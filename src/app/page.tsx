@@ -1,53 +1,40 @@
 import { DocumentUploadView } from "@/components/views/document-upload-view";
-import { FileText, Zap } from "lucide-react";
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+    <div className="min-h-screen bg-white">
       {/* Header */}
-      <header className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
+      <header className="sticky top-0 z-50 border-b border-gray-200">
+        <div className="container mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-primary/10 rounded-lg">
-                <FileText className="h-6 w-6 text-primary" />
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-gradient-to-br from-slate-900 to-slate-700 rounded-md flex items-center justify-center">
+                <span className="text-white font-bold text-sm">DI</span>
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">OM Intelligence</h1>
-                <p className="text-sm text-gray-600">AI-powered document analysis for real estate due diligence</p>
-              </div>
+              <h1 className="text-lg font-semibold tracking-tight text-gray-900">Deal Intelligence</h1>
             </div>
-            <div className="flex items-center space-x-4">
-              <div className="hidden md:flex items-center space-x-2 text-sm text-gray-600">
-                <Zap className="h-4 w-4" />
-                <span>Powered by Claude 3.5 & GPT-4</span>
-              </div>
-              <button className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">
-                Get Started
-              </button>
+            <div className="hidden md:flex items-center space-x-6 text-sm">
+              <span className="text-gray-600">Powered by Claude & GPT-4</span>
             </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-6 py-12">
         <DocumentUploadView />
       </main>
 
       {/* Footer */}
-      <footer className="border-t bg-white mt-16">
-        <div className="container mx-auto px-4 py-8">
-          <div className="flex flex-col md:flex-row justify-between items-center">
-            <div className="mb-4 md:mb-0">
-              <div className="flex items-center space-x-2">
-                <FileText className="h-6 w-6 text-primary" />
-                <span className="text-lg font-semibold">OM Intelligence</span>
-              </div>
-              <p className="text-sm text-gray-600 mt-2">© 2026 Moxie Management. All rights reserved.</p>
+      <footer className="border-t border-gray-200 mt-20">
+        <div className="container mx-auto px-6 py-8">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
+            <div>
+              <h3 className="font-semibold text-gray-900">Deal Intelligence</h3>
+              <p className="text-sm text-gray-600 mt-2">AI-powered due diligence for real estate professionals</p>
             </div>
             <div className="text-sm text-gray-600">
-              <p>Built for real estate professionals by real estate professionals</p>
+              <p>© 2026. Made for real estate, by real estate professionals.</p>
             </div>
           </div>
         </div>
