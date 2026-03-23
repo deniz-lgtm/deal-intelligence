@@ -1,0 +1,3 @@
+# Railway environment configuration for Deal Intelligence
+NODE_ENV=production
+RAILWAY_ENVIRONMENT=production
