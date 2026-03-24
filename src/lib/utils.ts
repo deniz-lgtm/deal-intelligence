@@ -27,6 +27,18 @@ export function formatNumber(value: number | null): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+export function formatFileSize(bytes: number): string {
+  return formatBytes(bytes);
+}
+
+export function formatDate(date: string | Date): string {
+  return new Date(date).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export function slugify(str: string): string {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
