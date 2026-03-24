@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
-  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles,
+  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -21,7 +21,7 @@ interface UnitGroup {
   beds_per_unit: number; current_rent_per_bed: number; market_rent_per_bed: number;
 }
 
-interface CapexItem { id: string; label: string; cost: number; }
+interface CapexItem { id: string; label: string; quantity: number; cost_per_unit: number; }
 
 interface UWData {
   purchase_price: number; closing_costs_pct: number;
@@ -59,7 +59,7 @@ const newGroup = (): UnitGroup => ({
   beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 1200,
 });
 
-const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", cost: 0 });
+const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity: 1, cost_per_unit: 0 });
 
 function annualPayment(principal: number, rate: number, years: number): number {
   if (principal <= 0 || rate === 0) return principal > 0 ? principal / years : 0;
@@ -85,7 +85,7 @@ function calc(d: UWData, isMF: boolean) {
   const totalOpEx = mgmtFee + d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual;
   const noi = effectiveRevenue - totalOpEx;
   const renovationCost = d.unit_groups.reduce((s, g) => s + (g.will_renovate ? g.unit_count * g.renovation_cost_per_unit : 0), 0);
-  const capexTotal = d.capex_items.reduce((s, c) => s + c.cost, 0);
+  const capexTotal = d.capex_items.reduce((s, c) => s + c.quantity * c.cost_per_unit, 0);
   const closingCosts = d.purchase_price * (d.closing_costs_pct / 100);
   const totalCost = d.purchase_price + closingCosts + renovationCost + capexTotal;
   const capRateOnPrice = d.purchase_price > 0 ? (noi / d.purchase_price) * 100 : 0;
@@ -163,11 +163,18 @@ function Section({ title, icon, children, open: defaultOpen = true }: { title: s
   );
 }
 
-function Row({ label, value, muted, bold, hi }: { label: string; value: string; muted?: boolean; bold?: boolean; hi?: boolean; }) {
+function TR({ label, val, per, muted, bold, hi }: { label: string; val: number; per?: number; muted?: boolean; bold?: boolean; hi?: boolean; }) {
+  const neg = val < 0;
+  const abs = Math.abs(val);
+  const formatted = neg ? `(${fc(abs)})` : fc(abs);
+  const perVal = per && per > 0 ? abs / per : 0;
+  const perFormatted = perVal > 0 ? (neg ? `(${fc(perVal)})` : fc(perVal)) : "—";
   return (
-    <div className={`flex justify-between ${bold ? "font-semibold" : ""} ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>
-      <span>{label}</span><span>{value}</span>
-    </div>
+    <tr className={`${bold ? "font-semibold" : ""} ${hi ? "bg-primary/5" : "hover:bg-muted/20"}`}>
+      <td className={`px-5 py-1.5 ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{label}</td>
+      <td className={`px-5 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{formatted}</td>
+      {per !== undefined && <td className={`px-5 py-1.5 text-right tabular-nums text-xs ${muted ? "text-muted-foreground" : "text-muted-foreground"}`}>{perFormatted}</td>}
+    </tr>
   );
 }
 
@@ -176,6 +183,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
+  const [capexEstimating, setCapexEstimating] = useState(false);
+  const [capexPreview, setCapexPreview] = useState<Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string; selected: boolean }> | null>(null);
+  const [showDocPicker, setShowDocPicker] = useState(false);
+  const [docs, setDocs] = useState<Array<{ id: string; original_name: string }>>([]);
+  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [deal, setDeal] = useState<{ name: string; property_type?: string } | null>(null);
   const isMF = deal?.property_type === "multifamily" || deal?.property_type === "student_housing";
 
@@ -185,7 +197,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()),
     ]).then(([dr, ur]) => {
       setDeal(dr.data);
-      if (ur.data?.data) { try { setData({ ...DEFAULT, ...JSON.parse(ur.data.data) }); } catch {} }
+      if (ur.data?.data) {
+        const raw = ur.data.data;
+        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        setData({ ...DEFAULT, ...parsed });
+      }
       else if (dr.data?.asking_price) setData(p => ({ ...p, purchase_price: dr.data.asking_price }));
       setLoading(false);
     });
@@ -205,12 +221,55 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     } catch { toast.error("Failed to save"); } finally { setSaving(false); }
   };
 
-  const autofillFromOm = async () => {
+  const estimateCapex = async () => {
+    setCapexEstimating(true);
+    try {
+      const res = await fetch(`/api/deals/${params.id}/capex-estimate`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) { toast.error(json.error || "Estimation failed"); return; }
+      const items = (json.data as Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string }>)
+        .map(item => ({ ...item, selected: true }));
+      setCapexPreview(items);
+    } catch { toast.error("CapEx estimation failed"); } finally { setCapexEstimating(false); }
+  };
+
+  const applyCapexEstimates = () => {
+    if (!capexPreview) return;
+    const selected = capexPreview.filter(i => i.selected);
+    const newItems: CapexItem[] = selected.map(i => ({
+      id: uuidv4(), label: i.label, quantity: i.quantity, cost_per_unit: i.cost_per_unit,
+    }));
+    setData(p => ({ ...p, capex_items: [...p.capex_items, ...newItems] }));
+    toast.success(`${selected.length} CapEx item${selected.length !== 1 ? "s" : ""} added`);
+    setCapexPreview(null);
+  };
+
+  const loadDocs = async () => {
+    try {
+      const res = await fetch(`/api/deals/${params.id}/documents`);
+      const json = await res.json();
+      if (json.data) setDocs(json.data);
+    } catch {}
+  };
+
+  const openDocPicker = async () => {
+    await loadDocs();
+    setSelectedDocIds([]);
+    setShowDocPicker(true);
+  };
+
+  const autofillWithDocs = async () => {
+    setShowDocPicker(false);
     const hasGroups = data.unit_groups.length > 0;
     if (hasGroups && !confirm("Replace existing unit groups with data extracted from documents?")) return;
     setAutofilling(true);
     try {
-      const res = await fetch(`/api/deals/${params.id}/uw-autofill`, { method: "POST" });
+      const body = selectedDocIds.length > 0 ? { doc_ids: selectedDocIds } : {};
+      const res = await fetch(`/api/deals/${params.id}/uw-autofill`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "Autofill failed"); return; }
       const d = json.data;
@@ -262,9 +321,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <p className="text-sm text-muted-foreground">{deal?.name}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={autofillFromOm} disabled={autofilling || saving}>
+          <Button variant="outline" onClick={openDocPicker} disabled={autofilling || saving}>
             {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-            Autofill from OM
+            Autofill from Docs
           </Button>
           <Button onClick={save} disabled={saving || autofilling}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
@@ -368,14 +427,25 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 <label className="block text-xs font-medium text-muted-foreground mb-1">Description</label>
                 <input type="text" value={c.label} onChange={e => updC(c.id, { label: e.target.value })} placeholder="e.g. Roof, HVAC, Site work" className="w-full px-2 py-1.5 text-sm border rounded-md bg-background outline-none focus:ring-2 focus:ring-ring" />
               </div>
-              <div className="w-44"><NumInput label="Cost" value={c.cost} onChange={v => updC(c.id, { cost: v })} prefix="$" /></div>
+              <div className="w-24"><NumInput label="Qty" value={c.quantity} onChange={v => updC(c.id, { quantity: v })} /></div>
+              <div className="w-36"><NumInput label="Cost / Unit" value={c.cost_per_unit} onChange={v => updC(c.id, { cost_per_unit: v })} prefix="$" /></div>
+              <div className="pb-1.5 w-24 text-right">
+                <p className="text-xs text-muted-foreground mb-1">Total</p>
+                <p className="text-sm font-semibold tabular-nums">{fc(c.quantity * c.cost_per_unit)}</p>
+              </div>
               <button onClick={() => delC(c.id)} className="text-muted-foreground hover:text-destructive mb-0.5"><Trash2 className="h-4 w-4" /></button>
             </div>
           ))}
           <div className="flex items-center justify-between">
-            <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, capex_items: [...p.capex_items, newCapex()] }))}>
-              <Plus className="h-4 w-4 mr-2" /> Add CapEx Item
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, capex_items: [...p.capex_items, newCapex()] }))}>
+                <Plus className="h-4 w-4 mr-2" /> Add Item
+              </Button>
+              <Button variant="outline" size="sm" onClick={estimateCapex} disabled={capexEstimating}>
+                {capexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                AI Estimate
+              </Button>
+            </div>
             {data.capex_items.length > 0 && <p className="text-sm font-semibold">Total: {fc(m.capexTotal)}</p>}
           </div>
         </div>
@@ -453,25 +523,43 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
-      <div className="border rounded-xl bg-card p-5">
-        <h3 className="font-semibold text-sm mb-4">Pro Forma Income Statement</h3>
-        <div className="space-y-2 text-sm">
-          <Row label="Gross Potential Revenue" value={fc(m.gpr)} />
-          <Row label={`Less Vacancy (${data.vacancy_rate}%)`} value={`(${fc(m.vacancyLoss)})`} muted />
-          <Row label="Effective Gross Income" value={fc(m.egi)} bold />
-          {m.reimbursements > 0 && <><Row label="Expense Reimbursements" value={fc(m.reimbursements)} /><Row label="Effective Revenue" value={fc(m.effectiveRevenue)} bold /></>}
-          <div className="border-t my-2" />
-          <Row label={`Management (${data.management_fee_pct}%)`} value={`(${fc(m.mgmtFee)})`} muted />
-          <Row label="Property Taxes" value={`(${fc(data.taxes_annual)})`} muted />
-          <Row label="Insurance" value={`(${fc(data.insurance_annual)})`} muted />
-          <Row label="Repairs" value={`(${fc(data.repairs_annual)})`} muted />
-          {data.utilities_annual > 0 && <Row label="Utilities" value={`(${fc(data.utilities_annual)})`} muted />}
-          {data.other_expenses_annual > 0 && <Row label="Other Expenses" value={`(${fc(data.other_expenses_annual)})`} muted />}
-          <Row label="Total Operating Expenses" value={`(${fc(m.totalOpEx)})`} />
-          <div className="border-t my-2" />
-          <Row label="Net Operating Income" value={fc(m.noi)} bold hi />
-          {data.has_financing && <><Row label="Annual Debt Service (Acq)" value={`(${fc(m.acqDebt)})`} muted /><div className="border-t my-2" /><Row label="Cash Flow Before Tax" value={fc(m.cashFlow)} bold hi={m.cashFlow > 0} /></>}
+      <div className="border rounded-xl bg-card overflow-hidden">
+        <div className="px-5 py-3 border-b bg-muted/30">
+          <h3 className="font-semibold text-sm">Pro Forma Income Statement</h3>
         </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/20">
+              <th className="text-left px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide">Line Item</th>
+              <th className="text-right px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-36">Annual</th>
+              {(isMF ? m.totalBeds > 0 : m.totalSF > 0) && <th className="text-right px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-28">{isMF ? "/ Bed" : "/ SF"}</th>}
+            </tr>
+          </thead>
+          <tbody>
+            <TR label="Gross Potential Revenue" val={m.gpr} per={isMF ? m.totalBeds : m.totalSF} />
+            <TR label={`Less Vacancy (${data.vacancy_rate}%)`} val={-m.vacancyLoss} per={isMF ? m.totalBeds : m.totalSF} muted />
+            <TR label="Effective Gross Income" val={m.egi} per={isMF ? m.totalBeds : m.totalSF} bold />
+            {m.reimbursements > 0 && <>
+              <TR label="Expense Reimbursements" val={m.reimbursements} per={isMF ? m.totalBeds : m.totalSF} />
+              <TR label="Effective Revenue" val={m.effectiveRevenue} per={isMF ? m.totalBeds : m.totalSF} bold />
+            </>}
+            <tr><td colSpan={3} className="px-5"><div className="border-t" /></td></tr>
+            <TR label={`Management (${data.management_fee_pct}%)`} val={-m.mgmtFee} per={isMF ? m.totalBeds : m.totalSF} muted />
+            <TR label="Property Taxes" val={-data.taxes_annual} per={isMF ? m.totalBeds : m.totalSF} muted />
+            <TR label="Insurance" val={-data.insurance_annual} per={isMF ? m.totalBeds : m.totalSF} muted />
+            <TR label="Repairs" val={-data.repairs_annual} per={isMF ? m.totalBeds : m.totalSF} muted />
+            {data.utilities_annual > 0 && <TR label="Utilities" val={-data.utilities_annual} per={isMF ? m.totalBeds : m.totalSF} muted />}
+            {data.other_expenses_annual > 0 && <TR label="Other Expenses" val={-data.other_expenses_annual} per={isMF ? m.totalBeds : m.totalSF} muted />}
+            <TR label="Total Operating Expenses" val={-m.totalOpEx} per={isMF ? m.totalBeds : m.totalSF} />
+            <tr><td colSpan={3} className="px-5"><div className="border-t" /></td></tr>
+            <TR label="Net Operating Income" val={m.noi} per={isMF ? m.totalBeds : m.totalSF} bold hi />
+            {data.has_financing && <>
+              <TR label="Annual Debt Service (Acq)" val={-m.acqDebt} per={isMF ? m.totalBeds : m.totalSF} muted />
+              <tr><td colSpan={3} className="px-5"><div className="border-t" /></td></tr>
+              <TR label="Cash Flow Before Tax" val={m.cashFlow} per={isMF ? m.totalBeds : m.totalSF} bold hi={m.cashFlow > 0} />
+            </>}
+          </tbody>
+        </table>
       </div>
 
       <div className="border rounded-xl bg-card p-5">
@@ -484,6 +572,93 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save Underwriting
         </Button>
       </div>
+
+      {/* ── CapEx AI Preview Modal ── */}
+      {capexPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setCapexPreview(null)}>
+          <div className="bg-card rounded-xl border shadow-lifted-md w-full max-w-xl mx-4 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h3 className="font-semibold text-sm">AI CapEx Estimates</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Select items to add to your underwriting</p>
+              </div>
+              <button onClick={() => setCapexPreview(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {capexPreview.map((item, i) => (
+                <label key={i} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${item.selected ? "border-primary/50 bg-primary/5" : "border-border hover:bg-muted/30"}`}>
+                  <input type="checkbox" checked={item.selected} onChange={() => {
+                    setCapexPreview(prev => prev!.map((p, j) => j === i ? { ...p, selected: !p.selected } : p));
+                  }} className="rounded mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-sm">{item.label}</span>
+                      <span className="font-semibold text-sm tabular-nums">{fc(item.quantity * item.cost_per_unit)}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">{item.quantity} {item.unit} × {fc(item.cost_per_unit)}</p>
+                    {item.basis && <p className="text-xs text-muted-foreground/70 mt-1 italic">{item.basis}</p>}
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="flex items-center justify-between p-4 border-t bg-muted/20">
+              <p className="text-sm text-muted-foreground">
+                {capexPreview.filter(i => i.selected).length} selected — {fc(capexPreview.filter(i => i.selected).reduce((s, i) => s + i.quantity * i.cost_per_unit, 0))}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setCapexPreview(null)}>Cancel</Button>
+                <Button size="sm" onClick={applyCapexEstimates} disabled={capexPreview.filter(i => i.selected).length === 0}>
+                  <Check className="h-4 w-4 mr-1.5" />Add Selected
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Document Picker Modal ── */}
+      {showDocPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowDocPicker(false)}>
+          <div className="bg-card rounded-xl border shadow-lifted-md w-full max-w-md mx-4 max-h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h3 className="font-semibold text-sm">Select Documents for Autofill</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Choose which docs to extract underwriting data from</p>
+              </div>
+              <button onClick={() => setShowDocPicker(false)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-1.5">
+              {docs.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">No documents uploaded for this deal.</p>
+              ) : (
+                <>
+                  <button className="text-xs text-primary hover:underline mb-2" onClick={() => {
+                    setSelectedDocIds(prev => prev.length === docs.length ? [] : docs.map(d => d.id));
+                  }}>{selectedDocIds.length === docs.length ? "Deselect all" : "Select all"}</button>
+                  {docs.map(doc => (
+                    <label key={doc.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${selectedDocIds.includes(doc.id) ? "border-primary/50 bg-primary/5" : "border-border hover:bg-muted/30"}`}>
+                      <input type="checkbox" checked={selectedDocIds.includes(doc.id)} onChange={() => {
+                        setSelectedDocIds(prev => prev.includes(doc.id) ? prev.filter(id => id !== doc.id) : [...prev, doc.id]);
+                      }} className="rounded" />
+                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="text-sm truncate">{doc.original_name}</span>
+                    </label>
+                  ))}
+                </>
+              )}
+            </div>
+            <div className="flex items-center justify-between p-4 border-t bg-muted/20">
+              <p className="text-xs text-muted-foreground">{selectedDocIds.length > 0 ? `${selectedDocIds.length} doc${selectedDocIds.length !== 1 ? "s" : ""} selected` : "All docs will be used"}</p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setShowDocPicker(false)}>Cancel</Button>
+                <Button size="sm" onClick={autofillWithDocs}>
+                  <Sparkles className="h-4 w-4 mr-1.5" />Autofill
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
