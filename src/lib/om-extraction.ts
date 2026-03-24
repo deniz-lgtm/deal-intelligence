@@ -1,6 +1,6 @@
 /**
  * OM Intelligence — Full 4-Stage Extraction Pipeline
- * Prompts ported from om-intelligence-backend, adapted for FlexBay OS.
+ * Prompts ported from om-intelligence-backend, adapted for Deal Intelligence.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -224,7 +224,7 @@ async function analyzeRedFlags(
     ? `\nINVESTOR'S BUSINESS PLAN & CONTEXT (CRITICAL — read before flagging anything):\n${dealContext.trim()}\n\nIMPORTANT: The investor has described their strategy above. Conditions that are INTENTIONAL parts of their plan (e.g. vacancy on a value-add play, missing leases on a vacant building, no rent roll for a repositioning) should NOT be flagged as critical or high issues. Only flag things that are genuinely unexpected risks given this strategy, or material issues the investor hasn't acknowledged.\n`
     : "";
 
-  const prompt = `You are a deal associate working inside FlexBay OS, a CRE acquisition platform. You are reviewing this OM at the initial screening stage — before underwriting, before site visits, before full due diligence. The acquisition team will run their own underwriting model, commission Phase I environmental, conduct a physical inspection, and verify title and zoning in later diligence stages. Do not flag items that will be covered in standard post-LOI diligence. At this stage brokers rarely share full financials, rent rolls, or CapEx budgets — that is expected and is not a red flag.
+  const prompt = `You are a deal associate working inside Deal Intelligence, a CRE acquisition platform. You are reviewing this OM at the initial screening stage — before underwriting, before site visits, before full due diligence. The acquisition team will run their own underwriting model, commission Phase I environmental, conduct a physical inspection, and verify title and zoning in later diligence stages. Do not flag items that will be covered in standard post-LOI diligence. At this stage brokers rarely share full financials, rent rolls, or CapEx budgets — that is expected and is not a red flag.
 
 Focus only on issues that are genuinely material right now: things that could kill this deal or that need an answer before making an offer.
 ${contextBlock}
@@ -247,7 +247,7 @@ Return ONLY a JSON array. If there are no genuine red flags in a category, omit 
     "severity": "critical|high|medium|low",
     "category": "Financial|Physical|Legal|Market|Tenant",
     "description": "Specific issue with supporting details from the document",
-    "recommendation": "Exactly what to do next — and which FlexBay workflow step handles it: 'Flag for underwriting model' / 'Add to diligence checklist' / 'Raise before LOI' / 'Verify on site visit'"
+    "recommendation": "Exactly what to do next — and which workflow step handles it: 'Flag for underwriting model' / 'Add to diligence checklist' / 'Raise before LOI' / 'Verify on site visit'"
   }
 ]
 
@@ -293,7 +293,7 @@ async function calculateDealScore(
     ? `\nINVESTOR'S BUSINESS PLAN:\n${dealContext.trim()}\n\nScore the deal relative to the stated strategy. A value-add play on a vacant building is a different risk profile than a stabilized core deal — score accordingly.\n`
     : "";
 
-  const prompt = `You are scoring this deal for initial pursuit prioritization inside FlexBay OS — not for final investment approval. This is a first-look screen to decide whether to spend time underwriting it.
+  const prompt = `You are scoring this deal for initial pursuit prioritization inside Deal Intelligence — not for final investment approval. This is a first-look screen to decide whether to spend time underwriting it.
 ${contextBlock}
 PROPERTY:
 ${JSON.stringify(propertyDetails, null, 2)}
@@ -356,9 +356,9 @@ async function generateRecommendations(
     ? `\nINVESTOR'S BUSINESS PLAN & STRATEGY:\n${dealContext.trim()}\n\nCalibrate the summary and recommendations to this strategy. Do not suggest things that contradict or are irrelevant to it.\n`
     : "";
 
-  const prompt = `You are a deal associate writing a quick first-look memo for the acquisition team inside FlexBay OS. This is the OM screening stage. The team's next steps in the workflow are: underwriting model → full diligence checklist → site visit → LOI submission.
+  const prompt = `You are a deal associate writing a quick first-look memo for the acquisition team inside Deal Intelligence. This is the OM screening stage. The team's next steps in the workflow are: underwriting model → full diligence checklist → site visit → LOI submission.
 
-Write a concise executive summary and structure the next steps to hand off clearly to those workflow stages. Do not recommend asking the broker for things they won't provide at OM stage (rent rolls, CapEx budgets, full financials). Do not recommend standard diligence tasks that are already built into the FlexBay checklist — only call out things specific to this deal.
+Write a concise executive summary and structure the next steps to hand off clearly to those workflow stages. Do not recommend asking the broker for things they won't provide at OM stage (rent rolls, CapEx budgets, full financials). Do not recommend standard diligence tasks that are already built into the diligence checklist — only call out things specific to this deal.
 ${contextBlock}
 DEAL SCORE: ${dealScore}/10
 PROPERTY: ${propertyDetails.property_type || "Commercial"} at ${propertyDetails.address || "unknown address"}

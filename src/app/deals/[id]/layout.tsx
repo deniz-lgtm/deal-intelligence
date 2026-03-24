@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
-  Building2,
   FileText,
   CheckSquare,
   MessageSquare,
@@ -84,16 +83,6 @@ export default function DealLayout({
                 <span className="hidden sm:inline">All Deals</span>
               </button>
             </Link>
-            <span className="text-white/30">/</span>
-
-            {/* Brand mark */}
-            <Link href="/" className="flex items-center gap-2 text-white font-semibold text-sm">
-              <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center">
-                <Building2 className="h-4 w-4 text-white" />
-              </div>
-              <span className="hidden sm:inline opacity-80">FlexBay OS</span>
-            </Link>
-
             <span className="text-white/30">/</span>
 
             {deal ? (

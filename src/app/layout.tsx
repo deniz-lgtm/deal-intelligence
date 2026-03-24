@@ -3,7 +3,7 @@ import "./globals.css";
 import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
-  title: "Deal Intelligence — FlexBay",
+  title: "Deal Intelligence",
   description: "AI-powered deal intelligence and due diligence platform",
 };
 

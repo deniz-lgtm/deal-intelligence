@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import {
   Plus,
   Star,
@@ -99,19 +98,10 @@ export default function DashboardPage() {
       <header className="gradient-header sticky top-0 z-20 shadow-card">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-white rounded-md px-2 py-1">
-              <Image
-                src="/flexbay-logo.png"
-                alt="FlexBay"
-                width={100}
-                height={32}
-                className="h-7 w-auto"
-              />
+            <div className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
+              <Building2 className="h-4.5 w-4.5 text-white" />
             </div>
-            <div className="h-5 w-px bg-white/30" />
-            <div>
-              <h1 className="font-bold text-base leading-none text-white">Deal Intelligence</h1>
-            </div>
+            <h1 className="font-bold text-base leading-none text-white">Deal Intelligence</h1>
           </div>
           <div className="flex items-center gap-2">
             <Link href="/business-plans">

@@ -5,29 +5,29 @@
 @layer base {
   :root {
     /* ── Backgrounds ── */
-    --background: 220 20% 98%;        /* Warm near-white */
-    --foreground: 220 25% 10%;        /* Deep cool-gray text */
+    --background: 220 14% 96%;        /* Cool neutral */
+    --foreground: 224 71% 4%;         /* Near-black */
     --card: 0 0% 100%;                /* Pure white cards */
-    --card-foreground: 220 25% 10%;
+    --card-foreground: 224 71% 4%;
     --popover: 0 0% 100%;
-    --popover-foreground: 220 25% 10%;
+    --popover-foreground: 224 71% 4%;
 
-    /* ── Primary — FlexBay Brown ── */
-    --primary: 25 51% 47%;            /* FlexBay brown #b36d3a */
+    /* ── Primary — Indigo ── */
+    --primary: 234 89% 56%;            /* Indigo #4f46e5 */
     --primary-foreground: 0 0% 100%;
-    --primary-light: 25 55% 60%;      /* Lighter brown for gradients */
+    --primary-light: 234 89% 65%;      /* Lighter indigo for gradients */
 
     /* ── Secondary ── */
-    --secondary: 220 14% 94%;         /* Warm gray */
-    --secondary-foreground: 220 25% 20%;
+    --secondary: 220 14% 94%;
+    --secondary-foreground: 224 71% 4%;
 
     /* ── Muted ── */
-    --muted: 220 14% 94%;
-    --muted-foreground: 220 10% 48%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
 
-    /* ── Accent — Warm light for hovers ── */
-    --accent: 220 20% 94%;
-    --accent-foreground: 220 25% 20%;
+    /* ── Accent — Light indigo tint for hovers ── */
+    --accent: 234 89% 96%;
+    --accent-foreground: 234 40% 20%;
 
     /* ── Amber — CTAs and highlights ── */
     --amber: 38 95% 55%;
@@ -42,9 +42,9 @@
     --warning-foreground: 0 0% 100%;
 
     /* ── Border / Input ── */
-    --border: 220 14% 88%;
-    --input: 220 14% 88%;
-    --ring: 25 51% 47%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 234 89% 56%;
 
     /* ── Radius ── */
     --radius: 0.625rem;
@@ -72,13 +72,13 @@
     background: linear-gradient(135deg, hsl(var(--primary-light)), hsl(var(--primary)));
   }
   .bg-primary\/8 {
-    background-color: hsl(25 51% 47% / 0.08);
+    background-color: hsl(234 89% 56% / 0.08);
   }
   .gradient-header {
     background: linear-gradient(
       to right,
-      hsl(25 30% 12%),
-      hsl(25 30% 20%)
+      hsl(215 28% 17%),
+      hsl(217 33% 22%)
     );
   }
   .text-gradient-primary {
