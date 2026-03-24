@@ -26,7 +26,8 @@ export async function PUT(req: Request) {
     }
     const existing = (await underwritingQueries.getByDealId(deal_id)) as { id: string } | undefined;
     const id = existing?.id || uuidv4();
-    const result = await underwritingQueries.upsert(deal_id, id, JSON.stringify(data));
+    const dataStr = typeof data === "string" ? data : JSON.stringify(data);
+    const result = await underwritingQueries.upsert(deal_id, id, dataStr);
     return NextResponse.json({ data: result });
   } catch (err) {
     console.error("Error saving underwriting:", err);
