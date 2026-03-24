@@ -1,6 +1,6 @@
 /**
  * Notion Integration
- * Exports FlexBay deals + OM analyses to a Notion database.
+ * Exports Deal Intelligence deals + OM analyses to a Notion database.
  *
  * Required environment variables:
  *   NOTION_API_KEY            — Integration token (secret_...)
@@ -10,7 +10,7 @@
  *   Name (title), Address (text), Property Type (select),
  *   Asking Price (number), Cap Rate (number), NOI (number),
  *   Deal Score (number), Status (select), Summary (rich_text),
- *   Red Flags Count (number), Analysis Date (date), FlexBay URL (url)
+ *   Red Flags Count (number), Analysis Date (date), Deal URL (url)
  */
 
 import { Client } from "@notionhq/client";
@@ -24,7 +24,7 @@ function getDatabaseId() {
   return process.env.NOTION_DEALS_DATABASE_ID!;
 }
 
-// Status mapping from FlexBay to Notion select options
+// Status mapping from Deal Intelligence to Notion select options
 const STATUS_MAP: Record<string, string> = {
   prospecting: "Prospecting",
   diligence: "Under Analysis",
@@ -60,7 +60,7 @@ export async function exportDealToNotion(
     ? analysis.summary.slice(0, 2000)
     : "No summary available.";
 
-  const flexbayUrl = process.env.NEXT_PUBLIC_APP_URL
+  const dealUrl = process.env.NEXT_PUBLIC_APP_URL
     ? `${process.env.NEXT_PUBLIC_APP_URL}/deals/${deal.id}/om-analysis`
     : null;
 
@@ -117,8 +117,8 @@ export async function exportDealToNotion(
     };
   }
 
-  if (flexbayUrl) {
-    properties["FlexBay URL"] = { url: flexbayUrl };
+  if (dealUrl) {
+    properties["Deal URL"] = { url: dealUrl };
   }
 
   // Build page body content (children blocks)

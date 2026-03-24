@@ -61,7 +61,7 @@ function PlanForm({
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. FlexBay Value-Add Strategy"
+          placeholder="e.g. Industrial Value-Add Strategy"
           className="w-full px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
         />
       </div>
@@ -174,15 +174,15 @@ function PlanCard({
           <div className="flex items-start gap-2 min-w-0">
             <div className={cn(
               "h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5",
-              plan.is_default ? "bg-amber-100" : "bg-primary/10"
+              plan.is_default ? "bg-indigo-100" : "bg-primary/10"
             )}>
-              <BookOpen className={cn("h-4 w-4", plan.is_default ? "text-amber-600" : "text-primary")} />
+              <BookOpen className={cn("h-4 w-4", plan.is_default ? "text-indigo-600" : "text-primary")} />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <CardTitle className="text-base leading-tight">{plan.name}</CardTitle>
                 {plan.is_default && (
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
                     <Star className="h-3 w-3 fill-amber-500 text-amber-500" />
                     Default
                   </span>

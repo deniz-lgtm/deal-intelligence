@@ -275,7 +275,7 @@ export default function NewDealPage() {
                   required
                   value={form.name}
                   onChange={(e) => set("name", e.target.value)}
-                  placeholder="e.g. FlexBay Hawthorne, 123 Main Industrial"
+                  placeholder="e.g. Hawthorne Industrial, 123 Main St"
                   className="input-field"
                 />
               </Field>
