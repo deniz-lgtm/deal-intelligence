@@ -1,180 +1,112 @@
-# OM Intelligence - Phase 1 MVP Frontend
+# Diligence — Property Due Diligence Platform
 
-AI-powered document analysis system for real estate due diligence. Built with Next.js 14, React, TypeScript, and Tailwind CSS.
+AI-powered property acquisition and development due diligence system. Part of the FlexBay OS suite, designed to be **property-agnostic** and eventually a standalone commercial product.
+
+## What It Does
+
+1. **Deal Dashboard** — Track all deals/properties with status, starring, and search/filter
+2. **Document Upload & AI Filing** — Drag-and-drop upload; Claude auto-classifies each document into 13 categories (Title, Environmental, Financial, etc.) and generates a summary
+3. **AI Diligence Chat** — Ask any question about the deal; Claude answers using your uploaded documents with streaming responses
+4. **Diligence Checklist** — 65+ item checklist across 10 categories; AI auto-fill analyzes all documents and marks items complete/pending/issue
+
+## Stack
+
+- **Next.js 14** + TypeScript
+- **SQLite** (better-sqlite3) — zero-config local database
+- **Claude claude-sonnet-4-6** — document classification, chat, checklist auto-fill
+- **Tailwind CSS** + shadcn/ui components
+- **react-dropzone** — drag-and-drop uploads
+- **pdf-parse** — PDF text extraction
+
+## Quick Start
+
+```bash
+cd diligence
+npm install
+cp .env.example .env.local
+# Add your ANTHROPIC_API_KEY to .env.local
+npm run dev
+# Open http://localhost:3004
+```
 
 ## Features
 
-### 1. Document Upload Interface
-- Drag-and-drop file upload zone
-- Progress indicators during upload
-- Support for PDFs, spreadsheets (CSV/XLSX), and images
-- File size and type validation
-- Recent document list with status indicators
+### Document Categories (AI auto-classified)
+- 🏛️ Title & Ownership
+- 🌿 Environmental (Phase I/II ESA)
+- 📋 Zoning & Entitlements
+- 💰 Financial (rent rolls, P&L, tax)
+- 📐 Surveys & Engineering
+- ⚖️ Legal (contracts, easements, CC&Rs)
+- ⚡ Utilities
+- 🔍 Inspections (PCR, roof, HVAC)
+- 📊 Market (comps, appraisals)
+- 🛡️ Insurance
+- 📝 Leases (estoppels, SNDAs)
+- 🔑 Permits & CO
+- 📁 Other
 
-### 2. Document Viewer
-- PDF preview with page navigation
-- Zoom controls (50% - 200%)
-- Side panel with extracted data:
-  - Key metrics (Purchase Price, NOI, Cap Rate)
-  - Property details (address, units, year built)
-  - Financial projections table
-- Annotations and notes panel
-- Toggleable side panel for full-screen viewing
+### Diligence Checklist Categories
+- Title & Ownership (7 items)
+- Environmental (7 items)
+- Zoning & Entitlements (7 items)
+- Financial (9 items)
+- Leases (9 items)
+- Physical Inspections (9 items)
+- Legal & Contracts (7 items)
+- Utilities & Infrastructure (7 items)
+- Permits & Compliance (6 items)
+- Market & Valuation (6 items)
+- Insurance (5 items)
 
-### 3. Analysis Dashboard
-- **Overall Deal Score**: 0-10 rating with qualitative assessment
-- **Summary Cards**:
-  - Purchase Price
-  - NOI (with trend indicators)
-  - Cap Rate (vs market comparison)
-  - Cash on Cash return
-  - GRM (Gross Rent Multiplier)
-  - Projected IRR
-- **Property Details**:
-  - Units, Year Built, Square Footage
-  - Property Class badge
-- **Red Flags & Warnings**:
-  - Critical, Warning, and Info level flags
-  - Expandable list with show more/less
-  - Color-coded severity indicators
+## Roadmap
 
-### 4. Q&A Chat Interface
-- Natural language query interface
-- Suggested question chips
-- Source citations with page numbers
-- Chat history with timestamps
-- Loading indicators during processing
-- Quick-access source links
+- [ ] Google Drive integration (upload from Drive, sync folders)
+- [ ] Multi-user / team access
+- [ ] Notion sync (push deal status to Notion)
+- [ ] Email integration (auto-ingest diligence docs from email)
+- [ ] Report generation (PDF diligence summary)
+- [ ] Deal pipeline / Kanban view
+- [ ] Underwriting calculator integration
+- [ ] PostgreSQL + pgvector for large document sets
+- [ ] Mission Control dashboard integration
 
-### 5. Export Options
-- PDF Report generation
-- Notion sync integration (UI ready)
-- One-click export buttons in analysis header
+## Environment Variables
 
-## Tech Stack
-
-- **Framework**: Next.js 14 (App Router)
-- **Language**: TypeScript
-- **Styling**: Tailwind CSS + shadcn/ui components
-- **State**: React hooks (useState, useEffect)
-- **Icons**: Lucide React
-- **Toast Notifications**: Radix UI Toast
-
-## Getting Started
-
-### Prerequisites
-- Node.js 18+
-- npm or yarn
-
-### Installation
-
-```bash
-# Install dependencies
-npm install
-
-# Run development server
-npm run dev
-
-# Build for production
-npm run build
-```
-
-### Development Server
-
-The development server runs on `http://localhost:3000`
-
-```bash
-npm run dev
+```env
+ANTHROPIC_API_KEY=your_key_here
+DATABASE_PATH=./data/diligence.db   # optional, defaults to ./data/diligence.db
+UPLOAD_DIR=./uploads                 # optional, defaults to ./uploads
 ```
 
 ## Project Structure
 
 ```
-projects/om-intelligence/
+diligence/
 ├── src/
-│   ├── app/                    # Next.js app router
-│   │   ├── globals.css         # Global styles + Tailwind
-│   │   ├── layout.tsx          # Root layout with providers
-│   │   └── page.tsx            # Main dashboard page
+│   ├── app/
+│   │   ├── page.tsx                    # Dashboard
+│   │   ├── deals/
+│   │   │   ├── new/page.tsx            # Create deal
+│   │   │   └── [id]/
+│   │   │       ├── layout.tsx          # Deal nav layout
+│   │   │       ├── page.tsx            # Deal overview
+│   │   │       ├── documents/page.tsx  # Document manager
+│   │   │       ├── checklist/page.tsx  # Diligence checklist
+│   │   │       └── chat/page.tsx       # AI chat
+│   │   └── api/
+│   │       ├── deals/                  # CRUD for deals
+│   │       ├── documents/              # Upload & manage docs
+│   │       ├── chat/                   # Streaming AI chat
+│   │       └── checklist/             # Checklist + autofill
 │   ├── components/
-│   │   ├── analysis/
-│   │   │   ├── dashboard.tsx   # Analysis dashboard component
-│   │   │   └── document-viewer.tsx  # PDF viewer with side panel
-│   │   ├── chat/
-│   │   │   └── chat-interface.tsx   # Q&A chat component
-│   │   ├── ui/                 # shadcn/ui components
-│   │   │   ├── button.tsx
-│   │   │   ├── toast.tsx
-│   │   │   └── toaster.tsx
-│   │   ├── upload/
-│   │   │   ├── document-list.tsx    # Document list component
-│   │   │   └── upload-zone.tsx      # Drag-drop upload zone
-│   │   ├── views/
-│   │   │   └── document-upload-view.tsx  # Main view container
-│   │   └── theme-provider.tsx   # Theme context provider
-│   ├── hooks/
-│   │   └── use-toast.ts        # Toast notification hook
-│   ├── lib/
-│   │   └── utils.ts            # Utility functions (cn, formatters)
-│   └── types/
-│       └── index.ts            # TypeScript type definitions
-├── public/                     # Static assets
-├── next.config.js             # Next.js configuration
-├── tailwind.config.js         # Tailwind CSS configuration
-└── package.json               # Dependencies
+│   │   ├── DealCard.tsx
+│   │   ├── DocumentUpload.tsx
+│   │   ├── ChatInterface.tsx
+│   │   └── DiligenceChecklist.tsx
+│   └── lib/
+│       ├── types.ts                    # All TypeScript types + checklist template
+│       ├── db.ts                       # SQLite queries
+│       ├── claude.ts                   # AI: classify, chat, autofill
+│       └── utils.ts
 ```
-
-## Design System
-
-### Colors
-- Primary: Blue (#2563eb)
-- Success: Green (#22c55e)
-- Warning: Amber (#f59e0b)
-- Danger: Red (#ef4444)
-- Background: Gray-50 to white gradient
-
-### Typography
-- Font: Inter (Google Fonts)
-- Headings: font-bold
-- Body: text-gray-600/700
-- Small text: text-xs text-gray-500
-
-### Spacing
-- Cards: p-5 or p-6
-- Buttons: px-4 py-2 (sm) / px-6 py-3 (default)
-- Grid gaps: gap-4 or gap-6
-
-### Components
-- Rounded corners: rounded-xl (cards), rounded-lg (buttons)
-- Shadows: shadow-sm (default), shadow-md (hover)
-- Borders: border border-gray-200
-
-## Mock Data
-
-The Phase 1 MVP uses mock data for demonstration:
-- Sunset Gardens apartment complex (48 units, 1985)
-- $12.5M purchase price
-- 7.0% cap rate
-- 7.2/10 deal score
-
-## Next Steps (Phase 2)
-
-1. **Backend Integration**
-   - API routes for document upload
-   - PDF processing with OCR
-   - AI analysis with Claude/GPT-4
-   - Database storage (PostgreSQL)
-
-2. **Advanced Features**
-   - Real PDF rendering (react-pdf)
-   - Live chat with streaming responses
-   - Notion OAuth integration
-   - Email notifications
-
-3. **Authentication**
-   - NextAuth.js integration
-   - User accounts and document ownership
-
-## License
-
-Private - Moxie Management / DJA CO

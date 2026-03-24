@@ -2,49 +2,53 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: 0 0% 100%;
-  --foreground: 240 10% 3.9%;
-  --card: 0 0% 100%;
-  --card-foreground: 240 10% 3.9%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 3.9%;
-  --primary: 240 10% 9%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 240 4.8% 95.9%;
-  --secondary-foreground: 240 5.9% 10%;
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
-  --ring: 240 10% 9%;
-  --radius: 0.375rem;
-}
+@layer base {
+  :root {
+    /* ── Backgrounds ── */
+    --background: 220 20% 98%;        /* Warm near-white */
+    --foreground: 220 25% 10%;        /* Deep cool-gray text */
+    --card: 0 0% 100%;                /* Pure white cards */
+    --card-foreground: 220 25% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
 
-.dark {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
-  --card: 240 10% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --popover: 240 10% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  --primary: 0 0% 98%;
-  --primary-foreground: 240 10% 9%;
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-  --accent: 240 3.7% 15.9%;
-  --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
-  --ring: 0 0% 98%;
+    /* ── Primary — FlexBay Brown ── */
+    --primary: 25 51% 47%;            /* FlexBay brown #b36d3a */
+    --primary-foreground: 0 0% 100%;
+    --primary-light: 25 55% 60%;      /* Lighter brown for gradients */
+
+    /* ── Secondary ── */
+    --secondary: 220 14% 94%;         /* Warm gray */
+    --secondary-foreground: 220 25% 20%;
+
+    /* ── Muted ── */
+    --muted: 220 14% 94%;
+    --muted-foreground: 220 10% 48%;
+
+    /* ── Accent — Warm light for hovers ── */
+    --accent: 220 20% 94%;
+    --accent-foreground: 220 25% 20%;
+
+    /* ── Amber — CTAs and highlights ── */
+    --amber: 38 95% 55%;
+    --amber-foreground: 0 0% 100%;
+
+    /* ── Semantic ── */
+    --destructive: 351 85% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 158 64% 42%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 95% 55%;
+    --warning-foreground: 0 0% 100%;
+
+    /* ── Border / Input ── */
+    --border: 220 14% 88%;
+    --input: 220 14% 88%;
+    --ring: 25 51% 47%;
+
+    /* ── Radius ── */
+    --radius: 0.625rem;
+  }
 }
 
 @layer base {
@@ -52,33 +56,82 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
   }
-  
-  h1, h2, h3, h4, h5, h6 {
-    @apply font-semibold tracking-tight;
-  }
-  
-  button {
-    @apply transition-all duration-200;
+  /* Smooth scrollbar */
+  :root {
+    scrollbar-color: hsl(220 14% 80%) transparent;
+    scrollbar-width: thin;
   }
 }
 
-/* Refined scrollbar */
-.scrollbar-thin::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ─── Gradient utilities ──────────────────────────────────────────────────── */
+@layer utilities {
+  .gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--primary-light)), hsl(var(--primary)));
+  }
+  .bg-primary\/8 {
+    background-color: hsl(25 51% 47% / 0.08);
+  }
+  .gradient-header {
+    background: linear-gradient(
+      to right,
+      hsl(25 30% 12%),
+      hsl(25 30% 20%)
+    );
+  }
+  .text-gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--primary-light)), hsl(var(--primary)));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .shadow-card {
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+  }
+  .shadow-lifted {
+    box-shadow: 0 4px 12px -2px rgb(0 0 0 / 0.08), 0 2px 6px -2px rgb(0 0 0 / 0.05);
+  }
 }
 
-.scrollbar-thin::-webkit-scrollbar-track {
-  background: transparent;
+/* ─── Prose styles for chat/markdown ────────────────────────────────────── */
+.prose h1, .prose h2, .prose h3 {
+  @apply font-semibold mt-3 mb-1.5;
 }
-
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background-color: rgb(209 213 219);
-  border-radius: 3px;
+.prose h1 { @apply text-base; }
+.prose h2 { @apply text-sm; }
+.prose h3 { @apply text-sm; }
+.prose ul {
+  @apply list-disc pl-4 mb-2;
 }
-
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background-color: rgb(156 163 175);
+.prose ol {
+  @apply list-decimal pl-4 mb-2;
+}
+.prose li {
+  @apply mb-0.5 text-sm;
+}
+.prose p {
+  @apply mb-2 text-sm leading-relaxed;
+}
+.prose code {
+  @apply bg-muted rounded px-1 py-0.5 text-xs font-mono;
+}
+.prose pre {
+  @apply bg-muted rounded-lg p-3 overflow-x-auto mb-2;
+}
+.prose blockquote {
+  @apply border-l-4 border-border pl-3 text-muted-foreground italic mb-2;
+}
+.prose table {
+  @apply w-full border-collapse text-sm mb-2;
+}
+.prose th {
+  @apply border border-border bg-muted px-3 py-1.5 font-medium text-left text-xs;
+}
+.prose td {
+  @apply border border-border px-3 py-1.5 text-sm;
+}
+.prose strong {
+  @apply font-semibold;
 }

@@ -1,0 +1,47 @@
+import { NextRequest, NextResponse } from "next/server";
+import { dealQueries, omAnalysisQueries } from "@/lib/db";
+import { exportDealToNotion } from "@/lib/notion";
+
+/**
+ * POST /api/deals/:id/om-notion
+ * Export the deal + latest OM analysis to Notion.
+ */
+export async function POST(
+  _req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    if (!process.env.NOTION_API_KEY || !process.env.NOTION_DEALS_DATABASE_ID) {
+      return NextResponse.json(
+        { error: "Notion integration not configured. Add NOTION_API_KEY and NOTION_DEALS_DATABASE_ID to environment variables." },
+        { status: 501 }
+      );
+    }
+
+    const deal = await dealQueries.getById(params.id);
+    if (!deal) {
+      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    }
+
+    const analysis = await omAnalysisQueries.getByDealId(params.id);
+    if (!analysis || analysis.status !== "complete") {
+      return NextResponse.json(
+        { error: "No completed OM analysis found. Analyze an OM first." },
+        { status: 400 }
+      );
+    }
+
+    const result = await exportDealToNotion(deal, analysis);
+
+    return NextResponse.json({
+      data: {
+        notion_page_id: result.pageId,
+        notion_url: result.url,
+        message: "Successfully exported to Notion.",
+      },
+    });
+  } catch (error) {
+    console.error("POST /api/deals/[id]/om-notion error:", error);
+    return NextResponse.json({ error: "Notion export failed" }, { status: 500 });
+  }
+}

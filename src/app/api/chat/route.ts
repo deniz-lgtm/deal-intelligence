@@ -1,0 +1,112 @@
+import { NextRequest, NextResponse } from "next/server";
+import { v4 as uuidv4 } from "uuid";
+import { chatQueries, documentQueries, dealQueries, underwritingQueries } from "@/lib/db";
+import { chatWithDealIntelligence } from "@/lib/claude";
+import type { Document } from "@/lib/types";
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { deal_id, message } = body;
+
+    if (!deal_id || !message) {
+      return NextResponse.json(
+        { error: "deal_id and message are required" },
+        { status: 400 }
+      );
+    }
+
+    const deal = await dealQueries.getById(deal_id) as {
+      id: string;
+      name: string;
+      context_notes?: string | null;
+    } | null;
+    if (!deal) {
+      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    }
+
+    const documents = await documentQueries.getByDealId(deal_id) as Document[];
+    const rawHistory = await chatQueries.getByDealId(deal_id, 20) as Array<{
+      role: "user" | "assistant";
+      content: string;
+    }>;
+    const history = rawHistory.map((m) => ({ role: m.role, content: m.content }));
+
+    // Save user message
+    await chatQueries.create({ id: uuidv4(), deal_id, role: "user", content: message });
+
+    // Run tool-use chat
+    const { response, actions } = await chatWithDealIntelligence(
+      deal,
+      documents,
+      history,
+      message
+    );
+
+    // Execute actions: save context notes, update deal fields, update underwriting
+    for (const action of actions) {
+      if (action.type === "context_saved" && action.note) {
+        await dealQueries.appendContextNote(deal_id, action.note);
+      } else if (action.type === "deal_updated" && action.fields) {
+        await dealQueries.update(deal_id, action.fields);
+      } else if (action.type === "underwriting_updated" && action.fields) {
+        // Merge partial fields into existing underwriting data
+        const existing = await underwritingQueries.getByDealId(deal_id) as { id: string; data: unknown } | null;
+        if (existing) {
+          const currentData = typeof existing.data === "string"
+            ? JSON.parse(existing.data)
+            : (existing.data ?? {});
+          const merged = { ...currentData, ...action.fields };
+          await underwritingQueries.upsert(deal_id, existing.id, JSON.stringify(merged));
+        } else {
+          const newId = uuidv4();
+          await underwritingQueries.upsert(deal_id, newId, JSON.stringify(action.fields));
+        }
+      }
+    }
+
+    // Save assistant message with actions metadata
+    await chatQueries.create({
+      id: uuidv4(),
+      deal_id,
+      role: "assistant",
+      content: response,
+      metadata: actions.length > 0 ? actions : null,
+    });
+
+    return NextResponse.json({ data: { message: response, actions } });
+  } catch (error) {
+    console.error("POST /api/chat error:", error);
+    return NextResponse.json({ error: "Chat failed" }, { status: 500 });
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const dealId = searchParams.get("deal_id");
+    if (!dealId) {
+      return NextResponse.json({ error: "deal_id is required" }, { status: 400 });
+    }
+    const messages = await chatQueries.getByDealId(dealId);
+    return NextResponse.json({ data: messages });
+  } catch (error) {
+    console.error("GET /api/chat error:", error);
+    return NextResponse.json({ error: "Failed to fetch messages" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const dealId = searchParams.get("deal_id");
+    if (!dealId) {
+      return NextResponse.json({ error: "deal_id is required" }, { status: 400 });
+    }
+    await chatQueries.clear(dealId);
+    return NextResponse.json({ data: { success: true } });
+  } catch (error) {
+    console.error("DELETE /api/chat error:", error);
+    return NextResponse.json({ error: "Failed to clear chat" }, { status: 500 });
+  }
+}
