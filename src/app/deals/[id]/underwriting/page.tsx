@@ -4,8 +4,11 @@ import { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
-  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose,
+  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical,
 } from "lucide-react";
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -25,7 +28,10 @@ interface UnitGroup {
   beds_per_unit: number; current_rent_per_bed: number; market_rent_per_bed: number;
 }
 
-interface CapexItem { id: string; label: string; quantity: number; cost_per_unit: number; }
+interface CapexItem { id: string; label: string; quantity: number; cost_per_unit: number; linked_unit_group_id?: string; }
+
+type NoteCategory = "context" | "review";
+interface NoteItem { id: string; text: string; category: NoteCategory; created_at: string; }
 
 interface UWData {
   purchase_price: number; closing_costs_pct: number;
@@ -33,11 +39,16 @@ interface UWData {
   vacancy_rate: number; in_place_vacancy_rate: number; management_fee_pct: number;
   taxes_annual: number; insurance_annual: number; repairs_annual: number;
   utilities_annual: number; other_expenses_annual: number;
+  ga_annual: number; marketing_annual: number; reserves_annual: number;
+  // In-place opex overrides (annual)
+  ip_mgmt_annual: number; ip_taxes_annual: number; ip_insurance_annual: number;
+  ip_repairs_annual: number; ip_utilities_annual: number; ip_other_annual: number;
+  ip_ga_annual: number; ip_marketing_annual: number; ip_reserves_annual: number;
   has_financing: boolean; acq_ltc: number; acq_interest_rate: number;
   acq_amort_years: number; acq_io_years: number;
   has_refi: boolean; refi_year: number; refi_ltv: number;
   refi_rate: number; refi_amort_years: number;
-  exit_cap_rate: number; hold_period_years: number; notes: string;
+  exit_cap_rate: number; hold_period_years: number; notes: string; deal_notes: NoteItem[];
 }
 
 const DEFAULT: UWData = {
@@ -46,11 +57,15 @@ const DEFAULT: UWData = {
   vacancy_rate: 5, in_place_vacancy_rate: 5, management_fee_pct: 5,
   taxes_annual: 0, insurance_annual: 0, repairs_annual: 0,
   utilities_annual: 0, other_expenses_annual: 0,
+  ga_annual: 0, marketing_annual: 0, reserves_annual: 0,
+  ip_mgmt_annual: 0, ip_taxes_annual: 0, ip_insurance_annual: 0,
+  ip_repairs_annual: 0, ip_utilities_annual: 0, ip_other_annual: 0,
+  ip_ga_annual: 0, ip_marketing_annual: 0, ip_reserves_annual: 0,
   has_financing: true, acq_ltc: 65, acq_interest_rate: 6.5,
   acq_amort_years: 25, acq_io_years: 0,
   has_refi: false, refi_year: 3, refi_ltv: 70,
   refi_rate: 6.0, refi_amort_years: 25,
-  exit_cap_rate: 5.5, hold_period_years: 5, notes: "",
+  exit_cap_rate: 5.5, hold_period_years: 5, notes: "", deal_notes: [],
 };
 
 const newGroup = (): UnitGroup => ({
@@ -103,10 +118,11 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   // ── Operating Expenses ──────────────────────────────────────────────────────
   const mgmtFee = egi * (d.management_fee_pct / 100);
-  const inPlaceMgmtFee = inPlaceEGI * (d.management_fee_pct / 100);
-  const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual;
+  const inPlaceMgmtFee = d.ip_mgmt_annual || (inPlaceEGI * (d.management_fee_pct / 100));
+  const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual + (d.ga_annual || 0) + (d.marketing_annual || 0) + (d.reserves_annual || 0);
   const totalOpEx = mgmtFee + fixedOpEx;
-  const inPlaceTotalOpEx = inPlaceMgmtFee + fixedOpEx;
+  const ipFixedOpEx = (d.ip_taxes_annual || d.taxes_annual) + (d.ip_insurance_annual || d.insurance_annual) + (d.ip_repairs_annual || d.repairs_annual) + (d.ip_utilities_annual || d.utilities_annual) + (d.ip_other_annual || d.other_expenses_annual) + (d.ip_ga_annual || d.ga_annual || 0) + (d.ip_marketing_annual || d.marketing_annual || 0) + (d.ip_reserves_annual || d.reserves_annual || 0);
+  const inPlaceTotalOpEx = inPlaceMgmtFee + ipFixedOpEx;
 
   // ── NOI ─────────────────────────────────────────────────────────────────────
   const noi = effectiveRevenue - totalOpEx;
@@ -163,12 +179,20 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   }
   const em = equity > 0 ? (exitEquity + totalCashFlows) / equity : 0;
 
+  // ── GRM + In-Place metrics ────────────────────────────────────────────────
+  const grm = d.purchase_price > 0 && gpr > 0 ? d.purchase_price / gpr : 0;
+  const inPlaceGRM = d.purchase_price > 0 && inPlaceGPR > 0 ? d.purchase_price / inPlaceGPR : 0;
+  const inPlaceCashFlow = inPlaceNOI - acqDebt;
+  const inPlaceCoC = equity > 0 ? (inPlaceCashFlow / equity) * 100 : 0;
+  const inPlaceDSCR = acqDebt > 0 ? inPlaceNOI / acqDebt : 0;
+
   return {
     totalSF, totalBeds, totalUnits,
     gpr, inPlaceGPR, vacancyLoss, inPlaceVacancyLoss, egi, inPlaceEGI,
     reimbursements, effectiveRevenue, inPlaceEffectiveRevenue,
     mgmtFee, inPlaceMgmtFee, totalOpEx, inPlaceTotalOpEx,
     noi, inPlaceNOI,
+    grm, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
     renovationCost, capexTotal, closingCosts, totalCost,
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
@@ -228,6 +252,24 @@ function CellText({ value, onChange, placeholder = "" }: { value: string; onChan
   );
 }
 
+function SortableRow({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <tr
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      className="border-b hover:bg-muted/20 group"
+    >
+      <td className="px-1 py-1.5 w-[28px]">
+        <button {...attributes} {...listeners} className="cursor-grab text-muted-foreground/40 hover:text-muted-foreground">
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+      </td>
+      {children}
+    </tr>
+  );
+}
+
 function MBox({ label, value, sub, hi, warn }: { label: string; value: string; sub?: string; hi?: boolean; warn?: boolean; }) {
   return (
     <div className={`p-4 rounded-xl border ${hi ? "border-primary/50 bg-primary/5" : warn ? "border-yellow-400/50 bg-yellow-50/50" : "bg-card"}`}>
@@ -278,6 +320,69 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const isSH = deal?.property_type === "student_housing";
   const isMF = deal?.property_type === "multifamily" || isSH;
   const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  const handleReorderUnits = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (over && active.id !== over.id) {
+      setData(prev => {
+        const oldIdx = prev.unit_groups.findIndex(g => g.id === active.id);
+        const newIdx = prev.unit_groups.findIndex(g => g.id === over.id);
+        return { ...prev, unit_groups: arrayMove(prev.unit_groups, oldIdx, newIdx) };
+      });
+    }
+  };
+  const handleReorderCapex = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (over && active.id !== over.id) {
+      setData(prev => {
+        const oldIdx = prev.capex_items.findIndex(c => c.id === active.id);
+        const newIdx = prev.capex_items.findIndex(c => c.id === over.id);
+        return { ...prev, capex_items: arrayMove(prev.capex_items, oldIdx, newIdx) };
+      });
+    }
+  };
+  // Renovation ↔ CapEx sync
+  const toggleRenovation = (groupId: string, checked: boolean) => {
+    setData(prev => {
+      const group = prev.unit_groups.find(g => g.id === groupId);
+      if (!group) return prev;
+      const updatedGroups = prev.unit_groups.map(g => g.id === groupId ? { ...g, will_renovate: checked } : g);
+      let updatedCapex = [...prev.capex_items];
+      if (checked) {
+        // Add linked capex item
+        if (!updatedCapex.some(c => c.linked_unit_group_id === groupId)) {
+          updatedCapex.push({
+            id: uuidv4(),
+            label: `${group.label || "Unit"} Renovation`,
+            quantity: group.unit_count,
+            cost_per_unit: group.renovation_cost_per_unit || 0,
+            linked_unit_group_id: groupId,
+          });
+        }
+      } else {
+        // Remove linked capex item
+        updatedCapex = updatedCapex.filter(c => c.linked_unit_group_id !== groupId);
+      }
+      return { ...prev, unit_groups: updatedGroups, capex_items: updatedCapex };
+    });
+  };
+  // Keep linked capex in sync when unit group changes
+  const syncLinkedCapex = (groupId: string, updates: Partial<UnitGroup>) => {
+    setData(prev => {
+      const updatedGroups = prev.unit_groups.map(g => g.id === groupId ? { ...g, ...updates } : g);
+      const group = updatedGroups.find(g => g.id === groupId)!;
+      const updatedCapex = prev.capex_items.map(c =>
+        c.linked_unit_group_id === groupId
+          ? { ...c, label: `${group.label || "Unit"} Renovation`, quantity: group.unit_count, cost_per_unit: group.renovation_cost_per_unit }
+          : c
+      );
+      return { ...prev, unit_groups: updatedGroups, capex_items: updatedCapex };
+    });
+  };
 
   useEffect(() => {
     Promise.all([
@@ -451,18 +556,58 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <MBox label="In-Place NOI" value={fc(m.inPlaceNOI)} sub={`${fc(m.noi)} pro forma`} />
-        <MBox label="In-Place Cap Rate" value={m.inPlaceCapRate > 0 ? `${m.inPlaceCapRate.toFixed(2)}%` : "—"} sub="on purchase price" warn={m.inPlaceCapRate > 0 && m.inPlaceCapRate < 4} />
-        <MBox label="Market Cap Rate" value={m.marketCapRate > 0 ? `${m.marketCapRate.toFixed(2)}%` : "—"} sub={`${m.yoc.toFixed(2)}% yield on cost`} hi={m.marketCapRate > 5} warn={m.marketCapRate > 0 && m.marketCapRate < 4} />
-        <MBox label="Cash-on-Cash" value={m.coc !== 0 ? `${m.coc.toFixed(2)}%` : "—"} sub={data.has_financing ? `DSCR ${m.dscr.toFixed(2)}x` : "No financing"} hi={m.coc > 7} warn={m.coc > 0 && m.coc < 4} />
-        <MBox label="Equity Multiple" value={m.em > 0 ? `${m.em.toFixed(2)}x` : "—"} sub={`${data.hold_period_years}yr hold`} />
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MBox label={isSH ? "Total Beds" : isMF ? "Total Units" : "Total SF"} value={fn(isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF)} sub={isSH ? `${fn(m.totalUnits)} units` : isMF ? undefined : `${fn(m.totalUnits)} units`} />
-        <MBox label={isSH ? "Price / Bed" : "Price / Unit"} value={isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—"} sub={!isMF && m.pricePerSF > 0 ? `${fc(m.pricePerSF)} / SF` : undefined} />
-        <MBox label="Total Investment" value={fc(m.totalCost)} sub={`${fc(m.capexTotal + m.renovationCost)} CapEx + ${fc(m.closingCosts)} closing`} />
-        <MBox label="Gross Revenue (PF)" value={fc(m.gpr)} sub={`${fc(m.inPlaceGPR)} in-place`} />
+      {/* Returns — Before (In-Place) vs After (Pro Forma) */}
+      <div className="border rounded-xl bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b bg-muted/30">
+          <h3 className="font-semibold text-sm">Returns — In-Place vs Pro Forma</h3>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-border">
+          {([
+            { label: "NOI", ip: fc(m.inPlaceNOI), pf: fc(m.noi) },
+            { label: "Cap Rate", ip: m.inPlaceCapRate > 0 ? `${m.inPlaceCapRate.toFixed(2)}%` : "—", pf: m.marketCapRate > 0 ? `${m.marketCapRate.toFixed(2)}%` : "—" },
+            { label: "Cash-on-Cash", ip: m.inPlaceCoC !== 0 ? `${m.inPlaceCoC.toFixed(2)}%` : "—", pf: m.coc !== 0 ? `${m.coc.toFixed(2)}%` : "—" },
+            { label: "DSCR", ip: m.inPlaceDSCR > 0 ? `${m.inPlaceDSCR.toFixed(2)}x` : "—", pf: m.dscr > 0 ? `${m.dscr.toFixed(2)}x` : "—" },
+            { label: "GRM", ip: m.inPlaceGRM > 0 ? m.inPlaceGRM.toFixed(2) : "—", pf: m.grm > 0 ? m.grm.toFixed(2) : "—" },
+            { label: "Yield on Cost", ip: "—", pf: m.yoc > 0 ? `${m.yoc.toFixed(2)}%` : "—" },
+          ] as const).map(metric => (
+            <div key={metric.label} className="bg-card p-3">
+              <p className="text-xs text-muted-foreground mb-2">{metric.label}</p>
+              <div className="flex items-baseline justify-between gap-2">
+                <div>
+                  <p className="text-[10px] text-muted-foreground/70 uppercase">In-Place</p>
+                  <p className="text-sm font-semibold tabular-nums">{metric.ip}</p>
+                </div>
+                <span className="text-muted-foreground/40 text-xs">→</span>
+                <div className="text-right">
+                  <p className="text-[10px] text-muted-foreground/70 uppercase">Pro Forma</p>
+                  <p className="text-sm font-semibold tabular-nums text-primary">{metric.pf}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 border-t">
+          <div className="p-3 border-r">
+            <p className="text-xs text-muted-foreground mb-1">Equity Multiple</p>
+            <p className="text-lg font-bold tabular-nums">{m.em > 0 ? `${m.em.toFixed(2)}x` : "—"}</p>
+            <p className="text-xs text-muted-foreground">{data.hold_period_years}yr hold</p>
+          </div>
+          <div className="p-3 border-r">
+            <p className="text-xs text-muted-foreground mb-1">{isSH ? "Total Beds" : isMF ? "Total Units" : "Total SF"}</p>
+            <p className="text-lg font-bold tabular-nums">{fn(isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF)}</p>
+            {(isSH || !isMF) && <p className="text-xs text-muted-foreground">{fn(m.totalUnits)} units</p>}
+          </div>
+          <div className="p-3 border-r">
+            <p className="text-xs text-muted-foreground mb-1">Total Investment</p>
+            <p className="text-lg font-bold tabular-nums">{fc(m.totalCost)}</p>
+            <p className="text-xs text-muted-foreground">{fc(m.capexTotal + m.renovationCost)} CapEx + {fc(m.closingCosts)} closing</p>
+          </div>
+          <div className="p-3">
+            <p className="text-xs text-muted-foreground mb-1">{isSH ? "Price / Bed" : "Price / Unit"}</p>
+            <p className="text-lg font-bold tabular-nums">{isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—"}</p>
+            {!isMF && m.pricePerSF > 0 && <p className="text-xs text-muted-foreground">{fc(m.pricePerSF)} / SF</p>}
+          </div>
+        </div>
       </div>
 
       <Section title="Purchase & Cost Basis" icon={<DollarSign className="h-4 w-4 text-green-600" />}>
@@ -478,6 +623,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-muted/30 border-b">
+                <th className="w-[28px]" />
                 {isSH ? (<>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit Type</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
@@ -509,6 +655,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </>)}
               </tr>
             </thead>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleReorderUnits}>
+            <SortableContext items={data.unit_groups.map(g => g.id)} strategy={verticalListSortingStrategy}>
             <tbody>
               {data.unit_groups.map(g => {
                 const annualRev = isSH
@@ -516,25 +664,32 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   : isMF
                   ? g.unit_count * g.market_rent_per_unit * 12
                   : g.unit_count * g.sf_per_unit * g.market_rent_per_sf;
+                const updFn = (id: string, updates: Partial<UnitGroup>) => {
+                  if (g.will_renovate && ("label" in updates || "unit_count" in updates || "renovation_cost_per_unit" in updates)) {
+                    syncLinkedCapex(id, updates);
+                  } else {
+                    upd(id, updates);
+                  }
+                };
                 return (
-                  <tr key={g.id} className="border-b hover:bg-muted/20 group">
+                  <SortableRow key={g.id} id={g.id}>
                     {isSH ? (<>
-                      <td className="px-2 py-1"><CellText value={g.label} onChange={v => upd(g.id, { label: v })} placeholder="e.g. 4BR/2BA" /></td>
-                      <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} /></td>
+                      <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 4BR/2BA" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.beds_per_unit} onChange={v => upd(g.id, { beds_per_unit: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.current_rent_per_bed} onChange={v => upd(g.id, { current_rent_per_bed: v })} prefix="$" /></td>
                       <td className="px-2 py-1"><CellInput value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" /></td>
                     </>) : isMF ? (<>
-                      <td className="px-2 py-1"><CellText value={g.label} onChange={v => upd(g.id, { label: v })} placeholder="e.g. 1BR/1BA" /></td>
-                      <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} /></td>
+                      <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 1BR/1BA" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.bedrooms} onChange={v => upd(g.id, { bedrooms: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.bathrooms} onChange={v => upd(g.id, { bathrooms: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.sf_per_unit} onChange={v => upd(g.id, { sf_per_unit: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.current_rent_per_unit} onChange={v => upd(g.id, { current_rent_per_unit: v })} prefix="$" /></td>
                       <td className="px-2 py-1"><CellInput value={g.market_rent_per_unit} onChange={v => upd(g.id, { market_rent_per_unit: v })} prefix="$" /></td>
                     </>) : (<>
-                      <td className="px-2 py-1"><CellText value={g.label} onChange={v => upd(g.id, { label: v })} placeholder="e.g. Suite A" /></td>
-                      <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} /></td>
+                      <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. Suite A" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.sf_per_unit} onChange={v => upd(g.id, { sf_per_unit: v })} /></td>
                       <td className="px-1 py-1">
                         <select value={g.lease_type} onChange={e => upd(g.id, { lease_type: e.target.value as LeaseType })} className="w-full bg-transparent text-sm outline-none text-center">
@@ -549,15 +704,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     <td className="px-1 py-1">
                       <button onClick={() => del(g.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
-                  </tr>
+                  </SortableRow>
                 );
               })}
               {data.unit_groups.length === 0 && (
-                <tr><td colSpan={isSH ? 7 : isMF ? 9 : 9} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
+                <tr><td colSpan={isSH ? 8 : isMF ? 10 : 10} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
               )}
             </tbody>
+            </SortableContext>
+            </DndContext>
             <tfoot>
               <tr className="border-t bg-muted/20 font-medium">
+                <td />
                 <td className="px-2 py-1.5 text-xs">Total</td>
                 <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalUnits)}</td>
                 {isSH ? (<>
@@ -587,16 +745,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <div className="mt-3 flex flex-wrap gap-3">
               {data.unit_groups.map(g => (
                 <label key={g.id} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                  <input type="checkbox" checked={g.will_renovate} onChange={e => upd(g.id, { will_renovate: e.target.checked })} className="rounded" />
-                  <span className="text-muted-foreground">Reno: {g.label || "Unit"}</span>
-                  {g.will_renovate && (
-                    <span className="inline-flex items-center ml-1">
-                      <span className="text-muted-foreground">$</span>
-                      <input type="text" inputMode="decimal" defaultValue={g.renovation_cost_per_unit || ""}
-                        onBlur={e => upd(g.id, { renovation_cost_per_unit: parseFloat(e.target.value.replace(/,/g, "")) || 0 })}
-                        className="w-16 bg-transparent text-xs outline-none tabular-nums" placeholder="0" />/unit
-                    </span>
-                  )}
+                  <input type="checkbox" checked={g.will_renovate} onChange={e => toggleRenovation(g.id, e.target.checked)} className="rounded" />
+                  <span className="text-muted-foreground">Renovate: {g.label || "Unit"}</span>
                 </label>
               ))}
             </div>
@@ -605,24 +755,73 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </Section>
 
       <Section title="Capital Expenditures" icon={<Hammer className="h-4 w-4 text-orange-600" />} open={false}>
-        <div className="space-y-3 mt-3">
-          {data.capex_items.length === 0 && <p className="text-sm text-muted-foreground py-2">No CapEx items. Click + to add.</p>}
-          {data.capex_items.map(c => (
-            <div key={c.id} className="flex items-end gap-3">
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Description</label>
-                <input type="text" value={c.label} onChange={e => updC(c.id, { label: e.target.value })} placeholder="e.g. Roof, HVAC, Site work" className="w-full px-2 py-1.5 text-sm border rounded-md bg-background outline-none focus:ring-2 focus:ring-ring" />
-              </div>
-              <div className="w-24"><NumInput label="Qty" value={c.quantity} onChange={v => updC(c.id, { quantity: v })} /></div>
-              <div className="w-36"><NumInput label="Cost / Unit" value={c.cost_per_unit} onChange={v => updC(c.id, { cost_per_unit: v })} prefix="$" /></div>
-              <div className="pb-1.5 w-24 text-right">
-                <p className="text-xs text-muted-foreground mb-1">Total</p>
-                <p className="text-sm font-semibold tabular-nums">{fc(c.quantity * c.cost_per_unit)}</p>
-              </div>
-              <button onClick={() => delC(c.id)} className="text-muted-foreground hover:text-destructive mb-0.5"><Trash2 className="h-4 w-4" /></button>
-            </div>
-          ))}
-          <div className="flex items-center justify-between">
+        <div className="mt-3 overflow-x-auto">
+          {data.capex_items.length === 0 && <p className="text-sm text-muted-foreground py-2">No CapEx items. Click + to add or check "Renovate" on unit types.</p>}
+          {data.capex_items.length > 0 && (
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-muted/30 border-b">
+                  <th className="w-[28px]" />
+                  <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[30px]">#</th>
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Description</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Qty</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">Cost / Unit</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Total</th>
+                  <th className="w-[32px]" />
+                </tr>
+              </thead>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleReorderCapex}>
+              <SortableContext items={data.capex_items.map(c => c.id)} strategy={verticalListSortingStrategy}>
+              <tbody>
+                {data.capex_items.map((c, i) => {
+                  const isLinked = !!c.linked_unit_group_id;
+                  const updCapex = (updates: Partial<CapexItem>) => {
+                    updC(c.id, updates);
+                    // Sync back to unit group if linked
+                    if (isLinked) {
+                      setData(prev => ({
+                        ...prev,
+                        unit_groups: prev.unit_groups.map(g =>
+                          g.id === c.linked_unit_group_id
+                            ? { ...g, ...(updates.cost_per_unit !== undefined ? { renovation_cost_per_unit: updates.cost_per_unit } : {}) }
+                            : g
+                        ),
+                      }));
+                    }
+                  };
+                  return (
+                    <SortableRow key={c.id} id={c.id}>
+                      <td className="px-1 py-1.5 text-center text-xs text-muted-foreground tabular-nums">{i + 1}</td>
+                      <td className="px-2 py-1.5">
+                        <input type="text" value={c.label} onChange={e => updCapex({ label: e.target.value })}
+                          placeholder="e.g. Roof, HVAC" className="w-full bg-transparent text-sm outline-none"
+                          readOnly={isLinked} />
+                        {isLinked && <span className="text-[10px] text-primary">linked to unit type</span>}
+                      </td>
+                      <td className="px-2 py-1.5"><CellInput value={c.quantity} onChange={v => updCapex({ quantity: v })} /></td>
+                      <td className="px-2 py-1.5"><CellInput value={c.cost_per_unit} onChange={v => updCapex({ cost_per_unit: v })} prefix="$" /></td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(c.quantity * c.cost_per_unit)}</td>
+                      <td className="px-1 py-1.5">
+                        {!isLinked && (
+                          <button onClick={() => delC(c.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
+                        )}
+                      </td>
+                    </SortableRow>
+                  );
+                })}
+              </tbody>
+              </SortableContext>
+              </DndContext>
+              <tfoot>
+                <tr className="border-t bg-muted/20 font-semibold">
+                  <td colSpan={5} className="px-2 py-2 text-right">Total CapEx</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{fc(m.capexTotal + m.renovationCost)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          )}
+          <div className="flex items-center justify-between mt-3">
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, capex_items: [...p.capex_items, newCapex()] }))}>
                 <Plus className="h-4 w-4 mr-2" /> Add Item
@@ -632,23 +831,74 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 AI Estimate
               </Button>
             </div>
-            {data.capex_items.length > 0 && <p className="text-sm font-semibold">Total: {fc(m.capexTotal)}</p>}
           </div>
         </div>
       </Section>
 
       <Section title="Operating Assumptions" icon={<Calculator className="h-4 w-4 text-blue-600" />}>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
-          <NumInput label="In-Place Vacancy" value={data.in_place_vacancy_rate} onChange={v => set("in_place_vacancy_rate", v)} suffix="%" decimals={1} />
-          <NumInput label="Pro Forma Vacancy" value={data.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
-          <NumInput label="Management Fee" value={data.management_fee_pct} onChange={v => set("management_fee_pct", v)} suffix="% EGI" decimals={1} />
-          <NumInput label="Taxes (Annual)" value={data.taxes_annual} onChange={v => set("taxes_annual", v)} prefix="$" />
-          <NumInput label="Insurance (Annual)" value={data.insurance_annual} onChange={v => set("insurance_annual", v)} prefix="$" />
-          <NumInput label="Repairs (Annual)" value={data.repairs_annual} onChange={v => set("repairs_annual", v)} prefix="$" />
-          <NumInput label="Utilities (Annual)" value={data.utilities_annual} onChange={v => set("utilities_annual", v)} prefix="$" />
-          <NumInput label="Other Expenses" value={data.other_expenses_annual} onChange={v => set("other_expenses_annual", v)} prefix="$" />
-          <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Total OpEx</p><p className="text-sm font-semibold">{fc(m.totalOpEx)}</p><p className="text-xs text-muted-foreground">{m.egi > 0 ? ((m.totalOpEx / m.egi) * 100).toFixed(0) : 0}% of EGI</p></div>
-          <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">EGI</p><p className="text-sm font-semibold">{fc(m.egi)}</p><p className="text-xs text-muted-foreground">{fc(m.vacancyLoss)} vacancy loss</p></div>
+        <div className="mt-3 overflow-x-auto">
+          {/* Vacancy row */}
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            <NumInput label="In-Place Vacancy" value={data.in_place_vacancy_rate} onChange={v => set("in_place_vacancy_rate", v)} suffix="%" decimals={1} />
+            <NumInput label="Pro Forma Vacancy" value={data.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
+            <NumInput label="Management Fee" value={data.management_fee_pct} onChange={v => set("management_fee_pct", v)} suffix="% EGI" decimals={1} />
+          </div>
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="bg-muted/30 border-b">
+                <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[180px]">Category</th>
+                <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[130px]">In-Place (Annual)</th>
+                <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[130px]">Pro Forma (Annual)</th>
+                <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">PF $/Unit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* Management row — computed from % */}
+              <tr className="border-b hover:bg-muted/20">
+                <td className="px-2 py-1.5 text-muted-foreground">Management ({data.management_fee_pct}%)</td>
+                <td className="px-2 py-1.5"><span className="block text-right text-sm tabular-nums">{fc(m.inPlaceMgmtFee)}</span></td>
+                <td className="px-2 py-1.5"><span className="block text-right text-sm tabular-nums">{fc(m.mgmtFee)}</span></td>
+                <td className="px-2 py-1.5 text-right text-sm tabular-nums text-muted-foreground">{m.totalUnits > 0 ? fc(Math.round(m.mgmtFee / m.totalUnits)) : "—"}</td>
+              </tr>
+              {/* Editable expense rows */}
+              {([
+                { label: "Property Taxes", ipKey: "ip_taxes_annual" as keyof UWData, pfKey: "taxes_annual" as keyof UWData },
+                { label: "Insurance", ipKey: "ip_insurance_annual" as keyof UWData, pfKey: "insurance_annual" as keyof UWData },
+                { label: "Repairs & Maintenance", ipKey: "ip_repairs_annual" as keyof UWData, pfKey: "repairs_annual" as keyof UWData },
+                { label: "Utilities", ipKey: "ip_utilities_annual" as keyof UWData, pfKey: "utilities_annual" as keyof UWData },
+                { label: "General & Admin", ipKey: "ip_ga_annual" as keyof UWData, pfKey: "ga_annual" as keyof UWData },
+                { label: "Marketing / Leasing", ipKey: "ip_marketing_annual" as keyof UWData, pfKey: "marketing_annual" as keyof UWData },
+                { label: "Reserves", ipKey: "ip_reserves_annual" as keyof UWData, pfKey: "reserves_annual" as keyof UWData },
+                { label: "Other", ipKey: "ip_other_annual" as keyof UWData, pfKey: "other_expenses_annual" as keyof UWData },
+              ]).map(row => {
+                const ipVal = (data[row.ipKey] as number) || 0;
+                const pfVal = (data[row.pfKey] as number) || 0;
+                const perUnit = m.totalUnits > 0 ? pfVal / m.totalUnits : 0;
+                return (
+                  <tr key={row.label} className="border-b hover:bg-muted/20">
+                    <td className="px-2 py-1.5 text-muted-foreground">{row.label}</td>
+                    <td className="px-2 py-1.5">
+                      <CellInput value={ipVal} onChange={v => set(row.ipKey as keyof UWData, v)} prefix="$" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <CellInput value={pfVal} onChange={v => set(row.pfKey as keyof UWData, v)} prefix="$" />
+                    </td>
+                    <td className="px-2 py-1.5 text-right text-sm tabular-nums text-muted-foreground">{perUnit > 0 ? fc(Math.round(perUnit)) : "—"}</td>
+                  </tr>
+                );
+              })}
+              <tr className="border-t-2 font-semibold">
+                <td className="px-2 py-2">Total Operating Expenses</td>
+                <td className="px-2 py-2 text-right tabular-nums">{fc(m.inPlaceTotalOpEx)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalOpEx)}</td>
+                <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{m.totalUnits > 0 ? fc(Math.round(m.totalOpEx / m.totalUnits)) : "—"}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="flex gap-4 mt-3">
+            <div className="p-3 bg-muted/50 rounded-lg flex-1"><p className="text-xs text-muted-foreground mb-1">EGI</p><p className="text-sm font-semibold">{fc(m.egi)}</p><p className="text-xs text-muted-foreground">{fc(m.vacancyLoss)} vacancy loss</p></div>
+            <div className="p-3 bg-muted/50 rounded-lg flex-1"><p className="text-xs text-muted-foreground mb-1">OpEx Ratio</p><p className="text-sm font-semibold">{m.egi > 0 ? ((m.totalOpEx / m.egi) * 100).toFixed(0) : 0}% of EGI</p></div>
+          </div>
         </div>
       </Section>
 
@@ -732,12 +982,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </>}
             <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
             <ISRow label={`Management (${data.management_fee_pct}%)`} ip={-m.inPlaceMgmtFee} pf={-m.mgmtFee} muted />
-            <ISRow label="Property Taxes" ip={-data.taxes_annual} pf={-data.taxes_annual} muted />
-            <ISRow label="Insurance" ip={-data.insurance_annual} pf={-data.insurance_annual} muted />
-            <ISRow label="Repairs" ip={-data.repairs_annual} pf={-data.repairs_annual} muted />
-            {data.utilities_annual > 0 && <ISRow label="Utilities" ip={-data.utilities_annual} pf={-data.utilities_annual} muted />}
-            {data.other_expenses_annual > 0 && <ISRow label="Other Expenses" ip={-data.other_expenses_annual} pf={-data.other_expenses_annual} muted />}
-            <ISRow label="Total Operating Expenses" ip={-m.inPlaceTotalOpEx} pf={-m.totalOpEx} />
+            <ISRow label="Property Taxes" ip={-(data.ip_taxes_annual || data.taxes_annual)} pf={-data.taxes_annual} muted />
+            <ISRow label="Insurance" ip={-(data.ip_insurance_annual || data.insurance_annual)} pf={-data.insurance_annual} muted />
+            <ISRow label="Repairs & Maintenance" ip={-(data.ip_repairs_annual || data.repairs_annual)} pf={-data.repairs_annual} muted />
+            {(data.utilities_annual > 0 || data.ip_utilities_annual > 0) && <ISRow label="Utilities" ip={-(data.ip_utilities_annual || data.utilities_annual)} pf={-data.utilities_annual} muted />}
+            {(data.ga_annual > 0 || data.ip_ga_annual > 0) && <ISRow label="General & Admin" ip={-(data.ip_ga_annual || data.ga_annual)} pf={-data.ga_annual} muted />}
+            {(data.marketing_annual > 0 || data.ip_marketing_annual > 0) && <ISRow label="Marketing / Leasing" ip={-(data.ip_marketing_annual || data.marketing_annual)} pf={-data.marketing_annual} muted />}
+            {(data.reserves_annual > 0 || data.ip_reserves_annual > 0) && <ISRow label="Reserves" ip={-(data.ip_reserves_annual || data.reserves_annual)} pf={-data.reserves_annual} muted />}
+            {(data.other_expenses_annual > 0 || data.ip_other_annual > 0) && <ISRow label="Other Expenses" ip={-(data.ip_other_annual || data.other_expenses_annual)} pf={-data.other_expenses_annual} muted />}
+            <ISRow label={`Total Operating Expenses${m.inPlaceEGI > 0 ? ` (${((m.inPlaceTotalOpEx / m.inPlaceEGI) * 100).toFixed(0)}% / ${m.egi > 0 ? ((m.totalOpEx / m.egi) * 100).toFixed(0) : 0}%)` : ""}`} ip={-m.inPlaceTotalOpEx} pf={-m.totalOpEx} />
             <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
             <ISRow label="Net Operating Income" ip={m.inPlaceNOI} pf={m.noi} bold hi />
             {data.has_financing && <>
@@ -750,8 +1003,76 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </div>
 
       <div className="border rounded-xl bg-card p-5">
-        <h3 className="font-semibold text-sm mb-3">Notes</h3>
-        <textarea value={data.notes} onChange={e => set("notes", e.target.value)} rows={3} className="w-full text-sm border rounded-lg p-3 bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring" placeholder="Assumptions, deal thesis, renovation scope..." />
+        <h3 className="font-semibold text-sm mb-3">Deal Notes</h3>
+        {/* Existing notes list */}
+        {(data.deal_notes ?? []).length > 0 && (
+          <div className="space-y-2 mb-3">
+            {(data.deal_notes ?? []).map(note => (
+              <div key={note.id} className="flex items-start gap-2 group">
+                <span className={`text-[10px] mt-0.5 px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                  note.category === "context" ? "bg-primary/10 text-primary" : "bg-amber-100 text-amber-700"
+                }`}>
+                  {note.category === "context" ? "AI Context" : "Team Review"}
+                </span>
+                <p className="text-sm flex-1">{note.text}</p>
+                <button
+                  onClick={() => setData(prev => ({ ...prev, deal_notes: (prev.deal_notes ?? []).filter(n => n.id !== note.id) }))}
+                  className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                ><Trash2 className="h-3.5 w-3.5" /></button>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Add note form */}
+        <div className="flex items-center gap-2">
+          <select
+            id="note-category"
+            defaultValue="context"
+            className="text-xs border rounded-md px-2 py-1.5 bg-background"
+          >
+            <option value="context">AI Context</option>
+            <option value="review">Team Review</option>
+          </select>
+          <input
+            id="note-input"
+            type="text"
+            placeholder="Add a note..."
+            className="flex-1 text-sm border rounded-md px-3 py-1.5 bg-background outline-none focus:ring-2 focus:ring-ring"
+            onKeyDown={e => {
+              if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
+                const input = e.target as HTMLInputElement;
+                const catSelect = document.getElementById("note-category") as HTMLSelectElement;
+                const newNote: NoteItem = {
+                  id: uuidv4(),
+                  text: input.value.trim(),
+                  category: catSelect.value as NoteCategory,
+                  created_at: new Date().toISOString(),
+                };
+                setData(prev => ({ ...prev, deal_notes: [...(prev.deal_notes ?? []), newNote] }));
+                input.value = "";
+              }
+            }}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const input = document.getElementById("note-input") as HTMLInputElement;
+              const catSelect = document.getElementById("note-category") as HTMLSelectElement;
+              if (!input.value.trim()) return;
+              const newNote: NoteItem = {
+                id: uuidv4(),
+                text: input.value.trim(),
+                category: catSelect.value as NoteCategory,
+                created_at: new Date().toISOString(),
+              };
+              setData(prev => ({ ...prev, deal_notes: [...(prev.deal_notes ?? []), newNote] }));
+              input.value = "";
+            }}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <div className="flex justify-end">
