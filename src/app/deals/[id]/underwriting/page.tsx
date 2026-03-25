@@ -430,7 +430,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const m = calc(data, calcMode);
 
   return (
-    <div className="space-y-5">
+    <div className={`flex gap-4 ${docViewerOpen ? "" : ""}`}>
+    <div className={`space-y-5 min-w-0 ${docViewerOpen ? "flex-1" : "w-full"}`}>
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold">Underwriting</h2>
@@ -846,57 +847,53 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       )}
 
-      {/* ── Document Viewer Panel ── */}
+    </div>
+
+      {/* ── Side-by-Side Document Viewer Panel ── */}
       {docViewerOpen && (
-        <div className="fixed inset-0 z-40" onClick={() => setDocViewerOpen(false)}>
-          <div className="absolute inset-0 bg-black/30" />
-          <div
-            className="absolute top-0 right-0 h-full w-full max-w-2xl bg-card border-l shadow-xl flex flex-col"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 shrink-0">
-              <h3 className="font-semibold text-sm">Documents</h3>
-              <button onClick={() => setDocViewerOpen(false)} className="text-muted-foreground hover:text-foreground">
-                <PanelRightClose className="h-4 w-4" />
+        <div className="w-[480px] flex-shrink-0 sticky top-[108px] h-[calc(100vh-120px)] bg-card border rounded-xl shadow-lg flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 shrink-0">
+            <h3 className="font-semibold text-sm">Documents</h3>
+            <button onClick={() => setDocViewerOpen(false)} className="text-muted-foreground hover:text-foreground">
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Doc tabs */}
+          <div className="flex gap-1 px-3 py-2 border-b overflow-x-auto shrink-0 bg-muted/10">
+            {docs.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-1">No documents uploaded</p>
+            ) : docs.map(doc => (
+              <button
+                key={doc.id}
+                onClick={() => setViewingDocId(doc.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors ${
+                  viewingDocId === doc.id
+                    ? "bg-primary text-primary-foreground font-medium"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                <FileText className="h-3 w-3 shrink-0" />
+                {doc.original_name.length > 30 ? doc.original_name.slice(0, 27) + "..." : doc.original_name}
               </button>
-            </div>
+            ))}
+          </div>
 
-            {/* Doc tabs */}
-            <div className="flex gap-1 px-3 py-2 border-b overflow-x-auto shrink-0 bg-muted/10">
-              {docs.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-1">No documents uploaded</p>
-              ) : docs.map(doc => (
-                <button
-                  key={doc.id}
-                  onClick={() => setViewingDocId(doc.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors ${
-                    viewingDocId === doc.id
-                      ? "bg-primary text-primary-foreground font-medium"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  <FileText className="h-3 w-3 shrink-0" />
-                  {doc.original_name.length > 30 ? doc.original_name.slice(0, 27) + "..." : doc.original_name}
-                </button>
-              ))}
-            </div>
-
-            {/* Viewer */}
-            <div className="flex-1 min-h-0">
-              {viewingDocId ? (
-                <iframe
-                  key={viewingDocId}
-                  src={`/api/documents/${viewingDocId}/view`}
-                  className="w-full h-full border-0"
-                  title="Document viewer"
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                  Select a document to view
-                </div>
-              )}
-            </div>
+          {/* Viewer */}
+          <div className="flex-1 min-h-0">
+            {viewingDocId ? (
+              <iframe
+                key={viewingDocId}
+                src={`/api/documents/${viewingDocId}/view`}
+                className="w-full h-full border-0"
+                title="Document viewer"
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                Select a document to view
+              </div>
+            )}
           </div>
         </div>
       )}

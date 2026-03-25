@@ -402,17 +402,6 @@ export default function NewDealPage() {
             </div>
           </Section>
 
-          {/* Notes */}
-          <Section title="Notes">
-            <textarea
-              value={form.notes}
-              onChange={(e) => set("notes", e.target.value)}
-              placeholder="Investment thesis, deal source, key considerations..."
-              rows={4}
-              className="input-field resize-none"
-            />
-          </Section>
-
           <div className="flex justify-end gap-3 pt-4">
             <Link href="/">
               <Button type="button" variant="outline">
