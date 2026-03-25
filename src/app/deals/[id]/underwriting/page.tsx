@@ -71,28 +71,52 @@ function calc(d: UWData, isMF: boolean) {
   const totalUnits = d.unit_groups.reduce((s, g) => s + g.unit_count, 0);
   const totalSF = isMF ? 0 : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit, 0);
   const totalBeds = isMF ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit, 0) : 0;
+
+  // ── Revenue ─────────────────────────────────────────────────────────────────
   const gpr = isMF
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit * g.market_rent_per_bed * 12, 0)
     : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.market_rent_per_sf, 0);
   const inPlaceGPR = isMF
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit * g.current_rent_per_bed * 12, 0)
     : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0);
+
   const vacancyLoss = gpr * (d.vacancy_rate / 100);
+  const inPlaceVacancyLoss = inPlaceGPR * (d.vacancy_rate / 100);
   const egi = gpr - vacancyLoss;
+  const inPlaceEGI = inPlaceGPR - inPlaceVacancyLoss;
+
   const reimbursements = isMF ? 0 : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.expense_reimbursement_per_sf, 0);
   const effectiveRevenue = egi + reimbursements;
+  const inPlaceEffectiveRevenue = inPlaceEGI + reimbursements;
+
+  // ── Operating Expenses ──────────────────────────────────────────────────────
   const mgmtFee = egi * (d.management_fee_pct / 100);
-  const totalOpEx = mgmtFee + d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual;
+  const inPlaceMgmtFee = inPlaceEGI * (d.management_fee_pct / 100);
+  const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual;
+  const totalOpEx = mgmtFee + fixedOpEx;
+  const inPlaceTotalOpEx = inPlaceMgmtFee + fixedOpEx;
+
+  // ── NOI ─────────────────────────────────────────────────────────────────────
   const noi = effectiveRevenue - totalOpEx;
+  const inPlaceNOI = inPlaceEffectiveRevenue - inPlaceTotalOpEx;
+
+  // ── Cost Basis ──────────────────────────────────────────────────────────────
   const renovationCost = d.unit_groups.reduce((s, g) => s + (g.will_renovate ? g.unit_count * g.renovation_cost_per_unit : 0), 0);
   const capexTotal = d.capex_items.reduce((s, c) => s + c.quantity * c.cost_per_unit, 0);
   const closingCosts = d.purchase_price * (d.closing_costs_pct / 100);
   const totalCost = d.purchase_price + closingCosts + renovationCost + capexTotal;
-  const capRateOnPrice = d.purchase_price > 0 ? (noi / d.purchase_price) * 100 : 0;
+
+  // ── Cap Rates ───────────────────────────────────────────────────────────────
+  const inPlaceCapRate = d.purchase_price > 0 ? (inPlaceNOI / d.purchase_price) * 100 : 0;
+  const marketCapRate = d.purchase_price > 0 ? (noi / d.purchase_price) * 100 : 0;
   const yoc = totalCost > 0 ? (noi / totalCost) * 100 : 0;
+
+  // ── Per-Unit Metrics ────────────────────────────────────────────────────────
   const pricePerSF = !isMF && totalSF > 0 ? d.purchase_price / totalSF : 0;
   const pricePerBed = isMF && totalBeds > 0 ? d.purchase_price / totalBeds : 0;
   const pricePerUnit = totalUnits > 0 ? d.purchase_price / totalUnits : 0;
+
+  // ── Acquisition Financing ───────────────────────────────────────────────────
   let acqLoan = 0, acqDebt = 0;
   if (d.has_financing && totalCost > 0) {
     acqLoan = totalCost * (d.acq_ltc / 100);
@@ -102,17 +126,43 @@ function calc(d: UWData, isMF: boolean) {
   const cashFlow = noi - acqDebt;
   const coc = equity > 0 ? (cashFlow / equity) * 100 : 0;
   const dscr = acqDebt > 0 ? noi / acqDebt : 0;
+
+  // ── Refinance ───────────────────────────────────────────────────────────────
   let refiProceeds = 0, refiDebt = 0;
   if (d.has_refi && d.has_financing && d.exit_cap_rate > 0) {
     const refiLoan = (noi / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100);
     refiProceeds = refiLoan - acqLoan;
     refiDebt = annualPayment(refiLoan, d.refi_rate, d.refi_amort_years);
   }
+
+  // ── Exit & Returns ──────────────────────────────────────────────────────────
   const exitValue = d.exit_cap_rate > 0 ? noi / (d.exit_cap_rate / 100) : 0;
-  const exitEquity = exitValue - acqLoan;
-  const annualCF = d.has_refi ? noi - refiDebt : cashFlow;
-  const em = equity > 0 ? (exitEquity + annualCF * d.hold_period_years) / equity : 0;
-  return { totalSF, totalBeds, totalUnits, gpr, inPlaceGPR, vacancyLoss, egi, reimbursements, effectiveRevenue, mgmtFee, totalOpEx, noi, renovationCost, capexTotal, closingCosts, totalCost, capRateOnPrice, yoc, pricePerSF, pricePerBed, pricePerUnit, acqLoan, acqDebt, equity, cashFlow, coc, dscr, refiProceeds, refiDebt, exitValue, exitEquity, annualCF, em };
+  const exitLoanBalance = d.has_refi ? (noi / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100) : acqLoan;
+  const exitEquity = exitValue - exitLoanBalance;
+
+  // Equity multiple: account for pre-refi and post-refi cash flows separately
+  let totalCashFlows = 0;
+  if (d.has_refi && d.has_financing) {
+    const preRefiYears = Math.min(d.refi_year, d.hold_period_years);
+    const postRefiYears = Math.max(0, d.hold_period_years - d.refi_year);
+    totalCashFlows = cashFlow * preRefiYears + (noi - refiDebt) * postRefiYears + refiProceeds;
+  } else {
+    totalCashFlows = cashFlow * d.hold_period_years;
+  }
+  const em = equity > 0 ? (exitEquity + totalCashFlows) / equity : 0;
+
+  return {
+    totalSF, totalBeds, totalUnits,
+    gpr, inPlaceGPR, vacancyLoss, inPlaceVacancyLoss, egi, inPlaceEGI,
+    reimbursements, effectiveRevenue, inPlaceEffectiveRevenue,
+    mgmtFee, inPlaceMgmtFee, totalOpEx, inPlaceTotalOpEx,
+    noi, inPlaceNOI,
+    renovationCost, capexTotal, closingCosts, totalCost,
+    inPlaceCapRate, marketCapRate, yoc,
+    pricePerSF, pricePerBed, pricePerUnit,
+    acqLoan, acqDebt, equity, cashFlow, coc, dscr,
+    refiProceeds, refiDebt, exitValue, exitEquity, totalCashFlows, em,
+  };
 }
 
 const fc = (n: number) => n || n === 0 ? "$" + Math.round(n).toLocaleString("en-US") : "—";
@@ -331,16 +381,17 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MBox label="Pro Forma NOI" value={fc(m.noi)} hi />
-        <MBox label="Cap Rate (on price)" value={m.capRateOnPrice > 0 ? `${m.capRateOnPrice.toFixed(2)}%` : "—"} sub={`${m.yoc.toFixed(2)}% yield on cost`} hi={m.capRateOnPrice > 5} warn={m.capRateOnPrice > 0 && m.capRateOnPrice < 4} />
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <MBox label="In-Place NOI" value={fc(m.inPlaceNOI)} sub={`${fc(m.noi)} pro forma`} />
+        <MBox label="In-Place Cap Rate" value={m.inPlaceCapRate > 0 ? `${m.inPlaceCapRate.toFixed(2)}%` : "—"} sub="on purchase price" warn={m.inPlaceCapRate > 0 && m.inPlaceCapRate < 4} />
+        <MBox label="Market Cap Rate" value={m.marketCapRate > 0 ? `${m.marketCapRate.toFixed(2)}%` : "—"} sub={`${m.yoc.toFixed(2)}% yield on cost`} hi={m.marketCapRate > 5} warn={m.marketCapRate > 0 && m.marketCapRate < 4} />
         <MBox label="Cash-on-Cash" value={m.coc !== 0 ? `${m.coc.toFixed(2)}%` : "—"} sub={data.has_financing ? `DSCR ${m.dscr.toFixed(2)}x` : "No financing"} hi={m.coc > 7} warn={m.coc > 0 && m.coc < 4} />
         <MBox label="Equity Multiple" value={m.em > 0 ? `${m.em.toFixed(2)}x` : "—"} sub={`${data.hold_period_years}yr hold`} />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MBox label={isMF ? "Total Beds" : "Total SF"} value={fn(isMF ? m.totalBeds : m.totalSF)} sub={`${fn(m.totalUnits)} units`} />
         <MBox label={isMF ? "Price / Bed" : "Price / SF"} value={(isMF ? m.pricePerBed : m.pricePerSF) > 0 ? fc(isMF ? m.pricePerBed : m.pricePerSF) : "—"} sub={`${fc(m.pricePerUnit)} / unit`} />
-        <MBox label="Total Investment" value={fc(m.totalCost)} sub={`${fc(m.capexTotal + m.renovationCost)} CapEx`} />
+        <MBox label="Total Investment" value={fc(m.totalCost)} sub={`${fc(m.capexTotal + m.renovationCost)} CapEx + ${fc(m.closingCosts)} closing`} />
         <MBox label="Gross Revenue (PF)" value={fc(m.gpr)} sub={`${fc(m.inPlaceGPR)} in-place`} />
       </div>
 
