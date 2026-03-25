@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
-  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText,
+  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -270,8 +270,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [capexEstimating, setCapexEstimating] = useState(false);
   const [capexPreview, setCapexPreview] = useState<Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string; selected: boolean }> | null>(null);
   const [showDocPicker, setShowDocPicker] = useState(false);
-  const [docs, setDocs] = useState<Array<{ id: string; original_name: string }>>([]);
+  const [docs, setDocs] = useState<Array<{ id: string; original_name: string; mime_type?: string }>>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [docViewerOpen, setDocViewerOpen] = useState(false);
+  const [viewingDocId, setViewingDocId] = useState<string | null>(null);
   const [deal, setDeal] = useState<{ name: string; property_type?: string } | null>(null);
   const isSH = deal?.property_type === "student_housing";
   const isMF = deal?.property_type === "multifamily" || isSH;
@@ -357,6 +359,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     setShowDocPicker(true);
   };
 
+  const openDocViewer = async () => {
+    try {
+      const res = await fetch(`/api/deals/${params.id}/documents`);
+      const json = await res.json();
+      if (json.data) {
+        setDocs(json.data);
+        if (!viewingDocId && json.data.length > 0) setViewingDocId(json.data[0].id);
+      }
+    } catch {}
+    setDocViewerOpen(true);
+  };
+
   const autofillWithDocs = async () => {
     setShowDocPicker(false);
     const hasGroups = data.unit_groups.length > 0;
@@ -423,9 +437,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <p className="text-sm text-muted-foreground">{deal?.name}</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={openDocViewer}>
+            <Eye className="h-4 w-4 mr-2" />Docs
+          </Button>
           <Button variant="outline" onClick={openDocPicker} disabled={autofilling || saving}>
             {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-            Autofill from Docs
+            Autofill
           </Button>
           <Button onClick={save} disabled={saving || autofilling}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
@@ -824,6 +841,61 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <Sparkles className="h-4 w-4 mr-1.5" />Autofill
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Document Viewer Panel ── */}
+      {docViewerOpen && (
+        <div className="fixed inset-0 z-40" onClick={() => setDocViewerOpen(false)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div
+            className="absolute top-0 right-0 h-full w-full max-w-2xl bg-card border-l shadow-xl flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 shrink-0">
+              <h3 className="font-semibold text-sm">Documents</h3>
+              <button onClick={() => setDocViewerOpen(false)} className="text-muted-foreground hover:text-foreground">
+                <PanelRightClose className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Doc tabs */}
+            <div className="flex gap-1 px-3 py-2 border-b overflow-x-auto shrink-0 bg-muted/10">
+              {docs.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-1">No documents uploaded</p>
+              ) : docs.map(doc => (
+                <button
+                  key={doc.id}
+                  onClick={() => setViewingDocId(doc.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors ${
+                    viewingDocId === doc.id
+                      ? "bg-primary text-primary-foreground font-medium"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <FileText className="h-3 w-3 shrink-0" />
+                  {doc.original_name.length > 30 ? doc.original_name.slice(0, 27) + "..." : doc.original_name}
+                </button>
+              ))}
+            </div>
+
+            {/* Viewer */}
+            <div className="flex-1 min-h-0">
+              {viewingDocId ? (
+                <iframe
+                  key={viewingDocId}
+                  src={`/api/documents/${viewingDocId}/view`}
+                  className="w-full h-full border-0"
+                  title="Document viewer"
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                  Select a document to view
+                </div>
+              )}
             </div>
           </div>
         </div>
