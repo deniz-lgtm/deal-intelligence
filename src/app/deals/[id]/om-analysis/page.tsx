@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import {
   Upload,
   FileText,
@@ -17,16 +18,14 @@ import {
   DollarSign,
   Percent,
   Building2,
-  BarChart3,
   MessageSquare,
   Lightbulb,
   XCircle,
-  Info,
   BookOpen,
   ChevronRight,
   Star,
+  Calculator,
 } from "lucide-react";
-import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -485,11 +484,17 @@ function ScoreCard({ analysis }: { analysis: OmAnalysis }) {
   const score = analysis.deal_score ?? 0;
   const criticalCount = analysis.red_flags?.filter((f) => f.severity === "critical").length ?? 0;
 
+  // Split score reasoning into bullet points (by sentence or newline)
+  const reasoningBullets = (analysis.score_reasoning ?? "")
+    .split(/(?:\.\s+|\n+)/)
+    .map((s) => s.replace(/\.+$/, "").trim())
+    .filter((s) => s.length > 0);
+
   return (
     <Card className={cn("border", scoreBg(score))}>
       <CardContent className="pt-6">
         <div className="flex items-start justify-between gap-4">
-          <div>
+          <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-muted-foreground mb-1">Deal Score</p>
             <div className="flex items-baseline gap-2">
               <span className={cn("text-6xl font-bold tabular-nums", scoreColor(score))}>
@@ -497,25 +502,14 @@ function ScoreCard({ analysis }: { analysis: OmAnalysis }) {
               </span>
               <span className="text-2xl text-muted-foreground">/10</span>
             </div>
-            {analysis.score_reasoning && (
-              <p className="text-sm text-muted-foreground mt-2 max-w-sm leading-relaxed">
-                {analysis.score_reasoning}
-              </p>
-            )}
           </div>
-          <div className="flex flex-col gap-2 items-end">
+          <div className="flex flex-col gap-2 items-end flex-shrink-0">
             {criticalCount > 0 && (
               <div className="flex items-center gap-1.5 text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-1.5 text-sm font-medium">
                 <AlertTriangle className="h-4 w-4" />
                 {criticalCount} critical flag{criticalCount > 1 ? "s" : ""}
               </div>
             )}
-            <div className="text-xs text-muted-foreground text-right">
-              {analysis.model_used ?? "Claude"} · {analysis.tokens_used?.toLocaleString() ?? "?"} tokens
-              {analysis.cost_estimate != null && (
-                <> · ${Number(analysis.cost_estimate).toFixed(4)}</>
-              )}
-            </div>
           </div>
         </div>
 
@@ -529,6 +523,22 @@ function ScoreCard({ analysis }: { analysis: OmAnalysis }) {
             style={{ width: `${score * 10}%` }}
           />
         </div>
+
+        {/* Summary + reasoning bullets */}
+        {(analysis.summary || reasoningBullets.length > 0) && (
+          <div className="mt-4 space-y-2">
+            {analysis.summary && (
+              <p className="text-sm text-muted-foreground leading-relaxed">{analysis.summary}</p>
+            )}
+            {reasoningBullets.length > 0 && (
+              <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+                {reasoningBullets.map((bullet, i) => (
+                  <li key={i}>{bullet}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1157,33 +1167,25 @@ export default function OmAnalysisPage() {
       {/* Score */}
       <ScoreCard analysis={analysis} />
 
-      {/* Summary */}
-      {analysis.summary && (
-        <div className="bg-muted/40 border rounded-xl p-4 text-sm leading-relaxed text-muted-foreground flex items-start gap-2">
-          <Info className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
-          <p>{analysis.summary}</p>
-        </div>
-      )}
-
       {/* Property strip */}
       <div className="flex flex-wrap gap-3 items-center text-sm text-muted-foreground bg-card border rounded-xl px-4 py-3">
         {analysis.property_type && (
           <span className="flex items-center gap-1.5">
             <Building2 className="h-3.5 w-3.5" />
-            {analysis.property_type}
+            {analysis.property_type?.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
           </span>
         )}
         {analysis.year_built && <span>Built {analysis.year_built}</span>}
         {analysis.sf && <span>{fmtSf(analysis.sf)}</span>}
-        {analysis.unit_count && <span>{analysis.unit_count} units</span>}
+        {analysis.unit_count && <span>{Number(analysis.unit_count).toLocaleString()} units</span>}
       </div>
 
-      {/* Primary metrics */}
+      {/* Key Financials — in-place metrics only */}
       <div>
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
           Key Financials
         </h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <MetricCard
             label="Asking Price"
             value={fmt$(analysis.asking_price)}
@@ -1200,22 +1202,10 @@ export default function OmAnalysisPage() {
             value={fmtPct(analysis.cap_rate)}
             icon={Percent}
           />
-          <MetricCard
-            label="Cash-on-Cash"
-            value={fmtPct(analysis.cash_on_cash)}
-            icon={BarChart3}
-          />
+          <MetricCard label="GRM" value={fmtNum(analysis.grm, 1)} />
+          <MetricCard label="Vacancy" value={fmtPct(analysis.vacancy_rate)} />
+          <MetricCard label="Price/SF" value={fmt$(analysis.price_per_sf)} />
         </div>
-      </div>
-
-      {/* Secondary metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <MetricCard label="GRM" value={fmtNum(analysis.grm, 1)} />
-        <MetricCard label="IRR" value={fmtPct(analysis.irr)} />
-        <MetricCard label="Equity Multiple" value={analysis.equity_multiple != null ? `${fmtNum(analysis.equity_multiple, 2)}x` : "—"} />
-        <MetricCard label="DSCR" value={fmtNum(analysis.dscr, 2)} />
-        <MetricCard label="Vacancy" value={fmtPct(analysis.vacancy_rate)} />
-        <MetricCard label="Price/SF" value={fmt$(analysis.price_per_sf)} />
       </div>
 
       {/* Assumptions */}
@@ -1280,6 +1270,16 @@ export default function OmAnalysisPage() {
         history={qaHistory}
         onNewEntry={(entry) => setQaHistory((h) => [...h, entry])}
       />
+
+      {/* Go to Underwriting CTA */}
+      <div className="flex justify-center pt-2 pb-4">
+        <Link href={`/deals/${dealId}/underwriting`}>
+          <Button size="lg" className="gap-2">
+            <Calculator className="h-4 w-4" />
+            Go to Underwriting
+          </Button>
+        </Link>
+      </div>
     </div>
   );
 }

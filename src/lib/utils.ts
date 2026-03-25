@@ -42,3 +42,10 @@ export function formatDate(date: string | Date): string {
 export function slugify(str: string): string {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
+
+/** Convert snake_case or lowercase strings to Title Case (e.g. "mixed_use" → "Mixed Use") */
+export function titleCase(str: string): string {
+  return str
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}

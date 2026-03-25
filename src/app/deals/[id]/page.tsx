@@ -27,7 +27,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { formatCurrency, formatNumber } from "@/lib/utils";
+import { formatCurrency, formatNumber, titleCase } from "@/lib/utils";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import type { Deal, DealStatus, Document, ChecklistItem } from "@/lib/types";
@@ -228,8 +228,8 @@ export default function DealOverviewPage({
             <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
               {DEAL_STAGE_LABELS[deal.status]}
             </Badge>
-            <span className="text-sm text-muted-foreground capitalize">
-              {deal.property_type?.replace(/_/g, " ")}
+            <span className="text-sm text-muted-foreground">
+              {deal.property_type ? titleCase(deal.property_type) : ""}
             </span>
             {deal.loi_executed && (
               <span className="text-xs text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">
@@ -408,13 +408,13 @@ export default function DealOverviewPage({
         <MetricCard
           icon={<Building2 className="h-5 w-5 text-purple-600" />}
           label="Units"
-          value={deal.units ? String(deal.units) : "—"}
+          value={deal.units ? formatNumber(deal.units) : "—"}
         />
         {deal.bedrooms ? (
           <MetricCard
             icon={<BedDouble className="h-5 w-5 text-indigo-600" />}
             label="Bedrooms"
-            value={String(deal.bedrooms)}
+            value={formatNumber(deal.bedrooms)}
           />
         ) : (
           <MetricCard
@@ -498,8 +498,8 @@ export default function DealOverviewPage({
             {Object.entries(docsByCategory).map(([cat, count]) => (
               <div key={cat} className="bg-muted/50 rounded-lg p-3 text-center">
                 <p className="text-2xl font-bold">{count}</p>
-                <p className="text-xs text-muted-foreground mt-1 capitalize">
-                  {cat.replace(/_/g, " ")}
+                <p className="text-xs text-muted-foreground mt-1">
+                  {titleCase(cat)}
                 </p>
               </div>
             ))}

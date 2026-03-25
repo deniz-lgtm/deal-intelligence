@@ -15,7 +15,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatNumber, cn } from "@/lib/utils";
+import { formatCurrency, formatNumber, cn, titleCase } from "@/lib/utils";
 import type { Deal, DealStatus } from "@/lib/types";
 import { DEAL_PIPELINE, DEAL_STAGE_LABELS } from "@/lib/types";
 
@@ -94,7 +94,7 @@ export default function DealCard({
             {deal.property_type && (
               <span className="text-xs text-muted-foreground capitalize flex items-center gap-1">
                 <PropertyIcon className="h-3 w-3" />
-                {deal.property_type.replace(/_/g, " ")}
+                {titleCase(deal.property_type)}
               </span>
             )}
           </div>
@@ -158,12 +158,12 @@ export default function DealCard({
             </span>
           )}
           {deal.units && (
-            <span className="text-muted-foreground">{deal.units} units</span>
+            <span className="text-muted-foreground">{formatNumber(deal.units)} units</span>
           )}
           {deal.bedrooms && (
             <span className="text-muted-foreground flex items-center gap-1">
               <BedDouble className="h-3 w-3" />
-              {deal.bedrooms} beds
+              {formatNumber(deal.bedrooms)} beds
             </span>
           )}
         </div>

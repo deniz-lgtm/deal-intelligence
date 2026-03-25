@@ -15,6 +15,7 @@ import {
   FileSignature,
   ScrollText,
   FileSearch,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -40,6 +41,7 @@ const NAV_ITEMS = [
   { href: "/loi", label: "LOI", icon: FileSignature },
   { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
   { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/deal-log", label: "Deal Log", icon: Activity },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
