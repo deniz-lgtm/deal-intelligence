@@ -141,10 +141,10 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const inPlaceNOI = inPlaceEffectiveRevenue - inPlaceTotalOpEx;
 
   // ── Cost Basis ──────────────────────────────────────────────────────────────
-  const renovationCost = d.unit_groups.reduce((s, g) => s + (g.will_renovate ? g.unit_count * g.renovation_cost_per_unit : 0), 0);
+  // Renovation costs are now included in capex_items via linked items — no separate sum
   const capexTotal = d.capex_items.reduce((s, c) => s + c.quantity * c.cost_per_unit, 0);
   const closingCosts = d.purchase_price * (d.closing_costs_pct / 100);
-  const totalCost = d.purchase_price + closingCosts + renovationCost + capexTotal;
+  const totalCost = d.purchase_price + closingCosts + capexTotal;
 
   // ── Cap Rates ───────────────────────────────────────────────────────────────
   const inPlaceCapRate = d.purchase_price > 0 ? (inPlaceNOI / d.purchase_price) * 100 : 0;
@@ -211,7 +211,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     noi, inPlaceNOI,
     grm, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
     exitPricePerUnit, exitPricePerBed, exitPricePerSF,
-    renovationCost, capexTotal, closingCosts, totalCost,
+    capexTotal, closingCosts, totalCost,
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
     acqLoan, acqDebt, equity, cashFlow, coc, dscr,
@@ -660,7 +660,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <div className="bg-card p-3">
             <p className="text-xs text-muted-foreground mb-1">Total Investment</p>
             <p className="text-lg font-bold tabular-nums">{fc(m.totalCost)}</p>
-            <p className="text-xs text-muted-foreground/60">{fc(m.capexTotal + m.renovationCost)} CapEx · {fc(m.closingCosts)} closing</p>
+            <p className="text-xs text-muted-foreground/60">{fc(m.capexTotal)} CapEx · {fc(m.closingCosts)} closing</p>
           </div>
         </div>
       </div>
@@ -684,9 +684,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
                   <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">+/−</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">Beds</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">In-Place/Bed</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Market/Bed</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">In-Place/Bed</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">Market/Bed</th>
                   <th className="w-[32px]" />
                 </>) : isMF ? (<>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit Type</th>
@@ -695,9 +694,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[40px]">BD</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[40px]">BA</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">SF</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">In-Place Rent</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Market Rent</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">In-Place Rent</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Market Rent</th>
                   <th className="w-[32px]" />
                 </>) : (<>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit / Space</th>
@@ -705,10 +703,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">+/−</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">SF/Unit</th>
                   <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">Lease</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Curr $/SF</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Mkt $/SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Curr $/SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Mkt $/SF</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Reimb $/SF</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
                   <th className="w-[32px]" />
                 </>)}
               </tr>
@@ -717,11 +714,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <SortableContext items={data.unit_groups.map(g => g.id)} strategy={verticalListSortingStrategy}>
             <tbody>
               {data.unit_groups.map(g => {
-                const annualRev = isSH
-                  ? g.unit_count * g.beds_per_unit * g.market_rent_per_bed * 12
+                const ipAnnual = isSH
+                  ? g.unit_count * g.beds_per_unit * g.current_rent_per_bed * 12
                   : isMF
-                  ? g.unit_count * g.market_rent_per_unit * 12
-                  : g.unit_count * g.sf_per_unit * g.market_rent_per_sf;
+                  ? g.unit_count * g.current_rent_per_unit * 12
+                  : g.unit_count * g.sf_per_unit * g.current_rent_per_sf;
+                const pfAnnual = isSH
+                  ? effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed * 12
+                  : isMF
+                  ? effectiveUnits(g) * g.market_rent_per_unit * 12
+                  : effectiveUnits(g) * g.sf_per_unit * g.market_rent_per_sf;
                 const uc = g.unit_change || "none";
                 const unitChangeCell = (
                   <td className="px-1 py-1">
@@ -755,8 +757,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
                       {unitChangeCell}
                       <td className="px-2 py-1"><CellInput value={g.beds_per_unit} onChange={v => upd(g.id, { beds_per_unit: v })} /></td>
-                      <td className="px-2 py-1"><CellInput value={g.current_rent_per_bed} onChange={v => upd(g.id, { current_rent_per_bed: v })} prefix="$" /></td>
-                      <td className="px-2 py-1"><CellInput value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" /></td>
+                      <td className="px-2 py-1">
+                        <CellInput value={g.current_rent_per_bed} onChange={v => upd(g.id, { current_rent_per_bed: v })} prefix="$" />
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(ipAnnual)}/yr</p>
+                      </td>
+                      <td className="px-2 py-1">
+                        <CellInput value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" />
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(pfAnnual)}/yr</p>
+                      </td>
                     </>) : isMF ? (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 1BR/1BA" /></td>
                       <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
@@ -764,8 +772,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <td className="px-2 py-1"><CellInput value={g.bedrooms} onChange={v => upd(g.id, { bedrooms: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.bathrooms} onChange={v => upd(g.id, { bathrooms: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.sf_per_unit} onChange={v => upd(g.id, { sf_per_unit: v })} /></td>
-                      <td className="px-2 py-1"><CellInput value={g.current_rent_per_unit} onChange={v => upd(g.id, { current_rent_per_unit: v })} prefix="$" /></td>
-                      <td className="px-2 py-1"><CellInput value={g.market_rent_per_unit} onChange={v => upd(g.id, { market_rent_per_unit: v })} prefix="$" /></td>
+                      <td className="px-2 py-1">
+                        <CellInput value={g.current_rent_per_unit} onChange={v => upd(g.id, { current_rent_per_unit: v })} prefix="$" />
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(ipAnnual)}/yr</p>
+                      </td>
+                      <td className="px-2 py-1">
+                        <CellInput value={g.market_rent_per_unit} onChange={v => upd(g.id, { market_rent_per_unit: v })} prefix="$" />
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(pfAnnual)}/yr</p>
+                      </td>
                     </>) : (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. Suite A" /></td>
                       <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
@@ -776,11 +790,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           <option value="NNN">NNN</option><option value="MG">MG</option><option value="Gross">Gross</option><option value="Modified Gross">Mod G</option>
                         </select>
                       </td>
-                      <td className="px-2 py-1"><CellInput value={g.current_rent_per_sf} onChange={v => upd(g.id, { current_rent_per_sf: v })} prefix="$" decimals={2} /></td>
-                      <td className="px-2 py-1"><CellInput value={g.market_rent_per_sf} onChange={v => upd(g.id, { market_rent_per_sf: v })} prefix="$" decimals={2} /></td>
+                      <td className="px-2 py-1">
+                        <CellInput value={g.current_rent_per_sf} onChange={v => upd(g.id, { current_rent_per_sf: v })} prefix="$" decimals={2} />
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(ipAnnual)}/yr</p>
+                      </td>
+                      <td className="px-2 py-1">
+                        <CellInput value={g.market_rent_per_sf} onChange={v => upd(g.id, { market_rent_per_sf: v })} prefix="$" decimals={2} />
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(pfAnnual)}/yr</p>
+                      </td>
                       <td className="px-2 py-1"><CellInput value={g.expense_reimbursement_per_sf} onChange={v => upd(g.id, { expense_reimbursement_per_sf: v })} prefix="$" decimals={2} /></td>
                     </>)}
-                    <td className="px-2 py-1 text-right tabular-nums text-muted-foreground text-xs font-medium">{fc(annualRev)}</td>
                     <td className="px-1 py-1">
                       <button onClick={() => del(g.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
@@ -788,7 +807,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 );
               })}
               {data.unit_groups.length === 0 && (
-                <tr><td colSpan={isSH ? 9 : isMF ? 11 : 11} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
+                <tr><td colSpan={isSH ? 8 : isMF ? 10 : 10} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
               )}
             </tbody>
             </SortableContext>
@@ -797,19 +816,23 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <tr className="border-t bg-muted/20 font-medium">
                 <td />
                 <td className="px-2 py-1.5 text-xs">Total</td>
-                <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalUnits)}</td>
+                <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.ipTotalUnits)}{m.totalUnits !== m.ipTotalUnits ? ` → ${fn(m.totalUnits)}` : ""}</td>
                 <td />
                 {isSH ? (<>
                   <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalBeds)}</td>
-                  <td colSpan={2} />
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fc(m.inPlaceGPR)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold">{fc(m.gpr)}<span className="text-muted-foreground/60">/yr</span></td>
                 </>) : isMF ? (<>
                   <td colSpan={3} />
-                  <td colSpan={2} />
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fc(m.inPlaceGPR)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold">{fc(m.gpr)}<span className="text-muted-foreground/60">/yr</span></td>
                 </>) : (<>
                   <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalSF)}</td>
-                  <td colSpan={4} />
+                  <td />
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fc(m.inPlaceGPR)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold">{fc(m.gpr)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td />
                 </>)}
-                <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold">{fc(m.gpr)}</td>
                 <td />
               </tr>
             </tfoot>
@@ -818,9 +841,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, unit_groups: [...p.unit_groups, newGroup()] }))}>
               <Plus className="h-4 w-4 mr-2" /> Add Row
             </Button>
-            {data.unit_groups.some(g => g.will_renovate) && (
-              <p className="text-xs text-muted-foreground">Renovation CapEx: {fc(m.renovationCost)}</p>
-            )}
           </div>
           {data.unit_groups.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-3">
@@ -896,7 +916,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <tfoot>
                 <tr className="border-t bg-muted/20 font-semibold">
                   <td colSpan={5} className="px-2 py-2 text-right">Total CapEx</td>
-                  <td className="px-2 py-2 text-right tabular-nums">{fc(m.capexTotal + m.renovationCost)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{fc(m.capexTotal)}</td>
                   <td />
                 </tr>
               </tfoot>
