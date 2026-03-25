@@ -14,8 +14,10 @@ type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 interface UnitGroup {
   id: string; label: string; unit_count: number;
   will_renovate: boolean; renovation_cost_per_unit: number;
+  // Shared
+  bedrooms: number; bathrooms: number; sf_per_unit: number;
   // Commercial (SF-based)
-  sf_per_unit: number; current_rent_per_sf: number; market_rent_per_sf: number;
+  current_rent_per_sf: number; market_rent_per_sf: number;
   lease_type: LeaseType; expense_reimbursement_per_sf: number;
   // Multifamily (unit-based, monthly)
   current_rent_per_unit: number; market_rent_per_unit: number;
@@ -52,15 +54,16 @@ const DEFAULT: UWData = {
 };
 
 const newGroup = (): UnitGroup => ({
-  id: uuidv4(), label: "Unit Group", unit_count: 1,
+  id: uuidv4(), label: "", unit_count: 1,
   will_renovate: false, renovation_cost_per_unit: 0,
+  bedrooms: 1, bathrooms: 1, sf_per_unit: 0,
   // Commercial defaults
-  sf_per_unit: 1000, current_rent_per_sf: 0, market_rent_per_sf: 24,
+  current_rent_per_sf: 0, market_rent_per_sf: 0,
   lease_type: "NNN", expense_reimbursement_per_sf: 0,
   // MF defaults (monthly per unit)
-  current_rent_per_unit: 0, market_rent_per_unit: 1200,
+  current_rent_per_unit: 0, market_rent_per_unit: 0,
   // Student Housing defaults (monthly per bed)
-  beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 1200,
+  beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 0,
 });
 
 const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity: 1, cost_per_unit: 0 });
@@ -195,6 +198,31 @@ function NumInput({ label, value, onChange, prefix, suffix, decimals = 0, classN
         {suffix && <span className="px-2 text-sm text-muted-foreground bg-muted border-l">{suffix}</span>}
       </div>
     </div>
+  );
+}
+
+function CellInput({ value, onChange, decimals = 0, prefix, align = "right", placeholder = "0", className = "" }: {
+  value: number; onChange: (v: number) => void; decimals?: number; prefix?: string; align?: "left" | "right"; placeholder?: string; className?: string;
+}) {
+  const fmt = (v: number) => v === 0 ? "" : v.toLocaleString("en-US", { maximumFractionDigits: decimals });
+  const [raw, setRaw] = useState(fmt(value));
+  useEffect(() => { setRaw(fmt(value)); }, [value]);
+  return (
+    <div className={`flex items-center ${className}`}>
+      {prefix && <span className="text-xs text-muted-foreground mr-0.5 shrink-0">{prefix}</span>}
+      <input type="text" inputMode="decimal" value={raw}
+        onChange={e => setRaw(e.target.value)}
+        onBlur={() => { const v = parseFloat(raw.replace(/,/g, "")) || 0; onChange(v); setRaw(fmt(v)); }}
+        className={`w-full bg-transparent text-sm outline-none tabular-nums ${align === "right" ? "text-right" : "text-left"}`}
+        placeholder={placeholder} />
+    </div>
+  );
+}
+
+function CellText({ value, onChange, placeholder = "" }: { value: string; onChange: (v: string) => void; placeholder?: string; }) {
+  return (
+    <input type="text" value={value} onChange={e => onChange(e.target.value)}
+      className="w-full bg-transparent text-sm outline-none" placeholder={placeholder} />
   );
 }
 
@@ -417,84 +445,133 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </Section>
 
       <Section title="Revenue — Unit / Space Mix" icon={<Calculator className="h-4 w-4 text-indigo-600" />}>
-        <div className="space-y-3 mt-3">
-          {data.unit_groups.length === 0 && <p className="text-sm text-muted-foreground py-2">No units added. Click + to add a unit group or space type.</p>}
-          {data.unit_groups.map(g => (
-            <div key={g.id} className="border rounded-lg p-4 bg-background space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Label</label>
-                  <input type="text" value={g.label} onChange={e => upd(g.id, { label: e.target.value })} placeholder="e.g. Flex Bay, Suite A" className="w-full px-2 py-1.5 text-sm border rounded-md bg-background outline-none focus:ring-2 focus:ring-ring" />
-                </div>
-                <button onClick={() => del(g.id)} className="text-muted-foreground hover:text-destructive mt-5 shrink-0"><Trash2 className="h-4 w-4" /></button>
-              </div>
-              {isSH ? (
-                /* ── Student Housing: per-bed pricing ── */
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <NumInput label="# Units" value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} />
-                    <NumInput label="Beds / Unit" value={g.beds_per_unit} onChange={v => upd(g.id, { beds_per_unit: v })} />
-                    <NumInput label="Current Rent / Bed / Mo" value={g.current_rent_per_bed} onChange={v => upd(g.id, { current_rent_per_bed: v })} prefix="$" decimals={0} />
-                    <NumInput label="Market Rent / Bed / Mo" value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" decimals={0} />
-                  </div>
-                  <div className="p-3 bg-muted/50 rounded-lg text-xs max-w-xs">
-                    <p className="text-muted-foreground mb-1">Annual Revenue</p>
-                    <p className="font-semibold">{fc(g.unit_count * g.beds_per_unit * g.market_rent_per_bed * 12)}</p>
-                    <p className="text-muted-foreground">{fn(g.unit_count * g.beds_per_unit)} beds total</p>
-                  </div>
-                </>
-              ) : isMF ? (
-                /* ── Multifamily: per-unit pricing ── */
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    <NumInput label="# Units" value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} />
-                    <NumInput label="Current Rent / Unit / Mo" value={g.current_rent_per_unit} onChange={v => upd(g.id, { current_rent_per_unit: v })} prefix="$" decimals={0} />
-                    <NumInput label="Market Rent / Unit / Mo" value={g.market_rent_per_unit} onChange={v => upd(g.id, { market_rent_per_unit: v })} prefix="$" decimals={0} />
-                  </div>
-                  <div className="p-3 bg-muted/50 rounded-lg text-xs max-w-xs">
-                    <p className="text-muted-foreground mb-1">Annual Revenue</p>
-                    <p className="font-semibold">{fc(g.unit_count * g.market_rent_per_unit * 12)}</p>
-                    <p className="text-muted-foreground">{fn(g.unit_count)} units</p>
-                  </div>
-                </>
-              ) : (
-                /* ── Commercial: per-SF pricing ── */
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <NumInput label="# Units" value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} />
-                    <NumInput label="SF / Unit" value={g.sf_per_unit} onChange={v => upd(g.id, { sf_per_unit: v })} />
-                    <NumInput label="Current Rent / SF / Yr" value={g.current_rent_per_sf} onChange={v => upd(g.id, { current_rent_per_sf: v })} prefix="$" decimals={2} />
-                    <NumInput label="Market Rent / SF / Yr" value={g.market_rent_per_sf} onChange={v => upd(g.id, { market_rent_per_sf: v })} prefix="$" decimals={2} />
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-muted-foreground mb-1">Lease Type</label>
-                      <select value={g.lease_type} onChange={e => upd(g.id, { lease_type: e.target.value as LeaseType })} className="w-full px-2 py-1.5 text-sm border rounded-md bg-background outline-none focus:ring-2 focus:ring-ring">
-                        <option value="NNN">NNN — Triple Net</option>
-                        <option value="MG">MG — Modified Gross</option>
-                        <option value="Gross">Gross</option>
-                        <option value="Modified Gross">Modified Gross (Custom)</option>
-                      </select>
-                    </div>
-                    <NumInput label="Expense Reimb. / SF / Yr" value={g.expense_reimbursement_per_sf} onChange={v => upd(g.id, { expense_reimbursement_per_sf: v })} prefix="$" decimals={2} />
-                    <div className="p-3 bg-muted/50 rounded-lg text-xs">
-                      <p className="text-muted-foreground mb-1">Annual Revenue</p>
-                      <p className="font-semibold">{fc(g.unit_count * g.sf_per_unit * g.market_rent_per_sf)}</p>
-                      <p className="text-muted-foreground">{fn(g.unit_count * g.sf_per_unit)} SF total</p>
-                    </div>
-                  </div>
-                </>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="bg-muted/30 border-b">
+                {isSH ? (<>
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit Type</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">Beds</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">In-Place/Bed</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Market/Bed</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
+                  <th className="w-[32px]" />
+                </>) : isMF ? (<>
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit Type</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[40px]">BD</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[40px]">BA</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">In-Place Rent</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Market Rent</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
+                  <th className="w-[32px]" />
+                </>) : (<>
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit / Space</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">SF/Unit</th>
+                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">Lease</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Curr $/SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Mkt $/SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Reimb $/SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
+                  <th className="w-[32px]" />
+                </>)}
+              </tr>
+            </thead>
+            <tbody>
+              {data.unit_groups.map(g => {
+                const annualRev = isSH
+                  ? g.unit_count * g.beds_per_unit * g.market_rent_per_bed * 12
+                  : isMF
+                  ? g.unit_count * g.market_rent_per_unit * 12
+                  : g.unit_count * g.sf_per_unit * g.market_rent_per_sf;
+                return (
+                  <tr key={g.id} className="border-b hover:bg-muted/20 group">
+                    {isSH ? (<>
+                      <td className="px-2 py-1"><CellText value={g.label} onChange={v => upd(g.id, { label: v })} placeholder="e.g. 4BR/2BA" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} /></td>
+                      <td className="px-2 py-1"><CellInput value={g.beds_per_unit} onChange={v => upd(g.id, { beds_per_unit: v })} /></td>
+                      <td className="px-2 py-1"><CellInput value={g.current_rent_per_bed} onChange={v => upd(g.id, { current_rent_per_bed: v })} prefix="$" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" /></td>
+                    </>) : isMF ? (<>
+                      <td className="px-2 py-1"><CellText value={g.label} onChange={v => upd(g.id, { label: v })} placeholder="e.g. 1BR/1BA" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} /></td>
+                      <td className="px-2 py-1"><CellInput value={g.bedrooms} onChange={v => upd(g.id, { bedrooms: v })} /></td>
+                      <td className="px-2 py-1"><CellInput value={g.bathrooms} onChange={v => upd(g.id, { bathrooms: v })} /></td>
+                      <td className="px-2 py-1"><CellInput value={g.sf_per_unit} onChange={v => upd(g.id, { sf_per_unit: v })} /></td>
+                      <td className="px-2 py-1"><CellInput value={g.current_rent_per_unit} onChange={v => upd(g.id, { current_rent_per_unit: v })} prefix="$" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.market_rent_per_unit} onChange={v => upd(g.id, { market_rent_per_unit: v })} prefix="$" /></td>
+                    </>) : (<>
+                      <td className="px-2 py-1"><CellText value={g.label} onChange={v => upd(g.id, { label: v })} placeholder="e.g. Suite A" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} /></td>
+                      <td className="px-2 py-1"><CellInput value={g.sf_per_unit} onChange={v => upd(g.id, { sf_per_unit: v })} /></td>
+                      <td className="px-1 py-1">
+                        <select value={g.lease_type} onChange={e => upd(g.id, { lease_type: e.target.value as LeaseType })} className="w-full bg-transparent text-sm outline-none text-center">
+                          <option value="NNN">NNN</option><option value="MG">MG</option><option value="Gross">Gross</option><option value="Modified Gross">Mod G</option>
+                        </select>
+                      </td>
+                      <td className="px-2 py-1"><CellInput value={g.current_rent_per_sf} onChange={v => upd(g.id, { current_rent_per_sf: v })} prefix="$" decimals={2} /></td>
+                      <td className="px-2 py-1"><CellInput value={g.market_rent_per_sf} onChange={v => upd(g.id, { market_rent_per_sf: v })} prefix="$" decimals={2} /></td>
+                      <td className="px-2 py-1"><CellInput value={g.expense_reimbursement_per_sf} onChange={v => upd(g.id, { expense_reimbursement_per_sf: v })} prefix="$" decimals={2} /></td>
+                    </>)}
+                    <td className="px-2 py-1 text-right tabular-nums text-muted-foreground text-xs font-medium">{fc(annualRev)}</td>
+                    <td className="px-1 py-1">
+                      <button onClick={() => del(g.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {data.unit_groups.length === 0 && (
+                <tr><td colSpan={isSH ? 7 : isMF ? 9 : 9} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
               )}
-              <label className="flex items-center gap-2 cursor-pointer text-sm">
-                <input type="checkbox" checked={g.will_renovate} onChange={e => upd(g.id, { will_renovate: e.target.checked })} className="rounded" />
-                Include renovation CapEx
-              </label>
-              {g.will_renovate && <NumInput label="Renovation Cost / Unit" value={g.renovation_cost_per_unit} onChange={v => upd(g.id, { renovation_cost_per_unit: v })} prefix="$" className="max-w-xs" />}
+            </tbody>
+            <tfoot>
+              <tr className="border-t bg-muted/20 font-medium">
+                <td className="px-2 py-1.5 text-xs">Total</td>
+                <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalUnits)}</td>
+                {isSH ? (<>
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalBeds)}</td>
+                  <td colSpan={2} />
+                </>) : isMF ? (<>
+                  <td colSpan={3} />
+                  <td colSpan={2} />
+                </>) : (<>
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalSF)}</td>
+                  <td colSpan={4} />
+                </>)}
+                <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold">{fc(m.gpr)}</td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+          <div className="flex items-center gap-3 mt-3">
+            <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, unit_groups: [...p.unit_groups, newGroup()] }))}>
+              <Plus className="h-4 w-4 mr-2" /> Add Row
+            </Button>
+            {data.unit_groups.some(g => g.will_renovate) && (
+              <p className="text-xs text-muted-foreground">Renovation CapEx: {fc(m.renovationCost)}</p>
+            )}
+          </div>
+          {data.unit_groups.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-3">
+              {data.unit_groups.map(g => (
+                <label key={g.id} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input type="checkbox" checked={g.will_renovate} onChange={e => upd(g.id, { will_renovate: e.target.checked })} className="rounded" />
+                  <span className="text-muted-foreground">Reno: {g.label || "Unit"}</span>
+                  {g.will_renovate && (
+                    <span className="inline-flex items-center ml-1">
+                      <span className="text-muted-foreground">$</span>
+                      <input type="text" inputMode="decimal" defaultValue={g.renovation_cost_per_unit || ""}
+                        onBlur={e => upd(g.id, { renovation_cost_per_unit: parseFloat(e.target.value.replace(/,/g, "")) || 0 })}
+                        className="w-16 bg-transparent text-xs outline-none tabular-nums" placeholder="0" />/unit
+                    </span>
+                  )}
+                </label>
+              ))}
             </div>
-          ))}
-          <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, unit_groups: [...p.unit_groups, newGroup()] }))}>
-            <Plus className="h-4 w-4 mr-2" /> {isMF ? "Add Unit Type" : "Add Unit Group / Space"}
-          </Button>
+          )}
         </div>
       </Section>
 
