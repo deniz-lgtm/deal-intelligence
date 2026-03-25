@@ -30,7 +30,7 @@ interface CapexItem { id: string; label: string; quantity: number; cost_per_unit
 interface UWData {
   purchase_price: number; closing_costs_pct: number;
   unit_groups: UnitGroup[]; capex_items: CapexItem[];
-  vacancy_rate: number; management_fee_pct: number;
+  vacancy_rate: number; in_place_vacancy_rate: number; management_fee_pct: number;
   taxes_annual: number; insurance_annual: number; repairs_annual: number;
   utilities_annual: number; other_expenses_annual: number;
   has_financing: boolean; acq_ltc: number; acq_interest_rate: number;
@@ -43,7 +43,7 @@ interface UWData {
 const DEFAULT: UWData = {
   purchase_price: 0, closing_costs_pct: 2,
   unit_groups: [], capex_items: [],
-  vacancy_rate: 5, management_fee_pct: 5,
+  vacancy_rate: 5, in_place_vacancy_rate: 5, management_fee_pct: 5,
   taxes_annual: 0, insurance_annual: 0, repairs_annual: 0,
   utilities_annual: 0, other_expenses_annual: 0,
   has_financing: true, acq_ltc: 65, acq_interest_rate: 6.5,
@@ -91,8 +91,9 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.current_rent_per_unit * 12, 0)
     : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0);
 
+  const ipVacRate = d.in_place_vacancy_rate ?? d.vacancy_rate;
   const vacancyLoss = gpr * (d.vacancy_rate / 100);
-  const inPlaceVacancyLoss = inPlaceGPR * (d.vacancy_rate / 100);
+  const inPlaceVacancyLoss = inPlaceGPR * (ipVacRate / 100);
   const egi = gpr - vacancyLoss;
   const inPlaceEGI = inPlaceGPR - inPlaceVacancyLoss;
 
@@ -250,17 +251,13 @@ function Section({ title, icon, children, open: defaultOpen = true }: { title: s
   );
 }
 
-function TR({ label, val, per, muted, bold, hi }: { label: string; val: number; per?: number; muted?: boolean; bold?: boolean; hi?: boolean; }) {
-  const neg = val < 0;
-  const abs = Math.abs(val);
-  const formatted = neg ? `(${fc(abs)})` : fc(abs);
-  const perVal = per && per > 0 ? abs / per : 0;
-  const perFormatted = perVal > 0 ? (neg ? `(${fc(perVal)})` : fc(perVal)) : "—";
+function ISRow({ label, ip, pf, muted, bold, hi }: { label: string; ip: number; pf: number; muted?: boolean; bold?: boolean; hi?: boolean; }) {
+  const fmtVal = (v: number) => { const neg = v < 0; return neg ? `(${fc(Math.abs(v))})` : fc(Math.abs(v)); };
   return (
     <tr className={`${bold ? "font-semibold" : ""} ${hi ? "bg-primary/5" : "hover:bg-muted/20"}`}>
-      <td className={`px-5 py-1.5 ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{label}</td>
-      <td className={`px-5 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{formatted}</td>
-      {per !== undefined && <td className={`px-5 py-1.5 text-right tabular-nums text-xs ${muted ? "text-muted-foreground" : "text-muted-foreground"}`}>{perFormatted}</td>}
+      <td className={`px-4 py-1.5 ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{label}</td>
+      <td className={`px-4 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""}`}>{fmtVal(ip)}</td>
+      <td className={`px-4 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{fmtVal(pf)}</td>
     </tr>
   );
 }
@@ -624,7 +621,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       <Section title="Operating Assumptions" icon={<Calculator className="h-4 w-4 text-blue-600" />}>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
-          <NumInput label="Vacancy Rate" value={data.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
+          <NumInput label="In-Place Vacancy" value={data.in_place_vacancy_rate} onChange={v => set("in_place_vacancy_rate", v)} suffix="%" decimals={1} />
+          <NumInput label="Pro Forma Vacancy" value={data.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
           <NumInput label="Management Fee" value={data.management_fee_pct} onChange={v => set("management_fee_pct", v)} suffix="% EGI" decimals={1} />
           <NumInput label="Taxes (Annual)" value={data.taxes_annual} onChange={v => set("taxes_annual", v)} prefix="$" />
           <NumInput label="Insurance (Annual)" value={data.insurance_annual} onChange={v => set("insurance_annual", v)} prefix="$" />
@@ -695,39 +693,39 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </Section>
 
       <div className="border rounded-xl bg-card overflow-hidden">
-        <div className="px-5 py-3 border-b bg-muted/30">
-          <h3 className="font-semibold text-sm">Pro Forma Income Statement</h3>
+        <div className="px-4 py-3 border-b bg-muted/30">
+          <h3 className="font-semibold text-sm">Income Statement</h3>
         </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/20">
-              <th className="text-left px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide">Line Item</th>
-              <th className="text-right px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-36">Annual</th>
-              {(isSH ? m.totalBeds > 0 : isMF ? m.totalUnits > 0 : m.totalSF > 0) && <th className="text-right px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-28">{isSH ? "/ Bed" : isMF ? "/ Unit" : "/ SF"}</th>}
+              <th className="text-left px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide">Line Item</th>
+              <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-32">In-Place</th>
+              <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-32">Pro Forma</th>
             </tr>
           </thead>
           <tbody>
-            <TR label="Gross Potential Revenue" val={m.gpr} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} />
-            <TR label={`Less Vacancy (${data.vacancy_rate}%)`} val={-m.vacancyLoss} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
-            <TR label="Effective Gross Income" val={m.egi} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} bold />
+            <ISRow label="Gross Potential Revenue" ip={m.inPlaceGPR} pf={m.gpr} />
+            <ISRow label={`Less Vacancy`} ip={-m.inPlaceVacancyLoss} pf={-m.vacancyLoss} muted />
+            <ISRow label="Effective Gross Income" ip={m.inPlaceEGI} pf={m.egi} bold />
             {m.reimbursements > 0 && <>
-              <TR label="Expense Reimbursements" val={m.reimbursements} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} />
-              <TR label="Effective Revenue" val={m.effectiveRevenue} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} bold />
+              <ISRow label="Expense Reimbursements" ip={m.reimbursements} pf={m.reimbursements} />
+              <ISRow label="Effective Revenue" ip={m.inPlaceEffectiveRevenue} pf={m.effectiveRevenue} bold />
             </>}
-            <tr><td colSpan={3} className="px-5"><div className="border-t" /></td></tr>
-            <TR label={`Management (${data.management_fee_pct}%)`} val={-m.mgmtFee} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
-            <TR label="Property Taxes" val={-data.taxes_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
-            <TR label="Insurance" val={-data.insurance_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
-            <TR label="Repairs" val={-data.repairs_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
-            {data.utilities_annual > 0 && <TR label="Utilities" val={-data.utilities_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />}
-            {data.other_expenses_annual > 0 && <TR label="Other Expenses" val={-data.other_expenses_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />}
-            <TR label="Total Operating Expenses" val={-m.totalOpEx} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} />
-            <tr><td colSpan={3} className="px-5"><div className="border-t" /></td></tr>
-            <TR label="Net Operating Income" val={m.noi} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} bold hi />
+            <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
+            <ISRow label={`Management (${data.management_fee_pct}%)`} ip={-m.inPlaceMgmtFee} pf={-m.mgmtFee} muted />
+            <ISRow label="Property Taxes" ip={-data.taxes_annual} pf={-data.taxes_annual} muted />
+            <ISRow label="Insurance" ip={-data.insurance_annual} pf={-data.insurance_annual} muted />
+            <ISRow label="Repairs" ip={-data.repairs_annual} pf={-data.repairs_annual} muted />
+            {data.utilities_annual > 0 && <ISRow label="Utilities" ip={-data.utilities_annual} pf={-data.utilities_annual} muted />}
+            {data.other_expenses_annual > 0 && <ISRow label="Other Expenses" ip={-data.other_expenses_annual} pf={-data.other_expenses_annual} muted />}
+            <ISRow label="Total Operating Expenses" ip={-m.inPlaceTotalOpEx} pf={-m.totalOpEx} />
+            <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
+            <ISRow label="Net Operating Income" ip={m.inPlaceNOI} pf={m.noi} bold hi />
             {data.has_financing && <>
-              <TR label="Annual Debt Service (Acq)" val={-m.acqDebt} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
-              <tr><td colSpan={3} className="px-5"><div className="border-t" /></td></tr>
-              <TR label="Cash Flow Before Tax" val={m.cashFlow} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} bold hi={m.cashFlow > 0} />
+              <ISRow label="Annual Debt Service (Acq)" ip={-m.acqDebt} pf={-m.acqDebt} muted />
+              <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
+              <ISRow label="Cash Flow Before Tax" ip={m.inPlaceNOI - m.acqDebt} pf={m.cashFlow} bold hi={m.cashFlow > 0} />
             </>}
           </tbody>
         </table>
