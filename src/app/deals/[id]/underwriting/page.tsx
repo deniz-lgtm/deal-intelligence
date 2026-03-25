@@ -17,7 +17,9 @@ interface UnitGroup {
   // Commercial (SF-based)
   sf_per_unit: number; current_rent_per_sf: number; market_rent_per_sf: number;
   lease_type: LeaseType; expense_reimbursement_per_sf: number;
-  // Multifamily (bed-based)
+  // Multifamily (unit-based, monthly)
+  current_rent_per_unit: number; market_rent_per_unit: number;
+  // Student Housing (bed-based, monthly)
   beds_per_unit: number; current_rent_per_bed: number; market_rent_per_bed: number;
 }
 
@@ -55,7 +57,9 @@ const newGroup = (): UnitGroup => ({
   // Commercial defaults
   sf_per_unit: 1000, current_rent_per_sf: 0, market_rent_per_sf: 24,
   lease_type: "NNN", expense_reimbursement_per_sf: 0,
-  // MF defaults
+  // MF defaults (monthly per unit)
+  current_rent_per_unit: 0, market_rent_per_unit: 1200,
+  // Student Housing defaults (monthly per bed)
   beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 1200,
 });
 
@@ -67,17 +71,21 @@ function annualPayment(principal: number, rate: number, years: number): number {
   return (principal * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1)) * 12;
 }
 
-function calc(d: UWData, isMF: boolean) {
+function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing") {
   const totalUnits = d.unit_groups.reduce((s, g) => s + g.unit_count, 0);
-  const totalSF = isMF ? 0 : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit, 0);
-  const totalBeds = isMF ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit, 0) : 0;
+  const totalSF = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit, 0) : 0;
+  const totalBeds = mode === "student_housing" ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit, 0) : 0;
 
   // ── Revenue ─────────────────────────────────────────────────────────────────
-  const gpr = isMF
+  const gpr = mode === "student_housing"
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit * g.market_rent_per_bed * 12, 0)
+    : mode === "multifamily"
+    ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.market_rent_per_unit * 12, 0)
     : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.market_rent_per_sf, 0);
-  const inPlaceGPR = isMF
+  const inPlaceGPR = mode === "student_housing"
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit * g.current_rent_per_bed * 12, 0)
+    : mode === "multifamily"
+    ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.current_rent_per_unit * 12, 0)
     : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0);
 
   const vacancyLoss = gpr * (d.vacancy_rate / 100);
@@ -85,7 +93,7 @@ function calc(d: UWData, isMF: boolean) {
   const egi = gpr - vacancyLoss;
   const inPlaceEGI = inPlaceGPR - inPlaceVacancyLoss;
 
-  const reimbursements = isMF ? 0 : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.expense_reimbursement_per_sf, 0);
+  const reimbursements = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.expense_reimbursement_per_sf, 0) : 0;
   const effectiveRevenue = egi + reimbursements;
   const inPlaceEffectiveRevenue = inPlaceEGI + reimbursements;
 
@@ -112,8 +120,8 @@ function calc(d: UWData, isMF: boolean) {
   const yoc = totalCost > 0 ? (noi / totalCost) * 100 : 0;
 
   // ── Per-Unit Metrics ────────────────────────────────────────────────────────
-  const pricePerSF = !isMF && totalSF > 0 ? d.purchase_price / totalSF : 0;
-  const pricePerBed = isMF && totalBeds > 0 ? d.purchase_price / totalBeds : 0;
+  const pricePerSF = mode === "commercial" && totalSF > 0 ? d.purchase_price / totalSF : 0;
+  const pricePerBed = mode === "student_housing" && totalBeds > 0 ? d.purchase_price / totalBeds : 0;
   const pricePerUnit = totalUnits > 0 ? d.purchase_price / totalUnits : 0;
 
   // ── Acquisition Financing ───────────────────────────────────────────────────
@@ -239,7 +247,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [docs, setDocs] = useState<Array<{ id: string; original_name: string }>>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [deal, setDeal] = useState<{ name: string; property_type?: string } | null>(null);
-  const isMF = deal?.property_type === "multifamily" || deal?.property_type === "student_housing";
+  const isSH = deal?.property_type === "student_housing";
+  const isMF = deal?.property_type === "multifamily" || isSH;
+  const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
 
   useEffect(() => {
     Promise.all([
@@ -332,10 +342,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               ...newGroup(),
               label: String(g.label ?? "Unit Group"),
               unit_count: Number(g.unit_count ?? 1),
-              ...(isMF ? {
+              ...(isSH ? {
                 beds_per_unit: Number(g.beds_per_unit ?? 1),
                 current_rent_per_bed: Number(g.current_rent_per_bed ?? 0),
                 market_rent_per_bed: Number(g.market_rent_per_bed ?? 0),
+              } : isMF ? {
+                current_rent_per_unit: Number(g.current_rent_per_bed ?? g.current_rent_per_unit ?? 0),
+                market_rent_per_unit: Number(g.market_rent_per_bed ?? g.market_rent_per_unit ?? 0),
               } : {
                 sf_per_unit: Number(g.sf_per_unit ?? 0),
                 current_rent_per_sf: Number(g.current_rent_per_sf ?? 0),
@@ -361,7 +374,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
-  const m = calc(data, isMF);
+  const m = calc(data, calcMode);
 
   return (
     <div className="space-y-5">
@@ -389,8 +402,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         <MBox label="Equity Multiple" value={m.em > 0 ? `${m.em.toFixed(2)}x` : "—"} sub={`${data.hold_period_years}yr hold`} />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MBox label={isMF ? "Total Beds" : "Total SF"} value={fn(isMF ? m.totalBeds : m.totalSF)} sub={`${fn(m.totalUnits)} units`} />
-        <MBox label={isMF ? "Price / Bed" : "Price / SF"} value={(isMF ? m.pricePerBed : m.pricePerSF) > 0 ? fc(isMF ? m.pricePerBed : m.pricePerSF) : "—"} sub={`${fc(m.pricePerUnit)} / unit`} />
+        <MBox label={isSH ? "Total Beds" : isMF ? "Total Units" : "Total SF"} value={fn(isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF)} sub={isSH ? `${fn(m.totalUnits)} units` : isMF ? undefined : `${fn(m.totalUnits)} units`} />
+        <MBox label={isSH ? "Price / Bed" : "Price / Unit"} value={isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—"} sub={!isMF && m.pricePerSF > 0 ? `${fc(m.pricePerSF)} / SF` : undefined} />
         <MBox label="Total Investment" value={fc(m.totalCost)} sub={`${fc(m.capexTotal + m.renovationCost)} CapEx + ${fc(m.closingCosts)} closing`} />
         <MBox label="Gross Revenue (PF)" value={fc(m.gpr)} sub={`${fc(m.inPlaceGPR)} in-place`} />
       </div>
@@ -415,14 +428,37 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </div>
                 <button onClick={() => del(g.id)} className="text-muted-foreground hover:text-destructive mt-5 shrink-0"><Trash2 className="h-4 w-4" /></button>
               </div>
-              {isMF ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <NumInput label="# Units" value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} />
-                  <NumInput label="Beds / Unit" value={g.beds_per_unit} onChange={v => upd(g.id, { beds_per_unit: v })} />
-                  <NumInput label="Current Rent / Bed / Mo" value={g.current_rent_per_bed} onChange={v => upd(g.id, { current_rent_per_bed: v })} prefix="$" decimals={0} />
-                  <NumInput label="Market Rent / Bed / Mo" value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" decimals={0} />
-                </div>
+              {isSH ? (
+                /* ── Student Housing: per-bed pricing ── */
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <NumInput label="# Units" value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} />
+                    <NumInput label="Beds / Unit" value={g.beds_per_unit} onChange={v => upd(g.id, { beds_per_unit: v })} />
+                    <NumInput label="Current Rent / Bed / Mo" value={g.current_rent_per_bed} onChange={v => upd(g.id, { current_rent_per_bed: v })} prefix="$" decimals={0} />
+                    <NumInput label="Market Rent / Bed / Mo" value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" decimals={0} />
+                  </div>
+                  <div className="p-3 bg-muted/50 rounded-lg text-xs max-w-xs">
+                    <p className="text-muted-foreground mb-1">Annual Revenue</p>
+                    <p className="font-semibold">{fc(g.unit_count * g.beds_per_unit * g.market_rent_per_bed * 12)}</p>
+                    <p className="text-muted-foreground">{fn(g.unit_count * g.beds_per_unit)} beds total</p>
+                  </div>
+                </>
+              ) : isMF ? (
+                /* ── Multifamily: per-unit pricing ── */
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <NumInput label="# Units" value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} />
+                    <NumInput label="Current Rent / Unit / Mo" value={g.current_rent_per_unit} onChange={v => upd(g.id, { current_rent_per_unit: v })} prefix="$" decimals={0} />
+                    <NumInput label="Market Rent / Unit / Mo" value={g.market_rent_per_unit} onChange={v => upd(g.id, { market_rent_per_unit: v })} prefix="$" decimals={0} />
+                  </div>
+                  <div className="p-3 bg-muted/50 rounded-lg text-xs max-w-xs">
+                    <p className="text-muted-foreground mb-1">Annual Revenue</p>
+                    <p className="font-semibold">{fc(g.unit_count * g.market_rent_per_unit * 12)}</p>
+                    <p className="text-muted-foreground">{fn(g.unit_count)} units</p>
+                  </div>
+                </>
               ) : (
+                /* ── Commercial: per-SF pricing ── */
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <NumInput label="# Units" value={g.unit_count} onChange={v => upd(g.id, { unit_count: v })} />
@@ -448,13 +484,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     </div>
                   </div>
                 </>
-              )}
-              {isMF && (
-                <div className="p-3 bg-muted/50 rounded-lg text-xs max-w-xs">
-                  <p className="text-muted-foreground mb-1">Annual Revenue</p>
-                  <p className="font-semibold">{fc(g.unit_count * g.beds_per_unit * g.market_rent_per_bed * 12)}</p>
-                  <p className="text-muted-foreground">{fn(g.unit_count * g.beds_per_unit)} beds total</p>
-                </div>
               )}
               <label className="flex items-center gap-2 cursor-pointer text-sm">
                 <input type="checkbox" checked={g.will_renovate} onChange={e => upd(g.id, { will_renovate: e.target.checked })} className="rounded" />
@@ -583,31 +612,31 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <tr className="border-b bg-muted/20">
               <th className="text-left px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide">Line Item</th>
               <th className="text-right px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-36">Annual</th>
-              {(isMF ? m.totalBeds > 0 : m.totalSF > 0) && <th className="text-right px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-28">{isMF ? "/ Bed" : "/ SF"}</th>}
+              {(isSH ? m.totalBeds > 0 : isMF ? m.totalUnits > 0 : m.totalSF > 0) && <th className="text-right px-5 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-28">{isSH ? "/ Bed" : isMF ? "/ Unit" : "/ SF"}</th>}
             </tr>
           </thead>
           <tbody>
-            <TR label="Gross Potential Revenue" val={m.gpr} per={isMF ? m.totalBeds : m.totalSF} />
-            <TR label={`Less Vacancy (${data.vacancy_rate}%)`} val={-m.vacancyLoss} per={isMF ? m.totalBeds : m.totalSF} muted />
-            <TR label="Effective Gross Income" val={m.egi} per={isMF ? m.totalBeds : m.totalSF} bold />
+            <TR label="Gross Potential Revenue" val={m.gpr} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} />
+            <TR label={`Less Vacancy (${data.vacancy_rate}%)`} val={-m.vacancyLoss} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
+            <TR label="Effective Gross Income" val={m.egi} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} bold />
             {m.reimbursements > 0 && <>
-              <TR label="Expense Reimbursements" val={m.reimbursements} per={isMF ? m.totalBeds : m.totalSF} />
-              <TR label="Effective Revenue" val={m.effectiveRevenue} per={isMF ? m.totalBeds : m.totalSF} bold />
+              <TR label="Expense Reimbursements" val={m.reimbursements} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} />
+              <TR label="Effective Revenue" val={m.effectiveRevenue} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} bold />
             </>}
             <tr><td colSpan={3} className="px-5"><div className="border-t" /></td></tr>
-            <TR label={`Management (${data.management_fee_pct}%)`} val={-m.mgmtFee} per={isMF ? m.totalBeds : m.totalSF} muted />
-            <TR label="Property Taxes" val={-data.taxes_annual} per={isMF ? m.totalBeds : m.totalSF} muted />
-            <TR label="Insurance" val={-data.insurance_annual} per={isMF ? m.totalBeds : m.totalSF} muted />
-            <TR label="Repairs" val={-data.repairs_annual} per={isMF ? m.totalBeds : m.totalSF} muted />
-            {data.utilities_annual > 0 && <TR label="Utilities" val={-data.utilities_annual} per={isMF ? m.totalBeds : m.totalSF} muted />}
-            {data.other_expenses_annual > 0 && <TR label="Other Expenses" val={-data.other_expenses_annual} per={isMF ? m.totalBeds : m.totalSF} muted />}
-            <TR label="Total Operating Expenses" val={-m.totalOpEx} per={isMF ? m.totalBeds : m.totalSF} />
+            <TR label={`Management (${data.management_fee_pct}%)`} val={-m.mgmtFee} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
+            <TR label="Property Taxes" val={-data.taxes_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
+            <TR label="Insurance" val={-data.insurance_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
+            <TR label="Repairs" val={-data.repairs_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
+            {data.utilities_annual > 0 && <TR label="Utilities" val={-data.utilities_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />}
+            {data.other_expenses_annual > 0 && <TR label="Other Expenses" val={-data.other_expenses_annual} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />}
+            <TR label="Total Operating Expenses" val={-m.totalOpEx} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} />
             <tr><td colSpan={3} className="px-5"><div className="border-t" /></td></tr>
-            <TR label="Net Operating Income" val={m.noi} per={isMF ? m.totalBeds : m.totalSF} bold hi />
+            <TR label="Net Operating Income" val={m.noi} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} bold hi />
             {data.has_financing && <>
-              <TR label="Annual Debt Service (Acq)" val={-m.acqDebt} per={isMF ? m.totalBeds : m.totalSF} muted />
+              <TR label="Annual Debt Service (Acq)" val={-m.acqDebt} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} muted />
               <tr><td colSpan={3} className="px-5"><div className="border-t" /></td></tr>
-              <TR label="Cash Flow Before Tax" val={m.cashFlow} per={isMF ? m.totalBeds : m.totalSF} bold hi={m.cashFlow > 0} />
+              <TR label="Cash Flow Before Tax" val={m.cashFlow} per={isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF} bold hi={m.cashFlow > 0} />
             </>}
           </tbody>
         </table>

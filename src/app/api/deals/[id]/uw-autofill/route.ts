@@ -155,13 +155,22 @@ KNOWN EXTRACTED METRICS (from prior OM analysis):
 `
       : "";
 
-    const unitGroupFormat = isMF
+    const isSH = deal.property_type === "student_housing";
+
+    const unitGroupFormat = isSH
+      ? `    {
+      "label": "4BR/2BA",
+      "unit_count": 10,
+      "beds_per_unit": 4,
+      "current_rent_per_bed": 800,
+      "market_rent_per_bed": 900
+    }`
+      : isMF
       ? `    {
       "label": "1BR/1BA",
       "unit_count": 10,
-      "beds_per_unit": 1,
-      "current_rent_per_bed": 1200,
-      "market_rent_per_bed": 1350
+      "current_rent_per_unit": 1200,
+      "market_rent_per_unit": 1350
     }`
       : `    {
       "label": "Flex Bay — Suite 101",
@@ -173,11 +182,15 @@ KNOWN EXTRACTED METRICS (from prior OM analysis):
       "expense_reimbursement_per_sf": 0
     }`;
 
-    const unitGroupRules = isMF
-      ? `- unit_groups: one entry per distinct bedroom/unit type (e.g. "Studio", "1BR/1BA", "2BR/2BA", "3BR/2BA").
-- beds_per_unit: number of bedrooms in this unit type (Studio = 0 beds or 1 bed depending on market convention; use 1 for studio if unclear).
+    const unitGroupRules = isSH
+      ? `- unit_groups: one entry per distinct bedroom/unit type (e.g. "2BR/1BA", "4BR/2BA").
+- beds_per_unit: number of beds in this unit type.
 - current_rent_per_bed: current contracted monthly rent PER BED. If only rent per unit is given, divide by beds_per_unit.
 - market_rent_per_bed: market-rate monthly rent per bed. If not stated, set equal to current_rent_per_bed.`
+      : isMF
+      ? `- unit_groups: one entry per distinct unit type (e.g. "Studio", "1BR/1BA", "2BR/2BA", "3BR/2BA").
+- current_rent_per_unit: current contracted monthly rent PER UNIT. Convert annual → monthly ÷12 if needed.
+- market_rent_per_unit: market-rate monthly rent per unit. If not stated, set equal to current_rent_per_unit.`
       : `- unit_groups: one entry per distinct tenant, suite, unit type, or space. If multiple identical units exist, set unit_count > 1.
 - current_rent_per_sf: contracted rent per SF per YEAR. Convert monthly → annual ×12. If only total annual rent given, divide by SF.
 - market_rent_per_sf: broker's pro forma / market estimate per SF per year. If not stated, set equal to current_rent_per_sf.
