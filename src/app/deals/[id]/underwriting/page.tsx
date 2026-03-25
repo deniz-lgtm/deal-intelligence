@@ -101,6 +101,8 @@ function effectiveUnits(g: UnitGroup): number {
 function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing") {
   const totalUnits = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
   const ipTotalUnits = d.unit_groups.reduce((s, g) => s + g.unit_count, 0);
+  const ipTotalSF = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit, 0) : 0;
+  const ipTotalBeds = mode === "student_housing" ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit, 0) : 0;
   const totalSF = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit, 0) : 0;
   const totalBeds = mode === "student_housing" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit, 0) : 0;
 
@@ -202,7 +204,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const exitPricePerSF = mode === "commercial" && totalSF > 0 && exitValue > 0 ? exitValue / totalSF : 0;
 
   return {
-    totalSF, totalBeds, totalUnits,
+    totalSF, totalBeds, totalUnits, ipTotalUnits, ipTotalSF, ipTotalBeds,
     gpr, inPlaceGPR, vacancyLoss, inPlaceVacancyLoss, egi, inPlaceEGI,
     reimbursements, effectiveRevenue, inPlaceEffectiveRevenue,
     mgmtFee, inPlaceMgmtFee, totalOpEx, inPlaceTotalOpEx,
@@ -605,36 +607,60 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 border-t">
-          <div className="p-3 border-r">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-border border-t">
+          {/* Total Units with arrow */}
+          <div className="bg-card p-3">
+            <p className="text-xs text-muted-foreground mb-2">{isSH ? "Total Beds" : isMF ? "Total Units" : "Total SF"}</p>
+            <div className="flex items-baseline justify-between gap-2">
+              <div>
+                <p className="text-[10px] text-muted-foreground/70 uppercase">In-Place</p>
+                <p className="text-sm font-semibold tabular-nums">{fn(isSH ? m.ipTotalBeds : isMF ? m.ipTotalUnits : m.ipTotalSF)}</p>
+              </div>
+              <span className="text-muted-foreground/40 text-xs">→</span>
+              <div className="text-right">
+                <p className="text-[10px] text-muted-foreground/70 uppercase">Pro Forma</p>
+                <p className="text-sm font-semibold tabular-nums text-primary">{fn(isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF)}</p>
+              </div>
+            </div>
+          </div>
+          {/* Price / Unit: purchase → sale */}
+          <div className="bg-card p-3">
+            <p className="text-xs text-muted-foreground mb-2">{isSH ? "Price / Bed" : "Price / Unit"}</p>
+            <div className="flex items-baseline justify-between gap-2">
+              <div>
+                <p className="text-[10px] text-muted-foreground/70 uppercase">Purchase</p>
+                <p className="text-sm font-semibold tabular-nums">{isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—"}</p>
+              </div>
+              <span className="text-muted-foreground/40 text-xs">→</span>
+              <div className="text-right">
+                <p className="text-[10px] text-muted-foreground/70 uppercase">Sale</p>
+                <p className="text-sm font-semibold tabular-nums text-primary">{isSH ? (m.exitPricePerBed > 0 ? fc(m.exitPricePerBed) : "—") : m.exitPricePerUnit > 0 ? fc(m.exitPricePerUnit) : "—"}</p>
+              </div>
+            </div>
+          </div>
+          {/* Equity Multiple */}
+          <div className="bg-card p-3">
             <p className="text-xs text-muted-foreground mb-1">Equity Multiple</p>
             <p className="text-lg font-bold tabular-nums">{m.em > 0 ? `${m.em.toFixed(2)}x` : "—"}</p>
             <p className="text-xs text-muted-foreground">{data.hold_period_years}yr hold</p>
           </div>
-          <div className="p-3 border-r">
+          {/* Debt */}
+          <div className="bg-card p-3">
+            <p className="text-xs text-muted-foreground mb-1">Debt</p>
+            <p className="text-lg font-bold tabular-nums">{fc(m.acqLoan)}</p>
+            <p className="text-xs text-muted-foreground/60">{data.acq_ltc}% LTC · {data.acq_interest_rate}% · {data.acq_amort_years}yr</p>
+          </div>
+          {/* Equity */}
+          <div className="bg-card p-3">
+            <p className="text-xs text-muted-foreground mb-1">Equity</p>
+            <p className="text-lg font-bold tabular-nums">{fc(m.equity)}</p>
+            <p className="text-xs text-muted-foreground/60">{m.totalCost > 0 ? ((m.equity / m.totalCost) * 100).toFixed(0) : 0}% of total</p>
+          </div>
+          {/* Total Investment */}
+          <div className="bg-card p-3">
             <p className="text-xs text-muted-foreground mb-1">Total Investment</p>
             <p className="text-lg font-bold tabular-nums">{fc(m.totalCost)}</p>
-            <p className="text-xs text-muted-foreground">{fc(m.acqLoan)} debt · {fc(m.equity)} equity</p>
-          </div>
-          <div className="p-3 border-r">
-            <p className="text-xs text-muted-foreground mb-1">{isSH ? "Purchase / Bed" : "Purchase / Unit"}</p>
-            <p className="text-lg font-bold tabular-nums">{isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—"}</p>
-            {!isMF && m.pricePerSF > 0 && <p className="text-xs text-muted-foreground">{fc(m.pricePerSF)} / SF</p>}
-          </div>
-          <div className="p-3 border-r">
-            <p className="text-xs text-muted-foreground mb-1">{isSH ? "Sale / Bed" : "Sale / Unit"}</p>
-            <p className="text-lg font-bold tabular-nums">{isSH ? (m.exitPricePerBed > 0 ? fc(m.exitPricePerBed) : "—") : m.exitPricePerUnit > 0 ? fc(m.exitPricePerUnit) : "—"}</p>
-            {!isMF && m.exitPricePerSF > 0 && <p className="text-xs text-muted-foreground">{fc(m.exitPricePerSF)} / SF</p>}
-          </div>
-          <div className="p-3 border-r">
-            <p className="text-xs text-muted-foreground mb-1">{isSH ? "Total Beds" : isMF ? "Total Units" : "Total SF"}</p>
-            <p className="text-lg font-bold tabular-nums">{fn(isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF)}</p>
-            {(isSH || !isMF) && <p className="text-xs text-muted-foreground">{fn(m.totalUnits)} units</p>}
-          </div>
-          <div className="p-3">
-            <p className="text-xs text-muted-foreground mb-1">CapEx + Closing</p>
-            <p className="text-lg font-bold tabular-nums">{fc(m.capexTotal + m.renovationCost + m.closingCosts)}</p>
-            <p className="text-xs text-muted-foreground">{fc(m.capexTotal + m.renovationCost)} CapEx</p>
+            <p className="text-xs text-muted-foreground/60">{fc(m.capexTotal + m.renovationCost)} CapEx · {fc(m.closingCosts)} closing</p>
           </div>
         </div>
       </div>
