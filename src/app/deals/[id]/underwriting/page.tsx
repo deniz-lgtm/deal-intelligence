@@ -17,6 +17,7 @@ type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 interface UnitGroup {
   id: string; label: string; unit_count: number;
   will_renovate: boolean; renovation_cost_per_unit: number;
+  unit_change: "none" | "add" | "remove"; unit_change_count: number;
   // Shared
   bedrooms: number; bathrooms: number; sf_per_unit: number;
   // Commercial (SF-based)
@@ -71,6 +72,7 @@ const DEFAULT: UWData = {
 const newGroup = (): UnitGroup => ({
   id: uuidv4(), label: "", unit_count: 1,
   will_renovate: false, renovation_cost_per_unit: 0,
+  unit_change: "none" as const, unit_change_count: 0,
   bedrooms: 1, bathrooms: 1, sf_per_unit: 0,
   // Commercial defaults
   current_rent_per_sf: 0, market_rent_per_sf: 0,
@@ -89,17 +91,25 @@ function annualPayment(principal: number, rate: number, years: number): number {
   return (principal * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1)) * 12;
 }
 
-function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing") {
-  const totalUnits = d.unit_groups.reduce((s, g) => s + g.unit_count, 0);
-  const totalSF = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit, 0) : 0;
-  const totalBeds = mode === "student_housing" ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit, 0) : 0;
+function effectiveUnits(g: UnitGroup): number {
+  const delta = (g.unit_change_count || 0);
+  if (g.unit_change === "add") return g.unit_count + delta;
+  if (g.unit_change === "remove") return Math.max(0, g.unit_count - delta);
+  return g.unit_count;
+}
 
-  // ── Revenue ─────────────────────────────────────────────────────────────────
+function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing") {
+  const totalUnits = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
+  const ipTotalUnits = d.unit_groups.reduce((s, g) => s + g.unit_count, 0);
+  const totalSF = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit, 0) : 0;
+  const totalBeds = mode === "student_housing" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit, 0) : 0;
+
+  // ── Revenue (pro forma uses effective units, in-place uses current) ────────
   const gpr = mode === "student_housing"
-    ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit * g.market_rent_per_bed * 12, 0)
+    ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed * 12, 0)
     : mode === "multifamily"
-    ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.market_rent_per_unit * 12, 0)
-    : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.market_rent_per_sf, 0);
+    ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.market_rent_per_unit * 12, 0)
+    : d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit * g.market_rent_per_sf, 0);
   const inPlaceGPR = mode === "student_housing"
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit * g.current_rent_per_bed * 12, 0)
     : mode === "multifamily"
@@ -186,6 +196,11 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const inPlaceCoC = equity > 0 ? (inPlaceCashFlow / equity) * 100 : 0;
   const inPlaceDSCR = acqDebt > 0 ? inPlaceNOI / acqDebt : 0;
 
+  // ── Exit Per-Unit ─────────────────────────────────────────────────────────
+  const exitPricePerUnit = totalUnits > 0 && exitValue > 0 ? exitValue / totalUnits : 0;
+  const exitPricePerBed = mode === "student_housing" && totalBeds > 0 && exitValue > 0 ? exitValue / totalBeds : 0;
+  const exitPricePerSF = mode === "commercial" && totalSF > 0 && exitValue > 0 ? exitValue / totalSF : 0;
+
   return {
     totalSF, totalBeds, totalUnits,
     gpr, inPlaceGPR, vacancyLoss, inPlaceVacancyLoss, egi, inPlaceEGI,
@@ -193,6 +208,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     mgmtFee, inPlaceMgmtFee, totalOpEx, inPlaceTotalOpEx,
     noi, inPlaceNOI,
     grm, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
+    exitPricePerUnit, exitPricePerBed, exitPricePerSF,
     renovationCost, capexTotal, closingCosts, totalCost,
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
@@ -433,8 +449,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       const res = await fetch(`/api/deals/${params.id}/capex-estimate`, { method: "POST" });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "Estimation failed"); return; }
+      // Filter out renovation-type items if we already have linked renovation capex
+      const hasLinkedRenos = data.capex_items.some(c => c.linked_unit_group_id);
+      const renoKeywords = /\breno(vat|v)|unit (upgrade|improve|rehab)|interior (upgrade|improve)/i;
       const items = (json.data as Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string }>)
-        .map(item => ({ ...item, selected: true }));
+        .map(item => ({ ...item, selected: hasLinkedRenos && renoKeywords.test(item.label) ? false : true }));
       setCapexPreview(items);
     } catch { toast.error("CapEx estimation failed"); } finally { setCapexEstimating(false); }
   };
@@ -586,26 +605,36 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 border-t">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 border-t">
           <div className="p-3 border-r">
             <p className="text-xs text-muted-foreground mb-1">Equity Multiple</p>
             <p className="text-lg font-bold tabular-nums">{m.em > 0 ? `${m.em.toFixed(2)}x` : "—"}</p>
             <p className="text-xs text-muted-foreground">{data.hold_period_years}yr hold</p>
           </div>
           <div className="p-3 border-r">
+            <p className="text-xs text-muted-foreground mb-1">Total Investment</p>
+            <p className="text-lg font-bold tabular-nums">{fc(m.totalCost)}</p>
+            <p className="text-xs text-muted-foreground">{fc(m.acqLoan)} debt · {fc(m.equity)} equity</p>
+          </div>
+          <div className="p-3 border-r">
+            <p className="text-xs text-muted-foreground mb-1">{isSH ? "Purchase / Bed" : "Purchase / Unit"}</p>
+            <p className="text-lg font-bold tabular-nums">{isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—"}</p>
+            {!isMF && m.pricePerSF > 0 && <p className="text-xs text-muted-foreground">{fc(m.pricePerSF)} / SF</p>}
+          </div>
+          <div className="p-3 border-r">
+            <p className="text-xs text-muted-foreground mb-1">{isSH ? "Sale / Bed" : "Sale / Unit"}</p>
+            <p className="text-lg font-bold tabular-nums">{isSH ? (m.exitPricePerBed > 0 ? fc(m.exitPricePerBed) : "—") : m.exitPricePerUnit > 0 ? fc(m.exitPricePerUnit) : "—"}</p>
+            {!isMF && m.exitPricePerSF > 0 && <p className="text-xs text-muted-foreground">{fc(m.exitPricePerSF)} / SF</p>}
+          </div>
+          <div className="p-3 border-r">
             <p className="text-xs text-muted-foreground mb-1">{isSH ? "Total Beds" : isMF ? "Total Units" : "Total SF"}</p>
             <p className="text-lg font-bold tabular-nums">{fn(isSH ? m.totalBeds : isMF ? m.totalUnits : m.totalSF)}</p>
             {(isSH || !isMF) && <p className="text-xs text-muted-foreground">{fn(m.totalUnits)} units</p>}
           </div>
-          <div className="p-3 border-r">
-            <p className="text-xs text-muted-foreground mb-1">Total Investment</p>
-            <p className="text-lg font-bold tabular-nums">{fc(m.totalCost)}</p>
-            <p className="text-xs text-muted-foreground">{fc(m.capexTotal + m.renovationCost)} CapEx + {fc(m.closingCosts)} closing</p>
-          </div>
           <div className="p-3">
-            <p className="text-xs text-muted-foreground mb-1">{isSH ? "Price / Bed" : "Price / Unit"}</p>
-            <p className="text-lg font-bold tabular-nums">{isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—"}</p>
-            {!isMF && m.pricePerSF > 0 && <p className="text-xs text-muted-foreground">{fc(m.pricePerSF)} / SF</p>}
+            <p className="text-xs text-muted-foreground mb-1">CapEx + Closing</p>
+            <p className="text-lg font-bold tabular-nums">{fc(m.capexTotal + m.renovationCost + m.closingCosts)}</p>
+            <p className="text-xs text-muted-foreground">{fc(m.capexTotal + m.renovationCost)} CapEx</p>
           </div>
         </div>
       </div>
@@ -627,6 +656,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 {isSH ? (<>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit Type</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
+                  <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">+/−</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">Beds</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">In-Place/Bed</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Market/Bed</th>
@@ -635,6 +665,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </>) : isMF ? (<>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit Type</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
+                  <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">+/−</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[40px]">BD</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[40px]">BA</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">SF</th>
@@ -645,6 +676,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </>) : (<>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit / Space</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
+                  <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">+/−</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">SF/Unit</th>
                   <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">Lease</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Curr $/SF</th>
@@ -664,6 +696,25 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   : isMF
                   ? g.unit_count * g.market_rent_per_unit * 12
                   : g.unit_count * g.sf_per_unit * g.market_rent_per_sf;
+                const uc = g.unit_change || "none";
+                const unitChangeCell = (
+                  <td className="px-1 py-1">
+                    <div className="flex items-center gap-0.5">
+                      <select
+                        value={uc}
+                        onChange={e => upd(g.id, { unit_change: e.target.value as UnitGroup["unit_change"], unit_change_count: uc === "none" ? 0 : g.unit_change_count || 0 })}
+                        className="bg-transparent text-[11px] outline-none w-[38px] text-center"
+                      >
+                        <option value="none">—</option>
+                        <option value="add">+</option>
+                        <option value="remove">−</option>
+                      </select>
+                      {uc !== "none" && (
+                        <CellInput value={g.unit_change_count || 0} onChange={v => upd(g.id, { unit_change_count: v })} className="w-[30px]" />
+                      )}
+                    </div>
+                  </td>
+                );
                 const updFn = (id: string, updates: Partial<UnitGroup>) => {
                   if (g.will_renovate && ("label" in updates || "unit_count" in updates || "renovation_cost_per_unit" in updates)) {
                     syncLinkedCapex(id, updates);
@@ -676,12 +727,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     {isSH ? (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 4BR/2BA" /></td>
                       <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
+                      {unitChangeCell}
                       <td className="px-2 py-1"><CellInput value={g.beds_per_unit} onChange={v => upd(g.id, { beds_per_unit: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.current_rent_per_bed} onChange={v => upd(g.id, { current_rent_per_bed: v })} prefix="$" /></td>
                       <td className="px-2 py-1"><CellInput value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" /></td>
                     </>) : isMF ? (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 1BR/1BA" /></td>
                       <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
+                      {unitChangeCell}
                       <td className="px-2 py-1"><CellInput value={g.bedrooms} onChange={v => upd(g.id, { bedrooms: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.bathrooms} onChange={v => upd(g.id, { bathrooms: v })} /></td>
                       <td className="px-2 py-1"><CellInput value={g.sf_per_unit} onChange={v => upd(g.id, { sf_per_unit: v })} /></td>
@@ -690,6 +743,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     </>) : (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. Suite A" /></td>
                       <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
+                      {unitChangeCell}
                       <td className="px-2 py-1"><CellInput value={g.sf_per_unit} onChange={v => upd(g.id, { sf_per_unit: v })} /></td>
                       <td className="px-1 py-1">
                         <select value={g.lease_type} onChange={e => upd(g.id, { lease_type: e.target.value as LeaseType })} className="w-full bg-transparent text-sm outline-none text-center">
@@ -708,7 +762,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 );
               })}
               {data.unit_groups.length === 0 && (
-                <tr><td colSpan={isSH ? 8 : isMF ? 10 : 10} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
+                <tr><td colSpan={isSH ? 9 : isMF ? 11 : 11} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
               )}
             </tbody>
             </SortableContext>
@@ -718,6 +772,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 <td />
                 <td className="px-2 py-1.5 text-xs">Total</td>
                 <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalUnits)}</td>
+                <td />
                 {isSH ? (<>
                   <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalBeds)}</td>
                   <td colSpan={2} />
@@ -997,6 +1052,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <ISRow label="Annual Debt Service (Acq)" ip={-m.acqDebt} pf={-m.acqDebt} muted />
               <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
               <ISRow label="Cash Flow Before Tax" ip={m.inPlaceNOI - m.acqDebt} pf={m.cashFlow} bold hi={m.cashFlow > 0} />
+              <tr className="bg-muted/10">
+                <td className="px-4 py-2 text-xs font-medium text-muted-foreground">Cash-on-Cash Return</td>
+                <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums">{m.inPlaceCoC !== 0 ? `${m.inPlaceCoC.toFixed(2)}%` : "—"}</td>
+                <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-primary">{m.coc !== 0 ? `${m.coc.toFixed(2)}%` : "—"}</td>
+              </tr>
             </>}
           </tbody>
         </table>
