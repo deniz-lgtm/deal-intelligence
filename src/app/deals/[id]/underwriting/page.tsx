@@ -204,9 +204,10 @@ function NumInput({ label, value, onChange, prefix, suffix, decimals = 0, classN
 function CellInput({ value, onChange, decimals = 0, prefix, align = "right", placeholder = "0", className = "" }: {
   value: number; onChange: (v: number) => void; decimals?: number; prefix?: string; align?: "left" | "right"; placeholder?: string; className?: string;
 }) {
-  const fmt = (v: number) => v === 0 ? "" : v.toLocaleString("en-US", { maximumFractionDigits: decimals });
-  const [raw, setRaw] = useState(fmt(value));
-  useEffect(() => { setRaw(fmt(value)); }, [value]);
+  const v0 = value ?? 0;
+  const fmt = (v: number) => !v ? "" : v.toLocaleString("en-US", { maximumFractionDigits: decimals });
+  const [raw, setRaw] = useState(fmt(v0));
+  useEffect(() => { setRaw(fmt(v0)); }, [v0]);
   return (
     <div className={`flex items-center ${className}`}>
       {prefix && <span className="text-xs text-muted-foreground mr-0.5 shrink-0">{prefix}</span>}
@@ -288,6 +289,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       if (ur.data?.data) {
         const raw = ur.data.data;
         const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        // Merge defaults into each unit_group and capex_item for backward compat
+        if (Array.isArray(parsed.unit_groups)) {
+          parsed.unit_groups = parsed.unit_groups.map((g: Partial<UnitGroup>) => ({ ...newGroup(), ...g }));
+        }
+        if (Array.isArray(parsed.capex_items)) {
+          parsed.capex_items = parsed.capex_items.map((c: Record<string, unknown>) => ({
+            ...newCapex(),
+            ...c,
+            // migrate old { cost } → { quantity: 1, cost_per_unit: cost }
+            quantity: c.quantity ?? 1,
+            cost_per_unit: c.cost_per_unit ?? c.cost ?? 0,
+          }));
+        }
         setData({ ...DEFAULT, ...parsed });
       }
       else if (dr.data?.asking_price) setData(p => ({ ...p, purchase_price: dr.data.asking_price }));
