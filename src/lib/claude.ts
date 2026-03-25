@@ -448,7 +448,6 @@ Extract only values you are confident about from the documents. Return valid JSO
 // ─── DD Abstract ─────────────────────────────────────────────────────────────
 
 export interface UnderwritingSnapshot {
-  // From proforma_outputs JSONB on deals table
   proforma?: {
     irr?: number | null;
     yoc?: number | null;
@@ -458,27 +457,14 @@ export interface UnderwritingSnapshot {
     noi_stabilized?: number | null;
     refi_proceeds?: number | null;
   } | null;
-  // From underwriting table (raw UWData)
-  uwData?: {
-    purchase_price?: number | null;
-    hold_period_years?: number | null;
-    exit_cap_rate?: number | null;
-    vacancy_rate?: number | null;
-    capex_items?: Array<{ name: string; cost: number }>;
-    notes?: string | null;
-    financing?: {
-      acq_ltc?: number | null;
-      acq_interest_rate?: number | null;
-      acq_amort_years?: number | null;
-    };
-  } | null;
+  uwData?: Record<string, unknown> | null;
 }
 
 export async function generateDDAbstract(
   deal: { name: string; address: string; city: string; state: string; property_type: string; status: string; asking_price: number | null; square_footage: number | null; units: number | null; year_built: number | null },
   documents: Array<{ name: string; category: string; content_text: string | null; ai_summary: string | null; ai_tags: string | null }>,
   checklist: Array<{ category: string; item: string; status: string; notes: string | null }>,
-  underwriting?: UnderwritingSnapshot,
+  underwritingSummary?: string,
   contextNotes?: string | null
 ): Promise<string> {
   const docContext = documents
@@ -487,53 +473,33 @@ export async function generateDDAbstract(
     .join("\n");
 
   const checklistSummary = (() => {
-    const byCategory: Record<string, { complete: number; pending: number; issue: number; na: number; issues: string[] }> = {};
+    const byCategory: Record<string, { complete: number; pending: number; issue: number; na: number; notes: string[] }> = {};
     for (const item of checklist) {
-      if (!byCategory[item.category]) byCategory[item.category] = { complete: 0, pending: 0, issue: 0, na: 0, issues: [] };
-      byCategory[item.category][item.status as "complete" | "pending" | "issue" | "na"]++;
-      if (item.status === "issue" && item.notes) byCategory[item.category].issues.push(item.notes);
+      if (!byCategory[item.category]) byCategory[item.category] = { complete: 0, pending: 0, issue: 0, na: 0, notes: [] };
+      const cat = byCategory[item.category];
+      cat[item.status as "complete" | "pending" | "issue" | "na"]++;
+      if (item.notes) {
+        cat.notes.push(`[${item.status}] ${item.item}: ${item.notes}`);
+      }
     }
     return Object.entries(byCategory)
-      .map(([cat, s]) => `${cat}: ${s.complete} complete, ${s.pending} pending, ${s.issue} issues${s.issues.length ? " — " + s.issues.join("; ") : ""}`)
+      .map(([cat, s]) => {
+        let line = `${cat}: ${s.complete} complete, ${s.pending} pending, ${s.issue} issues`;
+        if (s.notes.length > 0) line += `\n  Notes: ${s.notes.join("; ")}`;
+        return line;
+      })
       .join("\n");
   })();
 
-  // Build underwriting section
-  const uwLines: string[] = [];
-  const pf = underwriting?.proforma;
-  const uw = underwriting?.uwData;
-
-  if (pf || uw) {
-    if (uw?.purchase_price) uwLines.push(`Purchase Price: $${uw.purchase_price.toLocaleString()}`);
-    if (pf?.noi_stabilized) uwLines.push(`Stabilized NOI: $${pf.noi_stabilized.toLocaleString()}`);
-    if (pf?.yoc) uwLines.push(`Yield on Cost: ${(pf.yoc * 100).toFixed(2)}%`);
-    if (pf?.irr) uwLines.push(`Projected IRR: ${(pf.irr * 100).toFixed(2)}%`);
-    if (pf?.equity_multiple) uwLines.push(`Equity Multiple: ${pf.equity_multiple.toFixed(2)}x`);
-    if (pf?.dscr) uwLines.push(`DSCR: ${pf.dscr.toFixed(2)}`);
-    if (uw?.hold_period_years) uwLines.push(`Hold Period: ${uw.hold_period_years} years`);
-    if (uw?.exit_cap_rate) uwLines.push(`Exit Cap Rate: ${(uw.exit_cap_rate * 100).toFixed(2)}%`);
-    if (uw?.vacancy_rate) uwLines.push(`Vacancy Assumption: ${(uw.vacancy_rate * 100).toFixed(1)}%`);
-    if (uw?.financing?.acq_ltc) uwLines.push(`Acquisition LTC: ${(uw.financing.acq_ltc * 100).toFixed(0)}%`);
-    if (uw?.financing?.acq_interest_rate) uwLines.push(`Interest Rate: ${(uw.financing.acq_interest_rate * 100).toFixed(2)}%`);
-    if (pf?.max_pp) uwLines.push(`Max Purchase Price (underwriter calc): $${pf.max_pp.toLocaleString()}`);
-    if (pf?.refi_proceeds) uwLines.push(`Projected Refi Proceeds: $${pf.refi_proceeds.toLocaleString()}`);
-
-    if (uw?.capex_items && uw.capex_items.length > 0) {
-      const totalCapex = uw.capex_items.reduce((sum, c) => sum + (c.cost || 0), 0);
-      uwLines.push(`Total CapEx Budget: $${totalCapex.toLocaleString()} (${uw.capex_items.length} line items)`);
-    }
-    if (uw?.notes) uwLines.push(`Underwriter Notes: ${uw.notes}`);
-  }
-
-  const uwSection = uwLines.length > 0
-    ? `\nINTERNAL UNDERWRITING MODEL:\n${uwLines.join("\n")}\n`
+  const uwSection = underwritingSummary?.trim()
+    ? `\nINTERNAL UNDERWRITING MODEL:\n${underwritingSummary}\n`
     : "";
 
   const memorySection = contextNotes?.trim()
     ? `\nDEAL MEMORY (analyst notes & intel):\n${contextNotes}\n`
     : "";
 
-  const prompt = `You are a senior real estate investment analyst. Write a concise due diligence abstract memo for the following deal.
+  const prompt = `You are a senior real estate investment analyst. Write a comprehensive due diligence abstract memo that synthesizes ALL available deal information — the OM analysis, the underwriting model, document reviews, checklist progress, and analyst notes.
 ${memorySection}
 DEAL: ${deal.name}
 Address: ${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}
@@ -547,20 +513,22 @@ DILIGENCE CHECKLIST STATUS:
 ${checklistSummary || "Checklist not yet completed."}
 
 Write a professional due diligence abstract in markdown format with these sections:
-1. **Executive Summary** (2-3 sentences)
-2. **Property Overview** (key facts)
-3. **Underwriting Summary** (include IRR, equity multiple, YoC, DSCR, hold period, CapEx if available from the internal model — omit if no underwriting data)
-4. **Document Review Status** (what's been received, what's outstanding)
-5. **Key Findings** (organized by category — title, environmental, financial, physical, legal)
-6. **Red Flags & Issues** (anything requiring attention)
-7. **Outstanding Items** (what's still needed to complete diligence)
-8. **Recommendation** (proceed / proceed with conditions / do not proceed — with brief rationale)
+1. **Executive Summary** (2-3 sentences synthesizing the deal thesis)
+2. **Property Overview** (key facts from all sources)
+3. **Underwriting Summary** (use the COMPUTED RETURNS from the internal model — show cap rate, NOI, yield on cost, financing terms, CapEx budget, hold period, exit assumptions. Note: all percentage values are already in percent form, do NOT multiply by 100)
+4. **Revenue & Expense Analysis** (unit mix, in-place vs market rents, operating expenses breakdown)
+5. **Document Review Status** (what's been received, what's outstanding)
+6. **Key Findings** (organized by category — title, environmental, financial, physical, legal)
+7. **Red Flags & Issues** (anything requiring attention, including checklist items marked as issues)
+8. **Outstanding Items** (what's still needed to complete diligence)
+9. **Recommendation** (proceed / proceed with conditions / do not proceed — with brief rationale)
 
+IMPORTANT: Use the actual underwriting data provided. All rates (vacancy, cap rate, interest rate, etc.) are already expressed as percentages — do NOT multiply them by 100. For example, a vacancy_rate of 5 means 5%, not 500%.
 Be factual, concise, and investment-focused. If information is missing, note it as outstanding.`;
 
   const response = await getClient().messages.create({
     model: MODEL,
-    max_tokens: 3500,
+    max_tokens: 5000,
     messages: [{ role: "user", content: prompt }],
   });
 

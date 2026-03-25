@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, documentQueries, checklistQueries, underwritingQueries } from "@/lib/db";
 import { generateDDAbstract } from "@/lib/claude";
 import type { Document, ChecklistItem, Deal } from "@/lib/types";
-import type { UnderwritingSnapshot } from "@/lib/claude";
 
 export async function POST(
   _req: NextRequest,
@@ -20,16 +19,188 @@ export async function POST(
       underwritingQueries.getByDealId(params.id),
     ]);
 
-    // Build underwriting snapshot from proforma_outputs (stored on deal) + raw UW data
-    const underwriting: UnderwritingSnapshot = {
-      proforma: deal.proforma_outputs ?? null,
-      uwData: uwRow?.data ?? null,
-    };
+    // Parse raw UW data — it's stored as JSONB, may be string or object
+    let rawUw: Record<string, unknown> | null = null;
+    if (uwRow?.data) {
+      rawUw = typeof uwRow.data === "string" ? JSON.parse(uwRow.data) : uwRow.data;
+    }
 
-    const abstract = await generateDDAbstract(deal as Deal, documents, checklist, underwriting, deal.context_notes);
+    // Build a comprehensive underwriting summary from the raw data
+    const uwSummary = buildUWSummary(rawUw, deal);
+
+    const abstract = await generateDDAbstract(
+      deal as Deal,
+      documents,
+      checklist,
+      uwSummary,
+      deal.context_notes
+    );
     return NextResponse.json({ data: abstract });
   } catch (error) {
     console.error("POST /api/deals/[id]/dd-abstract error:", error);
     return NextResponse.json({ error: "Failed to generate DD abstract" }, { status: 500 });
   }
+}
+
+/** Compute key metrics from raw UW data and format as readable text for the AI */
+function buildUWSummary(
+  uw: Record<string, unknown> | null,
+  deal: { property_type?: string; asking_price?: number | null }
+): string {
+  if (!uw) return "";
+
+  const lines: string[] = [];
+  const n = (v: unknown) => typeof v === "number" ? v : 0;
+  const fc = (v: number) => `$${Math.round(v).toLocaleString()}`;
+  const pct = (v: number) => `${v.toFixed(2)}%`;
+
+  const isSH = deal.property_type === "student_housing";
+  const isMF = deal.property_type === "multifamily" || isSH;
+
+  // --- Purchase & Financing ---
+  const purchasePrice = n(uw.purchase_price);
+  const closingCostsPct = n(uw.closing_costs_pct);
+  const closingCosts = purchasePrice * (closingCostsPct / 100);
+  if (purchasePrice > 0) lines.push(`Purchase Price: ${fc(purchasePrice)}`);
+  if (closingCostsPct > 0) lines.push(`Closing Costs: ${pct(closingCostsPct)} (${fc(closingCosts)})`);
+
+  // --- Unit Groups / Revenue ---
+  const unitGroups = Array.isArray(uw.unit_groups) ? uw.unit_groups : [];
+  if (unitGroups.length > 0) {
+    const totalUnits = unitGroups.reduce((s: number, g: Record<string, unknown>) => s + n(g.unit_count), 0);
+    lines.push(`\nREVENUE (${totalUnits} units, ${unitGroups.length} unit types):`);
+    for (const g of unitGroups) {
+      const label = g.label || "Unit";
+      const count = n(g.unit_count);
+      if (isMF) {
+        const ipRent = n(g.current_rent_per_unit);
+        const mktRent = n(g.market_rent_per_unit);
+        lines.push(`  ${label}: ${count} units, in-place ${fc(ipRent)}/mo, market ${fc(mktRent)}/mo`);
+      } else {
+        const sf = n(g.sf_per_unit);
+        const ipRent = n(g.current_rent_per_sf);
+        const mktRent = n(g.market_rent_per_sf);
+        lines.push(`  ${label}: ${count} units, ${sf.toLocaleString()} SF/unit, in-place $${ipRent.toFixed(2)}/SF, market $${mktRent.toFixed(2)}/SF`);
+      }
+      if (g.will_renovate) lines.push(`    → Renovating ${count} units at ${fc(n(g.renovation_cost_per_unit))}/unit`);
+    }
+
+    // Compute GPR
+    let inPlaceGPR = 0, proFormaGPR = 0;
+    for (const g of unitGroups) {
+      if (isSH) {
+        inPlaceGPR += n(g.unit_count) * n(g.beds_per_unit) * n(g.current_rent_per_bed) * 12;
+        proFormaGPR += n(g.unit_count) * n(g.beds_per_unit) * n(g.market_rent_per_bed) * 12;
+      } else if (isMF) {
+        inPlaceGPR += n(g.unit_count) * n(g.current_rent_per_unit) * 12;
+        proFormaGPR += n(g.unit_count) * n(g.market_rent_per_unit) * 12;
+      } else {
+        inPlaceGPR += n(g.unit_count) * n(g.sf_per_unit) * n(g.current_rent_per_sf);
+        proFormaGPR += n(g.unit_count) * n(g.sf_per_unit) * n(g.market_rent_per_sf);
+      }
+    }
+    lines.push(`  Gross Potential Revenue: ${fc(inPlaceGPR)} in-place → ${fc(proFormaGPR)} pro forma`);
+  }
+
+  // --- Operating Assumptions ---
+  const vacancyRate = n(uw.vacancy_rate);
+  const ipVacancyRate = n(uw.in_place_vacancy_rate) || vacancyRate;
+  const mgmtFeePct = n(uw.management_fee_pct);
+  lines.push(`\nOPERATING ASSUMPTIONS:`);
+  lines.push(`  In-Place Vacancy: ${pct(ipVacancyRate)} | Pro Forma Vacancy: ${pct(vacancyRate)}`);
+  lines.push(`  Management Fee: ${pct(mgmtFeePct)} of EGI`);
+
+  const opexItems = [
+    ["Taxes", n(uw.taxes_annual)],
+    ["Insurance", n(uw.insurance_annual)],
+    ["Repairs", n(uw.repairs_annual)],
+    ["Utilities", n(uw.utilities_annual)],
+    ["G&A", n(uw.ga_annual)],
+    ["Marketing", n(uw.marketing_annual)],
+    ["Reserves", n(uw.reserves_annual)],
+    ["Other", n(uw.other_expenses_annual)],
+  ].filter(([, v]) => (v as number) > 0);
+  if (opexItems.length > 0) {
+    for (const [label, val] of opexItems) {
+      lines.push(`  ${label}: ${fc(val as number)}/yr`);
+    }
+  }
+
+  // --- CapEx ---
+  const capexItems = Array.isArray(uw.capex_items) ? uw.capex_items : [];
+  if (capexItems.length > 0) {
+    const totalCapex = capexItems.reduce((s: number, c: Record<string, unknown>) => s + n(c.quantity) * n(c.cost_per_unit), 0);
+    lines.push(`\nCAPEX (${capexItems.length} items, ${fc(totalCapex)} total):`);
+    for (const c of capexItems) {
+      const qty = n(c.quantity);
+      const cpu = n(c.cost_per_unit);
+      lines.push(`  ${c.label || "Item"}: ${qty} × ${fc(cpu)} = ${fc(qty * cpu)}${c.linked_unit_group_id ? " (renovation)" : ""}`);
+    }
+  }
+
+  // --- Financing ---
+  if (uw.has_financing) {
+    const ltc = n(uw.acq_ltc);
+    const rate = n(uw.acq_interest_rate);
+    const amort = n(uw.acq_amort_years);
+    const io = n(uw.acq_io_years);
+    lines.push(`\nFINANCING:`);
+    lines.push(`  Acquisition: ${pct(ltc)} LTC, ${pct(rate)} rate, ${amort}yr amort${io > 0 ? `, ${io}yr I/O` : ""}`);
+
+    if (uw.has_refi) {
+      lines.push(`  Refi in Year ${n(uw.refi_year)}: ${pct(n(uw.refi_ltv))} LTV, ${pct(n(uw.refi_rate))} rate, ${n(uw.refi_amort_years)}yr amort`);
+    }
+  }
+
+  // --- Exit ---
+  const exitCapRate = n(uw.exit_cap_rate);
+  const holdPeriod = n(uw.hold_period_years);
+  if (exitCapRate > 0) lines.push(`\nEXIT: ${pct(exitCapRate)} exit cap, ${holdPeriod}yr hold`);
+
+  // --- Computed Returns ---
+  // Simple NOI calc for the AI
+  let pfGPR = 0;
+  for (const g of unitGroups) {
+    if (isSH) pfGPR += n(g.unit_count) * n(g.beds_per_unit) * n(g.market_rent_per_bed) * 12;
+    else if (isMF) pfGPR += n(g.unit_count) * n(g.market_rent_per_unit) * 12;
+    else pfGPR += n(g.unit_count) * n(g.sf_per_unit) * n(g.market_rent_per_sf);
+  }
+  const egi = pfGPR * (1 - vacancyRate / 100);
+  const mgmtFee = egi * (mgmtFeePct / 100);
+  const fixedOpex = opexItems.reduce((s, [, v]) => s + (v as number), 0);
+  const totalOpex = mgmtFee + fixedOpex;
+  const noi = egi - totalOpex;
+  const capexTotal = capexItems.reduce((s: number, c: Record<string, unknown>) => s + n(c.quantity) * n(c.cost_per_unit), 0);
+  const totalCost = purchasePrice + closingCosts + capexTotal;
+  const capRate = purchasePrice > 0 ? (noi / purchasePrice) * 100 : 0;
+  const yoc = totalCost > 0 ? (noi / totalCost) * 100 : 0;
+
+  if (noi > 0) {
+    lines.push(`\nCOMPUTED RETURNS:`);
+    lines.push(`  Pro Forma NOI: ${fc(noi)}`);
+    lines.push(`  Cap Rate (on purchase): ${pct(capRate)}`);
+    lines.push(`  Yield on Cost: ${pct(yoc)}`);
+    if (exitCapRate > 0) lines.push(`  Exit Value: ${fc(noi / (exitCapRate / 100))}`);
+    if (uw.has_financing && totalCost > 0) {
+      const acqLoan = totalCost * (n(uw.acq_ltc) / 100);
+      const equity = totalCost - acqLoan;
+      lines.push(`  Total Investment: ${fc(totalCost)} (${fc(acqLoan)} debt + ${fc(equity)} equity)`);
+    }
+  }
+
+  // --- Deal Notes ---
+  const dealNotes = Array.isArray(uw.deal_notes) ? uw.deal_notes : [];
+  if (dealNotes.length > 0) {
+    lines.push(`\nUNDERWRITER NOTES:`);
+    for (const note of dealNotes) {
+      const cat = note.category === "context" ? "Context" : "Review";
+      lines.push(`  [${cat}] ${note.text}`);
+    }
+  }
+  // Legacy string notes
+  if (typeof uw.notes === "string" && uw.notes.trim()) {
+    lines.push(`  ${uw.notes}`);
+  }
+
+  return lines.join("\n");
 }
