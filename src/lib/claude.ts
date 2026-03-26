@@ -460,12 +460,35 @@ export interface UnderwritingSnapshot {
   uwData?: Record<string, unknown> | null;
 }
 
+const SECTION_PROMPTS: Record<string, string> = {
+  executive_summary: "**Executive Summary** (2-3 sentences synthesizing the deal thesis)",
+  property_overview: "**Property Overview** (key facts from all sources)",
+  underwriting_summary: "**Underwriting Summary** (use the COMPUTED RETURNS from the internal model — show cap rate, NOI, yield on cost, financing terms, CapEx budget, hold period, exit assumptions. Note: all percentage values are already in percent form, do NOT multiply by 100)",
+  revenue_expense: "**Revenue & Expense Analysis** (unit mix, in-place vs market rents, operating expenses breakdown)",
+  document_review: "**Document Review Status** (what's been received, what's outstanding)",
+  key_findings: "**Key Findings** (organized by category — title, environmental, financial, physical, legal)",
+  red_flags: "**Red Flags & Issues** (anything requiring attention, including checklist items marked as issues)",
+  outstanding_items: "**Outstanding Items** (what's still needed to complete diligence)",
+  recommendation: "**Recommendation** (proceed / proceed with conditions / do not proceed — with brief rationale)",
+};
+
+function buildSectionInstructions(sections?: string[]): string {
+  const ids = sections && sections.length > 0
+    ? sections
+    : Object.keys(SECTION_PROMPTS);
+  return ids
+    .filter(id => SECTION_PROMPTS[id])
+    .map((id, i) => `${i + 1}. ${SECTION_PROMPTS[id]}`)
+    .join("\n");
+}
+
 export async function generateDDAbstract(
   deal: { name: string; address: string; city: string; state: string; property_type: string; status: string; asking_price: number | null; square_footage: number | null; units: number | null; year_built: number | null },
   documents: Array<{ name: string; category: string; content_text: string | null; ai_summary: string | null; ai_tags: string | null }>,
   checklist: Array<{ category: string; item: string; status: string; notes: string | null }>,
   underwritingSummary?: string,
-  contextNotes?: string | null
+  contextNotes?: string | null,
+  sections?: string[]
 ): Promise<string> {
   const docContext = documents
     .filter((d) => d.ai_summary)
@@ -512,16 +535,8 @@ ${docContext || "No documents with summaries yet."}
 DILIGENCE CHECKLIST STATUS:
 ${checklistSummary || "Checklist not yet completed."}
 
-Write a professional due diligence abstract in markdown format with these sections:
-1. **Executive Summary** (2-3 sentences synthesizing the deal thesis)
-2. **Property Overview** (key facts from all sources)
-3. **Underwriting Summary** (use the COMPUTED RETURNS from the internal model — show cap rate, NOI, yield on cost, financing terms, CapEx budget, hold period, exit assumptions. Note: all percentage values are already in percent form, do NOT multiply by 100)
-4. **Revenue & Expense Analysis** (unit mix, in-place vs market rents, operating expenses breakdown)
-5. **Document Review Status** (what's been received, what's outstanding)
-6. **Key Findings** (organized by category — title, environmental, financial, physical, legal)
-7. **Red Flags & Issues** (anything requiring attention, including checklist items marked as issues)
-8. **Outstanding Items** (what's still needed to complete diligence)
-9. **Recommendation** (proceed / proceed with conditions / do not proceed — with brief rationale)
+Write a professional due diligence abstract in markdown format with ONLY the following requested sections:
+${buildSectionInstructions(sections)}
 
 IMPORTANT: Use the actual underwriting data provided. All rates (vacancy, cap rate, interest rate, etc.) are already expressed as percentages — do NOT multiply them by 100. For example, a vacancy_rate of 5 means 5%, not 500%.
 Be factual, concise, and investment-focused. If information is missing, note it as outstanding.`;

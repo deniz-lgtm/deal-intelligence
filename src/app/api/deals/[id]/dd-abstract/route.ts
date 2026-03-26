@@ -4,10 +4,13 @@ import { generateDDAbstract } from "@/lib/claude";
 import type { Document, ChecklistItem, Deal } from "@/lib/types";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    const body = await req.json().catch(() => ({}));
+    const sections: string[] | undefined = body.sections;
+
     const deal = await dealQueries.getById(params.id);
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
@@ -33,7 +36,8 @@ export async function POST(
       documents,
       checklist,
       uwSummary,
-      deal.context_notes
+      deal.context_notes,
+      sections
     );
     return NextResponse.json({ data: abstract });
   } catch (error) {

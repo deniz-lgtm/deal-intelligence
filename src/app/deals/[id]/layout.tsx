@@ -16,6 +16,7 @@ import {
   ScrollText,
   FileSearch,
   Activity,
+  Presentation,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -40,6 +41,7 @@ const NAV_ITEMS = [
   { href: "/checklist", label: "Checklist", icon: CheckSquare },
   { href: "/loi", label: "LOI", icon: FileSignature },
   { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
+  { href: "/investment-package", label: "Inv. Package", icon: Presentation },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/deal-log", label: "Deal Log", icon: Activity },
 ];
