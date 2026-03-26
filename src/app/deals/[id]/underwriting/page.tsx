@@ -245,7 +245,7 @@ function NumInput({ label, value, onChange, prefix, suffix, decimals = 0, classN
         <input type="text" inputMode="decimal" value={raw}
           onChange={(e) => setRaw(e.target.value)}
           onBlur={() => { const v = parseFloat(raw.replace(/,/g, "")) || 0; onChange(v); setRaw(fmt(v)); }}
-          className="flex-1 px-2 py-1.5 text-sm outline-none bg-transparent" placeholder="0" />
+          className="flex-1 px-2 py-1.5 text-sm outline-none bg-transparent text-blue-700" placeholder="0" />
         {suffix && <span className="px-2 text-sm text-muted-foreground bg-muted border-l">{suffix}</span>}
       </div>
     </div>
@@ -265,7 +265,7 @@ function CellInput({ value, onChange, decimals = 0, prefix, align = "right", pla
       <input type="text" inputMode="decimal" value={raw}
         onChange={e => setRaw(e.target.value)}
         onBlur={() => { const v = parseFloat(raw.replace(/,/g, "")) || 0; onChange(v); setRaw(fmt(v)); }}
-        className={`w-full bg-transparent text-sm outline-none tabular-nums ${align === "right" ? "text-right" : "text-left"}`}
+        className={`w-full bg-transparent text-sm outline-none tabular-nums text-blue-700 ${align === "right" ? "text-right" : "text-left"}`}
         placeholder={placeholder} />
     </div>
   );
@@ -274,7 +274,7 @@ function CellInput({ value, onChange, decimals = 0, prefix, align = "right", pla
 function CellText({ value, onChange, placeholder = "" }: { value: string; onChange: (v: string) => void; placeholder?: string; }) {
   return (
     <input type="text" value={value} onChange={e => onChange(e.target.value)}
-      className="w-full bg-transparent text-sm outline-none" placeholder={placeholder} />
+      className="w-full bg-transparent text-sm outline-none text-blue-700" placeholder={placeholder} />
   );
 }
 
