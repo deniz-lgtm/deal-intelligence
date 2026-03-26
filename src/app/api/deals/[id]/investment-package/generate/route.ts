@@ -51,7 +51,7 @@ export async function POST(
       .join("\n");
     if (docSummaries) dealContext += `\nDocuments:\n${docSummaries}\n`;
 
-    const prompt = `You are writing a section of a commercial real estate investment package/memo for investors or an investment committee.
+    const prompt = `You are writing a section of a commercial real estate investment package for investors or an investment committee. Your tone should be CONFIDENT, REALISTIC, PROFESSIONAL, and OPTIMISTIC — you are presenting a compelling investment opportunity. Highlight strengths, frame challenges as manageable, and convey conviction in the business plan. Be specific with numbers and grounded in facts, but present the deal in its best light without being misleading.
 
 DEAL CONTEXT:
 ${dealContext}
@@ -62,7 +62,7 @@ Purpose: ${sectionDescription}
 THE ANALYST HAS PROVIDED THESE KEY POINTS TO EXPAND:
 ${notes.map((n: string, i: number) => `${i + 1}. ${n}`).join("\n")}
 
-Write this section as professional, investor-ready content in markdown format. Expand each key point into clear, well-written prose. Use the deal context to add specific numbers, facts, and analysis. Keep it concise but thorough — suitable for a presentation deck or investment memo.
+Write this section as polished, investor-ready content in markdown format. Expand each key point into clear, compelling prose. Use the deal context to add specific numbers, facts, and analysis. Keep it concise but thorough — suitable for a presentation deck or investment memo.
 
 IMPORTANT: All percentage values in the data are already in percent form (e.g., 5 means 5%, not 0.05). Do not multiply by 100.
 
