@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import PptxGenJS from "pptxgenjs";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from "docx";
 
 interface ExportSection {
   id: string;
@@ -13,10 +14,15 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const { sections, dealName } = await req.json() as {
+    const { sections, dealName, format = "pptx" } = await req.json() as {
       sections: ExportSection[];
       dealName: string;
+      format?: string;
     };
+
+    if (format === "docx") {
+      return generateDocx(sections, dealName);
+    }
 
     const pptx = new PptxGenJS();
     pptx.layout = "LAYOUT_WIDE";
@@ -148,4 +154,88 @@ export async function POST(
     console.error("Export PPTX error:", error);
     return NextResponse.json({ error: "Export failed" }, { status: 500 });
   }
+}
+
+// ─── Word Export ──────────────────────────────────────────────────────────────
+
+async function generateDocx(sections: ExportSection[], dealName: string) {
+  const children: Paragraph[] = [];
+
+  // Cover page
+  children.push(new Paragraph({ spacing: { before: 600 } }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: "INVESTMENT PACKAGE", size: 28, color: "6B7280", font: "Helvetica" })],
+    spacing: { after: 100 },
+  }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: dealName, size: 56, bold: true, color: "1E293B", font: "Helvetica" })],
+    spacing: { after: 200 },
+  }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" }), size: 24, color: "6B7280" })],
+    spacing: { after: 200 },
+  }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: "CONFIDENTIAL", size: 18, color: "9CA3AF" })],
+    spacing: { after: 400 },
+  }));
+  children.push(new Paragraph({
+    border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "4F46E5" } },
+    spacing: { after: 600 },
+  }));
+
+  // Section pages
+  for (const section of sections) {
+    const content = section.generatedContent || section.notes?.filter(n => n.text?.trim()).map(n => `• ${n.text}`).join("\n") || "";
+    if (!content) continue;
+
+    // Section heading
+    children.push(new Paragraph({
+      children: [new TextRun({ text: section.title.toUpperCase(), size: 28, bold: true, color: "1E293B", font: "Helvetica" })],
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 400, after: 200 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: "E5E7EB" } },
+    }));
+
+    // Parse markdown content into paragraphs
+    const lines = content.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        children.push(new Paragraph({ spacing: { before: 100 } }));
+        continue;
+      }
+      if (trimmed.startsWith("### ") || trimmed.startsWith("## ")) {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: trimmed.replace(/^#{1,3}\s*/, "").replace(/\*\*/g, ""), size: 24, bold: true, color: "4F46E5" })],
+          spacing: { before: 200, after: 100 },
+        }));
+      } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: "  • " + trimmed.replace(/^[-*+]\s*/, "").replace(/\*\*/g, ""), size: 22, color: "1E293B" })],
+          spacing: { before: 40 },
+        }));
+      } else {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: trimmed.replace(/\*\*/g, "").replace(/\*/g, ""), size: 22, color: "1E293B" })],
+          spacing: { before: 80 },
+        }));
+      }
+    }
+  }
+
+  const doc = new Document({
+    sections: [{ children }],
+    styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
+  });
+
+  const buffer = await Packer.toBuffer(doc);
+  const uint8 = new Uint8Array(buffer);
+
+  return new NextResponse(uint8, {
+    headers: {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "Content-Disposition": `attachment; filename="Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx"`,
+    },
+  });
 }

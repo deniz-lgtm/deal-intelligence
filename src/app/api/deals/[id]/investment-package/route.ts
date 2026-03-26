@@ -17,7 +17,7 @@ export async function GET(
     }
     const raw = res.rows[0].data;
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    return NextResponse.json({ data: { sections: parsed?.investment_package_sections || null } });
+    return NextResponse.json({ data: { sections: parsed?.investment_package_sections || null, meta: parsed?.investment_package_meta || null } });
   } catch (error) {
     console.error("GET investment-package error:", error);
     return NextResponse.json({ data: null });
@@ -30,15 +30,16 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const { sections } = await req.json();
+    const { sections, meta } = await req.json();
     const pool = getPool();
 
-    // Load existing UW data, merge in the investment package sections
+    // Load existing UW data, merge in the investment package
     const existing = await pool.query("SELECT data FROM underwriting WHERE deal_id = $1", [params.id]);
     if (existing.rows[0]) {
       const raw = existing.rows[0].data;
       const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
       parsed.investment_package_sections = sections;
+      if (meta) parsed.investment_package_meta = meta;
       await pool.query(
         "UPDATE underwriting SET data = $1, updated_at = NOW() WHERE deal_id = $2",
         [JSON.stringify(parsed), params.id]
