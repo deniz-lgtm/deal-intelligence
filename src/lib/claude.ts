@@ -522,7 +522,9 @@ export async function generateDDAbstract(
     ? `\nDEAL MEMORY (analyst notes & intel):\n${contextNotes}\n`
     : "";
 
-  const prompt = `You are a senior real estate investment analyst. Write a comprehensive due diligence abstract memo that synthesizes ALL available deal information — the OM analysis, the underwriting model, document reviews, checklist progress, and analyst notes.
+  const prompt = `You are a senior real estate investment analyst conducting critical due diligence review. Your tone should be SKEPTICAL, ANALYTICAL, and CRITICAL — identify weaknesses, flag assumptions that seem aggressive, question gaps in data, and highlight risks prominently. This memo is for internal decision-makers who need an honest, unvarnished assessment — not a sales pitch. Err on the side of caution and be direct about concerns.
+
+Write a comprehensive due diligence abstract memo that synthesizes ALL available deal information — the OM analysis, the underwriting model, document reviews, checklist progress, and analyst notes.
 ${memorySection}
 DEAL: ${deal.name}
 Address: ${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}

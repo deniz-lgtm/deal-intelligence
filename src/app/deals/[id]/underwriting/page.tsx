@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
-  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical,
+  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3,
 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -30,6 +30,14 @@ interface UnitGroup {
 }
 
 interface CapexItem { id: string; label: string; quantity: number; cost_per_unit: number; linked_unit_group_id?: string; }
+
+interface RentComp {
+  name: string; address: string; distance_mi: number; year_built: number;
+  units?: number; total_sf?: number; occupancy_pct: number;
+  unit_types?: Array<{ type: string; sf: number; rent: number }>;
+  rent_per_sf?: number; lease_type?: string; tenant_type?: string;
+  amenities?: string; notes?: string;
+}
 
 type NoteCategory = "context" | "review";
 interface NoteItem { id: string; text: string; category: NoteCategory; created_at: string; }
@@ -335,6 +343,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [docViewerOpen, setDocViewerOpen] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
   const [deal, setDeal] = useState<{ name: string; property_type?: string } | null>(null);
+  const [compsLoading, setCompsLoading] = useState(false);
+  const [comps, setComps] = useState<Array<RentComp>>([]);
+  const [selectedCompIds, setSelectedCompIds] = useState<Set<number>>(new Set());
   const isSH = deal?.property_type === "student_housing";
   const isMF = deal?.property_type === "multifamily" || isSH;
   const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
@@ -670,6 +681,168 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <NumInput label="Purchase Price" value={data.purchase_price} onChange={v => set("purchase_price", v)} prefix="$" />
           <NumInput label="Closing Costs" value={data.closing_costs_pct} onChange={v => set("closing_costs_pct", v)} suffix="%" decimals={1} />
           <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Closing Cost $</p><p className="text-sm font-semibold">{fc(m.closingCosts)}</p></div>
+        </div>
+      </Section>
+
+      {/* Rent Comp Generator */}
+      <Section title="Rent Comps" icon={<BarChart3 className="h-4 w-4 text-teal-600" />} open={false}>
+        <div className="mt-3">
+          <div className="flex items-center gap-2 mb-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                setCompsLoading(true);
+                try {
+                  const res = await fetch(`/api/deals/${params.id}/rent-comps`, { method: "POST" });
+                  const json = await res.json();
+                  if (res.ok && Array.isArray(json.data)) {
+                    setComps(json.data);
+                    setSelectedCompIds(new Set(json.data.map((_: unknown, i: number) => i)));
+                    toast.success(`${json.data.length} comps generated`);
+                  } else {
+                    toast.error(json.error || "Failed to generate comps");
+                  }
+                } catch { toast.error("Failed to generate comps"); }
+                finally { setCompsLoading(false); }
+              }}
+              disabled={compsLoading}
+            >
+              {compsLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+              Generate Comps
+            </Button>
+            {comps.length > 0 && selectedCompIds.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  // Calculate average rents from selected comps and apply to unit groups
+                  const selected = comps.filter((_, i) => selectedCompIds.has(i));
+                  if (isMF || isSH) {
+                    // Average rents by unit type
+                    const rentsByType: Record<string, { total: number; count: number }> = {};
+                    for (const comp of selected) {
+                      for (const ut of (comp.unit_types || [])) {
+                        const key = ut.type;
+                        if (!rentsByType[key]) rentsByType[key] = { total: 0, count: 0 };
+                        rentsByType[key].total += ut.rent;
+                        rentsByType[key].count++;
+                      }
+                    }
+                    // Try to match unit groups by bedroom count
+                    setData(prev => ({
+                      ...prev,
+                      unit_groups: prev.unit_groups.map(g => {
+                        const bd = g.bedrooms || 1;
+                        const match = Object.entries(rentsByType).find(([k]) => k.startsWith(`${bd}BR`));
+                        if (match) {
+                          const avgRent = Math.round(match[1].total / match[1].count);
+                          return { ...g, market_rent_per_unit: avgRent };
+                        }
+                        return g;
+                      }),
+                    }));
+                    toast.success("Market rents updated from comps");
+                  } else {
+                    // Commercial — average rent/SF
+                    const totalRent = selected.reduce((s, c) => s + (c.rent_per_sf || 0), 0);
+                    const avgRent = selected.length > 0 ? totalRent / selected.length : 0;
+                    if (avgRent > 0) {
+                      setData(prev => ({
+                        ...prev,
+                        unit_groups: prev.unit_groups.map(g => ({ ...g, market_rent_per_sf: Math.round(avgRent * 100) / 100 })),
+                      }));
+                      toast.success(`Market rent set to $${avgRent.toFixed(2)}/SF from comps`);
+                    }
+                  }
+                }}
+              >
+                Apply to Market Rents
+              </Button>
+            )}
+            {comps.length > 0 && (
+              <span className="text-xs text-muted-foreground">{selectedCompIds.size} of {comps.length} selected</span>
+            )}
+          </div>
+
+          {comps.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-muted/30 border-b">
+                    <th className="px-2 py-1.5 w-[30px]"><input type="checkbox" checked={selectedCompIds.size === comps.length} onChange={e => setSelectedCompIds(e.target.checked ? new Set(comps.map((_, i) => i)) : new Set())} className="rounded" /></th>
+                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Property</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">Dist.</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">Built</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">{isMF ? "Units" : "SF"}</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">Occ.</th>
+                    {(isMF || isSH) ? (
+                      <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Unit Types & Rents</th>
+                    ) : (
+                      <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">$/SF</th>
+                    )}
+                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[200px]">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comps.map((comp, i) => (
+                    <tr key={i} className={`border-b ${selectedCompIds.has(i) ? "bg-primary/5" : "opacity-50"}`}>
+                      <td className="px-2 py-1.5"><input type="checkbox" checked={selectedCompIds.has(i)} onChange={() => setSelectedCompIds(prev => { const next = new Set(prev); next.has(i) ? next.delete(i) : next.add(i); return next; })} className="rounded" /></td>
+                      <td className="px-2 py-1.5">
+                        <p className="text-sm font-medium">{comp.name}</p>
+                        <p className="text-[10px] text-muted-foreground">{comp.address}</p>
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-xs tabular-nums">{comp.distance_mi}mi</td>
+                      <td className="px-2 py-1.5 text-right text-xs tabular-nums">{comp.year_built}</td>
+                      <td className="px-2 py-1.5 text-right text-xs tabular-nums">{(isMF || isSH) ? comp.units : comp.total_sf?.toLocaleString()}</td>
+                      <td className="px-2 py-1.5 text-right text-xs tabular-nums">{comp.occupancy_pct}%</td>
+                      {(isMF || isSH) ? (
+                        <td className="px-2 py-1.5">
+                          <div className="flex flex-wrap gap-1">
+                            {(comp.unit_types || []).map((ut, j) => (
+                              <span key={j} className="text-[10px] bg-muted px-1.5 py-0.5 rounded tabular-nums">
+                                {ut.type}: ${ut.rent.toLocaleString()}{ut.sf ? ` · ${ut.sf}SF` : ""}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      ) : (
+                        <td className="px-2 py-1.5 text-right text-xs tabular-nums font-medium">${comp.rent_per_sf?.toFixed(2)}</td>
+                      )}
+                      <td className="px-2 py-1.5 text-xs text-muted-foreground">{comp.notes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {/* Comp summary */}
+              {selectedCompIds.size > 0 && (isMF || isSH) && (() => {
+                const selected = comps.filter((_, i) => selectedCompIds.has(i));
+                const rentsByType: Record<string, number[]> = {};
+                for (const c of selected) {
+                  for (const ut of (c.unit_types || [])) {
+                    if (!rentsByType[ut.type]) rentsByType[ut.type] = [];
+                    rentsByType[ut.type].push(ut.rent);
+                  }
+                }
+                return (
+                  <div className="mt-2 p-3 bg-muted/30 rounded-lg">
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Average Rents from Selected Comps</p>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(rentsByType).map(([type, rents]) => (
+                        <span key={type} className="text-xs bg-card border px-2 py-1 rounded tabular-nums">
+                          {type}: <span className="font-semibold">${Math.round(rents.reduce((a, b) => a + b, 0) / rents.length).toLocaleString()}</span>/mo
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {comps.length === 0 && !compsLoading && (
+            <p className="text-sm text-muted-foreground py-2">Generate rent comps to compare market rents. The AI will analyze your documents and property details to find relevant comparables.</p>
+          )}
         </div>
       </Section>
 
