@@ -138,7 +138,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   // ── Operating Expenses ──────────────────────────────────────────────────────
   const mgmtFee = egi * (d.management_fee_pct / 100);
-  const inPlaceMgmtFee = d.ip_mgmt_annual || (inPlaceEGI * (d.management_fee_pct / 100));
+  const inPlaceMgmtFee = d.ip_mgmt_annual; // Hard-coded dollar amount, not derived from %
   const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual + (d.ga_annual || 0) + (d.marketing_annual || 0) + (d.reserves_annual || 0);
   const totalOpEx = mgmtFee + fixedOpEx;
   const ipFixedOpEx = (d.ip_taxes_annual || d.taxes_annual) + (d.ip_insurance_annual || d.insurance_annual) + (d.ip_repairs_annual || d.repairs_annual) + (d.ip_utilities_annual || d.utilities_annual) + (d.ip_other_annual || d.other_expenses_annual) + (d.ip_ga_annual || d.ga_annual || 0) + (d.ip_marketing_annual || d.marketing_annual || 0) + (d.ip_reserves_annual || d.reserves_annual || 0);
@@ -1127,10 +1127,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </tr>
             </thead>
             <tbody>
-              {/* Management row — computed from % */}
+              {/* Management row — in-place is hard $ amount, pro forma is % of EGI */}
               <tr className="border-b hover:bg-muted/20">
-                <td className="px-2 py-1.5 text-muted-foreground">Management ({data.management_fee_pct}%)</td>
-                <td className="px-2 py-1.5"><span className="block text-right text-sm tabular-nums">{fc(m.inPlaceMgmtFee)}</span></td>
+                <td className="px-2 py-1.5 text-muted-foreground">Management <span className="text-xs text-muted-foreground/60">({data.management_fee_pct}% PF)</span></td>
+                <td className="px-2 py-1.5">
+                  <CellInput value={data.ip_mgmt_annual} onChange={v => set("ip_mgmt_annual", v)} prefix="$" />
+                </td>
                 <td className="px-2 py-1.5"><span className="block text-right text-sm tabular-nums">{fc(m.mgmtFee)}</span></td>
                 <td className="px-2 py-1.5 text-right text-sm tabular-nums text-muted-foreground">{m.totalUnits > 0 ? fc(Math.round(m.mgmtFee / m.totalUnits)) : "—"}</td>
               </tr>
