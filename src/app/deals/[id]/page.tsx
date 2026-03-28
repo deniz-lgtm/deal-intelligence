@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   Building2,
   FileText,
-  CheckSquare,
   MessageSquare,
   MapPin,
   Star,
@@ -102,7 +101,6 @@ export default function DealOverviewPage({
   const changeStatus = async (newStatus: DealStatus, force = false) => {
     if (!deal) return;
 
-    // Check stage gate
     if (!force) {
       const gate = STAGE_GATES[newStatus];
       if (gate && !deal[gate.flag]) {
@@ -160,7 +158,7 @@ export default function DealOverviewPage({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -194,24 +192,27 @@ export default function DealOverviewPage({
   const prevStatus = !isDead && currentPipelineIdx > 0 ? DEAL_PIPELINE[currentPipelineIdx - 1] : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       {/* Gate warning modal */}
       {showGateWarning && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-card border rounded-xl p-6 max-w-md w-full shadow-xl">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-card border rounded-2xl p-6 max-w-md w-full shadow-lifted-md animate-slide-up">
             <div className="flex items-start gap-3 mb-4">
-              <AlertTriangle className="h-5 w-5 text-yellow-500 shrink-0 mt-0.5" />
+              <div className="h-9 w-9 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
+                <AlertTriangle className="h-4.5 w-4.5 text-amber-500" />
+              </div>
               <div>
                 <h3 className="font-semibold mb-1">Stage Gate Warning</h3>
-                <p className="text-sm text-muted-foreground">{showGateWarning.message}</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{showGateWarning.message}</p>
               </div>
             </div>
-            <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setShowGateWarning(null)}>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowGateWarning(null)}>
                 Cancel
               </Button>
               <Button
                 variant="destructive"
+                size="sm"
                 onClick={() => changeStatus(showGateWarning.status, true)}
               >
                 Move Anyway
@@ -224,40 +225,40 @@ export default function DealOverviewPage({
       {/* Deal header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-2.5 mb-2">
             <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
               {DEAL_STAGE_LABELS[deal.status]}
             </Badge>
-            <span className="text-sm text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {deal.property_type ? titleCase(deal.property_type) : ""}
             </span>
             {deal.loi_executed && (
-              <span className="text-xs text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">
+              <span className="text-2xs text-emerald-700 font-medium bg-emerald-50 px-2 py-0.5 rounded-full">
                 LOI ✓
               </span>
             )}
             {deal.psa_executed && (
-              <span className="text-xs text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">
+              <span className="text-2xs text-emerald-700 font-medium bg-emerald-50 px-2 py-0.5 rounded-full">
                 PSA ✓
               </span>
             )}
           </div>
-          <h1 className="text-3xl font-bold">{deal.name}</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{deal.name}</h1>
           {(deal.address || deal.city) && (
-            <p className="text-muted-foreground flex items-center gap-1 mt-1">
-              <MapPin className="h-4 w-4" />
+            <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-1">
+              <MapPin className="h-3.5 w-3.5" />
               {[deal.address, deal.city, deal.state, deal.zip]
                 .filter(Boolean)
                 .join(", ")}
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" onClick={toggleStar}>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9">
             <Star
-              className={`h-5 w-5 ${
+              className={`h-4 w-4 ${
                 deal.starred
-                  ? "text-yellow-500 fill-yellow-500"
+                  ? "text-amber-500 fill-amber-500"
                   : "text-muted-foreground"
               }`}
             />
@@ -267,7 +268,7 @@ export default function DealOverviewPage({
             size="icon"
             onClick={deleteDeal}
             disabled={deleting}
-            className="text-destructive hover:text-destructive"
+            className="text-muted-foreground hover:text-destructive h-9 w-9"
           >
             {deleting ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -279,13 +280,14 @@ export default function DealOverviewPage({
       </div>
 
       {/* Deal Pipeline */}
-      <div className="border rounded-xl p-5 bg-card">
+      <div className="border rounded-xl p-5 bg-card shadow-card">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">Deal Pipeline</h3>
+          <h3 className="font-semibold text-sm">Deal Pipeline</h3>
           {isDead && (
             <Button
               variant="outline"
               size="sm"
+              className="text-xs h-7"
               onClick={() => changeStatus("sourcing")}
             >
               Reactivate
@@ -293,9 +295,9 @@ export default function DealOverviewPage({
           )}
           {!isDead && (
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
-              className="text-destructive hover:text-destructive"
+              className="text-xs h-7 text-muted-foreground hover:text-destructive"
               onClick={() => changeStatus("dead")}
             >
               Mark Dead
@@ -308,19 +310,19 @@ export default function DealOverviewPage({
             const isCurrent = !isDead && currentPipelineIdx === i;
             const isFuture = isDead || currentPipelineIdx < i;
             return (
-              <div key={stage} className="flex-1 flex flex-col items-center gap-1">
+              <div key={stage} className="flex-1 flex flex-col items-center gap-1.5">
                 <button
                   onClick={() => changeStatus(stage)}
                   disabled={advancingTo !== null}
-                  className={`w-full h-2 rounded-full transition-all cursor-pointer hover:opacity-80 ${
+                  className={`w-full h-1.5 rounded-full transition-all cursor-pointer hover:opacity-80 ${
                     isCompleted
                       ? "bg-primary"
                       : isCurrent
-                      ? "bg-primary/60"
+                      ? "bg-primary/50"
                       : isFuture && !isDead
                       ? "bg-muted hover:bg-primary/20"
                       : "bg-muted/40"
-                  } ${isDead ? "opacity-40" : ""}`}
+                  } ${isDead ? "opacity-30" : ""}`}
                   title={`Move to ${DEAL_STAGE_LABELS[stage]}`}
                 />
                 <span
@@ -329,7 +331,7 @@ export default function DealOverviewPage({
                       ? "text-primary font-semibold"
                       : isCompleted
                       ? "text-muted-foreground"
-                      : "text-muted-foreground/50"
+                      : "text-muted-foreground/40"
                   }`}
                 >
                   {DEAL_STAGE_LABELS[stage]}
@@ -345,11 +347,11 @@ export default function DealOverviewPage({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-xs text-muted-foreground"
+                  className="text-xs text-muted-foreground h-7"
                   onClick={() => changeStatus(prevStatus)}
                   disabled={advancingTo !== null}
                 >
-                  ← Back to {DEAL_STAGE_LABELS[prevStatus]}
+                  ← {DEAL_STAGE_LABELS[prevStatus]}
                 </Button>
               )}
             </div>
@@ -357,7 +359,7 @@ export default function DealOverviewPage({
               {nextStatus && (
                 <Button
                   size="sm"
-                  className="text-xs gap-1"
+                  className="text-xs gap-1 h-8"
                   onClick={() => changeStatus(nextStatus)}
                   disabled={advancingTo !== null}
                 >
@@ -376,12 +378,12 @@ export default function DealOverviewPage({
 
       {/* Key metrics */}
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm text-muted-foreground">Key Metrics</h3>
+        <h3 className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Key Metrics</h3>
         {documents.length > 0 && (
           <Button
             variant="outline"
             size="sm"
-            className="text-xs gap-1"
+            className="text-xs gap-1.5 h-7"
             onClick={autoFillFromDocs}
             disabled={autoFilling}
           >
@@ -390,35 +392,35 @@ export default function DealOverviewPage({
             ) : (
               <Sparkles className="h-3 w-3" />
             )}
-            AI Auto-fill from Docs
+            AI Auto-fill
           </Button>
         )}
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MetricCard
-          icon={<DollarSign className="h-5 w-5 text-green-600" />}
+          icon={<DollarSign className="h-4 w-4 text-emerald-600" />}
           label="Asking Price"
           value={formatCurrency(deal.asking_price)}
         />
         <MetricCard
-          icon={<Maximize2 className="h-5 w-5 text-blue-600" />}
+          icon={<Maximize2 className="h-4 w-4 text-blue-600" />}
           label="Square Footage"
           value={deal.square_footage ? `${formatNumber(deal.square_footage)} SF` : "—"}
         />
         <MetricCard
-          icon={<Building2 className="h-5 w-5 text-purple-600" />}
+          icon={<Building2 className="h-4 w-4 text-purple-600" />}
           label="Units"
           value={deal.units ? formatNumber(deal.units) : "—"}
         />
         {deal.bedrooms ? (
           <MetricCard
-            icon={<BedDouble className="h-5 w-5 text-indigo-600" />}
+            icon={<BedDouble className="h-4 w-4 text-indigo-600" />}
             label="Bedrooms"
             value={formatNumber(deal.bedrooms)}
           />
         ) : (
           <MetricCard
-            icon={<Calendar className="h-5 w-5 text-orange-600" />}
+            icon={<Calendar className="h-4 w-4 text-orange-600" />}
             label="Year Built"
             value={deal.year_built ? String(deal.year_built) : "—"}
           />
@@ -427,24 +429,24 @@ export default function DealOverviewPage({
 
       {/* Progress + Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2 border rounded-xl p-5 bg-card">
+        <div className="md:col-span-2 border rounded-xl p-5 bg-card shadow-card">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">Diligence Progress</h3>
+            <h3 className="font-semibold text-sm">Diligence Progress</h3>
             <Link href={`/deals/${params.id}/checklist`}>
-              <Button variant="ghost" size="sm" className="text-xs gap-1">
+              <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
                 View Checklist <ArrowRight className="h-3 w-3" />
               </Button>
             </Link>
           </div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {checklistComplete} of {checklistTotal} items complete
             </span>
-            <span className="text-sm font-semibold">{progressPct}%</span>
+            <span className="text-xs font-bold tabular-nums">{progressPct}%</span>
           </div>
-          <Progress value={progressPct} className="h-3 mb-3" />
-          <div className="flex gap-4 text-xs text-muted-foreground">
-            <span className="text-green-600 font-medium">
+          <Progress value={progressPct} className="h-2 mb-3" />
+          <div className="flex gap-4 text-2xs text-muted-foreground">
+            <span className="text-emerald-600 font-medium">
               ✓ {checklistComplete} complete
             </span>
             <span>
@@ -459,37 +461,39 @@ export default function DealOverviewPage({
         </div>
 
         {/* Quick actions */}
-        <div className="border rounded-xl p-5 bg-card space-y-2">
-          <h3 className="font-semibold mb-3">Quick Access</h3>
-          {[
-            { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-4 w-4 text-blue-600 shrink-0" />, label: "Underwriting", sub: "Financial model" },
-            { href: `/deals/${params.id}/documents`, icon: <FileText className="h-4 w-4 text-primary shrink-0" />, label: "Documents", sub: `${documents.length} uploaded` },
-            { href: `/deals/${params.id}/photos`, icon: <Camera className="h-4 w-4 text-green-600 shrink-0" />, label: "Photos", sub: "Property photos & street view" },
-            { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-4 w-4 text-orange-600 shrink-0" />, label: "LOI", sub: deal.loi_executed ? "Executed ✓" : "Build & track LOI" },
-            { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-4 w-4 text-amber-600 shrink-0" />, label: "DD Abstract", sub: "AI due diligence summary" },
-            { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-4 w-4 text-purple-600 shrink-0" />, label: "AI Chat", sub: "Ask about this deal" },
-          ].map(({ href, icon, label, sub }) => (
-            <Link key={href} href={href} className="block">
-              <button className="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-accent transition-colors text-left">
-                {icon}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{label}</p>
-                  <p className="text-xs text-muted-foreground truncate">{sub}</p>
-                </div>
-                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-            </Link>
-          ))}
+        <div className="border rounded-xl p-5 bg-card shadow-card">
+          <h3 className="font-semibold text-sm mb-3">Quick Access</h3>
+          <div className="space-y-1">
+            {[
+              { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3.5 w-3.5 text-blue-600 shrink-0" />, label: "Underwriting", sub: "Financial model" },
+              { href: `/deals/${params.id}/documents`, icon: <FileText className="h-3.5 w-3.5 text-primary shrink-0" />, label: "Documents", sub: `${documents.length} uploaded` },
+              { href: `/deals/${params.id}/photos`, icon: <Camera className="h-3.5 w-3.5 text-green-600 shrink-0" />, label: "Photos", sub: "Property photos" },
+              { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-3.5 w-3.5 text-orange-600 shrink-0" />, label: "LOI", sub: deal.loi_executed ? "Executed ✓" : "Build & track" },
+              { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-3.5 w-3.5 text-amber-600 shrink-0" />, label: "DD Abstract", sub: "AI summary" },
+              { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3.5 w-3.5 text-purple-600 shrink-0" />, label: "AI Chat", sub: "Ask about this deal" },
+            ].map(({ href, icon, label, sub }) => (
+              <Link key={href} href={href} className="block">
+                <button className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-accent transition-colors text-left group/item">
+                  {icon}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium">{label}</p>
+                    <p className="text-2xs text-muted-foreground truncate">{sub}</p>
+                  </div>
+                  <ArrowRight className="h-3 w-3 text-muted-foreground/30 group-hover/item:text-muted-foreground transition-colors" />
+                </button>
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Document breakdown */}
       {documents.length > 0 && (
-        <div className="border rounded-xl p-5 bg-card">
+        <div className="border rounded-xl p-5 bg-card shadow-card">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">Documents by Category</h3>
+            <h3 className="font-semibold text-sm">Documents by Category</h3>
             <Link href={`/deals/${params.id}/documents`}>
-              <Button variant="ghost" size="sm" className="text-xs gap-1">
+              <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
                 Manage <ArrowRight className="h-3 w-3" />
               </Button>
             </Link>
@@ -497,8 +501,8 @@ export default function DealOverviewPage({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {Object.entries(docsByCategory).map(([cat, count]) => (
               <div key={cat} className="bg-muted/50 rounded-lg p-3 text-center">
-                <p className="text-2xl font-bold">{count}</p>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="text-xl font-bold tabular-nums">{count}</p>
+                <p className="text-2xs text-muted-foreground mt-0.5">
                   {titleCase(cat)}
                 </p>
               </div>
@@ -508,22 +512,22 @@ export default function DealOverviewPage({
       )}
 
       {/* Notes */}
-      <div className="border rounded-xl p-5 bg-card">
+      <div className="border rounded-xl p-5 bg-card shadow-card">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <Edit2 className="h-4 w-4 text-muted-foreground" />
-            <h3 className="font-semibold">Notes</h3>
+            <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+            <h3 className="font-semibold text-sm">Notes</h3>
           </div>
           {!editingNotes ? (
-            <Button variant="ghost" size="sm" onClick={() => setEditingNotes(true)}>
+            <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setEditingNotes(true)}>
               Edit
             </Button>
           ) : (
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => { setEditingNotes(false); setNotesValue(deal.notes || ""); }}>
+              <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => { setEditingNotes(false); setNotesValue(deal.notes || ""); }}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={saveNotes}>Save</Button>
+              <Button size="sm" className="text-xs h-7" onClick={saveNotes}>Save</Button>
             </div>
           )}
         </div>
@@ -532,11 +536,11 @@ export default function DealOverviewPage({
             value={notesValue}
             onChange={(e) => setNotesValue(e.target.value)}
             rows={4}
-            className="w-full text-sm border rounded-lg p-3 bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+            className="input-field resize-none"
             placeholder="Investment thesis, deal source, key considerations..."
           />
         ) : (
-          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+          <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
             {deal.notes || "No notes yet. Click Edit to add."}
           </p>
         )}
@@ -555,12 +559,12 @@ function MetricCard({
   value: string;
 }) {
   return (
-    <div className="border rounded-xl p-4 bg-card">
+    <div className="border rounded-xl p-4 bg-card shadow-card">
       <div className="flex items-center gap-2 mb-2">
         {icon}
-        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-2xs text-muted-foreground">{label}</span>
       </div>
-      <p className="text-lg font-bold">{value}</p>
+      <p className="text-lg font-bold tabular-nums tracking-tight">{value}</p>
     </div>
   );
 }

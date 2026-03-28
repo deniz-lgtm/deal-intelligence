@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, Trash2, Bot, User, Brain, CheckCircle2, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { Send, Loader2, Trash2, Bot, User, Brain, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -120,7 +120,6 @@ export default function ChatInterface({
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // Update local context notes if any were saved
       const contextSaved = actions?.find((a: ChatAction) => a.type === "context_saved");
       if (contextSaved?.note) {
         setLocalContextNotes((prev) =>
@@ -155,21 +154,22 @@ export default function ChatInterface({
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b bg-card">
-        <div className="flex items-center gap-2">
-          <Bot className="h-5 w-5 text-primary" />
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center shadow-sm">
+            <Bot className="h-4 w-4 text-white" />
+          </div>
           <div>
             <p className="text-sm font-semibold">Deal Intelligence</p>
-            <p className="text-xs text-muted-foreground">{dealName}</p>
+            <p className="text-2xs text-muted-foreground">{dealName}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Memory toggle */}
+        <div className="flex items-center gap-1.5">
           <button
             onClick={() => setShowMemory((v) => !v)}
             className={cn(
-              "flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-colors",
+              "flex items-center gap-1.5 text-2xs px-2.5 py-1.5 rounded-lg border transition-all duration-150",
               localContextNotes
-                ? "border-primary/40 bg-primary/5 text-primary hover:bg-primary/10"
+                ? "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
                 : "border-border text-muted-foreground hover:bg-accent"
             )}
           >
@@ -189,9 +189,9 @@ export default function ChatInterface({
               variant="ghost"
               size="sm"
               onClick={clearChat}
-              className="text-muted-foreground h-8"
+              className="text-muted-foreground h-7 w-7 p-0"
             >
-              <Trash2 className="h-4 w-4" />
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
@@ -199,8 +199,8 @@ export default function ChatInterface({
 
       {/* Memory panel */}
       {showMemory && (
-        <div className="px-4 py-3 border-b bg-primary/5 text-sm">
-          <p className="text-xs font-semibold text-primary mb-1.5 flex items-center gap-1.5">
+        <div className="px-4 py-3 border-b bg-primary/[0.03]">
+          <p className="text-2xs font-semibold text-primary mb-1.5 flex items-center gap-1.5">
             <Brain className="h-3.5 w-3.5" />
             Deal Memory
           </p>
@@ -211,7 +211,7 @@ export default function ChatInterface({
           ) : (
             <p className="text-xs text-muted-foreground">
               No context saved yet. Tell me about the deal — seller motivation,
-              issues, broker intel, market conditions — and I'll remember it.
+              issues, broker intel, market conditions — and I&apos;ll remember it.
             </p>
           )}
         </div>
@@ -220,38 +220,44 @@ export default function ChatInterface({
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && !loading && (
-          <div className="py-6">
-            <div className="text-center mb-6">
-              <Bot className="h-10 w-10 mx-auto text-muted-foreground/30 mb-2" />
+          <div className="py-8">
+            <div className="text-center mb-8">
+              <div className="h-12 w-12 mx-auto rounded-2xl bg-muted flex items-center justify-center mb-3">
+                <Bot className="h-6 w-6 text-muted-foreground/30" />
+              </div>
               <p className="text-sm font-medium mb-1">Ask questions or give me context</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-2xs text-muted-foreground max-w-xs mx-auto">
                 I can answer questions, save deal intel to memory, and update deal fields
               </p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <p className="text-xs text-muted-foreground font-medium mb-1.5 px-1">Questions</p>
-                {STARTER_QUESTIONS.map((q) => (
-                  <button
-                    key={q}
-                    onClick={() => sendMessage(q)}
-                    className="w-full text-left text-xs p-2.5 rounded-lg border border-border hover:bg-accent transition-colors mb-1.5"
-                  >
-                    {q}
-                  </button>
-                ))}
+                <p className="text-2xs text-muted-foreground font-medium mb-2 px-1 uppercase tracking-wider">Questions</p>
+                <div className="space-y-1.5">
+                  {STARTER_QUESTIONS.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => sendMessage(q)}
+                      className="w-full text-left text-xs p-3 rounded-lg border border-border hover:bg-accent hover:border-accent-foreground/10 transition-all duration-150"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground font-medium mb-1.5 px-1">Actions & Context</p>
-                {STARTER_ACTIONS.map((q) => (
-                  <button
-                    key={q}
-                    onClick={() => sendMessage(q)}
-                    className="w-full text-left text-xs p-2.5 rounded-lg border border-primary/20 bg-primary/5 hover:bg-primary/10 text-foreground transition-colors mb-1.5"
-                  >
-                    {q}
-                  </button>
-                ))}
+                <p className="text-2xs text-muted-foreground font-medium mb-2 px-1 uppercase tracking-wider">Actions & Context</p>
+                <div className="space-y-1.5">
+                  {STARTER_ACTIONS.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => sendMessage(q)}
+                      className="w-full text-left text-xs p-3 rounded-lg border border-primary/15 bg-primary/[0.03] hover:bg-primary/[0.06] text-foreground transition-all duration-150"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -271,11 +277,15 @@ export default function ChatInterface({
         ))}
 
         {loading && (
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
+          <div className="flex items-center gap-2.5 text-muted-foreground text-sm">
             <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
             </div>
-            <span className="text-xs">Thinking…</span>
+            <div className="flex gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:150ms]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:300ms]" />
+            </div>
           </div>
         )}
 
@@ -289,15 +299,15 @@ export default function ChatInterface({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about documents, save context, or update deal fields…"
-            className="min-h-[44px] max-h-32 resize-none text-sm"
+            placeholder="Ask about documents, save context, or update deal fields..."
+            className="min-h-[44px] max-h-32 resize-none text-sm rounded-xl"
             disabled={loading}
           />
           <Button
             onClick={() => sendMessage()}
             disabled={!input.trim() || loading}
             size="icon"
-            className="shrink-0 h-11 w-11"
+            className="shrink-0 h-11 w-11 rounded-xl"
           >
             {loading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -306,7 +316,7 @@ export default function ChatInterface({
             )}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground mt-2 text-center">
+        <p className="text-2xs text-muted-foreground/60 mt-2 text-center">
           Enter to send · Shift+Enter for new line
         </p>
       </div>
@@ -322,18 +332,18 @@ function MessageBubble({
   const isUser = message.role === "user";
 
   return (
-    <div className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}>
+    <div className={cn("flex gap-2.5", isUser ? "justify-end" : "justify-start")}>
       {!isUser && (
         <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
-          <Bot className="h-4 w-4 text-primary" />
+          <Bot className="h-3.5 w-3.5 text-primary" />
         </div>
       )}
       <div
         className={cn(
-          "max-w-[85%] rounded-2xl px-4 py-3 text-sm",
+          "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
           isUser
-            ? "bg-primary text-primary-foreground rounded-tr-sm"
-            : "bg-muted rounded-tl-sm"
+            ? "bg-primary text-primary-foreground rounded-br-md"
+            : "bg-muted rounded-bl-md"
         )}
       >
         {isUser ? (
@@ -348,7 +358,7 @@ function MessageBubble({
       </div>
       {isUser && (
         <div className="h-7 w-7 rounded-full bg-secondary flex items-center justify-center shrink-0 mt-0.5">
-          <User className="h-4 w-4 text-muted-foreground" />
+          <User className="h-3.5 w-3.5 text-muted-foreground" />
         </div>
       )}
     </div>
@@ -361,8 +371,8 @@ function ActionCard({ action }: { action: ChatAction }) {
       className={cn(
         "flex items-start gap-2 text-xs px-3 py-2 rounded-lg border",
         action.type === "context_saved"
-          ? "bg-primary/5 border-primary/20 text-primary"
-          : "bg-blue-50 border-blue-200 text-blue-700"
+          ? "bg-primary/[0.03] border-primary/15 text-primary"
+          : "bg-blue-50/50 border-blue-200 text-blue-700"
       )}
     >
       {action.type === "context_saved" ? (

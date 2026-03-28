@@ -47,12 +47,14 @@ const NAV_ITEMS = [
 ];
 
 const STATUS_COLORS: Record<string, string> = {
-  prospecting: "bg-blue-100 text-blue-700",
-  diligence: "bg-amber-100 text-amber-700",
-  loi: "bg-purple-100 text-purple-700",
-  under_contract: "bg-indigo-100 text-indigo-700",
-  closed: "bg-emerald-100 text-emerald-700",
-  dead: "bg-gray-100 text-gray-500",
+  sourcing: "bg-gray-500/20 text-gray-200",
+  screening: "bg-blue-500/20 text-blue-200",
+  loi: "bg-amber-500/20 text-amber-200",
+  under_contract: "bg-orange-500/20 text-orange-200",
+  diligence: "bg-indigo-500/20 text-indigo-200",
+  closing: "bg-emerald-500/20 text-emerald-200",
+  closed: "bg-emerald-500/20 text-emerald-200",
+  dead: "bg-red-500/20 text-red-300",
 };
 
 export default function DealLayout({
@@ -77,48 +79,48 @@ export default function DealLayout({
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* ── Header bar ── */}
-      <header className="gradient-header sticky top-0 z-20 shadow-card">
+      <header className="gradient-header sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="flex items-center gap-3 py-3">
+          <div className="flex items-center gap-3 h-12">
             {/* Back link */}
             <Link href="/">
-              <button className="flex items-center gap-1.5 text-sm text-white/70 hover:text-white transition-colors">
-                <ArrowLeft className="h-4 w-4" />
-                <span className="hidden sm:inline">All Deals</span>
+              <button className="flex items-center gap-1.5 text-xs text-white/60 hover:text-white transition-colors">
+                <ArrowLeft className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Deals</span>
               </button>
             </Link>
-            <span className="text-white/30">/</span>
+            <span className="text-white/20 text-xs">/</span>
 
             {deal ? (
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="font-semibold text-white text-sm truncate max-w-[200px] sm:max-w-sm">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="font-medium text-white text-sm truncate max-w-[180px] sm:max-w-sm">
                   {deal.name}
                 </span>
                 {deal.starred && (
-                  <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400 flex-shrink-0" />
+                  <Star className="h-3 w-3 text-amber-400 fill-amber-400 flex-shrink-0" />
                 )}
                 {deal.city && (
-                  <span className="text-xs text-white/60 hidden md:inline">
+                  <span className="text-2xs text-white/40 hidden md:inline">
                     {deal.city}, {deal.state}
                   </span>
                 )}
                 <span
                   className={cn(
-                    "text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0",
-                    STATUS_COLORS[deal.status] ?? "bg-white/20 text-white"
+                    "text-2xs px-2 py-0.5 rounded-full font-medium flex-shrink-0",
+                    STATUS_COLORS[deal.status] ?? "bg-white/15 text-white/70"
                   )}
                 >
                   {DEAL_STAGE_LABELS[deal.status] || deal.status}
                 </span>
               </div>
             ) : (
-              <div className="h-5 w-40 rounded bg-white/20 animate-pulse" />
+              <div className="h-4 w-40 rounded bg-white/10 animate-pulse" />
             )}
           </div>
         </div>
 
         {/* ── Tab nav ── */}
-        <div className="bg-white/5 border-t border-white/10">
+        <div className="border-t border-white/[0.06]">
           <div className="max-w-7xl mx-auto px-4 sm:px-6">
             <div className="flex gap-0.5 overflow-x-auto scrollbar-none py-1">
               {NAV_ITEMS.map((item) => {
@@ -133,10 +135,10 @@ export default function DealLayout({
                   <Link key={item.href} href={fullPath}>
                     <button
                       className={cn(
-                        "flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md transition-all whitespace-nowrap",
+                        "flex items-center gap-1.5 px-3 py-1.5 text-2xs font-medium rounded-md transition-all duration-150 whitespace-nowrap",
                         isActive
                           ? "bg-white text-primary shadow-sm"
-                          : "text-white/70 hover:text-white hover:bg-white/10"
+                          : "text-white/50 hover:text-white/90 hover:bg-white/[0.07]"
                       )}
                     >
                       <Icon className="h-3.5 w-3.5" />

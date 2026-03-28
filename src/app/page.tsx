@@ -8,9 +8,9 @@ import {
   Search,
   Building2,
   TrendingUp,
-  CheckSquare,
   FileSearch,
   BookOpen,
+  LayoutGrid,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import DealCard from "@/components/DealCard";
@@ -25,8 +25,8 @@ interface DealWithStats extends Deal {
 }
 
 const STATUS_FILTERS: { value: DealStatus | "all" | "starred"; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "starred", label: "⭐ Starred" },
+  { value: "all", label: "All deals" },
+  { value: "starred", label: "Starred" },
   { value: "sourcing", label: "Sourcing" },
   { value: "screening", label: "Screening" },
   { value: "loi", label: "LOI" },
@@ -95,64 +95,68 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* ── Header ── */}
-      <header className="gradient-header sticky top-0 z-20 shadow-card">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
-              <Building2 className="h-4.5 w-4.5 text-white" />
+      <header className="gradient-header sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+          <div className="flex items-center justify-between h-14">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center shadow-sm">
+                <Building2 className="h-4 w-4 text-white" />
+              </div>
+              <span className="font-semibold text-sm text-white tracking-tight">
+                Deal Intelligence
+              </span>
             </div>
-            <h1 className="font-bold text-base leading-none text-white">Deal Intelligence</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link href="/business-plans">
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-white/80 hover:text-white hover:bg-white/15 font-medium"
-              >
-                <BookOpen className="h-4 w-4 mr-1.5" />
-                Business Plans
-              </Button>
-            </Link>
-            <Link href="/deals/new">
-              <Button
-                size="sm"
-                className="bg-white text-primary hover:bg-white/90 shadow-sm font-semibold"
-              >
-                <Plus className="h-4 w-4 mr-1.5" />
-                New Deal
-              </Button>
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link href="/business-plans">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-white/70 hover:text-white hover:bg-white/10 font-medium h-8 text-xs"
+                >
+                  <BookOpen className="h-3.5 w-3.5 mr-1.5" />
+                  Business Plans
+                </Button>
+              </Link>
+              <Link href="/deals/new">
+                <Button
+                  size="sm"
+                  className="bg-white text-primary hover:bg-white/90 shadow-sm font-semibold h-8 text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1.5" />
+                  New Deal
+                </Button>
+              </Link>
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {/* ── Stats bar ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
           <StatCard
-            icon={<Building2 className="h-5 w-5" />}
+            icon={<LayoutGrid className="h-4 w-4" />}
             label="Total Deals"
             value={stats.total}
             color="text-primary"
             bg="bg-primary/8"
           />
           <StatCard
-            icon={<TrendingUp className="h-5 w-5" />}
+            icon={<TrendingUp className="h-4 w-4" />}
             label="Active"
             value={stats.active}
             color="text-blue-600"
             bg="bg-blue-50"
           />
           <StatCard
-            icon={<Star className="h-5 w-5" />}
+            icon={<Star className="h-4 w-4" />}
             label="Starred"
             value={stats.starred}
             color="text-amber-500"
             bg="bg-amber-50"
           />
           <StatCard
-            icon={<FileSearch className="h-5 w-5" />}
+            icon={<FileSearch className="h-4 w-4" />}
             label="OM Analyzed"
             value={stats.analyzed}
             color="text-emerald-600"
@@ -163,26 +167,27 @@ export default function DashboardPage() {
         {/* ── Search + Filters ── */}
         <div className="flex flex-col sm:flex-row gap-3 mb-6">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
             <input
               type="text"
-              placeholder="Search deals, addresses…"
+              placeholder="Search deals, addresses..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-sm border rounded-xl bg-card focus:outline-none focus:ring-2 focus:ring-primary/30 shadow-card"
+              className="w-full pl-9 pr-4 py-2.5 text-sm border rounded-xl bg-card focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-card transition-all placeholder:text-muted-foreground/50"
             />
           </div>
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none">
             {STATUS_FILTERS.map((f) => (
               <button
                 key={f.value}
                 onClick={() => setStatusFilter(f.value)}
-                className={`shrink-0 text-xs px-3 py-1.5 rounded-full border transition-all font-medium ${
+                className={`shrink-0 text-xs px-3 py-2 rounded-lg border transition-all duration-150 font-medium ${
                   statusFilter === f.value
                     ? "bg-primary text-white border-primary shadow-sm"
-                    : "bg-card hover:bg-accent border-border text-muted-foreground hover:text-foreground"
+                    : "bg-card hover:bg-accent border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >
+                {f.value === "starred" && ""}
                 {f.label}
               </button>
             ))}
@@ -191,26 +196,44 @@ export default function DashboardPage() {
 
         {/* ── Deals grid ── */}
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[...Array(6)].map((_, i) => (
               <div
                 key={i}
-                className="h-56 rounded-xl border bg-card animate-pulse shadow-card"
-              />
+                className="h-64 rounded-xl border bg-card shadow-card overflow-hidden"
+              >
+                <div className="h-full p-5 flex flex-col">
+                  <div className="flex gap-2 mb-3">
+                    <div className="h-5 w-16 rounded-full bg-muted animate-pulse" />
+                    <div className="h-5 w-20 rounded-full bg-muted animate-pulse" />
+                  </div>
+                  <div className="h-5 w-3/4 rounded bg-muted animate-pulse mb-2" />
+                  <div className="h-4 w-1/2 rounded bg-muted animate-pulse mb-4" />
+                  <div className="flex gap-4 mb-4">
+                    <div className="h-4 w-20 rounded bg-muted animate-pulse" />
+                    <div className="h-4 w-16 rounded bg-muted animate-pulse" />
+                  </div>
+                  <div className="mt-auto flex gap-2">
+                    <div className="h-8 flex-1 rounded-lg bg-muted animate-pulse" />
+                    <div className="h-8 flex-1 rounded-lg bg-muted animate-pulse" />
+                    <div className="h-8 flex-1 rounded-lg bg-muted animate-pulse" />
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-24">
             <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4">
-              <Building2 className="h-8 w-8 text-muted-foreground/40" />
+              <Building2 className="h-7 w-7 text-muted-foreground/30" />
             </div>
-            <h2 className="text-lg font-semibold mb-2">
+            <h2 className="text-lg font-semibold mb-1.5">
               {deals.length === 0 ? "No deals yet" : "No deals match your filters"}
             </h2>
             <p className="text-sm text-muted-foreground mb-6 max-w-sm mx-auto">
               {deals.length === 0
                 ? "Start by creating your first deal and uploading diligence documents."
-                : "Try adjusting your search or filter."}
+                : "Try adjusting your search or filter criteria."}
             </p>
             {deals.length === 0 && (
               <Link href="/deals/new">
@@ -223,11 +246,11 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
-            <p className="text-xs text-muted-foreground mb-3">
+            <p className="text-xs text-muted-foreground mb-3 font-medium">
               {filtered.length} deal{filtered.length !== 1 ? "s" : ""}
               {statusFilter !== "all" || search ? " (filtered)" : ""}
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filtered.map((deal) => (
                 <DealCard
                   key={deal.id}
@@ -266,13 +289,13 @@ function StatCard({
   bg: string;
 }) {
   return (
-    <div className="border rounded-xl p-4 bg-card flex items-center gap-3 shadow-card hover:shadow-lifted transition-shadow">
+    <div className="border rounded-xl p-4 bg-card flex items-center gap-3.5 shadow-card hover:shadow-lifted transition-all duration-200">
       <div className={`h-10 w-10 rounded-xl ${bg} flex items-center justify-center shrink-0 ${color}`}>
         {icon}
       </div>
       <div>
-        <p className="text-2xl font-bold leading-none tabular-nums">{value}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
+        <p className="text-2xl font-bold leading-none tabular-nums tracking-tight">{value}</p>
+        <p className="text-xs text-muted-foreground mt-1">{label}</p>
       </div>
     </div>
   );

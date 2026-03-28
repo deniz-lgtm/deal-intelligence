@@ -29,8 +29,6 @@ interface BusinessPlan {
   updated_at: string;
 }
 
-// ─── Inline Form ──────────────────────────────────────────────────────────────
-
 function PlanForm({
   initial,
   onSave,
@@ -54,7 +52,7 @@ function PlanForm({
   return (
     <div className="flex flex-col gap-4 pt-2">
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+        <label className="text-2xs font-semibold text-muted-foreground uppercase tracking-wider">
           Plan Name
         </label>
         <input
@@ -62,15 +60,15 @@ function PlanForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Industrial Value-Add Strategy"
-          className="w-full px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+          className="input-field"
         />
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+        <label className="text-2xs font-semibold text-muted-foreground uppercase tracking-wider">
           Business Plan / Investment Strategy
         </label>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Describe your strategy so the AI calibrates its analysis to your approach. This text will be
           prepended to every OM analysis for this plan.
         </p>
@@ -82,7 +80,7 @@ function PlanForm({
 Vacancy is always intentional at acquisition — we will never have a rent roll at purchase. Do not flag this as a risk. We source our own CapEx budgets and do not rely on broker estimates. Standard due diligence items like environmental Phase I, title, and survey are handled post-LOI, not pre-offer.`}
           className="min-h-[180px] resize-none text-sm"
         />
-        <p className="text-xs text-muted-foreground text-right">{description.length} chars</p>
+        <p className="text-2xs text-muted-foreground text-right tabular-nums">{description.length} chars</p>
       </div>
 
       <div className="flex items-center gap-2">
@@ -90,7 +88,7 @@ Vacancy is always intentional at acquisition — we will never have a rent roll 
           type="button"
           onClick={() => setIsDefault((v) => !v)}
           className={cn(
-            "flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border transition-colors",
+            "flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border transition-all duration-150",
             isDefault
               ? "bg-amber-50 border-amber-200 text-amber-800"
               : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
@@ -101,9 +99,9 @@ Vacancy is always intentional at acquisition — we will never have a rent roll 
           ) : (
             <StarOff className="h-3.5 w-3.5" />
           )}
-          {isDefault ? "Set as default" : "Not default"}
+          {isDefault ? "Default plan" : "Not default"}
         </button>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-2xs text-muted-foreground">
           Default plan is auto-selected when uploading an OM.
         </span>
       </div>
@@ -111,24 +109,21 @@ Vacancy is always intentional at acquisition — we will never have a rent roll 
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={handleSave} disabled={saving || !name.trim() || !description.trim()}>
           {saving ? (
-            "Saving…"
+            "Saving..."
           ) : (
             <>
-              <Check className="h-4 w-4 mr-1.5" />
+              <Check className="h-3.5 w-3.5 mr-1.5" />
               Save Plan
             </>
           )}
         </Button>
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
-          <X className="h-4 w-4 mr-1.5" />
           Cancel
         </Button>
       </div>
     </div>
   );
 }
-
-// ─── Plan Card ────────────────────────────────────────────────────────────────
 
 function PlanCard({
   plan,
@@ -158,7 +153,6 @@ function PlanCard({
     if (!confirm(`Delete "${plan.name}"? This cannot be undone.`)) return;
     setDeleting(true);
     await onDelete(plan.id);
-    // component will unmount, no need to reset
   }
 
   async function handleSetDefault() {
@@ -168,13 +162,13 @@ function PlanCard({
   }
 
   return (
-    <Card className={cn("transition-shadow", plan.is_default && "ring-1 ring-amber-300 shadow-lifted")}>
+    <Card className={cn("transition-all duration-200", plan.is_default && "ring-1 ring-amber-200 shadow-lifted")}>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-2 min-w-0">
+          <div className="flex items-start gap-2.5 min-w-0">
             <div className={cn(
               "h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5",
-              plan.is_default ? "bg-indigo-100" : "bg-primary/10"
+              plan.is_default ? "bg-indigo-50" : "bg-primary/8"
             )}>
               <BookOpen className={cn("h-4 w-4", plan.is_default ? "text-indigo-600" : "text-primary")} />
             </div>
@@ -182,13 +176,13 @@ function PlanCard({
               <div className="flex items-center gap-2 flex-wrap">
                 <CardTitle className="text-base leading-tight">{plan.name}</CardTitle>
                 {plan.is_default && (
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
+                  <span className="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
                     <Star className="h-3 w-3 fill-amber-500 text-amber-500" />
                     Default
                   </span>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="text-2xs text-muted-foreground mt-0.5">
                 Updated {new Date(plan.updated_at).toLocaleDateString("en-US", {
                   month: "short",
                   day: "numeric",
@@ -197,7 +191,7 @@ function PlanCard({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-1 flex-shrink-0">
+          <div className="flex items-center gap-0.5 flex-shrink-0">
             {!plan.is_default && (
               <Button
                 variant="ghost"
@@ -276,8 +270,6 @@ function PlanCard({
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
 export default function BusinessPlansPage() {
   const [plans, setPlans] = useState<BusinessPlan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -310,7 +302,6 @@ export default function BusinessPlansPage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      // If it was set as default, refresh full list (other cards need to update)
       if (data.is_default) {
         await loadPlans();
       } else {
@@ -333,7 +324,6 @@ export default function BusinessPlansPage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      // Refresh full list if default changed
       if ("is_default" in data) {
         await loadPlans();
       } else {
@@ -364,7 +354,6 @@ export default function BusinessPlansPage() {
         body: JSON.stringify({ action: "setDefault" }),
       });
       if (!res.ok) throw new Error("Failed to set default");
-      // Refresh to update all cards' default state
       await loadPlans();
     } catch (err) {
       console.error("Failed to set default:", err);
@@ -374,36 +363,36 @@ export default function BusinessPlansPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* ── Header ── */}
-      <header className="gradient-header sticky top-0 z-20 shadow-card">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
+      <header className="gradient-header sticky top-0 z-20">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 flex items-center justify-between h-14">
           <div className="flex items-center gap-3">
             <Link
               href="/"
-              className="h-8 w-8 rounded-lg bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors"
+              className="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
             >
               <ArrowLeft className="h-4 w-4 text-white" />
             </Link>
             <div>
-              <h1 className="font-bold text-base leading-none text-white">Business Plans</h1>
-              <p className="text-xs text-white/60 mt-0.5">Investment strategy library</p>
+              <h1 className="font-semibold text-sm leading-none text-white">Business Plans</h1>
+              <p className="text-2xs text-white/50 mt-0.5">Investment strategy library</p>
             </div>
           </div>
           {!creating && (
             <Button
               size="sm"
-              className="bg-white text-primary hover:bg-white/90 shadow-sm font-semibold"
+              className="bg-white text-primary hover:bg-white/90 shadow-sm font-semibold h-8 text-xs"
               onClick={() => setCreating(true)}
             >
-              <Plus className="h-4 w-4 mr-1.5" />
+              <Plus className="h-3.5 w-3.5 mr-1.5" />
               New Plan
             </Button>
           )}
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 flex flex-col gap-6">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 flex flex-col gap-5">
         {/* Explainer */}
-        <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 text-sm text-muted-foreground leading-relaxed">
+        <div className="bg-primary/[0.03] border border-primary/10 rounded-xl p-4 text-sm text-muted-foreground leading-relaxed">
           <p className="font-semibold text-foreground mb-1">What are Business Plans?</p>
           <p>
             Save your investment strategy once and attach it to every OM analysis. The AI uses your plan
@@ -415,7 +404,7 @@ export default function BusinessPlansPage() {
 
         {/* Create form */}
         {creating && (
-          <Card className="border-primary/30 bg-primary/5">
+          <Card className="border-primary/20 bg-primary/[0.02]">
             <CardHeader className="pb-0">
               <CardTitle className="flex items-center gap-2 text-base">
                 <Plus className="h-4 w-4 text-primary" />
@@ -442,9 +431,9 @@ export default function BusinessPlansPage() {
         ) : plans.length === 0 && !creating ? (
           <div className="text-center py-20">
             <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4">
-              <BookOpen className="h-8 w-8 text-muted-foreground/40" />
+              <BookOpen className="h-7 w-7 text-muted-foreground/30" />
             </div>
-            <h2 className="text-lg font-semibold mb-2">No business plans yet</h2>
+            <h2 className="text-lg font-semibold mb-1.5">No business plans yet</h2>
             <p className="text-sm text-muted-foreground mb-6 max-w-sm mx-auto">
               Create a plan to pre-fill deal context on every OM analysis. Your investment thesis,
               strategy, and constraints — written once, applied everywhere.

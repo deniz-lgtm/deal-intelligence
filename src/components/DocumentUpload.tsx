@@ -55,7 +55,7 @@ export default function DocumentUpload({
       ],
       "image/*": [".png", ".jpg", ".jpeg", ".webp"],
     },
-    maxSize: 50 * 1024 * 1024, // 50MB
+    maxSize: 50 * 1024 * 1024,
   });
 
   const removeFile = (index: number) => {
@@ -130,26 +130,31 @@ export default function DocumentUpload({
       <div
         {...getRootProps()}
         className={cn(
-          "border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all",
+          "border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all duration-200",
           isDragActive
-            ? "border-primary bg-primary/5"
-            : "border-border hover:border-primary/50 hover:bg-muted/30"
+            ? "border-primary bg-primary/5 shadow-glow-primary"
+            : "border-border hover:border-primary/40 hover:bg-accent/30"
         )}
       >
         <input {...getInputProps()} />
-        <Upload
-          className={cn(
-            "mx-auto h-10 w-10 mb-3 transition-colors",
-            isDragActive ? "text-primary" : "text-muted-foreground"
-          )}
-        />
+        <div className={cn(
+          "mx-auto h-12 w-12 rounded-xl flex items-center justify-center mb-3 transition-colors",
+          isDragActive ? "bg-primary/10" : "bg-muted"
+        )}>
+          <Upload
+            className={cn(
+              "h-5 w-5 transition-colors",
+              isDragActive ? "text-primary" : "text-muted-foreground"
+            )}
+          />
+        </div>
         <p className="text-sm font-medium text-foreground">
           {isDragActive ? "Drop files here" : "Drop files or click to upload"}
         </p>
-        <p className="text-xs text-muted-foreground mt-1">
+        <p className="text-2xs text-muted-foreground mt-1">
           PDF, DOC, DOCX, XLS, XLSX, TXT, Images — up to 50MB each
         </p>
-        <p className="text-xs text-primary mt-2 font-medium">
+        <p className="text-2xs text-primary mt-2 font-medium">
           AI will automatically classify and summarize each document
         </p>
       </div>
@@ -159,12 +164,12 @@ export default function DocumentUpload({
           {files.map((uf, i) => (
             <div
               key={i}
-              className="flex items-center gap-3 p-3 rounded-lg border bg-card text-sm"
+              className="flex items-center gap-3 p-3 rounded-lg border bg-card text-sm shadow-card"
             >
               <FileIcon mimeType={uf.file.type} />
               <div className="flex-1 min-w-0">
-                <p className="font-medium truncate">{uf.file.name}</p>
-                <p className="text-xs text-muted-foreground">
+                <p className="font-medium truncate text-xs">{uf.file.name}</p>
+                <p className="text-2xs text-muted-foreground tabular-nums">
                   {formatBytes(uf.file.size)}
                 </p>
               </div>
@@ -174,27 +179,27 @@ export default function DocumentUpload({
                   onClick={() => removeFile(i)}
                   className="text-muted-foreground hover:text-destructive transition-colors"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
           ))}
 
           <div className="flex items-center justify-between pt-2">
-            <p className="text-xs text-muted-foreground">
+            <p className="text-2xs text-muted-foreground">
               {doneCount > 0 && `${doneCount} uploaded. `}
               {pendingCount > 0 && `${pendingCount} ready to upload.`}
             </p>
             {pendingCount > 0 && (
-              <Button onClick={uploadAll} disabled={uploading} size="sm">
+              <Button onClick={uploadAll} disabled={uploading} size="sm" className="gap-1.5">
                 {uploading ? (
                   <>
-                    <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                    Uploading & analyzing...
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Uploading...
                   </>
                 ) : (
                   <>
-                    <Upload className="h-3 w-3 mr-2" />
+                    <Upload className="h-3 w-3" />
                     Upload {pendingCount} file{pendingCount !== 1 ? "s" : ""}
                   </>
                 )}
@@ -209,9 +214,17 @@ export default function DocumentUpload({
 
 function FileIcon({ mimeType }: { mimeType: string }) {
   if (mimeType === "application/pdf") {
-    return <FileText className="h-5 w-5 text-red-500 shrink-0" />;
+    return (
+      <div className="h-8 w-8 rounded-lg bg-red-50 flex items-center justify-center shrink-0">
+        <FileText className="h-4 w-4 text-red-500" />
+      </div>
+    );
   }
-  return <File className="h-5 w-5 text-blue-500 shrink-0" />;
+  return (
+    <div className="h-8 w-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+      <File className="h-4 w-4 text-blue-500" />
+    </div>
+  );
 }
 
 function StatusIcon({
@@ -225,7 +238,7 @@ function StatusIcon({
     return <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />;
   }
   if (status === "done") {
-    return <CheckCircle className="h-4 w-4 text-green-500 shrink-0" />;
+    return <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />;
   }
   if (status === "error") {
     return (

@@ -11,6 +11,7 @@ import {
   Store,
   Hotel,
   FileSearch,
+  ArrowRight,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -54,10 +55,10 @@ const PROPERTY_ICONS: Record<string, React.ElementType> = {
 };
 
 function scoreColor(score: number): string {
-  if (score >= 8) return "text-emerald-600 bg-emerald-50 border-emerald-200";
-  if (score >= 6) return "text-amber-600 bg-amber-50 border-amber-200";
-  if (score >= 4) return "text-orange-600 bg-orange-50 border-orange-200";
-  return "text-rose-600 bg-rose-50 border-rose-200";
+  if (score >= 8) return "text-emerald-700 bg-emerald-50 border-emerald-200";
+  if (score >= 6) return "text-amber-700 bg-amber-50 border-amber-200";
+  if (score >= 4) return "text-orange-700 bg-orange-50 border-orange-200";
+  return "text-rose-700 bg-rose-50 border-rose-200";
 }
 
 interface DealCardProps {
@@ -80,19 +81,17 @@ export default function DealCard({
   const PropertyIcon = PROPERTY_ICONS[deal.property_type ?? ""] ?? Building2;
 
   return (
-    <Card className="group hover:shadow-lifted transition-all duration-200 border-border/60 shadow-card">
+    <Card className="group hover:shadow-lifted transition-all duration-200 overflow-hidden">
       <CardContent className="p-5">
-        {/* Top row: status + property type + star */}
+        {/* Top row: status + property type + score + star */}
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-2 flex-wrap min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", badge.dot)} />
-              <Badge variant={badge.variant} className="text-xs">
-                {DEAL_STAGE_LABELS[deal.status]}
-              </Badge>
-            </div>
+            <Badge variant={badge.variant} className="text-2xs gap-1">
+              <span className={cn("w-1.5 h-1.5 rounded-full", badge.dot)} />
+              {DEAL_STAGE_LABELS[deal.status]}
+            </Badge>
             {deal.property_type && (
-              <span className="text-xs text-muted-foreground capitalize flex items-center gap-1">
+              <span className="text-2xs text-muted-foreground capitalize flex items-center gap-1">
                 <PropertyIcon className="h-3 w-3" />
                 {titleCase(deal.property_type)}
               </span>
@@ -102,21 +101,19 @@ export default function DealCard({
             {deal.om_score != null && (
               <span
                 className={cn(
-                  "text-xs font-semibold px-1.5 py-0.5 rounded-md border",
+                  "text-2xs font-bold px-1.5 py-0.5 rounded-md border tabular-nums",
                   scoreColor(deal.om_score)
                 )}
               >
                 {deal.om_score}/10
               </span>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
+            <button
               className={cn(
-                "h-7 w-7 shrink-0 transition-all",
+                "h-7 w-7 shrink-0 rounded-md flex items-center justify-center transition-all",
                 deal.starred
                   ? "text-amber-500 hover:text-amber-600"
-                  : "text-muted-foreground hover:text-amber-500 opacity-0 group-hover:opacity-100"
+                  : "text-muted-foreground/30 hover:text-amber-500 opacity-0 group-hover:opacity-100"
               )}
               onClick={() => onStar?.(deal.id, !deal.starred)}
             >
@@ -124,12 +121,12 @@ export default function DealCard({
                 className="h-3.5 w-3.5"
                 fill={deal.starred ? "currentColor" : "none"}
               />
-            </Button>
+            </button>
           </div>
         </div>
 
         {/* Name + address */}
-        <h3 className="font-bold text-base leading-tight mb-1 truncate">
+        <h3 className="font-semibold text-base leading-tight mb-1 truncate">
           <Link
             href={`/deals/${deal.id}`}
             className="hover:text-primary transition-colors"
@@ -138,7 +135,7 @@ export default function DealCard({
           </Link>
         </h3>
         {(deal.address || deal.city) && (
-          <p className="text-xs text-muted-foreground flex items-center gap-1 mb-3 truncate">
+          <p className="text-2xs text-muted-foreground flex items-center gap-1 mb-3 truncate">
             <MapPin className="h-3 w-3 shrink-0" />
             {[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}
           </p>
@@ -147,21 +144,21 @@ export default function DealCard({
         {/* Key metrics */}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm mb-4">
           {deal.asking_price && (
-            <span className="font-semibold text-foreground">
+            <span className="font-semibold text-foreground tabular-nums">
               {formatCurrency(deal.asking_price)}
             </span>
           )}
           {deal.square_footage && (
-            <span className="text-muted-foreground flex items-center gap-1">
+            <span className="text-muted-foreground flex items-center gap-1 tabular-nums">
               <Building2 className="h-3 w-3" />
               {formatNumber(deal.square_footage)} SF
             </span>
           )}
           {deal.units && (
-            <span className="text-muted-foreground">{formatNumber(deal.units)} units</span>
+            <span className="text-muted-foreground tabular-nums">{formatNumber(deal.units)} units</span>
           )}
           {deal.bedrooms && (
-            <span className="text-muted-foreground flex items-center gap-1">
+            <span className="text-muted-foreground flex items-center gap-1 tabular-nums">
               <BedDouble className="h-3 w-3" />
               {formatNumber(deal.bedrooms)} beds
             </span>
@@ -169,10 +166,12 @@ export default function DealCard({
         </div>
 
         {/* Pipeline progress */}
-        {!isDead && (
-          <div className="mb-4">
-            <div className="flex items-center gap-0.5">
-              {DEAL_PIPELINE.map((stage, i) => {
+        <div className="mb-4">
+          <div className="flex items-center gap-0.5">
+            {isDead ? (
+              <div className="h-1 w-full rounded-full bg-rose-200" />
+            ) : (
+              DEAL_PIPELINE.map((stage, i) => {
                 const isCompleted = pipelineIndex > i;
                 const isCurrent = pipelineIndex === i;
                 return (
@@ -188,27 +187,20 @@ export default function DealCard({
                     )}
                   />
                 );
-              })}
-            </div>
+              })
+            )}
           </div>
-        )}
-        {isDead && (
-          <div className="mb-4">
-            <div className="h-1 w-full rounded-full bg-rose-200" />
-          </div>
-        )}
+        </div>
 
         {/* Footer: doc count, LOI/PSA, checklist */}
-        <div className="flex items-center gap-3 text-xs text-muted-foreground mb-4">
+        <div className="flex items-center gap-3 text-2xs text-muted-foreground mb-4">
           <span className="flex items-center gap-1">
             <FileText className="h-3 w-3" />
             {documentCount} doc{documentCount !== 1 ? "s" : ""}
           </span>
           {checklistProgress && checklistProgress.total > 0 && (
-            <span className="flex items-center gap-1">
-              <span>
-                {checklistProgress.complete}/{checklistProgress.total} checklist
-              </span>
+            <span className="flex items-center gap-1 tabular-nums">
+              {checklistProgress.complete}/{checklistProgress.total} checklist
             </span>
           )}
           {deal.loi_executed && (
@@ -233,8 +225,9 @@ export default function DealCard({
             </Button>
           </Link>
           <Link href={`/deals/${deal.id}/chat`} className="flex-1">
-            <Button size="sm" className="w-full text-xs h-8">
+            <Button size="sm" className="w-full text-xs h-8 gap-1">
               Chat
+              <ArrowRight className="h-3 w-3" />
             </Button>
           </Link>
         </div>

@@ -16,7 +16,16 @@ export default function RootLayout({
     <html lang="en">
       <body>
         {children}
-        <Toaster position="bottom-right" richColors />
+        <Toaster
+          position="bottom-right"
+          richColors
+          toastOptions={{
+            className: "shadow-lifted",
+            style: {
+              borderRadius: "0.75rem",
+            },
+          }}
+        />
       </body>
     </html>
   );

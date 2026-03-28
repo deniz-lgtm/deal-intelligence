@@ -127,13 +127,9 @@ export default function NewDealPage() {
 
       const dealId = json.data.id;
 
-      // If an OM was uploaded, create the processing row first (so the OM tab
-      // immediately shows the analyzing state), then redirect.
       if (omFile) {
         const fd = new FormData();
         fd.append("file", omFile);
-        // om-init creates the DB row with status='processing' and returns
-        // immediately; the actual analysis runs in the background on the server.
         await fetch(`/api/deals/${dealId}/om-init`, { method: "POST", body: fd });
         router.push(`/deals/${dealId}/om-analysis`);
       } else {
@@ -148,38 +144,39 @@ export default function NewDealPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-10">
-        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-4">
+      <header className="border-b bg-card sticky top-0 z-10 shadow-card">
+        <div className="max-w-3xl mx-auto px-6 h-14 flex items-center gap-4">
           <Link href="/">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4 mr-1" />
+            <Button variant="ghost" size="sm" className="text-xs h-8">
+              <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
               Back
             </Button>
           </Link>
+          <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-muted-foreground" />
-            <h1 className="font-semibold">New Deal</h1>
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+            <h1 className="font-semibold text-sm">New Deal</h1>
           </div>
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-6 py-8">
         <div className="mb-6">
-          <h2 className="text-2xl font-bold">Create a new deal</h2>
+          <h2 className="text-xl font-bold tracking-tight">Create a new deal</h2>
           <p className="text-muted-foreground text-sm mt-1">
             A diligence checklist with 65+ items will be automatically created.
           </p>
         </div>
 
         {/* OM Upload Zone */}
-        <div className="mb-6">
+        <div className="mb-8">
           {omFile ? (
             <div
               className={cn(
-                "border rounded-xl p-4 flex items-center gap-3",
+                "border rounded-xl p-4 flex items-center gap-3 transition-colors",
                 extracting
-                  ? "bg-primary/5 border-primary/30"
-                  : "bg-emerald-50 border-emerald-200"
+                  ? "bg-primary/5 border-primary/20"
+                  : "bg-emerald-50/50 border-emerald-200"
               )}
             >
               <div
@@ -189,16 +186,16 @@ export default function NewDealPage() {
                 )}
               >
                 {extracting ? (
-                  <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                  <Loader2 className="h-4 w-4 text-primary animate-spin" />
                 ) : (
-                  <Sparkles className="h-5 w-5 text-emerald-600" />
+                  <Sparkles className="h-4 w-4 text-emerald-600" />
                 )}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{omFile.name}</p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-2xs text-muted-foreground">
                   {extracting
-                    ? "Extracting deal details from OM…"
+                    ? "Extracting deal details from OM..."
                     : "Fields auto-filled from OM — review below"}
                 </p>
               </div>
@@ -210,7 +207,7 @@ export default function NewDealPage() {
                     setExtractError(null);
                     setForm(EMPTY_FORM);
                   }}
-                  className="text-muted-foreground hover:text-foreground"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <XCircle className="h-4 w-4" />
                 </button>
@@ -219,10 +216,10 @@ export default function NewDealPage() {
           ) : (
             <div
               className={cn(
-                "border-2 border-dashed rounded-xl p-6 flex flex-col items-center gap-3 cursor-pointer transition-colors",
+                "border-2 border-dashed rounded-xl p-8 flex flex-col items-center gap-3 cursor-pointer transition-all duration-200",
                 dragging
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-primary/40 hover:bg-accent/20"
+                  ? "border-primary bg-primary/5 shadow-glow-primary"
+                  : "border-border hover:border-primary/40 hover:bg-accent/30"
               )}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
@@ -234,7 +231,7 @@ export default function NewDealPage() {
               }}
               onClick={() => inputRef.current?.click()}
             >
-              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+              <div className="w-11 h-11 rounded-xl bg-primary/8 flex items-center justify-center">
                 <FileText className="h-5 w-5 text-primary" />
               </div>
               <div className="text-center">
@@ -242,7 +239,7 @@ export default function NewDealPage() {
                   Upload OM to auto-fill details{" "}
                   <span className="text-muted-foreground font-normal">(optional)</span>
                 </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
+                <p className="text-2xs text-muted-foreground mt-1">
                   Drag & drop or click — PDF or DOCX. AI extracts address, price, size, and more.
                 </p>
               </div>
@@ -259,14 +256,14 @@ export default function NewDealPage() {
             </div>
           )}
           {extractError && (
-            <p className="text-xs text-rose-600 mt-2 flex items-center gap-1">
-              <XCircle className="h-3.5 w-3.5" />
+            <p className="text-2xs text-rose-600 mt-2 flex items-center gap-1">
+              <XCircle className="h-3 w-3" />
               {extractError}
             </p>
           )}
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-5">
           {/* Basic Info */}
           <Section title="Basic Information">
             <div className="grid gap-4">
@@ -360,7 +357,7 @@ export default function NewDealPage() {
                   value={form.asking_price}
                   onChange={(e) => set("asking_price", e.target.value)}
                   placeholder="5000000"
-                  className="input-field"
+                  className="input-field tabular-nums"
                 />
               </Field>
               <Field label="Square Footage (SF)">
@@ -369,7 +366,7 @@ export default function NewDealPage() {
                   value={form.square_footage}
                   onChange={(e) => set("square_footage", e.target.value)}
                   placeholder="25000"
-                  className="input-field"
+                  className="input-field tabular-nums"
                 />
               </Field>
               <Field label="Units">
@@ -378,7 +375,7 @@ export default function NewDealPage() {
                   value={form.units}
                   onChange={(e) => set("units", e.target.value)}
                   placeholder="24"
-                  className="input-field"
+                  className="input-field tabular-nums"
                 />
               </Field>
               <Field label="Total Bedrooms (student housing)">
@@ -387,7 +384,7 @@ export default function NewDealPage() {
                   value={form.bedrooms}
                   onChange={(e) => set("bedrooms", e.target.value)}
                   placeholder="72"
-                  className="input-field"
+                  className="input-field tabular-nums"
                 />
               </Field>
               <Field label="Year Built">
@@ -396,13 +393,13 @@ export default function NewDealPage() {
                   value={form.year_built}
                   onChange={(e) => set("year_built", e.target.value)}
                   placeholder="1985"
-                  className="input-field"
+                  className="input-field tabular-nums"
                 />
               </Field>
             </div>
           </Section>
 
-          <div className="flex justify-end gap-3 pt-4">
+          <div className="flex justify-end gap-3 pt-2">
             <Link href="/">
               <Button type="button" variant="outline">
                 Cancel
@@ -412,7 +409,7 @@ export default function NewDealPage() {
               {saving ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  {omFile ? "Creating & launching analysis…" : "Creating…"}
+                  {omFile ? "Creating & analyzing..." : "Creating..."}
                 </>
               ) : (
                 "Create Deal"
@@ -421,26 +418,6 @@ export default function NewDealPage() {
           </div>
         </form>
       </main>
-
-      <style jsx global>{`
-        .input-field {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid hsl(var(--border));
-          border-radius: 0.375rem;
-          background: hsl(var(--background));
-          color: hsl(var(--foreground));
-          outline: none;
-          transition: box-shadow 0.15s;
-        }
-        .input-field:focus {
-          box-shadow: 0 0 0 2px hsl(var(--ring));
-        }
-        .input-field::placeholder {
-          color: hsl(var(--muted-foreground));
-        }
-      `}</style>
     </div>
   );
 }
@@ -453,8 +430,8 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border rounded-xl p-5 bg-card space-y-4">
-      <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+    <div className="border rounded-xl p-5 bg-card shadow-card space-y-4">
+      <h3 className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">
         {title}
       </h3>
       {children}
