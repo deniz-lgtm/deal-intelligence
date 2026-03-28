@@ -98,7 +98,7 @@ function PlanForm({
   );
 
   async function handleSave() {
-    if (!name.trim() || theses.length === 0) return;
+    if (!name.trim()) return;
     await onSave({
       name: name.trim(),
       description: description.trim(),
@@ -135,9 +135,9 @@ function PlanForm({
       <div className="flex flex-col gap-2">
         <label className="text-2xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
           <Target className="h-3.5 w-3.5" />
-          Investment Thesis *
+          Investment Thesis
         </label>
-        <p className="text-2xs text-muted-foreground">Select all strategies that apply to this plan.</p>
+        <p className="text-2xs text-muted-foreground">Select the strategies that apply to this plan.</p>
         <div className="grid gap-2">
           {ALL_THESES.map((t) => (
             <button
@@ -391,7 +391,7 @@ function PlanForm({
 
       {/* Actions */}
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={handleSave} disabled={saving || !name.trim() || theses.length === 0}>
+        <Button size="sm" onClick={handleSave} disabled={saving || !name.trim()}>
           {saving ? (
             "Saving..."
           ) : (
@@ -404,9 +404,6 @@ function PlanForm({
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
           Cancel
         </Button>
-        {theses.length === 0 && name.trim() && (
-          <span className="text-2xs text-red-400">Select at least one investment thesis</span>
-        )}
       </div>
     </div>
   );

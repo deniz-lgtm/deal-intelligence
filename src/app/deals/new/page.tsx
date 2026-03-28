@@ -379,16 +379,21 @@ export default function NewDealPage() {
                 </div>
               )}
 
-              {/* Selected plan summary */}
-              {selectedPlan && (
+              {/* Selected plan summary — only show if plan has structured data */}
+              {selectedPlan && ((selectedPlan.investment_theses || []).length > 0 || (selectedPlan.target_markets || []).length > 0 || selectedPlan.target_irr_min || selectedPlan.description) && (
                 <div className="rounded-lg border border-primary/15 bg-primary/[0.03] p-3 flex flex-col gap-2">
-                  <div className="flex flex-wrap gap-1.5">
-                    {(selectedPlan.investment_theses || []).map((t) => (
-                      <span key={t} className="text-2xs px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 font-medium">
-                        {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
-                      </span>
-                    ))}
-                  </div>
+                  {(selectedPlan.investment_theses || []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(selectedPlan.investment_theses || []).map((t) => (
+                        <span key={t} className="text-2xs px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 font-medium">
+                          {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {selectedPlan.description && (
+                    <p className="text-2xs text-muted-foreground leading-relaxed line-clamp-2">{selectedPlan.description}</p>
+                  )}
                   <div className="flex items-center gap-4 flex-wrap text-2xs text-muted-foreground">
                     {(selectedPlan.target_markets || []).length > 0 && (
                       <span className="flex items-center gap-1">

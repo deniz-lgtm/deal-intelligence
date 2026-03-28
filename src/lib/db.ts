@@ -226,7 +226,6 @@ export async function initSchema(): Promise<void> {
       updated_at  TIMESTAMPTZ DEFAULT NOW()
     );
 
-    -- Business plan structured fields
     ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS investment_theses JSONB NOT NULL DEFAULT '[]';
     ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_markets JSONB NOT NULL DEFAULT '[]';
     ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS property_types JSONB NOT NULL DEFAULT '[]';
@@ -237,8 +236,7 @@ export async function initSchema(): Promise<void> {
     ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_min NUMERIC;
     ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_max NUMERIC;
 
-    -- Deal -> Business Plan link
-    ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id UUID;
+    ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT;
   `);
 }
 
@@ -261,32 +259,27 @@ export const dealQueries = {
 
   create: async (deal: Record<string, unknown>) => {
     const pool = getPool();
+    const cols = [
+      "id", "name", "address", "city", "state", "zip", "property_type", "status",
+      "starred", "asking_price", "square_footage", "units", "bedrooms", "year_built", "notes",
+      "loi_executed", "psa_executed",
+    ];
+    const vals: unknown[] = [
+      deal.id, deal.name, deal.address, deal.city, deal.state, deal.zip,
+      deal.property_type, deal.status, deal.starred,
+      deal.asking_price ?? null, deal.square_footage ?? null,
+      deal.units ?? null, deal.bedrooms ?? null,
+      deal.year_built ?? null, deal.notes ?? null,
+      deal.loi_executed ?? false, deal.psa_executed ?? false,
+    ];
+    if (deal.business_plan_id) {
+      cols.push("business_plan_id");
+      vals.push(deal.business_plan_id);
+    }
+    const placeholders = vals.map((_, i) => `$${i + 1}`).join(",");
     await pool.query(
-      `INSERT INTO deals
-        (id, name, address, city, state, zip, property_type, status,
-         starred, asking_price, square_footage, units, bedrooms, year_built, notes,
-         loi_executed, psa_executed, business_plan_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-      [
-        deal.id,
-        deal.name,
-        deal.address,
-        deal.city,
-        deal.state,
-        deal.zip,
-        deal.property_type,
-        deal.status,
-        deal.starred,
-        deal.asking_price ?? null,
-        deal.square_footage ?? null,
-        deal.units ?? null,
-        deal.bedrooms ?? null,
-        deal.year_built ?? null,
-        deal.notes ?? null,
-        deal.loi_executed ?? false,
-        deal.psa_executed ?? false,
-        deal.business_plan_id ?? null,
-      ]
+      `INSERT INTO deals (${cols.join(", ")}) VALUES (${placeholders})`,
+      vals
     );
     return dealQueries.getById(deal.id as string);
   },
