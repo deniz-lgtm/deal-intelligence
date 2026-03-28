@@ -50,10 +50,9 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // Semantic extras
         amber: {
-          DEFAULT: "hsl(var(--amber))",
-          foreground: "hsl(var(--amber-foreground))",
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
         },
         success: {
           DEFAULT: "hsl(var(--success))",
@@ -67,7 +66,10 @@ module.exports = {
         base: ["0.9375rem", { lineHeight: "1.5rem" }],
         lg: ["1.0625rem", { lineHeight: "1.625rem" }],
         xl: ["1.1875rem", { lineHeight: "1.75rem" }],
-        "2xl": ["1.375rem", { lineHeight: "2rem" }],
+        "2xl": ["1.375rem", { lineHeight: "1.875rem" }],
+        "3xl": ["1.75rem", { lineHeight: "2.25rem" }],
+        "4xl": ["2.25rem", { lineHeight: "2.75rem" }],
+        "5xl": ["3rem", { lineHeight: "3.5rem" }],
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -77,10 +79,9 @@ module.exports = {
         "2xl": "calc(var(--radius) + 8px)",
       },
       boxShadow: {
-        card: "0 0 0 1px rgb(0 0 0 / 0.03), 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.03)",
-        lifted: "0 0 0 1px rgb(0 0 0 / 0.03), 0 4px 16px -2px rgb(0 0 0 / 0.08), 0 2px 6px -2px rgb(0 0 0 / 0.04)",
-        "lifted-md": "0 0 0 1px rgb(0 0 0 / 0.03), 0 8px 24px -4px rgb(0 0 0 / 0.10), 0 4px 8px -4px rgb(0 0 0 / 0.05)",
-        "glow-primary": "0 0 0 1px hsl(239 84% 67% / 0.15), 0 2px 8px hsl(239 84% 67% / 0.1)",
+        card: "0 0 0 1px hsl(240 4% 18% / 0.8), 0 2px 8px hsl(0 0% 0% / 0.3), 0 1px 2px hsl(0 0% 0% / 0.2)",
+        lifted: "0 0 0 1px hsl(240 4% 20% / 0.8), 0 8px 24px hsl(0 0% 0% / 0.4), 0 4px 8px hsl(0 0% 0% / 0.2)",
+        "lifted-md": "0 0 0 1px hsl(240 4% 22% / 0.8), 0 16px 48px hsl(0 0% 0% / 0.5), 0 8px 16px hsl(0 0% 0% / 0.3)",
       },
       keyframes: {
         "accordion-down": {
@@ -91,28 +92,30 @@ module.exports = {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
-        "fade-in": {
-          from: { opacity: "0", transform: "translateY(4px)" },
+        "fade-up": {
+          from: { opacity: "0", transform: "translateY(12px)" },
           to: { opacity: "1", transform: "translateY(0)" },
+        },
+        "fade-in": {
+          from: { opacity: "0" },
+          to: { opacity: "1" },
         },
         "slide-up": {
-          from: { opacity: "0", transform: "translateY(8px)" },
-          to: { opacity: "1", transform: "translateY(0)" },
+          from: { opacity: "0", transform: "translateY(20px) scale(0.98)" },
+          to: { opacity: "1", transform: "translateY(0) scale(1)" },
         },
-        "shimmer": {
-          "0%": { backgroundPosition: "-200% 0" },
-          "100%": { backgroundPosition: "200% 0" },
+        "glow-pulse": {
+          "0%, 100%": { opacity: "0.4" },
+          "50%": { opacity: "0.8" },
         },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
-        "fade-in": "fade-in 0.2s ease-out",
-        "slide-up": "slide-up 0.3s ease-out",
-        "shimmer": "shimmer 2s ease-in-out infinite",
-      },
-      transitionProperty: {
-        colors: "color, background-color, border-color, text-decoration-color, fill, stroke",
+        "fade-up": "fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both",
+        "fade-in": "fade-in 0.4s ease-out both",
+        "slide-up": "slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both",
+        "glow-pulse": "glow-pulse 3s ease-in-out infinite",
       },
     },
   },

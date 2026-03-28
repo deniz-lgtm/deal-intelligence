@@ -31,17 +31,17 @@ interface MetricCardProps {
 
 function MetricCard({ title, value, subtitle, trend, trendValue, icon }: MetricCardProps) {
   return (
-    <div className="bg-card p-4 rounded-xl border shadow-card hover:shadow-lifted transition-all duration-200">
+    <div className="bg-card p-4 rounded-xl border border-border/60 shadow-card hover:shadow-lifted transition-all duration-200">
       <div className="flex items-start justify-between">
-        <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center">
+        <div className="h-9 w-9 rounded-lg bg-muted/30 flex items-center justify-center">
           {icon}
         </div>
         {trend && (
           <div className={cn(
             "flex items-center space-x-1 text-2xs font-medium px-2 py-0.5 rounded-full",
-            trend === 'up' ? "text-emerald-700 bg-emerald-50" :
-            trend === 'down' ? "text-red-700 bg-red-50" :
-            "text-muted-foreground bg-muted"
+            trend === 'up' ? "text-emerald-400 bg-emerald-500/10" :
+            trend === 'down' ? "text-red-400 bg-red-500/10" :
+            "text-muted-foreground bg-muted/30"
           )}>
             {trend === 'up' ? <ArrowUpRight className="h-3 w-3" /> :
              trend === 'down' ? <ArrowDownRight className="h-3 w-3" /> :
@@ -77,21 +77,21 @@ function RedFlagItem({ type, title, description }: RedFlagProps) {
   return (
     <div className={cn(
       "flex items-start space-x-3 p-3 rounded-xl border",
-      type === 'critical' ? "bg-red-50/30 border-red-200/60" :
-      type === 'warning' ? "bg-amber-50/30 border-amber-200/60" :
-      "bg-blue-50/30 border-blue-200/60"
+      type === 'critical' ? "bg-red-500/[0.05] border-red-500/20" :
+      type === 'warning' ? "bg-amber-500/[0.05] border-amber-500/20" :
+      "bg-blue-500/[0.05] border-blue-500/20"
     )}>
       <div className={cn(
         "p-1.5 rounded-lg flex-shrink-0",
-        type === 'critical' ? "bg-red-100" :
-        type === 'warning' ? "bg-amber-100" :
-        "bg-blue-100"
+        type === 'critical' ? "bg-red-500/10" :
+        type === 'warning' ? "bg-amber-500/10" :
+        "bg-blue-500/10"
       )}>
         <AlertTriangle className={cn(
           "h-3.5 w-3.5",
-          type === 'critical' ? "text-red-600" :
-          type === 'warning' ? "text-amber-600" :
-          "text-blue-600"
+          type === 'critical' ? "text-red-400" :
+          type === 'warning' ? "text-amber-400" :
+          "text-blue-400"
         )} />
       </div>
       <div className="flex-1 min-w-0">
@@ -99,9 +99,9 @@ function RedFlagItem({ type, title, description }: RedFlagProps) {
           <p className="text-sm font-medium text-foreground">{title}</p>
           <span className={cn(
             "text-2xs px-1.5 py-0.5 rounded-full font-medium",
-            type === 'critical' ? "bg-red-100 text-red-700" :
-            type === 'warning' ? "bg-amber-100 text-amber-700" :
-            "bg-blue-100 text-blue-700"
+            type === 'critical' ? "bg-red-500/10 text-red-400" :
+            type === 'warning' ? "bg-amber-500/10 text-amber-400" :
+            "bg-blue-500/10 text-blue-400"
           )}>
             {config.label}
           </span>
@@ -161,15 +161,15 @@ export function AnalysisDashboard() {
   return (
     <div className="space-y-5">
       {/* Deal Score */}
-      <div className="gradient-header rounded-xl p-6 text-white">
+      <div className="gradient-gold rounded-xl p-6 text-primary-foreground">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-white/60 text-xs font-medium uppercase tracking-wider">Overall Deal Score</p>
+            <p className="text-primary-foreground/60 text-xs font-medium uppercase tracking-wider">Overall Deal Score</p>
             <div className="flex items-baseline space-x-2 mt-2">
-              <span className="text-5xl font-bold tracking-tight tabular-nums">{MOCK_ANALYSIS.score}</span>
-              <span className="text-white/40 text-lg">/ 10</span>
+              <span className="text-5xl font-bold tracking-tight tabular-nums font-display">{MOCK_ANALYSIS.score}</span>
+              <span className="text-primary-foreground/40 text-lg">/ 10</span>
             </div>
-            <p className="text-white/70 text-sm mt-2">
+            <p className="text-primary-foreground/70 text-sm mt-2">
               {MOCK_ANALYSIS.score >= 7 ? "Strong investment opportunity" :
                MOCK_ANALYSIS.score >= 5 ? "Moderate opportunity with caveats" :
                "Proceed with caution"}
@@ -179,7 +179,7 @@ export function AnalysisDashboard() {
             <Button
               variant="secondary"
               size="sm"
-              className="bg-white/10 hover:bg-white/20 text-white border-0 text-xs"
+              className="bg-black/20 hover:bg-black/30 text-primary-foreground border-0 text-xs"
               onClick={handleExportPDF}
             >
               <FileDown className="h-3.5 w-3.5 mr-1.5" />
@@ -188,7 +188,7 @@ export function AnalysisDashboard() {
             <Button
               variant="secondary"
               size="sm"
-              className="bg-white/10 hover:bg-white/20 text-white border-0 text-xs"
+              className="bg-black/20 hover:bg-black/30 text-primary-foreground border-0 text-xs"
               onClick={handleSyncNotion}
             >
               <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
@@ -253,13 +253,13 @@ export function AnalysisDashboard() {
       </div>
 
       {/* Property Details */}
-      <div className="bg-muted/30 rounded-xl p-5 border">
+      <div className="bg-muted/10 rounded-xl p-5 border border-border/60">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="font-semibold text-sm flex items-center">
+          <h4 className="font-display text-sm flex items-center">
             <Building2 className="h-4 w-4 mr-2 text-muted-foreground" />
             Property Details
           </h4>
-          <span className="text-2xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full font-medium">
+          <span className="text-2xs px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded-full font-medium border border-blue-500/20">
             Class {MOCK_ANALYSIS.property.propertyClass}
           </span>
         </div>
@@ -287,10 +287,10 @@ export function AnalysisDashboard() {
       {/* Red Flags */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h4 className="font-semibold text-sm flex items-center">
+          <h4 className="font-display text-sm flex items-center">
             <AlertTriangle className="h-4 w-4 mr-2 text-muted-foreground" />
             Red Flags & Warnings
-            <span className="ml-2 px-2 py-0.5 bg-red-50 text-red-700 rounded-full text-2xs font-medium tabular-nums">
+            <span className="ml-2 px-2 py-0.5 bg-red-500/10 text-red-400 rounded-full text-2xs font-medium tabular-nums border border-red-500/20">
               {MOCK_ANALYSIS.redFlags.length}
             </span>
           </h4>

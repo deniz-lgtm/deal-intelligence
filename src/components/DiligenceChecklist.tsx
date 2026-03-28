@@ -38,10 +38,10 @@ const STATUS_CONFIG: Record<
     badgeVariant: "success" | "secondary" | "outline" | "issue" | "warning";
   }
 > = {
-  complete: { icon: CheckCircle2, label: "Complete", className: "text-emerald-500", badgeVariant: "success" },
+  complete: { icon: CheckCircle2, label: "Complete", className: "text-emerald-400", badgeVariant: "success" },
   pending: { icon: Circle, label: "Pending", className: "text-muted-foreground/40", badgeVariant: "secondary" },
   na: { icon: XCircle, label: "N/A", className: "text-muted-foreground/30", badgeVariant: "outline" },
-  issue: { icon: AlertTriangle, label: "Issue", className: "text-red-500", badgeVariant: "issue" },
+  issue: { icon: AlertTriangle, label: "Issue", className: "text-red-400", badgeVariant: "issue" },
 };
 
 const CATEGORY_DOC_MAP: Record<string, DocumentCategory[]> = {
@@ -181,7 +181,7 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
   return (
     <div className="space-y-4">
       {/* Summary bar */}
-      <div className="flex items-center justify-between gap-4 p-4 rounded-xl border bg-card shadow-card">
+      <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-border/60 bg-card shadow-card">
         <div className="flex-1">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium tabular-nums">{completeItems} / {totalItems} complete</span>
@@ -189,7 +189,7 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
           </div>
           <Progress value={progressPct} className="h-1.5" />
           {issueItems > 0 && (
-            <p className="text-2xs text-red-500 mt-1.5 flex items-center gap-1">
+            <p className="text-2xs text-red-400 mt-1.5 flex items-center gap-1">
               <AlertTriangle className="h-3 w-3" />
               {issueItems} issue{issueItems !== 1 ? "s" : ""} flagged
             </p>
@@ -205,7 +205,7 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
       </div>
 
       {autofillResult && (
-        <div className="text-xs text-muted-foreground bg-primary/[0.03] border border-primary/10 rounded-lg px-3 py-2.5 flex items-center gap-2">
+        <div className="text-xs text-muted-foreground bg-primary/[0.05] border border-primary/15 rounded-lg px-3 py-2.5 flex items-center gap-2">
           <Sparkles className="h-3 w-3 text-primary shrink-0" />
           {autofillResult.message
             ? autofillResult.message
@@ -226,9 +226,9 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
         const relevantDocs = documents.filter((d) => relevantDocCats.includes(d.category as DocumentCategory));
 
         return (
-          <div key={category} className="border rounded-xl overflow-hidden shadow-card">
+          <div key={category} className="border border-border/60 rounded-xl overflow-hidden shadow-card">
             {/* Category header */}
-            <div className="flex items-center bg-card hover:bg-accent/30 transition-colors">
+            <div className="flex items-center bg-card hover:bg-muted/20 transition-colors">
               <button
                 onClick={() => toggleCategory(category)}
                 className="flex-1 flex items-center gap-3 p-4 text-left"
@@ -239,15 +239,15 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
                   <ChevronRight className="h-4 w-4 text-muted-foreground/60 shrink-0" />
                 )}
                 <span className="font-medium text-sm">{category}</span>
-                {hasIssues && <AlertTriangle className="h-3.5 w-3.5 text-red-500" />}
+                {hasIssues && <AlertTriangle className="h-3.5 w-3.5 text-red-400" />}
               </button>
               <div className="flex items-center gap-3 pr-4">
                 <span className="text-2xs text-muted-foreground tabular-nums">{catComplete}/{catTotal}</span>
-                <div className="w-16 bg-muted rounded-full h-1">
+                <div className="w-16 bg-muted/30 rounded-full h-1">
                   <div
                     className={cn(
                       "h-1 rounded-full transition-all duration-300",
-                      catPct === 100 ? "bg-emerald-500" : hasIssues ? "bg-red-400" : "bg-primary"
+                      catPct === 100 ? "bg-emerald-400" : hasIssues ? "bg-red-400" : "gradient-gold"
                     )}
                     style={{ width: `${catPct}%` }}
                   />
@@ -269,7 +269,7 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
 
             {/* Per-category upload area */}
             {uploadingCategory === category && (
-              <div className="border-t bg-muted/20 p-3 flex items-center gap-3">
+              <div className="border-t border-border/30 bg-muted/10 p-3 flex items-center gap-3">
                 <label className="flex-1 cursor-pointer">
                   <input
                     type="file"
@@ -280,7 +280,7 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
                       if (e.target.files) handleCategoryUpload(category, e.target.files);
                     }}
                   />
-                  <div className="flex items-center gap-2 border-2 border-dashed rounded-lg px-4 py-2.5 hover:border-primary/40 transition-colors">
+                  <div className="flex items-center gap-2 border-2 border-dashed border-border/40 rounded-lg px-4 py-2.5 hover:border-primary/40 transition-colors">
                     <Upload className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="text-xs text-muted-foreground">Click to upload documents for <strong>{category}</strong></span>
                   </div>
@@ -292,10 +292,10 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
             )}
 
             {isExpanded && (
-              <div className="border-t">
+              <div className="border-t border-border/30">
                 {/* Relevant docs panel */}
                 {relevantDocs.length > 0 && (
-                  <div className="px-4 py-2.5 bg-primary/[0.02] border-b flex items-start gap-2">
+                  <div className="px-4 py-2.5 bg-primary/[0.03] border-b border-border/20 flex items-start gap-2">
                     <FileText className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
                       <p className="text-2xs font-medium text-primary mb-1">Relevant documents</p>
@@ -306,7 +306,7 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
                             href={`/api/documents/${d.id}/view`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-2xs bg-card border rounded-md px-2 py-0.5 hover:bg-accent transition-colors truncate max-w-[200px]"
+                            className="text-2xs bg-muted/30 border border-border/30 rounded-md px-2 py-0.5 hover:bg-muted/50 transition-colors truncate max-w-[200px]"
                             title={d.original_name}
                           >
                             {d.original_name}
@@ -317,7 +317,7 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
                   </div>
                 )}
 
-                <div className="divide-y divide-border/50">
+                <div className="divide-y divide-border/20">
                   {catItems.map((item) => (
                     <ChecklistRow
                       key={item.id}
@@ -375,8 +375,8 @@ function ChecklistRow({
 
   return (
     <div className={cn(
-      "px-4 py-3 bg-card hover:bg-accent/20 transition-colors",
-      item.status === "issue" && "bg-red-50/30"
+      "px-4 py-3 bg-card hover:bg-muted/10 transition-colors",
+      item.status === "issue" && "bg-red-500/[0.03]"
     )}>
       <div className="flex items-start gap-3">
         <button

@@ -143,8 +143,8 @@ export default function NewDealPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-10 shadow-card">
+    <div className="min-h-screen bg-background noise">
+      <header className="border-b border-border/40 bg-card/80 backdrop-blur-xl sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-6 h-14 flex items-center gap-4">
           <Link href="/">
             <Button variant="ghost" size="sm" className="text-xs h-8">
@@ -152,17 +152,17 @@ export default function NewDealPage() {
               Back
             </Button>
           </Link>
-          <div className="h-4 w-px bg-border" />
+          <div className="h-4 w-px bg-border/40" />
           <div className="flex items-center gap-2">
             <Building2 className="h-4 w-4 text-muted-foreground" />
-            <h1 className="font-semibold text-sm">New Deal</h1>
+            <h1 className="font-display text-sm">New Deal</h1>
           </div>
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-6 py-8">
         <div className="mb-6">
-          <h2 className="text-xl font-bold tracking-tight">Create a new deal</h2>
+          <h2 className="font-display text-xl tracking-tight">Create a new deal</h2>
           <p className="text-muted-foreground text-sm mt-1">
             A diligence checklist with 65+ items will be automatically created.
           </p>
@@ -173,22 +173,22 @@ export default function NewDealPage() {
           {omFile ? (
             <div
               className={cn(
-                "border rounded-xl p-4 flex items-center gap-3 transition-colors",
+                "border border-border/60 rounded-xl p-4 flex items-center gap-3 transition-colors",
                 extracting
                   ? "bg-primary/5 border-primary/20"
-                  : "bg-emerald-50/50 border-emerald-200"
+                  : "bg-emerald-500/10 border-emerald-500/20"
               )}
             >
               <div
                 className={cn(
                   "w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0",
-                  extracting ? "bg-primary/10" : "bg-emerald-100"
+                  extracting ? "bg-primary/10" : "bg-emerald-500/10"
                 )}
               >
                 {extracting ? (
                   <Loader2 className="h-4 w-4 text-primary animate-spin" />
                 ) : (
-                  <Sparkles className="h-4 w-4 text-emerald-600" />
+                  <Sparkles className="h-4 w-4 text-emerald-400" />
                 )}
               </div>
               <div className="flex-1 min-w-0">
@@ -218,8 +218,8 @@ export default function NewDealPage() {
               className={cn(
                 "border-2 border-dashed rounded-xl p-8 flex flex-col items-center gap-3 cursor-pointer transition-all duration-200",
                 dragging
-                  ? "border-primary bg-primary/5 shadow-glow-primary"
-                  : "border-border hover:border-primary/40 hover:bg-accent/30"
+                  ? "border-primary bg-primary/5"
+                  : "border-border/60 hover:border-primary/40 hover:bg-muted/20"
               )}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
@@ -231,7 +231,7 @@ export default function NewDealPage() {
               }}
               onClick={() => inputRef.current?.click()}
             >
-              <div className="w-11 h-11 rounded-xl bg-primary/8 flex items-center justify-center">
+              <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center">
                 <FileText className="h-5 w-5 text-primary" />
               </div>
               <div className="text-center">
@@ -256,7 +256,7 @@ export default function NewDealPage() {
             </div>
           )}
           {extractError && (
-            <p className="text-2xs text-rose-600 mt-2 flex items-center gap-1">
+            <p className="text-2xs text-red-400 mt-2 flex items-center gap-1">
               <XCircle className="h-3 w-3" />
               {extractError}
             </p>
@@ -430,8 +430,8 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border rounded-xl p-5 bg-card shadow-card space-y-4">
-      <h3 className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">
+    <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card space-y-4">
+      <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">
         {title}
       </h3>
       {children}

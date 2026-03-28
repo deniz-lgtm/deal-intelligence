@@ -192,17 +192,17 @@ export default function DealOverviewPage({
   const prevStatus = !isDead && currentPipelineIdx > 0 ? DEAL_PIPELINE[currentPipelineIdx - 1] : null;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-up">
       {/* Gate warning modal */}
       {showGateWarning && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-card border rounded-2xl p-6 max-w-md w-full shadow-lifted-md animate-slide-up">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-2xl p-6 max-w-md w-full shadow-lifted animate-slide-up">
             <div className="flex items-start gap-3 mb-4">
-              <div className="h-9 w-9 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
-                <AlertTriangle className="h-4.5 w-4.5 text-amber-500" />
+              <div className="h-9 w-9 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
+                <AlertTriangle className="h-4.5 w-4.5 text-amber-400" />
               </div>
               <div>
-                <h3 className="font-semibold mb-1">Stage Gate Warning</h3>
+                <h3 className="font-display font-semibold mb-1">Stage Gate Warning</h3>
                 <p className="text-sm text-muted-foreground leading-relaxed">{showGateWarning.message}</p>
               </div>
             </div>
@@ -233,20 +233,20 @@ export default function DealOverviewPage({
               {deal.property_type ? titleCase(deal.property_type) : ""}
             </span>
             {deal.loi_executed && (
-              <span className="text-2xs text-emerald-700 font-medium bg-emerald-50 px-2 py-0.5 rounded-full">
+              <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                 LOI ✓
               </span>
             )}
             {deal.psa_executed && (
-              <span className="text-2xs text-emerald-700 font-medium bg-emerald-50 px-2 py-0.5 rounded-full">
+              <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                 PSA ✓
               </span>
             )}
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">{deal.name}</h1>
+          <h1 className="font-display text-2xl tracking-tight">{deal.name}</h1>
           {(deal.address || deal.city) && (
             <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-1">
-              <MapPin className="h-3.5 w-3.5" />
+              <MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />
               {[deal.address, deal.city, deal.state, deal.zip]
                 .filter(Boolean)
                 .join(", ")}
@@ -258,7 +258,7 @@ export default function DealOverviewPage({
             <Star
               className={`h-4 w-4 ${
                 deal.starred
-                  ? "text-amber-500 fill-amber-500"
+                  ? "text-amber-400 fill-amber-400"
                   : "text-muted-foreground"
               }`}
             />
@@ -280,9 +280,9 @@ export default function DealOverviewPage({
       </div>
 
       {/* Deal Pipeline */}
-      <div className="border rounded-xl p-5 bg-card shadow-card">
+      <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-sm">Deal Pipeline</h3>
+          <h3 className="font-display text-sm">Deal Pipeline</h3>
           {isDead && (
             <Button
               variant="outline"
@@ -316,9 +316,9 @@ export default function DealOverviewPage({
                   disabled={advancingTo !== null}
                   className={`w-full h-1.5 rounded-full transition-all cursor-pointer hover:opacity-80 ${
                     isCompleted
-                      ? "bg-primary"
+                      ? "gradient-gold"
                       : isCurrent
-                      ? "bg-primary/50"
+                      ? "bg-primary/30"
                       : isFuture && !isDead
                       ? "bg-muted hover:bg-primary/20"
                       : "bg-muted/40"
@@ -341,7 +341,7 @@ export default function DealOverviewPage({
           })}
         </div>
         {!isDead && (prevStatus || nextStatus) && (
-          <div className="flex items-center justify-between mt-2 pt-3 border-t">
+          <div className="flex items-center justify-between mt-2 pt-3 border-t border-border/40">
             <div>
               {prevStatus && (
                 <Button
@@ -378,7 +378,7 @@ export default function DealOverviewPage({
 
       {/* Key metrics */}
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Key Metrics</h3>
+        <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">Key Metrics</h3>
         {documents.length > 0 && (
           <Button
             variant="outline"
@@ -398,29 +398,29 @@ export default function DealOverviewPage({
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MetricCard
-          icon={<DollarSign className="h-4 w-4 text-emerald-600" />}
+          icon={<DollarSign className="h-4 w-4 text-emerald-400" />}
           label="Asking Price"
           value={formatCurrency(deal.asking_price)}
         />
         <MetricCard
-          icon={<Maximize2 className="h-4 w-4 text-blue-600" />}
+          icon={<Maximize2 className="h-4 w-4 text-blue-400" />}
           label="Square Footage"
           value={deal.square_footage ? `${formatNumber(deal.square_footage)} SF` : "—"}
         />
         <MetricCard
-          icon={<Building2 className="h-4 w-4 text-purple-600" />}
+          icon={<Building2 className="h-4 w-4 text-purple-400" />}
           label="Units"
           value={deal.units ? formatNumber(deal.units) : "—"}
         />
         {deal.bedrooms ? (
           <MetricCard
-            icon={<BedDouble className="h-4 w-4 text-indigo-600" />}
+            icon={<BedDouble className="h-4 w-4 text-indigo-400" />}
             label="Bedrooms"
             value={formatNumber(deal.bedrooms)}
           />
         ) : (
           <MetricCard
-            icon={<Calendar className="h-4 w-4 text-orange-600" />}
+            icon={<Calendar className="h-4 w-4 text-orange-400" />}
             label="Year Built"
             value={deal.year_built ? String(deal.year_built) : "—"}
           />
@@ -429,9 +429,9 @@ export default function DealOverviewPage({
 
       {/* Progress + Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2 border rounded-xl p-5 bg-card shadow-card">
+        <div className="md:col-span-2 border border-border/60 rounded-xl p-5 bg-card shadow-card">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-sm">Diligence Progress</h3>
+            <h3 className="font-display text-sm">Diligence Progress</h3>
             <Link href={`/deals/${params.id}/checklist`}>
               <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
                 View Checklist <ArrowRight className="h-3 w-3" />
@@ -446,14 +446,14 @@ export default function DealOverviewPage({
           </div>
           <Progress value={progressPct} className="h-2 mb-3" />
           <div className="flex gap-4 text-2xs text-muted-foreground">
-            <span className="text-emerald-600 font-medium">
+            <span className="text-emerald-400 font-medium">
               ✓ {checklistComplete} complete
             </span>
             <span>
               ○ {checklistTotal - checklistComplete - checklistIssues} pending
             </span>
             {checklistIssues > 0 && (
-              <span className="text-red-500 font-medium">
+              <span className="text-red-400 font-medium">
                 ⚠ {checklistIssues} issues
               </span>
             )}
@@ -461,25 +461,25 @@ export default function DealOverviewPage({
         </div>
 
         {/* Quick actions */}
-        <div className="border rounded-xl p-5 bg-card shadow-card">
-          <h3 className="font-semibold text-sm mb-3">Quick Access</h3>
+        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
+          <h3 className="font-display text-sm mb-3">Quick Access</h3>
           <div className="space-y-1">
             {[
-              { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3.5 w-3.5 text-blue-600 shrink-0" />, label: "Underwriting", sub: "Financial model" },
+              { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3.5 w-3.5 text-blue-400 shrink-0" />, label: "Underwriting", sub: "Financial model" },
               { href: `/deals/${params.id}/documents`, icon: <FileText className="h-3.5 w-3.5 text-primary shrink-0" />, label: "Documents", sub: `${documents.length} uploaded` },
-              { href: `/deals/${params.id}/photos`, icon: <Camera className="h-3.5 w-3.5 text-green-600 shrink-0" />, label: "Photos", sub: "Property photos" },
-              { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-3.5 w-3.5 text-orange-600 shrink-0" />, label: "LOI", sub: deal.loi_executed ? "Executed ✓" : "Build & track" },
-              { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-3.5 w-3.5 text-amber-600 shrink-0" />, label: "DD Abstract", sub: "AI summary" },
-              { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3.5 w-3.5 text-purple-600 shrink-0" />, label: "AI Chat", sub: "Ask about this deal" },
+              { href: `/deals/${params.id}/photos`, icon: <Camera className="h-3.5 w-3.5 text-emerald-400 shrink-0" />, label: "Photos", sub: "Property photos" },
+              { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-3.5 w-3.5 text-orange-400 shrink-0" />, label: "LOI", sub: deal.loi_executed ? "Executed ✓" : "Build & track" },
+              { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0" />, label: "DD Abstract", sub: "AI summary" },
+              { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3.5 w-3.5 text-purple-400 shrink-0" />, label: "AI Chat", sub: "Ask about this deal" },
             ].map(({ href, icon, label, sub }) => (
               <Link key={href} href={href} className="block">
-                <button className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-accent transition-colors text-left group/item">
+                <button className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors text-left group/item">
                   {icon}
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium">{label}</p>
                     <p className="text-2xs text-muted-foreground truncate">{sub}</p>
                   </div>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground/30 group-hover/item:text-muted-foreground transition-colors" />
+                  <ArrowRight className="h-3 w-3 text-muted-foreground/20 group-hover/item:text-muted-foreground transition-colors" />
                 </button>
               </Link>
             ))}
@@ -489,9 +489,9 @@ export default function DealOverviewPage({
 
       {/* Document breakdown */}
       {documents.length > 0 && (
-        <div className="border rounded-xl p-5 bg-card shadow-card">
+        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-sm">Documents by Category</h3>
+            <h3 className="font-display text-sm">Documents by Category</h3>
             <Link href={`/deals/${params.id}/documents`}>
               <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
                 Manage <ArrowRight className="h-3 w-3" />
@@ -500,7 +500,7 @@ export default function DealOverviewPage({
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {Object.entries(docsByCategory).map(([cat, count]) => (
-              <div key={cat} className="bg-muted/50 rounded-lg p-3 text-center">
+              <div key={cat} className="bg-muted/30 rounded-lg p-3 text-center border border-border/30">
                 <p className="text-xl font-bold tabular-nums">{count}</p>
                 <p className="text-2xs text-muted-foreground mt-0.5">
                   {titleCase(cat)}
@@ -512,11 +512,11 @@ export default function DealOverviewPage({
       )}
 
       {/* Notes */}
-      <div className="border rounded-xl p-5 bg-card shadow-card">
+      <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
-            <h3 className="font-semibold text-sm">Notes</h3>
+            <h3 className="font-display text-sm">Notes</h3>
           </div>
           {!editingNotes ? (
             <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setEditingNotes(true)}>
@@ -559,7 +559,7 @@ function MetricCard({
   value: string;
 }) {
   return (
-    <div className="border rounded-xl p-4 bg-card shadow-card">
+    <div className="border border-border/60 rounded-xl p-4 bg-card shadow-card">
       <div className="flex items-center gap-2 mb-2">
         {icon}
         <span className="text-2xs text-muted-foreground">{label}</span>

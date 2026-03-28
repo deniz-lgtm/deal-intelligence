@@ -47,13 +47,13 @@ const NAV_ITEMS = [
 ];
 
 const STATUS_COLORS: Record<string, string> = {
-  sourcing: "bg-gray-500/20 text-gray-200",
-  screening: "bg-blue-500/20 text-blue-200",
-  loi: "bg-amber-500/20 text-amber-200",
-  under_contract: "bg-orange-500/20 text-orange-200",
-  diligence: "bg-indigo-500/20 text-indigo-200",
-  closing: "bg-emerald-500/20 text-emerald-200",
-  closed: "bg-emerald-500/20 text-emerald-200",
+  sourcing: "bg-zinc-500/20 text-zinc-300",
+  screening: "bg-blue-500/20 text-blue-300",
+  loi: "bg-amber-500/20 text-amber-300",
+  under_contract: "bg-orange-500/20 text-orange-300",
+  diligence: "bg-primary/20 text-primary",
+  closing: "bg-emerald-500/20 text-emerald-300",
+  closed: "bg-emerald-500/20 text-emerald-300",
   dead: "bg-red-500/20 text-red-300",
 };
 
@@ -77,50 +77,50 @@ export default function DealLayout({
   const basePath = `/deals/${params.id}`;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-background noise flex flex-col">
       {/* ── Header bar ── */}
-      <header className="gradient-header sticky top-0 z-20">
+      <header className="sticky top-0 z-20 border-b border-border/40 bg-card/80 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex items-center gap-3 h-12">
             {/* Back link */}
             <Link href="/">
-              <button className="flex items-center gap-1.5 text-xs text-white/60 hover:text-white transition-colors">
+              <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
                 <ArrowLeft className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Deals</span>
               </button>
             </Link>
-            <span className="text-white/20 text-xs">/</span>
+            <span className="text-border text-xs">/</span>
 
             {deal ? (
               <div className="flex items-center gap-2.5 min-w-0">
-                <span className="font-medium text-white text-sm truncate max-w-[180px] sm:max-w-sm">
+                <span className="font-display text-sm text-foreground truncate max-w-[180px] sm:max-w-sm">
                   {deal.name}
                 </span>
                 {deal.starred && (
                   <Star className="h-3 w-3 text-amber-400 fill-amber-400 flex-shrink-0" />
                 )}
                 {deal.city && (
-                  <span className="text-2xs text-white/40 hidden md:inline">
+                  <span className="text-2xs text-muted-foreground hidden md:inline">
                     {deal.city}, {deal.state}
                   </span>
                 )}
                 <span
                   className={cn(
                     "text-2xs px-2 py-0.5 rounded-full font-medium flex-shrink-0",
-                    STATUS_COLORS[deal.status] ?? "bg-white/15 text-white/70"
+                    STATUS_COLORS[deal.status] ?? "bg-muted text-muted-foreground"
                   )}
                 >
                   {DEAL_STAGE_LABELS[deal.status] || deal.status}
                 </span>
               </div>
             ) : (
-              <div className="h-4 w-40 rounded bg-white/10 animate-pulse" />
+              <div className="h-4 w-40 rounded bg-muted/30 animate-pulse" />
             )}
           </div>
         </div>
 
         {/* ── Tab nav ── */}
-        <div className="border-t border-white/[0.06]">
+        <div className="border-t border-border/30">
           <div className="max-w-7xl mx-auto px-4 sm:px-6">
             <div className="flex gap-0.5 overflow-x-auto scrollbar-none py-1">
               {NAV_ITEMS.map((item) => {
@@ -137,8 +137,8 @@ export default function DealLayout({
                       className={cn(
                         "flex items-center gap-1.5 px-3 py-1.5 text-2xs font-medium rounded-md transition-all duration-150 whitespace-nowrap",
                         isActive
-                          ? "bg-white text-primary shadow-sm"
-                          : "text-white/50 hover:text-white/90 hover:bg-white/[0.07]"
+                          ? "gradient-gold text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                       )}
                     >
                       <Icon className="h-3.5 w-3.5" />

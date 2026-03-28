@@ -132,14 +132,14 @@ export default function DocumentUpload({
         className={cn(
           "border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all duration-200",
           isDragActive
-            ? "border-primary bg-primary/5 shadow-glow-primary"
-            : "border-border hover:border-primary/40 hover:bg-accent/30"
+            ? "border-primary bg-primary/5"
+            : "border-border/60 hover:border-primary/40 hover:bg-muted/20"
         )}
       >
         <input {...getInputProps()} />
         <div className={cn(
           "mx-auto h-12 w-12 rounded-xl flex items-center justify-center mb-3 transition-colors",
-          isDragActive ? "bg-primary/10" : "bg-muted"
+          isDragActive ? "bg-primary/10" : "bg-muted/30"
         )}>
           <Upload
             className={cn(
@@ -164,7 +164,7 @@ export default function DocumentUpload({
           {files.map((uf, i) => (
             <div
               key={i}
-              className="flex items-center gap-3 p-3 rounded-lg border bg-card text-sm shadow-card"
+              className="flex items-center gap-3 p-3 rounded-lg border border-border/60 bg-card text-sm shadow-card"
             >
               <FileIcon mimeType={uf.file.type} />
               <div className="flex-1 min-w-0">
@@ -215,14 +215,14 @@ export default function DocumentUpload({
 function FileIcon({ mimeType }: { mimeType: string }) {
   if (mimeType === "application/pdf") {
     return (
-      <div className="h-8 w-8 rounded-lg bg-red-50 flex items-center justify-center shrink-0">
-        <FileText className="h-4 w-4 text-red-500" />
+      <div className="h-8 w-8 rounded-lg bg-red-500/10 flex items-center justify-center shrink-0">
+        <FileText className="h-4 w-4 text-red-400" />
       </div>
     );
   }
   return (
-    <div className="h-8 w-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
-      <File className="h-4 w-4 text-blue-500" />
+    <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
+      <File className="h-4 w-4 text-blue-400" />
     </div>
   );
 }
@@ -238,7 +238,7 @@ function StatusIcon({
     return <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />;
   }
   if (status === "done") {
-    return <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />;
+    return <CheckCircle className="h-4 w-4 text-emerald-400 shrink-0" />;
   }
   if (status === "error") {
     return (

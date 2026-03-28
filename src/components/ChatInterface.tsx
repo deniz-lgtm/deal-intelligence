@@ -153,13 +153,13 @@ export default function ChatInterface({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-card">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/40 bg-card/80 backdrop-blur-xl">
         <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center shadow-sm">
-            <Bot className="h-4 w-4 text-white" />
+          <div className="h-8 w-8 rounded-lg gradient-gold flex items-center justify-center shadow-sm">
+            <Bot className="h-4 w-4 text-primary-foreground" />
           </div>
           <div>
-            <p className="text-sm font-semibold">Deal Intelligence</p>
+            <p className="text-sm font-display">Deal Intelligence</p>
             <p className="text-2xs text-muted-foreground">{dealName}</p>
           </div>
         </div>
@@ -169,8 +169,8 @@ export default function ChatInterface({
             className={cn(
               "flex items-center gap-1.5 text-2xs px-2.5 py-1.5 rounded-lg border transition-all duration-150",
               localContextNotes
-                ? "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
-                : "border-border text-muted-foreground hover:bg-accent"
+                ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+                : "border-border/40 text-muted-foreground hover:bg-muted/50"
             )}
           >
             <Brain className="h-3.5 w-3.5" />
@@ -199,7 +199,7 @@ export default function ChatInterface({
 
       {/* Memory panel */}
       {showMemory && (
-        <div className="px-4 py-3 border-b bg-primary/[0.03]">
+        <div className="px-4 py-3 border-b border-border/30 bg-primary/[0.05]">
           <p className="text-2xs font-semibold text-primary mb-1.5 flex items-center gap-1.5">
             <Brain className="h-3.5 w-3.5" />
             Deal Memory
@@ -222,10 +222,10 @@ export default function ChatInterface({
         {messages.length === 0 && !loading && (
           <div className="py-8">
             <div className="text-center mb-8">
-              <div className="h-12 w-12 mx-auto rounded-2xl bg-muted flex items-center justify-center mb-3">
+              <div className="h-12 w-12 mx-auto rounded-2xl bg-muted/30 flex items-center justify-center mb-3">
                 <Bot className="h-6 w-6 text-muted-foreground/30" />
               </div>
-              <p className="text-sm font-medium mb-1">Ask questions or give me context</p>
+              <p className="text-sm font-display mb-1">Ask questions or give me context</p>
               <p className="text-2xs text-muted-foreground max-w-xs mx-auto">
                 I can answer questions, save deal intel to memory, and update deal fields
               </p>
@@ -238,7 +238,7 @@ export default function ChatInterface({
                     <button
                       key={q}
                       onClick={() => sendMessage(q)}
-                      className="w-full text-left text-xs p-3 rounded-lg border border-border hover:bg-accent hover:border-accent-foreground/10 transition-all duration-150"
+                      className="w-full text-left text-xs p-3 rounded-lg border border-border/40 hover:bg-muted/30 hover:border-border transition-all duration-150"
                     >
                       {q}
                     </button>
@@ -252,7 +252,7 @@ export default function ChatInterface({
                     <button
                       key={q}
                       onClick={() => sendMessage(q)}
-                      className="w-full text-left text-xs p-3 rounded-lg border border-primary/15 bg-primary/[0.03] hover:bg-primary/[0.06] text-foreground transition-all duration-150"
+                      className="w-full text-left text-xs p-3 rounded-lg border border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.08] text-foreground transition-all duration-150"
                     >
                       {q}
                     </button>
@@ -293,7 +293,7 @@ export default function ChatInterface({
       </div>
 
       {/* Input */}
-      <div className="p-4 border-t bg-card">
+      <div className="p-4 border-t border-border/40 bg-card/80 backdrop-blur-xl">
         <div className="flex gap-2">
           <Textarea
             value={input}
@@ -316,7 +316,7 @@ export default function ChatInterface({
             )}
           </Button>
         </div>
-        <p className="text-2xs text-muted-foreground/60 mt-2 text-center">
+        <p className="text-2xs text-muted-foreground/40 mt-2 text-center">
           Enter to send · Shift+Enter for new line
         </p>
       </div>
@@ -342,14 +342,14 @@ function MessageBubble({
         className={cn(
           "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
           isUser
-            ? "bg-primary text-primary-foreground rounded-br-md"
-            : "bg-muted rounded-bl-md"
+            ? "gradient-gold text-primary-foreground rounded-br-md"
+            : "bg-muted/50 border border-border/30 rounded-bl-md"
         )}
       >
         {isUser ? (
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : (
-          <div className="prose prose-sm dark:prose-invert max-w-none">
+          <div className="prose prose-sm prose-invert max-w-none">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {message.content}
             </ReactMarkdown>
@@ -357,7 +357,7 @@ function MessageBubble({
         )}
       </div>
       {isUser && (
-        <div className="h-7 w-7 rounded-full bg-secondary flex items-center justify-center shrink-0 mt-0.5">
+        <div className="h-7 w-7 rounded-full bg-muted/30 border border-border/30 flex items-center justify-center shrink-0 mt-0.5">
           <User className="h-3.5 w-3.5 text-muted-foreground" />
         </div>
       )}
@@ -371,8 +371,8 @@ function ActionCard({ action }: { action: ChatAction }) {
       className={cn(
         "flex items-start gap-2 text-xs px-3 py-2 rounded-lg border",
         action.type === "context_saved"
-          ? "bg-primary/[0.03] border-primary/15 text-primary"
-          : "bg-blue-50/50 border-blue-200 text-blue-700"
+          ? "bg-primary/[0.05] border-primary/20 text-primary"
+          : "bg-blue-500/10 border-blue-500/20 text-blue-400"
       )}
     >
       {action.type === "context_saved" ? (

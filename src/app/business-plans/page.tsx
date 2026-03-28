@@ -90,12 +90,12 @@ Vacancy is always intentional at acquisition — we will never have a rent roll 
           className={cn(
             "flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border transition-all duration-150",
             isDefault
-              ? "bg-amber-50 border-amber-200 text-amber-800"
-              : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
+              ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
+              : "bg-muted/30 border-border/40 text-muted-foreground hover:bg-muted/50"
           )}
         >
           {isDefault ? (
-            <Star className="h-3.5 w-3.5 fill-amber-500 text-amber-500" />
+            <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
           ) : (
             <StarOff className="h-3.5 w-3.5" />
           )}
@@ -162,22 +162,22 @@ function PlanCard({
   }
 
   return (
-    <Card className={cn("transition-all duration-200", plan.is_default && "ring-1 ring-amber-200 shadow-lifted")}>
+    <Card className={cn("transition-all duration-200", plan.is_default && "ring-1 ring-amber-500/30 shadow-lifted")}>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2.5 min-w-0">
             <div className={cn(
               "h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5",
-              plan.is_default ? "bg-indigo-50" : "bg-primary/8"
+              plan.is_default ? "bg-primary/10" : "bg-muted/30"
             )}>
-              <BookOpen className={cn("h-4 w-4", plan.is_default ? "text-indigo-600" : "text-primary")} />
+              <BookOpen className={cn("h-4 w-4", plan.is_default ? "text-primary" : "text-muted-foreground")} />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <CardTitle className="text-base leading-tight">{plan.name}</CardTitle>
+                <CardTitle className="text-base leading-tight font-display">{plan.name}</CardTitle>
                 {plan.is_default && (
-                  <span className="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-                    <Star className="h-3 w-3 fill-amber-500 text-amber-500" />
+                  <span className="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
                     Default
                   </span>
                 )}
@@ -196,7 +196,7 @@ function PlanCard({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-muted-foreground hover:text-amber-600"
+                className="h-7 w-7 text-muted-foreground hover:text-amber-400"
                 onClick={handleSetDefault}
                 disabled={settingDefault}
                 title="Set as default"
@@ -216,7 +216,7 @@ function PlanCard({
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-rose-600"
+              className="h-7 w-7 text-muted-foreground hover:text-red-400"
               onClick={handleDelete}
               disabled={deleting}
               title="Delete"
@@ -361,26 +361,26 @@ export default function BusinessPlansPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background noise">
       {/* ── Header ── */}
-      <header className="gradient-header sticky top-0 z-20">
+      <header className="sticky top-0 z-20 border-b border-border/40 bg-card/80 backdrop-blur-xl">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 flex items-center justify-between h-14">
           <div className="flex items-center gap-3">
             <Link
               href="/"
-              className="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
+              className="h-8 w-8 rounded-lg bg-muted/30 flex items-center justify-center hover:bg-muted/50 transition-colors"
             >
-              <ArrowLeft className="h-4 w-4 text-white" />
+              <ArrowLeft className="h-4 w-4 text-muted-foreground" />
             </Link>
             <div>
-              <h1 className="font-semibold text-sm leading-none text-white">Business Plans</h1>
-              <p className="text-2xs text-white/50 mt-0.5">Investment strategy library</p>
+              <h1 className="font-display text-sm leading-none">Business Plans</h1>
+              <p className="text-2xs text-muted-foreground mt-0.5">Investment strategy library</p>
             </div>
           </div>
           {!creating && (
             <Button
               size="sm"
-              className="bg-white text-primary hover:bg-white/90 shadow-sm font-semibold h-8 text-xs"
+              className="font-semibold h-8 text-xs"
               onClick={() => setCreating(true)}
             >
               <Plus className="h-3.5 w-3.5 mr-1.5" />
@@ -392,21 +392,21 @@ export default function BusinessPlansPage() {
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 flex flex-col gap-5">
         {/* Explainer */}
-        <div className="bg-primary/[0.03] border border-primary/10 rounded-xl p-4 text-sm text-muted-foreground leading-relaxed">
-          <p className="font-semibold text-foreground mb-1">What are Business Plans?</p>
+        <div className="bg-primary/[0.05] border border-primary/15 rounded-xl p-4 text-sm text-muted-foreground leading-relaxed">
+          <p className="font-display text-foreground mb-1">What are Business Plans?</p>
           <p>
             Save your investment strategy once and attach it to every OM analysis. The AI uses your plan
             to calibrate its analysis — so it doesn&apos;t flag intentional conditions (like vacant
-            buildings or missing rent rolls) as risks. The <strong>default plan</strong> is
+            buildings or missing rent rolls) as risks. The <strong className="text-foreground">default plan</strong> is
             auto-selected whenever you upload an OM.
           </p>
         </div>
 
         {/* Create form */}
         {creating && (
-          <Card className="border-primary/20 bg-primary/[0.02]">
+          <Card className="border-primary/20 bg-primary/[0.03]">
             <CardHeader className="pb-0">
-              <CardTitle className="flex items-center gap-2 text-base">
+              <CardTitle className="flex items-center gap-2 text-base font-display">
                 <Plus className="h-4 w-4 text-primary" />
                 New Business Plan
               </CardTitle>
@@ -425,15 +425,15 @@ export default function BusinessPlansPage() {
         {loading ? (
           <div className="flex flex-col gap-4">
             {[1, 2].map((i) => (
-              <div key={i} className="h-36 rounded-xl border bg-card animate-pulse shadow-card" />
+              <div key={i} className="h-36 rounded-xl border border-border/40 bg-card/30 animate-pulse shadow-card" />
             ))}
           </div>
         ) : plans.length === 0 && !creating ? (
           <div className="text-center py-20">
-            <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4">
+            <div className="w-16 h-16 rounded-2xl bg-muted/30 flex items-center justify-center mx-auto mb-4">
               <BookOpen className="h-7 w-7 text-muted-foreground/30" />
             </div>
-            <h2 className="text-lg font-semibold mb-1.5">No business plans yet</h2>
+            <h2 className="font-display text-lg mb-1.5">No business plans yet</h2>
             <p className="text-sm text-muted-foreground mb-6 max-w-sm mx-auto">
               Create a plan to pre-fill deal context on every OM analysis. Your investment thesis,
               strategy, and constraints — written once, applied everywhere.

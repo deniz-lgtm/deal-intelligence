@@ -40,21 +40,21 @@ export function DocumentUploadView() {
           { icon: Brain, label: "Accuracy", value: "95%", sub: "metric extraction" },
           { icon: TrendingUp, label: "Insight Depth", value: "Multi", sub: "document analysis" },
         ].map(({ icon: Icon, label, value, sub }) => (
-          <div key={label} className="bg-card border rounded-xl p-5 shadow-card hover:shadow-lifted transition-all duration-200">
+          <div key={label} className="bg-card border border-border/60 rounded-xl p-5 shadow-card hover:shadow-lifted transition-all duration-200">
             <div className="flex items-center space-x-2 text-muted-foreground text-xs font-medium mb-3">
               <Icon className="h-3.5 w-3.5" />
               <span>{label}</span>
             </div>
-            <p className="text-2xl font-bold text-foreground tracking-tight tabular-nums">{value}</p>
+            <p className="text-2xl font-bold text-foreground tracking-tight tabular-nums font-display">{value}</p>
             <p className="text-2xs text-muted-foreground mt-0.5">{sub}</p>
           </div>
         ))}
       </div>
 
       {/* Main Content - Tab Interface */}
-      <div className="bg-card border rounded-xl overflow-hidden shadow-card">
+      <div className="bg-card border border-border/60 rounded-xl overflow-hidden shadow-card">
         {/* Tab Navigation */}
-        <div className="flex border-b">
+        <div className="flex border-b border-border/40">
           {tabs.map(tab => {
             const Icon = tab.icon
             const isDisabled = tab.requiresDoc && !hasDocument
@@ -70,8 +70,8 @@ export function DocumentUploadView() {
                   isActive
                     ? "text-foreground border-primary bg-card"
                     : isDisabled
-                      ? "text-muted-foreground/30 cursor-not-allowed border-transparent"
-                      : "text-muted-foreground border-transparent hover:text-foreground hover:bg-accent/30"
+                      ? "text-muted-foreground/20 cursor-not-allowed border-transparent"
+                      : "text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/20"
                 )}
               >
                 <Icon className="h-3.5 w-3.5" />
@@ -86,18 +86,18 @@ export function DocumentUploadView() {
           {activeTab === 'upload' && (
             <div className="space-y-8">
               <div>
-                <h2 className="text-xl font-bold text-foreground tracking-tight mb-1.5">Analyze Your Deals</h2>
+                <h2 className="text-xl font-display text-foreground tracking-tight mb-1.5">Analyze Your Deals</h2>
                 <p className="text-sm text-muted-foreground max-w-2xl">
                   Upload offering memorandums, rent rolls, financials, or property photos. We extract metrics, identify risks, and generate actionable insights in seconds.
                 </p>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-4">Upload Document</h3>
+                  <h3 className="text-sm font-display text-foreground mb-4">Upload Document</h3>
                   <UploadZone />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-4">Recent Uploads</h3>
+                  <h3 className="text-sm font-display text-foreground mb-4">Recent Uploads</h3>
                   <DocumentList />
                 </div>
               </div>
@@ -106,8 +106,8 @@ export function DocumentUploadView() {
 
           {activeTab === 'viewer' && hasDocument && (
             <div className="space-y-4">
-              <h2 className="text-xl font-bold text-foreground tracking-tight">Document Viewer</h2>
-              <div className="h-[700px] bg-muted/30 rounded-xl overflow-hidden border">
+              <h2 className="text-xl font-display text-foreground tracking-tight">Document Viewer</h2>
+              <div className="h-[700px] bg-muted/10 rounded-xl overflow-hidden border border-border/40">
                 <DocumentViewer />
               </div>
             </div>
@@ -115,7 +115,7 @@ export function DocumentUploadView() {
 
           {activeTab === 'analysis' && hasDocument && (
             <div className="space-y-4">
-              <h2 className="text-xl font-bold text-foreground tracking-tight">Deal Analysis</h2>
+              <h2 className="text-xl font-display text-foreground tracking-tight">Deal Analysis</h2>
               <AnalysisDashboard />
             </div>
           )}
@@ -123,7 +123,7 @@ export function DocumentUploadView() {
           {activeTab === 'chat' && hasDocument && (
             <div className="space-y-4">
               <div>
-                <h2 className="text-xl font-bold text-foreground tracking-tight mb-1.5">Ask Questions</h2>
+                <h2 className="text-xl font-display text-foreground tracking-tight mb-1.5">Ask Questions</h2>
                 <p className="text-sm text-muted-foreground">
                   Chat with AI about your deal. Get instant answers with source citations.
                 </p>
@@ -135,8 +135,8 @@ export function DocumentUploadView() {
       </div>
 
       {/* Workflow Section */}
-      <div className="bg-muted/30 border rounded-xl p-6 sm:p-8">
-        <h3 className="text-lg font-bold text-foreground tracking-tight mb-6">The Workflow</h3>
+      <div className="bg-muted/10 border border-border/60 rounded-xl p-6 sm:p-8">
+        <h3 className="text-lg font-display text-foreground tracking-tight mb-6">The Workflow</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {[
             { num: '1', title: 'Upload', desc: 'Drop your documents. PDFs, spreadsheets, images all supported.' },
@@ -144,10 +144,10 @@ export function DocumentUploadView() {
             { num: '3', title: 'Decide', desc: 'Review analysis, ask questions, make data-driven decisions.' },
           ].map((step, idx) => (
             <div key={idx} className="flex flex-col items-start">
-              <div className="w-9 h-9 gradient-header text-white rounded-xl flex items-center justify-center font-bold text-xs mb-3">
+              <div className="w-9 h-9 gradient-gold text-primary-foreground rounded-xl flex items-center justify-center font-bold text-xs mb-3">
                 {step.num}
               </div>
-              <h4 className="text-sm font-semibold text-foreground mb-1">{step.title}</h4>
+              <h4 className="text-sm font-display text-foreground mb-1">{step.title}</h4>
               <p className="text-xs text-muted-foreground leading-relaxed">{step.desc}</p>
             </div>
           ))}
@@ -155,15 +155,15 @@ export function DocumentUploadView() {
       </div>
 
       {/* CTA Section */}
-      <div className="gradient-header text-white rounded-xl p-6 sm:p-8">
+      <div className="gradient-gold text-primary-foreground rounded-xl p-6 sm:p-8">
         <div className="max-w-2xl">
-          <h3 className="text-xl font-bold tracking-tight mb-2">Ready to analyze your first deal?</h3>
-          <p className="text-white/60 text-sm mb-5">
+          <h3 className="text-xl font-display tracking-tight mb-2">Ready to analyze your first deal?</h3>
+          <p className="text-primary-foreground/60 text-sm mb-5">
             Upload an offering memorandum and get instant insights. No credit card required.
           </p>
           <button
             onClick={() => setActiveTab('upload')}
-            className="inline-flex items-center space-x-2 bg-white text-foreground px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-white/90 transition-colors shadow-sm"
+            className="inline-flex items-center space-x-2 bg-black/20 hover:bg-black/30 text-primary-foreground px-5 py-2.5 rounded-lg text-sm font-medium transition-colors"
           >
             <span>Start Analyzing</span>
             <ChevronRight className="h-3.5 w-3.5" />
