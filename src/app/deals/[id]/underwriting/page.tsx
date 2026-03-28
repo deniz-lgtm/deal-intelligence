@@ -165,14 +165,26 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const pricePerUnit = totalUnits > 0 ? d.purchase_price / totalUnits : 0;
 
   // ── Acquisition Financing ───────────────────────────────────────────────────
-  let acqLoan = 0, acqDebt = 0;
+  let acqLoan = 0, acqDebt = 0, acqDebtIO = 0;
   if (d.has_financing && totalCost > 0) {
     acqLoan = totalCost * (d.acq_ltc / 100);
-    acqDebt = d.acq_io_years > 0 ? acqLoan * (d.acq_interest_rate / 100) : annualPayment(acqLoan, d.acq_interest_rate, d.acq_amort_years);
+    const isIOOnly = d.acq_amort_years <= 0;
+    if (isIOOnly) {
+      // Pure interest-only / bullet loan — no amortization at all
+      acqDebt = acqLoan * (d.acq_interest_rate / 100);
+    } else {
+      // Amortizing loan (may have an IO period, but DSCR should reflect the amortizing payment)
+      acqDebt = annualPayment(acqLoan, d.acq_interest_rate, d.acq_amort_years);
+    }
+    // IO payment used for cash flow during IO years
+    acqDebtIO = d.acq_io_years > 0 ? acqLoan * (d.acq_interest_rate / 100) : acqDebt;
   }
   const equity = totalCost - acqLoan;
-  const cashFlow = noi - acqDebt;
+  // Cash flow uses IO payment during IO period for Year 1 snapshot
+  const yr1Debt = d.acq_io_years > 0 ? acqDebtIO : acqDebt;
+  const cashFlow = noi - yr1Debt;
   const coc = equity > 0 ? (cashFlow / equity) * 100 : 0;
+  // DSCR always uses amortizing debt service (worst-case obligation)
   const dscr = acqDebt > 0 ? noi / acqDebt : 0;
 
   // ── Refinance ───────────────────────────────────────────────────────────────
@@ -188,21 +200,28 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const exitLoanBalance = d.has_refi ? (noi / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100) : acqLoan;
   const exitEquity = exitValue - exitLoanBalance;
 
-  // Equity multiple: account for pre-refi and post-refi cash flows separately
+  // Equity multiple: account for IO period, amortizing period, and refi separately
   let totalCashFlows = 0;
   if (d.has_refi && d.has_financing) {
     const preRefiYears = Math.min(d.refi_year, d.hold_period_years);
     const postRefiYears = Math.max(0, d.hold_period_years - d.refi_year);
-    totalCashFlows = cashFlow * preRefiYears + (noi - refiDebt) * postRefiYears + refiProceeds;
+    // Pre-refi: split between IO and amortizing periods
+    const ioYears = Math.min(d.acq_io_years || 0, preRefiYears);
+    const amortYears = preRefiYears - ioYears;
+    const preRefiCF = (noi - acqDebtIO) * ioYears + (noi - acqDebt) * amortYears;
+    totalCashFlows = preRefiCF + (noi - refiDebt) * postRefiYears + refiProceeds;
   } else {
-    totalCashFlows = cashFlow * d.hold_period_years;
+    // Split hold period between IO and amortizing
+    const ioYears = Math.min(d.acq_io_years || 0, d.hold_period_years);
+    const amortYears = d.hold_period_years - ioYears;
+    totalCashFlows = (noi - acqDebtIO) * ioYears + (noi - acqDebt) * amortYears;
   }
   const em = equity > 0 ? (exitEquity + totalCashFlows) / equity : 0;
 
   // ── GRM + In-Place metrics ────────────────────────────────────────────────
   const grm = d.purchase_price > 0 && gpr > 0 ? d.purchase_price / gpr : 0;
   const inPlaceGRM = d.purchase_price > 0 && inPlaceGPR > 0 ? d.purchase_price / inPlaceGPR : 0;
-  const inPlaceCashFlow = inPlaceNOI - acqDebt;
+  const inPlaceCashFlow = inPlaceNOI - yr1Debt;
   const inPlaceCoC = equity > 0 ? (inPlaceCashFlow / equity) * 100 : 0;
   const inPlaceDSCR = acqDebt > 0 ? inPlaceNOI / acqDebt : 0;
 
@@ -222,7 +241,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     capexTotal, closingCosts, totalCost,
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
-    acqLoan, acqDebt, equity, cashFlow, coc, dscr,
+    acqLoan, acqDebt, acqDebtIO, yr1Debt, equity, cashFlow, coc, dscr,
     refiProceeds, refiDebt, exitValue, exitEquity, totalCashFlows, em,
   };
 }
@@ -1334,9 +1353,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
             <ISRow label="Net Operating Income" ip={m.inPlaceNOI} pf={m.noi} bold hi />
             {data.has_financing && <>
-              <ISRow label="Annual Debt Service (Acq)" ip={-m.acqDebt} pf={-m.acqDebt} muted />
+              <ISRow label={`Annual Debt Service (Acq)${data.acq_io_years > 0 ? " — IO" : ""}`} ip={-m.yr1Debt} pf={-m.acqDebt} muted />
               <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
-              <ISRow label="Cash Flow Before Tax" ip={m.inPlaceNOI - m.acqDebt} pf={m.cashFlow} bold hi={m.cashFlow > 0} />
+              <ISRow label="Cash Flow Before Tax" ip={m.inPlaceCashFlow} pf={m.cashFlow} bold hi={m.cashFlow > 0} />
               <tr className="bg-muted/10">
                 <td className="px-4 py-2 text-xs font-medium text-muted-foreground">Cash-on-Cash Return</td>
                 <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums">{m.inPlaceCoC !== 0 ? `${m.inPlaceCoC.toFixed(2)}%` : "—"}</td>
