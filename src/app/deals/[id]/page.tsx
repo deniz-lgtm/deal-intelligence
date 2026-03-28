@@ -59,6 +59,8 @@ export default function DealOverviewPage({
   const [documents, setDocuments] = useState<Document[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [businessPlan, setBusinessPlan] = useState<BusinessPlan | null>(null);
+  const [allPlans, setAllPlans] = useState<BusinessPlan[]>([]);
+  const [changingPlan, setChangingPlan] = useState(false);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [advancingTo, setAdvancingTo] = useState<DealStatus | null>(null);
@@ -72,19 +74,26 @@ export default function DealOverviewPage({
       fetch(`/api/deals/${params.id}`).then((r) => r.json()),
       fetch(`/api/deals/${params.id}/documents`).then((r) => r.json()),
       fetch(`/api/checklist?deal_id=${params.id}`).then((r) => r.json()),
-    ]).then(async ([dealRes, docsRes, checklistRes]) => {
+      fetch("/api/business-plans").then((r) => r.json()),
+    ]).then(async ([dealRes, docsRes, checklistRes, plansRes]) => {
       const d = dealRes.data;
       setDeal(d);
       setNotesValue(d?.notes || "");
       setDocuments(docsRes.data || []);
       setChecklist(checklistRes.data || []);
+      const plans = plansRes.data || [];
+      setAllPlans(plans);
       // Load linked business plan
       if (d?.business_plan_id) {
-        try {
-          const bpRes = await fetch(`/api/business-plans/${d.business_plan_id}`);
-          const bpJson = await bpRes.json();
-          if (bpJson.data) setBusinessPlan(bpJson.data);
-        } catch { /* ignore */ }
+        const linked = plans.find((p: BusinessPlan) => p.id === d.business_plan_id);
+        if (linked) setBusinessPlan(linked);
+        else {
+          try {
+            const bpRes = await fetch(`/api/business-plans/${d.business_plan_id}`);
+            const bpJson = await bpRes.json();
+            if (bpJson.data) setBusinessPlan(bpJson.data);
+          } catch { /* ignore */ }
+        }
       }
       setLoading(false);
     });
@@ -440,21 +449,58 @@ export default function DealOverviewPage({
       </div>
 
       {/* Business Plan */}
-      {businessPlan && (
-        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <BookOpen className="h-3.5 w-3.5 text-primary" />
-              <h3 className="font-display text-sm">Business Plan</h3>
-            </div>
-            <Link href="/business-plans">
-              <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
-                Manage <ArrowRight className="h-3 w-3" />
-              </Button>
-            </Link>
+      <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <BookOpen className="h-3.5 w-3.5 text-primary" />
+            <h3 className="font-display text-sm">Business Plan</h3>
           </div>
+          <Link href="/business-plans">
+            <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
+              Manage <ArrowRight className="h-3 w-3" />
+            </Button>
+          </Link>
+        </div>
+        {/* Plan selector dropdown */}
+        <div className="mb-3">
+          <select
+            value={deal.business_plan_id || ""}
+            onChange={async (e) => {
+              const planId = e.target.value || null;
+              setChangingPlan(true);
+              try {
+                const res = await fetch(`/api/deals/${params.id}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ business_plan_id: planId }),
+                });
+                const json = await res.json();
+                if (json.data) {
+                  setDeal(json.data as Deal);
+                  const linked = planId ? allPlans.find((p) => p.id === planId) || null : null;
+                  setBusinessPlan(linked);
+                  toast.success(planId ? "Business plan linked" : "Business plan removed");
+                }
+              } catch {
+                toast.error("Failed to update business plan");
+              } finally {
+                setChangingPlan(false);
+              }
+            }}
+            disabled={changingPlan}
+            className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">No business plan</option>
+            {allPlans.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}{p.is_default ? " (Default)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+        {/* Plan details */}
+        {businessPlan ? (
           <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium">{businessPlan.name}</p>
             <div className="flex flex-wrap gap-1.5">
               {(businessPlan.investment_theses || []).map((t) => (
                 <span
@@ -475,6 +521,9 @@ export default function DealOverviewPage({
               {(businessPlan.target_irr_min || businessPlan.target_irr_max) && (
                 <span>IRR {businessPlan.target_irr_min ?? "?"}–{businessPlan.target_irr_max ?? "?"}%</span>
               )}
+              {(businessPlan.target_equity_multiple_min || businessPlan.target_equity_multiple_max) && (
+                <span>EM {businessPlan.target_equity_multiple_min ?? "?"}–{businessPlan.target_equity_multiple_max ?? "?"}x</span>
+              )}
               {(businessPlan.hold_period_min || businessPlan.hold_period_max) && (
                 <span>{businessPlan.hold_period_min}–{businessPlan.hold_period_max} yr hold</span>
               )}
@@ -483,8 +532,10 @@ export default function DealOverviewPage({
               <p className="text-2xs text-muted-foreground leading-relaxed line-clamp-2">{businessPlan.description}</p>
             )}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-xs text-muted-foreground">No plan linked. Select one above to guide analysis.</p>
+        )}
+      </div>
 
       {/* Progress + Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

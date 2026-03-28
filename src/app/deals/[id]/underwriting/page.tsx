@@ -42,6 +42,22 @@ interface RentComp {
 type NoteCategory = "context" | "review";
 interface NoteItem { id: string; text: string; category: NoteCategory; created_at: string; }
 
+type ScenarioType = "custom" | "land_residual" | "rent_target" | "exit_cap";
+interface Scenario {
+  id: string;
+  name: string;
+  type: ScenarioType;
+  description: string;
+  overrides: Partial<UWData>;
+}
+
+const SCENARIO_TYPES: Array<{ type: ScenarioType; label: string; description: string; icon: string }> = [
+  { type: "land_residual", label: "Max Purchase Price", description: "Find the maximum purchase price to hit your return targets", icon: "🏷️" },
+  { type: "rent_target", label: "Required Rents", description: "Find the minimum rents needed to hit your return targets", icon: "📈" },
+  { type: "exit_cap", label: "Exit Cap Sensitivity", description: "Find what exit cap rate is needed to hit your return targets", icon: "🎯" },
+  { type: "custom", label: "Custom What-If", description: "Start from baseline and manually adjust any assumptions", icon: "✏️" },
+];
+
 interface UWData {
   purchase_price: number; closing_costs_pct: number;
   unit_groups: UnitGroup[]; capex_items: CapexItem[];
@@ -58,6 +74,7 @@ interface UWData {
   has_refi: boolean; refi_year: number; refi_ltv: number;
   refi_rate: number; refi_amort_years: number;
   exit_cap_rate: number; hold_period_years: number; notes: string; deal_notes: NoteItem[];
+  scenarios: Scenario[];
 }
 
 const DEFAULT: UWData = {
@@ -75,6 +92,7 @@ const DEFAULT: UWData = {
   has_refi: false, refi_year: 3, refi_ltv: 70,
   refi_rate: 6.0, refi_amort_years: 25,
   exit_cap_rate: 5.5, hold_period_years: 5, notes: "", deal_notes: [],
+  scenarios: [],
 };
 
 const newGroup = (): UnitGroup => ({
@@ -361,7 +379,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [docViewerOpen, setDocViewerOpen] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
-  const [deal, setDeal] = useState<{ name: string; property_type?: string } | null>(null);
+  const [deal, setDeal] = useState<{ name: string; property_type?: string; business_plan_id?: string } | null>(null);
+  const [businessPlan, setBusinessPlan] = useState<{ target_irr_min?: number; target_irr_max?: number; target_equity_multiple_min?: number; target_equity_multiple_max?: number; hold_period_min?: number; hold_period_max?: number } | null>(null);
+  const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null); // null = baseline
+  const [showScenarioWizard, setShowScenarioWizard] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
+  const [wizardType, setWizardType] = useState<ScenarioType>("custom");
+  const [wizardMetric, setWizardMetric] = useState<"em" | "coc" | "irr_proxy">("em");
+  const [wizardTarget, setWizardTarget] = useState<number>(0);
+  const [wizardResult, setWizardResult] = useState<{ value: number; label: string; scenarioOverrides: Partial<UWData> } | null>(null);
+  const [wizardSolving, setWizardSolving] = useState(false);
   const [compsLoading, setCompsLoading] = useState(false);
   const [comps, setComps] = useState<Array<RentComp>>([]);
   const [selectedCompIds, setSelectedCompIds] = useState<Set<number>>(new Set());
@@ -436,8 +463,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     Promise.all([
       fetch(`/api/deals/${params.id}`).then(r => r.json()),
       fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()),
-    ]).then(([dr, ur]) => {
+    ]).then(async ([dr, ur]) => {
       setDeal(dr.data);
+      // Load business plan if linked
+      if (dr.data?.business_plan_id) {
+        try {
+          const bpRes = await fetch(`/api/business-plans/${dr.data.business_plan_id}`);
+          const bpJson = await bpRes.json();
+          if (bpJson.data) setBusinessPlan(bpJson.data);
+        } catch { /* ignore */ }
+      }
       if (ur.data?.data) {
         const raw = ur.data.data;
         const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -461,8 +496,31 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     });
   }, [params.id]);
 
-  const set = useCallback(<K extends keyof UWData>(k: K, v: UWData[K]) => setData(p => ({ ...p, [k]: v })), []);
-  const upd = (id: string, u: Partial<UnitGroup>) => setData(p => ({ ...p, unit_groups: p.unit_groups.map(g => g.id === id ? { ...g, ...u } : g) }));
+  const set = useCallback(<K extends keyof UWData>(k: K, v: UWData[K]) => {
+    if (activeScenarioId) {
+      // Update the scenario's overrides
+      setData(p => ({
+        ...p,
+        scenarios: (p.scenarios || []).map(s =>
+          s.id === activeScenarioId ? { ...s, overrides: { ...s.overrides, [k]: v } } : s
+        ),
+      }));
+    } else {
+      setData(p => ({ ...p, [k]: v }));
+    }
+  }, [activeScenarioId]);
+  const upd = (id: string, u: Partial<UnitGroup>) => {
+    if (activeScenarioId) {
+      setData(p => {
+        const scenario = (p.scenarios || []).find(s => s.id === activeScenarioId);
+        const baseGroups = scenario?.overrides.unit_groups || p.unit_groups;
+        const updated = baseGroups.map(g => g.id === id ? { ...g, ...u } : g);
+        return { ...p, scenarios: (p.scenarios || []).map(s => s.id === activeScenarioId ? { ...s, overrides: { ...s.overrides, unit_groups: updated } } : s) };
+      });
+    } else {
+      setData(p => ({ ...p, unit_groups: p.unit_groups.map(g => g.id === id ? { ...g, ...u } : g) }));
+    }
+  };
   const del = (id: string) => setData(p => ({ ...p, unit_groups: p.unit_groups.filter(g => g.id !== id) }));
   const updC = (id: string, u: Partial<CapexItem>) => setData(p => ({ ...p, capex_items: p.capex_items.map(c => c.id === id ? { ...c, ...u } : c) }));
   const delC = (id: string) => setData(p => ({ ...p, capex_items: p.capex_items.filter(c => c.id !== id) }));
@@ -581,9 +639,103 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     } catch { toast.error("Autofill failed"); } finally { setAutofilling(false); }
   };
 
+  // ── Scenario helpers ──────────────────────────────────────────────────────
+  const activeScenario = activeScenarioId ? (data.scenarios || []).find(s => s.id === activeScenarioId) : null;
+  const effectiveData: UWData = activeScenario
+    ? { ...data, ...activeScenario.overrides, scenarios: data.scenarios }
+    : data;
+
+  const solveScenario = useCallback((type: ScenarioType, metric: "em" | "coc" | "irr_proxy", target: number) => {
+    // Bisection goal-seek: find the input value that makes the metric match target
+    const getMetric = (d: UWData) => {
+      const r = calc(d, calcMode);
+      if (metric === "em") return r.em;
+      if (metric === "coc") return r.coc;
+      // irr_proxy ≈ annualized EM
+      return r.em > 0 && d.hold_period_years > 0 ? (Math.pow(r.em, 1 / d.hold_period_years) - 1) * 100 : 0;
+    };
+
+    if (type === "land_residual") {
+      // Solve for purchase_price: search 0 to 10x current price
+      let lo = 0, hi = Math.max(data.purchase_price * 10, 50_000_000);
+      for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2;
+        const v = getMetric({ ...data, purchase_price: mid });
+        if (v > target) lo = mid; else hi = mid;
+      }
+      return { value: Math.round((lo + hi) / 2), label: "Max Purchase Price", scenarioOverrides: { purchase_price: Math.round((lo + hi) / 2) } as Partial<UWData> };
+    }
+    if (type === "rent_target") {
+      // Solve for a rent multiplier on all market rents
+      let lo = 0, hi = 10; // 0x to 10x current rents
+      const baseGroups = data.unit_groups;
+      for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2;
+        const scaledGroups = baseGroups.map(g => ({
+          ...g,
+          market_rent_per_sf: g.market_rent_per_sf * mid,
+          market_rent_per_unit: g.market_rent_per_unit * mid,
+          market_rent_per_bed: g.market_rent_per_bed * mid,
+        }));
+        const v = getMetric({ ...data, unit_groups: scaledGroups });
+        if (v < target) lo = mid; else hi = mid;
+      }
+      const mult = (lo + hi) / 2;
+      const scaledGroups = baseGroups.map(g => ({
+        ...g,
+        market_rent_per_sf: Math.round(g.market_rent_per_sf * mult * 100) / 100,
+        market_rent_per_unit: Math.round(g.market_rent_per_unit * mult),
+        market_rent_per_bed: Math.round(g.market_rent_per_bed * mult),
+      }));
+      return { value: mult, label: `Rents at ${(mult * 100).toFixed(0)}% of current market`, scenarioOverrides: { unit_groups: scaledGroups } as Partial<UWData> };
+    }
+    if (type === "exit_cap") {
+      // Solve for exit_cap_rate: lower cap = higher exit value
+      let lo = 0.5, hi = 20;
+      for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2;
+        const v = getMetric({ ...data, exit_cap_rate: mid });
+        if (v < target) hi = mid; else lo = mid;
+      }
+      const cap = Math.round((lo + hi) / 2 * 100) / 100;
+      return { value: cap, label: `Exit Cap at ${cap.toFixed(2)}%`, scenarioOverrides: { exit_cap_rate: cap } as Partial<UWData> };
+    }
+    return null;
+  }, [data, calcMode]);
+
+  const runWizardSolve = useCallback(() => {
+    if (wizardType === "custom") return;
+    setWizardSolving(true);
+    // Run in next tick to allow UI update
+    setTimeout(() => {
+      const result = solveScenario(wizardType, wizardMetric, wizardTarget);
+      setWizardResult(result);
+      setWizardSolving(false);
+    }, 50);
+  }, [wizardType, wizardMetric, wizardTarget, solveScenario]);
+
+  const createScenario = (name: string, type: ScenarioType, description: string, overrides: Partial<UWData>) => {
+    const scenario: Scenario = { id: uuidv4(), name, type, description, overrides };
+    setData(prev => ({ ...prev, scenarios: [...(prev.scenarios || []), scenario] }));
+    setActiveScenarioId(scenario.id);
+    setShowScenarioWizard(false);
+    // Reset wizard
+    setWizardStep(0);
+    setWizardType("custom");
+    setWizardResult(null);
+  };
+
+  const deleteScenario = (id: string) => {
+    setData(prev => ({ ...prev, scenarios: (prev.scenarios || []).filter(s => s.id !== id) }));
+    if (activeScenarioId === id) setActiveScenarioId(null);
+  };
+
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
-  const m = calc(data, calcMode);
+  const m = calc(effectiveData, calcMode);
+  const baselineM = activeScenario ? calc(data, calcMode) : m;
+  // d = display data — use this for all input bindings so scenarios work
+  const d = effectiveData;
 
   return (
     <div className={`flex gap-4 ${docViewerOpen ? "" : ""}`}>
@@ -607,10 +759,71 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      {/* Returns — Before (In-Place) vs After (Pro Forma) */}
+      {/* ── Scenario Tabs ── */}
       <div className="border rounded-xl bg-card overflow-hidden">
-        <div className="px-4 py-3 border-b bg-muted/30">
+        <div className="flex items-center gap-1 px-3 py-2 overflow-x-auto bg-muted/20">
+          <button
+            onClick={() => setActiveScenarioId(null)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+              !activeScenarioId
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            <BarChart3 className="h-3 w-3" />
+            Baseline
+          </button>
+          {(data.scenarios || []).map(s => (
+            <div key={s.id} className="flex items-center group">
+              <button
+                onClick={() => setActiveScenarioId(s.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-l-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                  activeScenarioId === s.id
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                {s.name}
+              </button>
+              <button
+                onClick={() => deleteScenario(s.id)}
+                className={`px-1.5 py-1.5 rounded-r-lg text-xs transition-colors ${
+                  activeScenarioId === s.id
+                    ? "bg-primary/80 text-primary-foreground hover:bg-destructive"
+                    : "text-muted-foreground/30 hover:text-destructive hover:bg-muted"
+                }`}
+                title="Delete scenario"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => { setShowScenarioWizard(true); setWizardStep(0); setWizardType("custom"); setWizardResult(null); setWizardTarget(businessPlan?.target_equity_multiple_min || 2); }}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors whitespace-nowrap border border-dashed border-border"
+          >
+            <Plus className="h-3 w-3" />
+            Scenario
+          </button>
+        </div>
+        {activeScenario && (
+          <div className="px-4 py-2 border-t bg-amber-50/50 border-amber-200/50 flex items-center gap-2">
+            <span className="text-xs font-medium text-amber-700">Scenario:</span>
+            <span className="text-xs text-amber-600">{activeScenario.description || activeScenario.name}</span>
+            {activeScenario.type !== "custom" && (
+              <span className="ml-auto text-2xs text-muted-foreground">Changes from baseline highlighted</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Returns — Before (In-Place) vs After (Pro Forma) */}
+      <div className={`border rounded-xl bg-card overflow-hidden ${activeScenario ? "ring-2 ring-amber-300/50" : ""}`}>
+        <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
           <h3 className="font-semibold text-sm">Returns — In-Place vs Pro Forma</h3>
+          {activeScenario && (
+            <span className="text-2xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{activeScenario.name}</span>
+          )}
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-border">
           {([
@@ -672,13 +885,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <div className="bg-card p-3">
             <p className="text-xs text-muted-foreground mb-1">Equity Multiple</p>
             <p className="text-lg font-bold tabular-nums">{m.em > 0 ? `${m.em.toFixed(2)}x` : "—"}</p>
-            <p className="text-xs text-muted-foreground">{data.hold_period_years}yr hold</p>
+            <p className="text-xs text-muted-foreground">{d.hold_period_years}yr hold</p>
           </div>
           {/* Debt */}
           <div className="bg-card p-3">
             <p className="text-xs text-muted-foreground mb-1">Debt</p>
             <p className="text-lg font-bold tabular-nums">{fc(m.acqLoan)}</p>
-            <p className="text-xs text-muted-foreground/60">{data.acq_ltc}% LTC · {data.acq_interest_rate}% · {data.acq_amort_years}yr</p>
+            <p className="text-xs text-muted-foreground/60">{d.acq_ltc}% LTC · {d.acq_interest_rate}% · {d.acq_amort_years}yr</p>
           </div>
           {/* Equity */}
           <div className="bg-card p-3">
@@ -697,8 +910,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       <Section title="Purchase & Cost Basis" icon={<DollarSign className="h-4 w-4 text-green-600" />}>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
-          <NumInput label="Purchase Price" value={data.purchase_price} onChange={v => set("purchase_price", v)} prefix="$" />
-          <NumInput label="Closing Costs" value={data.closing_costs_pct} onChange={v => set("closing_costs_pct", v)} suffix="%" decimals={1} />
+          <NumInput label="Purchase Price" value={d.purchase_price} onChange={v => set("purchase_price", v)} prefix="$" />
+          <NumInput label="Closing Costs" value={d.closing_costs_pct} onChange={v => set("closing_costs_pct", v)} suffix="%" decimals={1} />
           <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Closing Cost $</p><p className="text-sm font-semibold">{fc(m.closingCosts)}</p></div>
         </div>
       </Section>
@@ -737,7 +950,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   name: "", address: "", distance_mi: 0, year_built: 0,
                   units: 0, occupancy_pct: 0,
                   unit_types: (isMF || isSH)
-                    ? Array.from(new Set(data.unit_groups.map(g => `${g.bedrooms || 1}BR/${g.bathrooms || 1}BA`))).map(t => ({ type: t, sf: 0, rent: 0 }))
+                    ? Array.from(new Set(d.unit_groups.map(g => `${g.bedrooms || 1}BR/${g.bathrooms || 1}BA`))).map(t => ({ type: t, sf: 0, rent: 0 }))
                     : [],
                   rent_per_sf: 0, notes: "",
                 };
@@ -967,9 +1180,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </tr>
             </thead>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleReorderUnits}>
-            <SortableContext items={data.unit_groups.map(g => g.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={d.unit_groups.map(g => g.id)} strategy={verticalListSortingStrategy}>
             <tbody>
-              {data.unit_groups.map(g => {
+              {d.unit_groups.map(g => {
                 const ipAnnual = isSH
                   ? g.unit_count * g.beds_per_unit * g.current_rent_per_bed * 12
                   : isMF
@@ -1062,7 +1275,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   </SortableRow>
                 );
               })}
-              {data.unit_groups.length === 0 && (
+              {d.unit_groups.length === 0 && (
                 <tr><td colSpan={isSH ? 8 : isMF ? 10 : 10} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
               )}
             </tbody>
@@ -1098,9 +1311,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <Plus className="h-4 w-4 mr-2" /> Add Row
             </Button>
           </div>
-          {data.unit_groups.length > 0 && (
+          {d.unit_groups.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-3">
-              {data.unit_groups.map(g => (
+              {d.unit_groups.map(g => (
                 <label key={g.id} className="flex items-center gap-1.5 text-xs cursor-pointer">
                   <input type="checkbox" checked={g.will_renovate} onChange={e => toggleRenovation(g.id, e.target.checked)} className="rounded" />
                   <span className="text-muted-foreground">Renovate: {g.label || "Unit"}</span>
@@ -1113,8 +1326,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       <Section title="Capital Expenditures" icon={<Hammer className="h-4 w-4 text-orange-600" />} open={false}>
         <div className="mt-3 overflow-x-auto">
-          {data.capex_items.length === 0 && <p className="text-sm text-muted-foreground py-2">No CapEx items. Click + to add or check "Renovate" on unit types.</p>}
-          {data.capex_items.length > 0 && (
+          {d.capex_items.length === 0 && <p className="text-sm text-muted-foreground py-2">No CapEx items. Click + to add or check "Renovate" on unit types.</p>}
+          {d.capex_items.length > 0 && (
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-muted/30 border-b">
@@ -1128,9 +1341,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </tr>
               </thead>
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleReorderCapex}>
-              <SortableContext items={data.capex_items.map(c => c.id)} strategy={verticalListSortingStrategy}>
+              <SortableContext items={d.capex_items.map(c => c.id)} strategy={verticalListSortingStrategy}>
               <tbody>
-                {data.capex_items.map((c, i) => {
+                {d.capex_items.map((c, i) => {
                   const isLinked = !!c.linked_unit_group_id;
                   const updCapex = (updates: Partial<CapexItem>) => {
                     updC(c.id, updates);
@@ -1196,9 +1409,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         <div className="mt-3 overflow-x-auto">
           {/* Vacancy row */}
           <div className="grid grid-cols-3 gap-4 mb-4">
-            <NumInput label="In-Place Vacancy" value={data.in_place_vacancy_rate} onChange={v => set("in_place_vacancy_rate", v)} suffix="%" decimals={1} />
-            <NumInput label="Pro Forma Vacancy" value={data.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
-            <NumInput label="Management Fee" value={data.management_fee_pct} onChange={v => set("management_fee_pct", v)} suffix="% EGI" decimals={1} />
+            <NumInput label="In-Place Vacancy" value={d.in_place_vacancy_rate} onChange={v => set("in_place_vacancy_rate", v)} suffix="%" decimals={1} />
+            <NumInput label="Pro Forma Vacancy" value={d.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
+            <NumInput label="Management Fee" value={d.management_fee_pct} onChange={v => set("management_fee_pct", v)} suffix="% EGI" decimals={1} />
           </div>
           <table className="w-full text-sm border-collapse">
             <thead>
@@ -1212,9 +1425,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <tbody>
               {/* Management row — in-place is hard $ amount, pro forma is % of EGI */}
               <tr className="border-b hover:bg-muted/20">
-                <td className="px-2 py-1.5 text-muted-foreground">Management <span className="text-xs text-muted-foreground/60">({data.management_fee_pct}% PF)</span></td>
+                <td className="px-2 py-1.5 text-muted-foreground">Management <span className="text-xs text-muted-foreground/60">({d.management_fee_pct}% PF)</span></td>
                 <td className="px-2 py-1.5">
-                  <CellInput value={data.ip_mgmt_annual} onChange={v => set("ip_mgmt_annual", v)} prefix="$" />
+                  <CellInput value={d.ip_mgmt_annual} onChange={v => set("ip_mgmt_annual", v)} prefix="$" />
                 </td>
                 <td className="px-2 py-1.5"><span className="block text-right text-sm tabular-nums">{fc(m.mgmtFee)}</span></td>
                 <td className="px-2 py-1.5 text-right text-sm tabular-nums text-muted-foreground">{m.totalUnits > 0 ? fc(Math.round(m.mgmtFee / m.totalUnits)) : "—"}</td>
@@ -1230,8 +1443,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 { label: "Reserves", ipKey: "ip_reserves_annual" as keyof UWData, pfKey: "reserves_annual" as keyof UWData },
                 { label: "Other", ipKey: "ip_other_annual" as keyof UWData, pfKey: "other_expenses_annual" as keyof UWData },
               ]).map(row => {
-                const ipVal = (data[row.ipKey] as number) || 0;
-                const pfVal = (data[row.pfKey] as number) || 0;
+                const ipVal = (d[row.ipKey] as number) || 0;
+                const pfVal = (d[row.pfKey] as number) || 0;
                 const perUnit = m.totalUnits > 0 ? pfVal / m.totalUnits : 0;
                 return (
                   <tr key={row.label} className="border-b hover:bg-muted/20">
@@ -1265,15 +1478,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         <div className="mt-3 space-y-5">
           <div>
             <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold mb-3">
-              <input type="checkbox" checked={data.has_financing} onChange={e => set("has_financing", e.target.checked)} className="rounded" />
+              <input type="checkbox" checked={d.has_financing} onChange={e => set("has_financing", e.target.checked)} className="rounded" />
               Acquisition Loan
             </label>
-            {data.has_financing && (
+            {d.has_financing && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <NumInput label="Loan-to-Cost" value={data.acq_ltc} onChange={v => set("acq_ltc", v)} suffix="%" decimals={1} />
-                <NumInput label="Interest Rate" value={data.acq_interest_rate} onChange={v => set("acq_interest_rate", v)} suffix="%" decimals={3} />
-                <NumInput label="Amortization" value={data.acq_amort_years} onChange={v => set("acq_amort_years", v)} suffix="yrs" />
-                <NumInput label="Interest-Only Period" value={data.acq_io_years} onChange={v => set("acq_io_years", v)} suffix="yrs" />
+                <NumInput label="Loan-to-Cost" value={d.acq_ltc} onChange={v => set("acq_ltc", v)} suffix="%" decimals={1} />
+                <NumInput label="Interest Rate" value={d.acq_interest_rate} onChange={v => set("acq_interest_rate", v)} suffix="%" decimals={3} />
+                <NumInput label="Amortization" value={d.acq_amort_years} onChange={v => set("acq_amort_years", v)} suffix="yrs" />
+                <NumInput label="Interest-Only Period" value={d.acq_io_years} onChange={v => set("acq_io_years", v)} suffix="yrs" />
                 <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Loan Amount</p><p className="text-sm font-semibold">{fc(m.acqLoan)}</p></div>
                 <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Annual Debt Service</p><p className="text-sm font-semibold">{fc(m.acqDebt)}</p></div>
                 <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Equity Required</p><p className="text-sm font-semibold">{fc(m.equity)}</p></div>
@@ -1285,18 +1498,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </div>
             )}
           </div>
-          {data.has_financing && (
+          {d.has_financing && (
             <div className="border-t pt-4">
               <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold mb-3">
-                <input type="checkbox" checked={data.has_refi} onChange={e => set("has_refi", e.target.checked)} className="rounded" />
+                <input type="checkbox" checked={d.has_refi} onChange={e => set("has_refi", e.target.checked)} className="rounded" />
                 Refinance
               </label>
-              {data.has_refi && (
+              {d.has_refi && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <NumInput label="Refi in Year" value={data.refi_year} onChange={v => set("refi_year", v)} suffix="yr" />
-                  <NumInput label="Refi LTV" value={data.refi_ltv} onChange={v => set("refi_ltv", v)} suffix="%" decimals={1} />
-                  <NumInput label="Refi Rate" value={data.refi_rate} onChange={v => set("refi_rate", v)} suffix="%" decimals={3} />
-                  <NumInput label="Refi Amortization" value={data.refi_amort_years} onChange={v => set("refi_amort_years", v)} suffix="yrs" />
+                  <NumInput label="Refi in Year" value={d.refi_year} onChange={v => set("refi_year", v)} suffix="yr" />
+                  <NumInput label="Refi LTV" value={d.refi_ltv} onChange={v => set("refi_ltv", v)} suffix="%" decimals={1} />
+                  <NumInput label="Refi Rate" value={d.refi_rate} onChange={v => set("refi_rate", v)} suffix="%" decimals={3} />
+                  <NumInput label="Refi Amortization" value={d.refi_amort_years} onChange={v => set("refi_amort_years", v)} suffix="yrs" />
                   <div className="p-3 bg-muted/50 rounded-lg">
                     <p className="text-xs text-muted-foreground mb-1">Refi Proceeds</p>
                     <p className={`text-sm font-semibold ${m.refiProceeds < 0 ? "text-red-600" : "text-green-700"}`}>{fc(m.refiProceeds)}</p>
@@ -1312,8 +1525,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       <Section title="Exit Analysis" icon={<RefreshCw className="h-4 w-4 text-teal-600" />} open={false}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
-          <NumInput label="Exit Cap Rate" value={data.exit_cap_rate} onChange={v => set("exit_cap_rate", v)} suffix="%" decimals={2} />
-          <NumInput label="Hold Period" value={data.hold_period_years} onChange={v => set("hold_period_years", v)} suffix="yrs" />
+          <NumInput label="Exit Cap Rate" value={d.exit_cap_rate} onChange={v => set("exit_cap_rate", v)} suffix="%" decimals={2} />
+          <NumInput label="Hold Period" value={d.hold_period_years} onChange={v => set("hold_period_years", v)} suffix="yrs" />
           <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Exit Value</p><p className="text-sm font-semibold">{fc(m.exitValue)}</p></div>
           <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Equity at Exit</p><p className="text-sm font-semibold">{fc(m.exitEquity)}</p></div>
         </div>
@@ -1340,20 +1553,20 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <ISRow label="Effective Revenue" ip={m.inPlaceEffectiveRevenue} pf={m.effectiveRevenue} bold />
             </>}
             <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
-            <ISRow label={`Management (${data.management_fee_pct}%)`} ip={-m.inPlaceMgmtFee} pf={-m.mgmtFee} muted />
-            <ISRow label="Property Taxes" ip={-(data.ip_taxes_annual || data.taxes_annual)} pf={-data.taxes_annual} muted />
-            <ISRow label="Insurance" ip={-(data.ip_insurance_annual || data.insurance_annual)} pf={-data.insurance_annual} muted />
-            <ISRow label="Repairs & Maintenance" ip={-(data.ip_repairs_annual || data.repairs_annual)} pf={-data.repairs_annual} muted />
-            {(data.utilities_annual > 0 || data.ip_utilities_annual > 0) && <ISRow label="Utilities" ip={-(data.ip_utilities_annual || data.utilities_annual)} pf={-data.utilities_annual} muted />}
-            {(data.ga_annual > 0 || data.ip_ga_annual > 0) && <ISRow label="General & Admin" ip={-(data.ip_ga_annual || data.ga_annual)} pf={-data.ga_annual} muted />}
-            {(data.marketing_annual > 0 || data.ip_marketing_annual > 0) && <ISRow label="Marketing / Leasing" ip={-(data.ip_marketing_annual || data.marketing_annual)} pf={-data.marketing_annual} muted />}
-            {(data.reserves_annual > 0 || data.ip_reserves_annual > 0) && <ISRow label="Reserves" ip={-(data.ip_reserves_annual || data.reserves_annual)} pf={-data.reserves_annual} muted />}
-            {(data.other_expenses_annual > 0 || data.ip_other_annual > 0) && <ISRow label="Other Expenses" ip={-(data.ip_other_annual || data.other_expenses_annual)} pf={-data.other_expenses_annual} muted />}
+            <ISRow label={`Management (${d.management_fee_pct}%)`} ip={-m.inPlaceMgmtFee} pf={-m.mgmtFee} muted />
+            <ISRow label="Property Taxes" ip={-(d.ip_taxes_annual || d.taxes_annual)} pf={-d.taxes_annual} muted />
+            <ISRow label="Insurance" ip={-(d.ip_insurance_annual || d.insurance_annual)} pf={-d.insurance_annual} muted />
+            <ISRow label="Repairs & Maintenance" ip={-(d.ip_repairs_annual || d.repairs_annual)} pf={-d.repairs_annual} muted />
+            {(d.utilities_annual > 0 || d.ip_utilities_annual > 0) && <ISRow label="Utilities" ip={-(d.ip_utilities_annual || d.utilities_annual)} pf={-d.utilities_annual} muted />}
+            {(d.ga_annual > 0 || d.ip_ga_annual > 0) && <ISRow label="General & Admin" ip={-(d.ip_ga_annual || d.ga_annual)} pf={-d.ga_annual} muted />}
+            {(d.marketing_annual > 0 || d.ip_marketing_annual > 0) && <ISRow label="Marketing / Leasing" ip={-(d.ip_marketing_annual || d.marketing_annual)} pf={-d.marketing_annual} muted />}
+            {(d.reserves_annual > 0 || d.ip_reserves_annual > 0) && <ISRow label="Reserves" ip={-(d.ip_reserves_annual || d.reserves_annual)} pf={-d.reserves_annual} muted />}
+            {(d.other_expenses_annual > 0 || d.ip_other_annual > 0) && <ISRow label="Other Expenses" ip={-(d.ip_other_annual || d.other_expenses_annual)} pf={-d.other_expenses_annual} muted />}
             <ISRow label={`Total Operating Expenses${m.inPlaceEGI > 0 ? ` (${((m.inPlaceTotalOpEx / m.inPlaceEGI) * 100).toFixed(0)}% / ${m.egi > 0 ? ((m.totalOpEx / m.egi) * 100).toFixed(0) : 0}%)` : ""}`} ip={-m.inPlaceTotalOpEx} pf={-m.totalOpEx} />
             <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
             <ISRow label="Net Operating Income" ip={m.inPlaceNOI} pf={m.noi} bold hi />
-            {data.has_financing && <>
-              <ISRow label={`Annual Debt Service (Acq)${data.acq_io_years > 0 ? " — IO" : ""}`} ip={-m.yr1Debt} pf={-m.acqDebt} muted />
+            {d.has_financing && <>
+              <ISRow label={`Annual Debt Service (Acq)${d.acq_io_years > 0 ? " — IO" : ""}`} ip={-m.yr1Debt} pf={-m.acqDebt} muted />
               <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
               <ISRow label="Cash Flow Before Tax" ip={m.inPlaceCashFlow} pf={m.cashFlow} bold hi={m.cashFlow > 0} />
               <tr className="bg-muted/10">
@@ -1444,6 +1657,199 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save Underwriting
         </Button>
       </div>
+
+      {/* ── Scenario Wizard Modal ── */}
+      {showScenarioWizard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowScenarioWizard(false)}>
+          <div className="bg-card rounded-xl border shadow-lifted-md w-full max-w-lg mx-4 max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h3 className="font-semibold text-sm">New Scenario</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {wizardStep === 0 ? "What would you like to model?" : wizardStep === 1 ? "Set your target" : "Review results"}
+                </p>
+              </div>
+              <button onClick={() => setShowScenarioWizard(false)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {wizardStep === 0 && (
+                <div className="space-y-2">
+                  {SCENARIO_TYPES.map(st => (
+                    <button
+                      key={st.type}
+                      onClick={() => {
+                        setWizardType(st.type);
+                        if (st.type === "custom") {
+                          createScenario("Custom Scenario", "custom", "Manual what-if adjustments", {});
+                        } else {
+                          // Set smart defaults from business plan
+                          if (st.type === "land_residual" || st.type === "rent_target") {
+                            setWizardMetric("em");
+                            setWizardTarget(businessPlan?.target_equity_multiple_min || 2);
+                          } else {
+                            setWizardMetric("em");
+                            setWizardTarget(businessPlan?.target_equity_multiple_min || 2);
+                          }
+                          setWizardStep(1);
+                        }
+                      }}
+                      className={`w-full flex items-start gap-3 p-4 rounded-lg border transition-colors text-left hover:border-primary/50 hover:bg-primary/5`}
+                    >
+                      <span className="text-xl">{st.icon}</span>
+                      <div>
+                        <p className="text-sm font-medium">{st.label}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{st.description}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {wizardStep === 1 && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-2">Target Return Metric</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        { key: "em" as const, label: "Equity Multiple", suffix: "x", bpVal: businessPlan?.target_equity_multiple_min },
+                        { key: "coc" as const, label: "Cash-on-Cash", suffix: "%", bpVal: undefined },
+                        { key: "irr_proxy" as const, label: "IRR (approx)", suffix: "%", bpVal: businessPlan?.target_irr_min },
+                      ]).map(opt => (
+                        <button
+                          key={opt.key}
+                          onClick={() => {
+                            setWizardMetric(opt.key);
+                            if (opt.bpVal) setWizardTarget(opt.bpVal);
+                          }}
+                          className={`p-3 rounded-lg border text-center transition-colors ${
+                            wizardMetric === opt.key ? "border-primary bg-primary/5" : "hover:bg-muted/50"
+                          }`}
+                        >
+                          <p className="text-xs font-medium">{opt.label}</p>
+                          {opt.bpVal && (
+                            <p className="text-[10px] text-primary mt-1">Plan: {opt.bpVal}{opt.suffix}</p>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-2">
+                      Target Value
+                      {businessPlan && wizardMetric === "em" && businessPlan.target_equity_multiple_min && (
+                        <button
+                          className="ml-2 text-primary hover:underline"
+                          onClick={() => setWizardTarget(businessPlan.target_equity_multiple_min!)}
+                        >
+                          Use plan min ({businessPlan.target_equity_multiple_min}x)
+                        </button>
+                      )}
+                      {businessPlan && wizardMetric === "irr_proxy" && businessPlan.target_irr_min && (
+                        <button
+                          className="ml-2 text-primary hover:underline"
+                          onClick={() => setWizardTarget(businessPlan.target_irr_min!)}
+                        >
+                          Use plan min ({businessPlan.target_irr_min}%)
+                        </button>
+                      )}
+                    </label>
+                    <div className="flex items-center border rounded-md bg-background overflow-hidden w-48">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={wizardTarget || ""}
+                        onChange={e => setWizardTarget(parseFloat(e.target.value) || 0)}
+                        className="flex-1 px-3 py-2 text-sm outline-none bg-transparent text-blue-700"
+                        placeholder="0"
+                      />
+                      <span className="px-2 text-sm text-muted-foreground bg-muted border-l">
+                        {wizardMetric === "em" ? "x" : "%"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {wizardType === "land_residual" && "We'll find the maximum purchase price that achieves this return."}
+                      {wizardType === "rent_target" && "We'll find how much market rents need to change to achieve this return."}
+                      {wizardType === "exit_cap" && "We'll find the exit cap rate needed to achieve this return."}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between pt-2">
+                    <Button variant="outline" size="sm" onClick={() => setWizardStep(0)}>Back</Button>
+                    <Button size="sm" onClick={() => { runWizardSolve(); setWizardStep(2); }} disabled={!wizardTarget}>
+                      Calculate
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {wizardStep === 2 && (
+                <div className="space-y-4">
+                  {wizardSolving ? (
+                    <div className="flex flex-col items-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-primary mb-3" />
+                      <p className="text-sm text-muted-foreground">Solving...</p>
+                    </div>
+                  ) : wizardResult ? (
+                    <>
+                      <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+                        <p className="text-xs text-muted-foreground mb-1">{wizardResult.label}</p>
+                        <p className="text-2xl font-bold text-primary tabular-nums">
+                          {wizardType === "land_residual" ? fc(wizardResult.value) :
+                           wizardType === "exit_cap" ? `${wizardResult.value.toFixed(2)}%` :
+                           `${(wizardResult.value * 100).toFixed(0)}% of baseline rents`}
+                        </p>
+                        {wizardType === "land_residual" && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            vs baseline {fc(data.purchase_price)} ({wizardResult.value > data.purchase_price ? "+" : ""}{((wizardResult.value - data.purchase_price) / data.purchase_price * 100).toFixed(1)}%)
+                          </p>
+                        )}
+                        {wizardType === "exit_cap" && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            vs baseline {data.exit_cap_rate.toFixed(2)}%
+                          </p>
+                        )}
+                      </div>
+                      {/* Quick comparison */}
+                      {(() => {
+                        const scenarioData = { ...data, ...wizardResult.scenarioOverrides };
+                        const sm = calc(scenarioData, calcMode);
+                        const bm = calc(data, calcMode);
+                        return (
+                          <div className="grid grid-cols-3 gap-3">
+                            {[
+                              { label: "Equity Multiple", base: `${bm.em.toFixed(2)}x`, scen: `${sm.em.toFixed(2)}x` },
+                              { label: "Cash-on-Cash", base: `${bm.coc.toFixed(2)}%`, scen: `${sm.coc.toFixed(2)}%` },
+                              { label: "NOI", base: fc(bm.noi), scen: fc(sm.noi) },
+                            ].map(c => (
+                              <div key={c.label} className="p-3 rounded-lg border bg-muted/30">
+                                <p className="text-[10px] text-muted-foreground mb-1">{c.label}</p>
+                                <p className="text-xs tabular-nums"><span className="text-muted-foreground">{c.base}</span> → <span className="font-semibold text-primary">{c.scen}</span></p>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                      <div className="flex items-center justify-between pt-2">
+                        <Button variant="outline" size="sm" onClick={() => setWizardStep(1)}>Back</Button>
+                        <Button size="sm" onClick={() => {
+                          const name = wizardType === "land_residual" ? `Price → ${fc(wizardResult.value)}`
+                            : wizardType === "exit_cap" ? `Exit Cap → ${wizardResult.value.toFixed(2)}%`
+                            : `Rents → ${(wizardResult.value * 100).toFixed(0)}%`;
+                          createScenario(name, wizardType, wizardResult.label, wizardResult.scenarioOverrides);
+                        }}>
+                          <Check className="h-4 w-4 mr-1.5" />Create Scenario
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-muted-foreground">No solution found. Try adjusting your target.</p>
+                      <Button variant="outline" size="sm" className="mt-3" onClick={() => setWizardStep(1)}>Back</Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── CapEx AI Preview Modal ── */}
       {capexPreview && (
