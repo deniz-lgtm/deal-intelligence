@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
       notes: body.notes ?? null,
       loi_executed: false,
       psa_executed: false,
+      business_plan_id: body.business_plan_id ?? null,
     });
 
     // Seed the diligence checklist from template

@@ -22,6 +22,7 @@ import {
   Camera,
   FileSignature,
   Sparkles,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,11 +30,12 @@ import { Progress } from "@/components/ui/progress";
 import { formatCurrency, formatNumber, titleCase } from "@/lib/utils";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import type { Deal, DealStatus, Document, ChecklistItem } from "@/lib/types";
+import type { Deal, DealStatus, Document, ChecklistItem, BusinessPlan, InvestmentThesis } from "@/lib/types";
 import {
   DEAL_PIPELINE,
   DEAL_STAGE_LABELS,
   STAGE_GATES,
+  INVESTMENT_THESIS_LABELS,
 } from "@/lib/types";
 
 const STATUS_BADGE_VARIANT: Record<DealStatus, "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "issue"> = {
@@ -56,6 +58,7 @@ export default function DealOverviewPage({
   const [deal, setDeal] = useState<Deal | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+  const [businessPlan, setBusinessPlan] = useState<BusinessPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [advancingTo, setAdvancingTo] = useState<DealStatus | null>(null);
@@ -69,11 +72,20 @@ export default function DealOverviewPage({
       fetch(`/api/deals/${params.id}`).then((r) => r.json()),
       fetch(`/api/deals/${params.id}/documents`).then((r) => r.json()),
       fetch(`/api/checklist?deal_id=${params.id}`).then((r) => r.json()),
-    ]).then(([dealRes, docsRes, checklistRes]) => {
-      setDeal(dealRes.data);
-      setNotesValue(dealRes.data?.notes || "");
+    ]).then(async ([dealRes, docsRes, checklistRes]) => {
+      const d = dealRes.data;
+      setDeal(d);
+      setNotesValue(d?.notes || "");
       setDocuments(docsRes.data || []);
       setChecklist(checklistRes.data || []);
+      // Load linked business plan
+      if (d?.business_plan_id) {
+        try {
+          const bpRes = await fetch(`/api/business-plans/${d.business_plan_id}`);
+          const bpJson = await bpRes.json();
+          if (bpJson.data) setBusinessPlan(bpJson.data);
+        } catch { /* ignore */ }
+      }
       setLoading(false);
     });
   }, [params.id]);
@@ -426,6 +438,53 @@ export default function DealOverviewPage({
           />
         )}
       </div>
+
+      {/* Business Plan */}
+      {businessPlan && (
+        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <BookOpen className="h-3.5 w-3.5 text-primary" />
+              <h3 className="font-display text-sm">Business Plan</h3>
+            </div>
+            <Link href="/business-plans">
+              <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
+                Manage <ArrowRight className="h-3 w-3" />
+              </Button>
+            </Link>
+          </div>
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-medium">{businessPlan.name}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {(businessPlan.investment_theses || []).map((t) => (
+                <span
+                  key={t}
+                  className="text-2xs px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 font-medium"
+                >
+                  {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
+                </span>
+              ))}
+            </div>
+            <div className="flex items-center gap-4 flex-wrap text-2xs text-muted-foreground">
+              {(businessPlan.target_markets || []).length > 0 && (
+                <span className="flex items-center gap-1">
+                  <MapPin className="h-3 w-3" />
+                  {(businessPlan.target_markets || []).join(", ")}
+                </span>
+              )}
+              {(businessPlan.target_irr_min || businessPlan.target_irr_max) && (
+                <span>IRR {businessPlan.target_irr_min ?? "?"}–{businessPlan.target_irr_max ?? "?"}%</span>
+              )}
+              {(businessPlan.hold_period_min || businessPlan.hold_period_max) && (
+                <span>{businessPlan.hold_period_min}–{businessPlan.hold_period_max} yr hold</span>
+              )}
+            </div>
+            {businessPlan.description && (
+              <p className="text-2xs text-muted-foreground leading-relaxed line-clamp-2">{businessPlan.description}</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Progress + Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

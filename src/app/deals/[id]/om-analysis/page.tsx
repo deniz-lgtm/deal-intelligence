@@ -145,6 +145,47 @@ function severityConfig(severity: string) {
   }
 }
 
+function buildBusinessPlanContext(basePlan: BusinessPlan | null, addendum: string): string {
+  const parts: string[] = [];
+  if (basePlan) {
+    const planLines: string[] = [`BASE BUSINESS PLAN — ${basePlan.name}:`];
+    if ((basePlan.investment_theses || []).length > 0) {
+      planLines.push(`Investment Thesis: ${basePlan.investment_theses.map(t => THESIS_LABELS[t] || t).join(", ")}`);
+    }
+    if ((basePlan.target_markets || []).length > 0) {
+      planLines.push(`Target Markets: ${basePlan.target_markets.join(", ")}`);
+    }
+    if ((basePlan.property_types || []).length > 0) {
+      planLines.push(`Property Types: ${basePlan.property_types.join(", ")}`);
+    }
+    if (basePlan.target_irr_min || basePlan.target_irr_max) {
+      planLines.push(`Target IRR: ${basePlan.target_irr_min ?? "?"}% – ${basePlan.target_irr_max ?? "?"}%`);
+    }
+    if (basePlan.target_equity_multiple_min || basePlan.target_equity_multiple_max) {
+      planLines.push(`Target Equity Multiple: ${basePlan.target_equity_multiple_min ?? "?"}x – ${basePlan.target_equity_multiple_max ?? "?"}x`);
+    }
+    if (basePlan.hold_period_min || basePlan.hold_period_max) {
+      planLines.push(`Hold Period: ${basePlan.hold_period_min ?? "?"}–${basePlan.hold_period_max ?? "?"} years`);
+    }
+    if (basePlan.description?.trim()) {
+      planLines.push(`Strategy Notes: ${basePlan.description.trim()}`);
+    }
+    parts.push(planLines.join("\n"));
+  }
+  if (addendum.trim()) {
+    parts.push(`DEAL-SPECIFIC NOTES:\n${addendum.trim()}`);
+  }
+  return parts.join("\n\n");
+}
+
+const THESIS_LABELS: Record<string, string> = {
+  value_add: "Value-Add",
+  ground_up: "Ground-Up Development",
+  core: "Core",
+  core_plus: "Core-Plus",
+  opportunistic: "Opportunistic",
+};
+
 const SUGGESTED_QUESTIONS = [
   "What are the biggest risks with this deal?",
   "How does the cap rate compare to market?",
@@ -158,6 +199,15 @@ interface BusinessPlan {
   id: string;
   name: string;
   description: string;
+  investment_theses: string[];
+  target_markets: string[];
+  property_types: string[];
+  hold_period_min: number | null;
+  hold_period_max: number | null;
+  target_irr_min: number | null;
+  target_irr_max: number | null;
+  target_equity_multiple_min: number | null;
+  target_equity_multiple_max: number | null;
   is_default: boolean;
 }
 
@@ -168,11 +218,13 @@ function DealContextPanel({
   setBasePlan,
   addendum,
   setAddendum,
+  dealBusinessPlanId,
 }: {
   basePlan: BusinessPlan | null;
   setBasePlan: (plan: BusinessPlan | null) => void;
   addendum: string;
   setAddendum: (v: string) => void;
+  dealBusinessPlanId?: string | null;
 }) {
   const [plans, setPlans] = useState<BusinessPlan[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(true);
@@ -186,10 +238,13 @@ function DealContextPanel({
         const json = await res.json();
         if (json.data) {
           setPlans(json.data);
-          // Auto-select the default plan if none chosen yet
+          // Auto-select: deal's linked plan > default plan > none
           if (!basePlan) {
+            const linkedPlan = dealBusinessPlanId
+              ? json.data.find((p: BusinessPlan) => p.id === dealBusinessPlanId) ?? null
+              : null;
             const defaultPlan = json.data.find((p: BusinessPlan) => p.is_default) ?? null;
-            setBasePlan(defaultPlan);
+            setBasePlan(linkedPlan || defaultPlan);
           }
         }
       } catch {
@@ -283,16 +338,42 @@ function DealContextPanel({
               )}
               <p className="text-xs font-semibold text-amber-800">{basePlan.name}</p>
             </div>
-            <div className={cn("text-xs text-amber-700 leading-relaxed", !expanded && "line-clamp-3")}>
-              {basePlan.description ?? ""}
+            {/* Thesis badges */}
+            {(basePlan.investment_theses || []).length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-1.5">
+                {basePlan.investment_theses.map((t) => (
+                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-medium border border-amber-200">
+                    {THESIS_LABELS[t] || t}
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* Markets & targets summary */}
+            <div className="flex items-center gap-3 flex-wrap text-[10px] text-amber-700 mb-1">
+              {(basePlan.target_markets || []).length > 0 && (
+                <span>Markets: {basePlan.target_markets.join(", ")}</span>
+              )}
+              {(basePlan.target_irr_min || basePlan.target_irr_max) && (
+                <span>IRR {basePlan.target_irr_min ?? "?"}–{basePlan.target_irr_max ?? "?"}%</span>
+              )}
+              {(basePlan.hold_period_min || basePlan.hold_period_max) && (
+                <span>{basePlan.hold_period_min}–{basePlan.hold_period_max}yr hold</span>
+              )}
             </div>
-            {(basePlan.description?.length ?? 0) > 120 && (
-              <button
-                onClick={() => setExpanded((v) => !v)}
-                className="text-xs text-amber-600 hover:underline mt-1"
-              >
-                {expanded ? "Show less" : "Show more"}
-              </button>
+            {basePlan.description && (
+              <>
+                <div className={cn("text-xs text-amber-700 leading-relaxed", !expanded && "line-clamp-2")}>
+                  {basePlan.description}
+                </div>
+                {basePlan.description.length > 120 && (
+                  <button
+                    onClick={() => setExpanded((v) => !v)}
+                    className="text-xs text-amber-600 hover:underline mt-1"
+                  >
+                    {expanded ? "Show less" : "Show more"}
+                  </button>
+                )}
+              </>
             )}
           </div>
         ) : (
@@ -331,10 +412,12 @@ function UploadPanel({
   dealId,
   onAnalysisCreated,
   processing,
+  dealBusinessPlanId,
 }: {
   dealId: string;
   onAnalysisCreated: () => void;
   processing: boolean;
+  dealBusinessPlanId?: string | null;
 }) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -344,14 +427,7 @@ function UploadPanel({
   const inputRef = useRef<HTMLInputElement>(null);
 
   function buildDealContext(): string {
-    const parts: string[] = [];
-    if (basePlan?.description?.trim()) {
-      parts.push(`BASE BUSINESS PLAN — ${basePlan.name}:\n${basePlan.description.trim()}`);
-    }
-    if (addendum.trim()) {
-      parts.push(`DEAL-SPECIFIC NOTES:\n${addendum.trim()}`);
-    }
-    return parts.join("\n\n");
+    return buildBusinessPlanContext(basePlan, addendum);
   }
 
   async function upload(file: File) {
@@ -415,6 +491,7 @@ function UploadPanel({
             setBasePlan={setBasePlan}
             addendum={addendum}
             setAddendum={setAddendum}
+            dealBusinessPlanId={dealBusinessPlanId}
           />
 
           {/* Drop zone */}
@@ -853,14 +930,7 @@ function ReanalyzePanel({
   const inputRef = useRef<HTMLInputElement>(null);
 
   function buildDealContext(): string {
-    const parts: string[] = [];
-    if (basePlan?.description?.trim()) {
-      parts.push(`BASE BUSINESS PLAN — ${basePlan.name}:\n${basePlan.description.trim()}`);
-    }
-    if (addendum.trim()) {
-      parts.push(`DEAL-SPECIFIC NOTES:\n${addendum.trim()}`);
-    }
-    return parts.join("\n\n");
+    return buildBusinessPlanContext(basePlan, addendum);
   }
 
   async function upload(file: File) {
@@ -958,7 +1028,15 @@ export default function OmAnalysisPage() {
   const [notionResult, setNotionResult] = useState<{ url: string } | null>(null);
   const [showAssumptions, setShowAssumptions] = useState(false);
   const [showReanalyze, setShowReanalyze] = useState(false);
+  const [dealBusinessPlanId, setDealBusinessPlanId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Fetch deal to get linked business plan
+  useEffect(() => {
+    fetch(`/api/deals/${dealId}`).then(r => r.json()).then(json => {
+      if (json.data?.business_plan_id) setDealBusinessPlanId(json.data.business_plan_id);
+    }).catch(() => {});
+  }, [dealId]);
 
   const fetchAnalysis = useCallback(async () => {
     try {
@@ -1039,6 +1117,7 @@ export default function OmAnalysisPage() {
       <UploadPanel
         dealId={dealId}
         processing={false}
+        dealBusinessPlanId={dealBusinessPlanId}
         onAnalysisCreated={async () => {
           const a = await fetchAnalysis();
           if (a) setAnalysis(a);
@@ -1053,6 +1132,7 @@ export default function OmAnalysisPage() {
       <UploadPanel
         dealId={dealId}
         processing={true}
+        dealBusinessPlanId={dealBusinessPlanId}
         onAnalysisCreated={fetchAnalysis}
       />
     );
@@ -1076,6 +1156,7 @@ export default function OmAnalysisPage() {
         <UploadPanel
           dealId={dealId}
           processing={false}
+          dealBusinessPlanId={dealBusinessPlanId}
           onAnalysisCreated={async () => {
             const a = await fetchAnalysis();
             if (a) setAnalysis(a);

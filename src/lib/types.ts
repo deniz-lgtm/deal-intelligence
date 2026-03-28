@@ -73,11 +73,64 @@ export interface Deal {
   notes: string | null;
   loi_executed: boolean;
   psa_executed: boolean;
+  business_plan_id: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export type NewDeal = Omit<Deal, "id" | "created_at" | "updated_at">;
+
+// ─── Business Plan ─────────────────────────────────────────────────────────
+
+export type InvestmentThesis =
+  | "value_add"
+  | "ground_up"
+  | "core"
+  | "core_plus"
+  | "opportunistic";
+
+export const INVESTMENT_THESIS_LABELS: Record<InvestmentThesis, string> = {
+  value_add: "Value-Add",
+  ground_up: "Ground-Up Development",
+  core: "Core",
+  core_plus: "Core-Plus",
+  opportunistic: "Opportunistic",
+};
+
+export const INVESTMENT_THESIS_DESCRIPTIONS: Record<InvestmentThesis, string> = {
+  value_add: "Acquire underperforming assets, renovate/reposition, increase NOI, and sell at a higher valuation",
+  ground_up: "Develop new construction from raw or entitled land through lease-up and stabilization",
+  core: "Acquire stabilized, high-quality assets in prime locations for steady cash flow with minimal risk",
+  core_plus: "Acquire quality assets with minor value-add potential through light improvements or lease-up",
+  opportunistic: "High-risk/high-return strategies including distressed assets, heavy rehab, or market turnarounds",
+};
+
+export const PREDEFINED_MARKETS = [
+  "DFW", "Houston", "San Antonio", "Austin", "Tampa", "Orlando", "Jacksonville",
+  "Atlanta", "Charlotte", "Raleigh-Durham", "Nashville", "Phoenix", "Denver",
+  "Las Vegas", "Salt Lake City", "Boise", "Indianapolis", "Columbus", "Kansas City",
+  "Minneapolis", "Chicago", "Detroit", "St. Louis", "Miami", "Fort Lauderdale",
+  "Savannah", "Charleston", "Richmond", "Washington DC", "Baltimore", "Philadelphia",
+  "Boston", "New York", "Los Angeles", "San Diego", "San Francisco", "Seattle", "Portland",
+];
+
+export interface BusinessPlan {
+  id: string;
+  name: string;
+  description: string;
+  investment_theses: InvestmentThesis[];
+  target_markets: string[];
+  property_types: PropertyType[];
+  hold_period_min: number | null;
+  hold_period_max: number | null;
+  target_irr_min: number | null;
+  target_irr_max: number | null;
+  target_equity_multiple_min: number | null;
+  target_equity_multiple_max: number | null;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
 // ─── Document Categories ────────────────────────────────────────────────────
 

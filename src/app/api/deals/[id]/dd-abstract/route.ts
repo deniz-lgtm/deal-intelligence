@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, documentQueries, checklistQueries, underwritingQueries } from "@/lib/db";
+import { dealQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
 import { generateDDAbstract } from "@/lib/claude";
 import type { Document, ChecklistItem, Deal } from "@/lib/types";
 
@@ -31,12 +31,27 @@ export async function POST(
     // Build a comprehensive underwriting summary from the raw data
     const uwSummary = buildUWSummary(rawUw, deal);
 
+    // Build business plan context if linked
+    let bpContext = deal.context_notes || "";
+    if (deal.business_plan_id) {
+      const bp = await businessPlanQueries.getById(deal.business_plan_id);
+      if (bp) {
+        const bpLines: string[] = [`BUSINESS PLAN — ${bp.name}:`];
+        const theses = bp.investment_theses || [];
+        if (theses.length > 0) bpLines.push(`Investment Thesis: ${theses.join(", ")}`);
+        const markets = bp.target_markets || [];
+        if (markets.length > 0) bpLines.push(`Target Markets: ${markets.join(", ")}`);
+        if (bp.description?.trim()) bpLines.push(`Strategy: ${bp.description.trim()}`);
+        bpContext = bpLines.join("\n") + (bpContext ? `\n\n${bpContext}` : "");
+      }
+    }
+
     const abstract = await generateDDAbstract(
       deal as Deal,
       documents,
       checklist,
       uwSummary,
-      deal.context_notes,
+      bpContext,
       sections
     );
     return NextResponse.json({ data: abstract });

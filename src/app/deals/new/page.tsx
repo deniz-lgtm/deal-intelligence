@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Building2, FileText, Loader2, Sparkles, XCircle } from "lucide-react";
+import { ArrowLeft, Building2, FileText, Loader2, Sparkles, XCircle, BookOpen, Star, ChevronDown, ExternalLink, Target, MapPin, TrendingUp, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { DealStatus, PropertyType } from "@/lib/types";
+import type { DealStatus, PropertyType, BusinessPlan, InvestmentThesis } from "@/lib/types";
+import { INVESTMENT_THESIS_LABELS } from "@/lib/types";
 
 const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
   { value: "multifamily", label: "Multifamily" },
@@ -55,6 +56,33 @@ export default function NewDealPage() {
   const [dragging, setDragging] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Business plan state
+  const [plans, setPlans] = useState<BusinessPlan[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(true);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [showPlanDropdown, setShowPlanDropdown] = useState(false);
+
+  const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
+
+  useEffect(() => {
+    async function loadPlans() {
+      try {
+        const res = await fetch("/api/business-plans");
+        const json = await res.json();
+        if (json.data) {
+          setPlans(json.data);
+          const defaultPlan = json.data.find((p: BusinessPlan) => p.is_default);
+          if (defaultPlan) setSelectedPlanId(defaultPlan.id);
+        }
+      } catch {
+        // ignore
+      } finally {
+        setLoadingPlans(false);
+      }
+    }
+    loadPlans();
+  }, []);
 
   const set = (field: string, value: string) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -115,6 +143,7 @@ export default function NewDealPage() {
           units: form.units ? Number(form.units) : null,
           bedrooms: form.bedrooms ? Number(form.bedrooms) : null,
           year_built: form.year_built ? Number(form.year_built) : null,
+          business_plan_id: selectedPlanId,
         }),
       });
 
@@ -264,6 +293,127 @@ export default function NewDealPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Business Plan Selection */}
+          <Section title="Business Plan">
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-muted-foreground">
+                Optionally link a business plan to this deal. The plan&apos;s strategy will be used for analysis and documentation.
+              </p>
+              {loadingPlans ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading plans...
+                </div>
+              ) : plans.length === 0 ? (
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/20 border border-border/40">
+                  <BookOpen className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">No business plans created yet.</span>
+                  <Link href="/business-plans" target="_blank" className="text-xs text-primary hover:underline flex items-center gap-1 ml-auto">
+                    <ExternalLink className="h-3 w-3" />
+                    Create one
+                  </Link>
+                </div>
+              ) : (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowPlanDropdown((v) => !v)}
+                    className={cn(
+                      "w-full text-left flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-lg border transition-all",
+                      selectedPlan
+                        ? "bg-primary/5 border-primary/20"
+                        : "bg-muted/20 border-border/40 hover:bg-muted/30"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <BookOpen className={cn("h-4 w-4 flex-shrink-0", selectedPlan ? "text-primary" : "text-muted-foreground")} />
+                      <span className={cn("text-sm truncate", selectedPlan ? "font-medium" : "text-muted-foreground")}>
+                        {selectedPlan ? selectedPlan.name : "No business plan (optional)"}
+                      </span>
+                      {selectedPlan?.is_default && (
+                        <Star className="h-3 w-3 fill-amber-400 text-amber-400 flex-shrink-0" />
+                      )}
+                    </div>
+                    <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", showPlanDropdown && "rotate-180")} />
+                  </button>
+                  {showPlanDropdown && (
+                    <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-card border border-border rounded-xl shadow-lg py-1 max-h-72 overflow-y-auto">
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedPlanId(null); setShowPlanDropdown(false); }}
+                        className="w-full text-left px-3.5 py-2.5 hover:bg-muted/50 text-sm text-muted-foreground"
+                      >
+                        No business plan
+                      </button>
+                      {plans.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => { setSelectedPlanId(p.id); setShowPlanDropdown(false); }}
+                          className={cn(
+                            "w-full text-left px-3.5 py-2.5 hover:bg-muted/50 transition-colors",
+                            selectedPlanId === p.id && "bg-primary/5"
+                          )}
+                        >
+                          <div className="flex items-center gap-2">
+                            {p.is_default && <Star className="h-3 w-3 fill-amber-400 text-amber-400 flex-shrink-0" />}
+                            <span className="text-sm font-medium truncate">{p.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            {(p.investment_theses || []).map((t) => (
+                              <span key={t} className="text-2xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+                                {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
+                              </span>
+                            ))}
+                            {(p.target_markets || []).length > 0 && (
+                              <span className="text-2xs text-muted-foreground">
+                                {(p.target_markets || []).slice(0, 3).join(", ")}
+                                {(p.target_markets || []).length > 3 && ` +${(p.target_markets || []).length - 3}`}
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Selected plan summary */}
+              {selectedPlan && (
+                <div className="rounded-lg border border-primary/15 bg-primary/[0.03] p-3 flex flex-col gap-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {(selectedPlan.investment_theses || []).map((t) => (
+                      <span key={t} className="text-2xs px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 font-medium">
+                        {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-4 flex-wrap text-2xs text-muted-foreground">
+                    {(selectedPlan.target_markets || []).length > 0 && (
+                      <span className="flex items-center gap-1">
+                        <MapPin className="h-3 w-3" />
+                        {(selectedPlan.target_markets || []).join(", ")}
+                      </span>
+                    )}
+                    {(selectedPlan.target_irr_min || selectedPlan.target_irr_max) && (
+                      <span className="flex items-center gap-1">
+                        <TrendingUp className="h-3 w-3" />
+                        IRR {selectedPlan.target_irr_min ?? "?"}–{selectedPlan.target_irr_max ?? "?"}%
+                      </span>
+                    )}
+                    {(selectedPlan.hold_period_min || selectedPlan.hold_period_max) && (
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {selectedPlan.hold_period_min}–{selectedPlan.hold_period_max} yr
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+
           {/* Basic Info */}
           <Section title="Basic Information">
             <div className="grid gap-4">

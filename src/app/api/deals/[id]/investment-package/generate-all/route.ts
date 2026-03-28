@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries } from "@/lib/db";
+import { dealQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 
 const MODEL = "claude-sonnet-4-5";
@@ -52,6 +52,11 @@ export async function POST(
 
     if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
 
+    // Fetch linked business plan if set
+    const businessPlan = deal.business_plan_id
+      ? await businessPlanQueries.getById(deal.business_plan_id)
+      : null;
+
     const uw: AnyRecord | null = uwRow?.data
       ? (typeof uwRow.data === "string" ? JSON.parse(uwRow.data) : uwRow.data)
       : null;
@@ -60,12 +65,12 @@ export async function POST(
     const fc = (v: number) => `$${Math.round(v).toLocaleString()}`;
 
     // Build master deal context
-    const dealContext = buildDealContext(deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos);
+    const dealContext = buildDealContext(deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, businessPlan as AnyRecord | null);
 
     // Build per-section context
     const sectionContexts: Record<string, string> = {};
     for (const sectionId of sections) {
-      sectionContexts[sectionId] = buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc);
+      sectionContexts[sectionId] = buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc, businessPlan as AnyRecord | null);
     }
 
     const audienceTone = AUDIENCE_TONES[audience] || AUDIENCE_TONES.investment_committee;
@@ -127,12 +132,36 @@ const SECTION_TITLES: Record<string, string> = {
   risk_factors: "Risk Factors & Mitigants", photos: "Property Photos", appendix: "Appendix",
 };
 
-function buildDealContext(deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord | null, docs: AnyRecord[], checklist: AnyRecord[], photos: AnyRecord[]): string {
+const THESIS_LABELS: Record<string, string> = {
+  value_add: "Value-Add",
+  ground_up: "Ground-Up Development",
+  core: "Core",
+  core_plus: "Core-Plus",
+  opportunistic: "Opportunistic",
+};
+
+function buildDealContext(deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord | null, docs: AnyRecord[], checklist: AnyRecord[], photos: AnyRecord[], bp: AnyRecord | null): string {
   const lines: string[] = [];
   lines.push(`Deal: ${deal.name}`);
   lines.push(`Address: ${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}`);
   lines.push(`Type: ${deal.property_type} | Status: ${deal.status}`);
   lines.push(`Asking: ${deal.asking_price ? `$${Number(deal.asking_price).toLocaleString()}` : "TBD"} | Units: ${deal.units ?? "N/A"} | SF: ${deal.square_footage?.toLocaleString() ?? "N/A"} | Year Built: ${deal.year_built ?? "N/A"}`);
+
+  // Business Plan context
+  if (bp) {
+    const bpLines: string[] = [`Business Plan: ${bp.name}`];
+    const theses = bp.investment_theses || [];
+    if (theses.length > 0) bpLines.push(`Investment Thesis: ${theses.map((t: string) => THESIS_LABELS[t] || t).join(", ")}`);
+    const markets = bp.target_markets || [];
+    if (markets.length > 0) bpLines.push(`Target Markets: ${markets.join(", ")}`);
+    const propTypes = bp.property_types || [];
+    if (propTypes.length > 0) bpLines.push(`Target Property Types: ${propTypes.join(", ")}`);
+    if (bp.target_irr_min || bp.target_irr_max) bpLines.push(`Target IRR: ${bp.target_irr_min ?? "?"}% – ${bp.target_irr_max ?? "?"}%`);
+    if (bp.target_equity_multiple_min || bp.target_equity_multiple_max) bpLines.push(`Target Equity Multiple: ${bp.target_equity_multiple_min ?? "?"}x – ${bp.target_equity_multiple_max ?? "?"}x`);
+    if (bp.hold_period_min || bp.hold_period_max) bpLines.push(`Hold Period: ${bp.hold_period_min ?? "?"}–${bp.hold_period_max ?? "?"} years`);
+    if (bp.description?.trim()) bpLines.push(`Strategy Notes: ${bp.description.trim()}`);
+    lines.push(bpLines.join("\n"));
+  }
 
   if (uw?.purchase_price) lines.push(`Purchase Price: $${Number(uw.purchase_price).toLocaleString()}`);
   if (om?.summary) lines.push(`OM Summary: ${om.summary}`);
@@ -145,7 +174,7 @@ function buildDealContext(deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord |
 function buildSectionContext(
   sectionId: string, deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord | null,
   docs: AnyRecord[], checklist: AnyRecord[], photos: AnyRecord[],
-  n: (v: unknown) => number, fc: (v: number) => string
+  n: (v: unknown) => number, fc: (v: number) => string, bp?: AnyRecord | null
 ): string {
   const isMF = deal.property_type === "multifamily" || deal.property_type === "student_housing";
   const unitGroups = uw?.unit_groups || [];
@@ -153,6 +182,9 @@ function buildSectionContext(
   switch (sectionId) {
     case "exec_summary":
       return [
+        bp ? `Investment Thesis: ${(bp.investment_theses || []).map((t: string) => THESIS_LABELS[t] || t).join(", ")}` : "",
+        bp?.target_markets?.length ? `Target Markets: ${bp.target_markets.join(", ")}` : "",
+        bp?.target_irr_min || bp?.target_irr_max ? `Target IRR: ${bp?.target_irr_min ?? "?"}–${bp?.target_irr_max ?? "?"}%` : "",
         om?.summary ? `OM Summary: ${om.summary}` : "",
         om?.score_reasoning ? `Score Reasoning: ${om.score_reasoning}` : "",
         deal.context_notes ? `Analyst Notes: ${deal.context_notes}` : "",
@@ -206,6 +238,8 @@ function buildSectionContext(
       const capexItems = uw?.capex_items || [];
       const renos = unitGroups.filter((g: AnyRecord) => g.will_renovate);
       return [
+        bp ? `Business Plan: ${bp.name} — ${(bp.investment_theses || []).map((t: string) => THESIS_LABELS[t] || t).join(", ")}` : "",
+        bp?.description ? `Strategy: ${bp.description}` : "",
         renos.length > 0 ? `Renovating ${renos.length} unit types` : "",
         capexItems.length > 0 ? `CapEx items: ${capexItems.map((c: AnyRecord) => `${c.label}: ${n(c.quantity)} × ${fc(n(c.cost_per_unit))}`).join(", ")}` : "",
         deal.context_notes ? `Strategy notes: ${deal.context_notes}` : "",

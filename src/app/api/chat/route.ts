@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { chatQueries, documentQueries, dealQueries, underwritingQueries } from "@/lib/db";
+import { chatQueries, documentQueries, dealQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
 import { chatWithDealIntelligence } from "@/lib/claude";
 import type { Document } from "@/lib/types";
 
@@ -20,9 +20,25 @@ export async function POST(req: NextRequest) {
       id: string;
       name: string;
       context_notes?: string | null;
+      business_plan_id?: string | null;
     } | null;
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    }
+
+    // Enrich context_notes with business plan if linked
+    if (deal.business_plan_id) {
+      const bp = await businessPlanQueries.getById(deal.business_plan_id);
+      if (bp) {
+        const bpLines: string[] = [`BUSINESS PLAN — ${bp.name}:`];
+        const theses = bp.investment_theses || [];
+        if (theses.length > 0) bpLines.push(`Investment Thesis: ${theses.join(", ")}`);
+        const markets = bp.target_markets || [];
+        if (markets.length > 0) bpLines.push(`Target Markets: ${markets.join(", ")}`);
+        if (bp.description?.trim()) bpLines.push(`Strategy: ${bp.description.trim()}`);
+        const bpContext = bpLines.join("\n");
+        deal.context_notes = bpContext + (deal.context_notes ? `\n\n${deal.context_notes}` : "");
+      }
     }
 
     const documents = await documentQueries.getByDealId(deal_id) as Document[];

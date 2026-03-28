@@ -225,6 +225,20 @@ export async function initSchema(): Promise<void> {
       created_at  TIMESTAMPTZ DEFAULT NOW(),
       updated_at  TIMESTAMPTZ DEFAULT NOW()
     );
+
+    -- Business plan structured fields
+    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS investment_theses JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_markets JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS property_types JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_min INTEGER;
+    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_max INTEGER;
+    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_min NUMERIC;
+    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_max NUMERIC;
+    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_min NUMERIC;
+    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_max NUMERIC;
+
+    -- Deal -> Business Plan link
+    ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id UUID;
   `);
 }
 
@@ -251,8 +265,8 @@ export const dealQueries = {
       `INSERT INTO deals
         (id, name, address, city, state, zip, property_type, status,
          starred, asking_price, square_footage, units, bedrooms, year_built, notes,
-         loi_executed, psa_executed)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+         loi_executed, psa_executed, business_plan_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [
         deal.id,
         deal.name,
@@ -271,6 +285,7 @@ export const dealQueries = {
         deal.notes ?? null,
         deal.loi_executed ?? false,
         deal.psa_executed ?? false,
+        deal.business_plan_id ?? null,
       ]
     );
     return dealQueries.getById(deal.id as string);
@@ -799,6 +814,15 @@ export interface BusinessPlanRow {
   id: string;
   name: string;
   description: string;
+  investment_theses: string[]; // JSONB array
+  target_markets: string[];   // JSONB array
+  property_types: string[];   // JSONB array
+  hold_period_min: number | null;
+  hold_period_max: number | null;
+  target_irr_min: number | null;
+  target_irr_max: number | null;
+  target_equity_multiple_min: number | null;
+  target_equity_multiple_max: number | null;
   is_default: boolean;
   created_at: string;
   updated_at: string;
@@ -827,24 +851,58 @@ export const businessPlanQueries = {
     return res.rows[0] ?? null;
   },
 
-  create: async (plan: { name: string; description: string; is_default?: boolean }): Promise<BusinessPlanRow> => {
+  create: async (plan: {
+    name: string;
+    description: string;
+    is_default?: boolean;
+    investment_theses?: string[];
+    target_markets?: string[];
+    property_types?: string[];
+    hold_period_min?: number | null;
+    hold_period_max?: number | null;
+    target_irr_min?: number | null;
+    target_irr_max?: number | null;
+    target_equity_multiple_min?: number | null;
+    target_equity_multiple_max?: number | null;
+  }): Promise<BusinessPlanRow> => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO business_plans (name, description, is_default)
-       VALUES ($1, $2, $3)
+      `INSERT INTO business_plans (name, description, is_default, investment_theses, target_markets, property_types,
+        hold_period_min, hold_period_max, target_irr_min, target_irr_max, target_equity_multiple_min, target_equity_multiple_max)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
-      [plan.name, plan.description, plan.is_default ?? false]
+      [
+        plan.name,
+        plan.description,
+        plan.is_default ?? false,
+        JSON.stringify(plan.investment_theses ?? []),
+        JSON.stringify(plan.target_markets ?? []),
+        JSON.stringify(plan.property_types ?? []),
+        plan.hold_period_min ?? null,
+        plan.hold_period_max ?? null,
+        plan.target_irr_min ?? null,
+        plan.target_irr_max ?? null,
+        plan.target_equity_multiple_min ?? null,
+        plan.target_equity_multiple_max ?? null,
+      ]
     );
     return res.rows[0];
   },
 
-  update: async (id: string, updates: Partial<{ name: string; description: string; is_default: boolean }>): Promise<BusinessPlanRow | null> => {
+  update: async (id: string, updates: Record<string, unknown>): Promise<BusinessPlanRow | null> => {
     const pool = getPool();
-    const keys = Object.keys(updates) as Array<keyof typeof updates>;
+    const keys = Object.keys(updates);
     if (keys.length === 0) return businessPlanQueries.getById(id);
 
-    const setClauses = keys.map((k, i) => `"${k}" = $${i + 1}`).join(", ");
-    const values = keys.map((k) => updates[k]);
+    const jsonbFields = new Set(["investment_theses", "target_markets", "property_types"]);
+    const setClauses = keys.map((k, i) => {
+      if (jsonbFields.has(k)) return `"${k}" = $${i + 1}::jsonb`;
+      return `"${k}" = $${i + 1}`;
+    }).join(", ");
+    const values = keys.map((k) => {
+      if (jsonbFields.has(k)) return JSON.stringify(updates[k]);
+      return updates[k];
+    });
 
     await pool.query(
       `UPDATE business_plans SET ${setClauses}, updated_at = NOW() WHERE id = $${values.length + 1}`,
