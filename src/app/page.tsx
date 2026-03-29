@@ -244,7 +244,10 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg gradient-gold flex items-center justify-center">
-                <Building2 className="h-4 w-4 text-primary-foreground" />
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-primary-foreground">
+                  <path d="M3 4h7c3.3 0 6 2.7 6 6s-2.7 6-6 6H5v4H3V4zm2 10h5c2.2 0 4-1.8 4-4s-1.8-4-4-4H5v8z" fill="currentColor"/>
+                  <rect x="18" y="4" width="2.5" height="16" rx="1" fill="currentColor"/>
+                </svg>
               </div>
               <span className="font-display text-lg text-foreground tracking-tight">
                 Deal Intelligence
