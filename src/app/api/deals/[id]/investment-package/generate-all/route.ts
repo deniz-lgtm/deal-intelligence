@@ -230,9 +230,29 @@ function buildSectionContext(
       return lines.join("\n");
     }
 
-    case "rent_comps":
-      // Rent comps might be stored in UW data from the comp generator
-      return "Include any available rent comp data from the deal context.";
+    case "rent_comps": {
+      const rentComps = uw?.rent_comps || [];
+      if (!rentComps.length) return "No rent comp data available.";
+      const selectedIds = new Set(uw?.selected_comp_ids || rentComps.map((_: unknown, i: number) => i));
+      const selected = rentComps.filter((_: unknown, i: number) => selectedIds.has(i));
+      const compLines = selected.map((c: AnyRecord) => {
+        const parts = [`${c.name} — ${c.address}`];
+        if (c.distance_mi) parts.push(`${c.distance_mi}mi away`);
+        if (c.year_built) parts.push(`Built ${c.year_built}`);
+        if (c.units) parts.push(`${c.units} units`);
+        if (c.total_sf) parts.push(`${Number(c.total_sf).toLocaleString()} SF`);
+        if (c.occupancy_pct) parts.push(`${c.occupancy_pct}% occ`);
+        if (c.rent_per_sf) parts.push(`$${Number(c.rent_per_sf).toFixed(2)}/SF`);
+        if (c.lease_type) parts.push(c.lease_type);
+        if (Array.isArray(c.unit_types)) {
+          const rents = c.unit_types.map((ut: AnyRecord) => `${ut.type}: $${ut.rent}/mo (${ut.sf}SF)`).join(", ");
+          parts.push(`Rents: ${rents}`);
+        }
+        if (c.notes) parts.push(`Notes: ${c.notes}`);
+        return parts.join(" | ");
+      });
+      return `${selected.length} Comparable Properties:\n${compLines.join("\n")}`;
+    }
 
     case "value_add": {
       const capexItems = uw?.capex_items || [];

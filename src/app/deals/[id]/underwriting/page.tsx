@@ -75,6 +75,8 @@ interface UWData {
   refi_rate: number; refi_amort_years: number;
   exit_cap_rate: number; hold_period_years: number; notes: string; deal_notes: NoteItem[];
   scenarios: Scenario[];
+  rent_comps: RentComp[];
+  selected_comp_ids: number[];
 }
 
 const DEFAULT: UWData = {
@@ -93,6 +95,8 @@ const DEFAULT: UWData = {
   refi_rate: 6.0, refi_amort_years: 25,
   exit_cap_rate: 5.5, hold_period_years: 5, notes: "", deal_notes: [],
   scenarios: [],
+  rent_comps: [],
+  selected_comp_ids: [],
 };
 
 const newGroup = (): UnitGroup => ({
@@ -390,8 +394,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [wizardResult, setWizardResult] = useState<{ value: number; label: string; scenarioOverrides: Partial<UWData> } | null>(null);
   const [wizardSolving, setWizardSolving] = useState(false);
   const [compsLoading, setCompsLoading] = useState(false);
-  const [comps, setComps] = useState<Array<RentComp>>([]);
-  const [selectedCompIds, setSelectedCompIds] = useState<Set<number>>(new Set());
+  // comps and selectedCompIds are derived from d (effectiveData) below, after the loading guard
+  const setComps = (fn: (prev: RentComp[]) => RentComp[]) => setData(p => ({ ...p, rent_comps: fn(p.rent_comps || []) }));
+  const setSelectedCompIds = (fn: (prev: Set<number>) => Set<number>) => {
+    setData(p => {
+      const next = fn(new Set(p.selected_comp_ids || []));
+      return { ...p, selected_comp_ids: Array.from(next) };
+    });
+  };
   const isSH = deal?.property_type === "student_housing";
   const isMF = deal?.property_type === "multifamily" || isSH;
   const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
@@ -736,6 +746,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const baselineM = activeScenario ? calc(data, calcMode) : m;
   // d = display data — use this for all input bindings so scenarios work
   const d = effectiveData;
+  // Comps are now stored in UWData for persistence
+  const comps = d.rent_comps || [];
+  const selectedCompIds = new Set<number>(d.selected_comp_ids || []);
 
   return (
     <div className={`flex gap-4 ${docViewerOpen ? "" : ""}`}>
@@ -942,7 +955,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               disabled={compsLoading}
             >
               {compsLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
-              AI Generate
+              Search Comps
             </Button>
             <Button variant="outline" size="sm"
               onClick={() => {
@@ -1137,7 +1150,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           )}
 
           {comps.length === 0 && !compsLoading && (
-            <p className="text-sm text-muted-foreground py-2">Generate AI comps or add manually. AI uses your deal location, unit mix, and uploaded documents.</p>
+            <p className="text-sm text-muted-foreground py-2">Search for real comps or add manually. Search uses live web data from listing sites for your deal's location.</p>
           )}
         </div>
       </Section>

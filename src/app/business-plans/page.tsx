@@ -25,6 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import {
   INVESTMENT_THESIS_LABELS,
   INVESTMENT_THESIS_DESCRIPTIONS,
@@ -391,7 +392,7 @@ function PlanForm({
 
       {/* Actions */}
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={handleSave} disabled={saving || !name.trim()}>
+        <Button type="button" size="sm" onClick={handleSave} disabled={saving || !name.trim()}>
           {saving ? (
             "Saving..."
           ) : (
@@ -401,7 +402,7 @@ function PlanForm({
             </>
           )}
         </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
           Cancel
         </Button>
       </div>
@@ -645,6 +646,7 @@ export default function BusinessPlansPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     loadPlans();
@@ -657,6 +659,7 @@ export default function BusinessPlansPage() {
       if (json.data) setPlans(json.data);
     } catch (err) {
       console.error("Failed to load business plans:", err);
+      toast.error("Failed to load business plans");
     } finally {
       setLoading(false);
     }
@@ -664,6 +667,7 @@ export default function BusinessPlansPage() {
 
   async function handleCreate(data: Partial<BusinessPlan>) {
     setSaving(true);
+    setCreateError(null);
     try {
       const res = await fetch("/api/business-plans", {
         method: "POST",
@@ -671,15 +675,20 @@ export default function BusinessPlansPage() {
         body: JSON.stringify(data),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
+      if (!res.ok) throw new Error(json.error || `Server error (${res.status})`);
       if (data.is_default) {
         await loadPlans();
       } else {
         setPlans((prev) => [json.data, ...prev]);
       }
+      setCreateError(null);
       setCreating(false);
+      toast.success("Business plan created");
     } catch (err) {
-      console.error("Failed to create plan:", err);
+      const message = err instanceof Error ? err.message : "Failed to create business plan";
+      console.error("Failed to create plan:", message);
+      setCreateError(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -701,8 +710,10 @@ export default function BusinessPlansPage() {
           prev.map((p) => (p.id === id ? { ...p, ...json.data } : p))
         );
       }
+      toast.success("Business plan updated");
     } catch (err) {
       console.error("Failed to update plan:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to update business plan");
     }
   }
 
@@ -711,8 +722,10 @@ export default function BusinessPlansPage() {
       const res = await fetch(`/api/business-plans/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Delete failed");
       setPlans((prev) => prev.filter((p) => p.id !== id));
+      toast.success("Business plan deleted");
     } catch (err) {
       console.error("Failed to delete plan:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to delete business plan");
     }
   }
 
@@ -784,9 +797,15 @@ export default function BusinessPlansPage() {
             <CardContent>
               <PlanForm
                 onSave={handleCreate}
-                onCancel={() => setCreating(false)}
+                onCancel={() => { setCreating(false); setCreateError(null); }}
                 saving={saving}
               />
+              {createError && (
+                <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                  <p className="font-medium mb-0.5">Save failed</p>
+                  <p className="text-red-400/80 text-xs">{createError}</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}

@@ -13,7 +13,8 @@ export async function GET(
     return NextResponse.json({ data: plan });
   } catch (error) {
     console.error("GET /api/business-plans/[id] error:", error);
-    return NextResponse.json({ error: "Failed to fetch business plan" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: `Failed to fetch business plan: ${message}` }, { status: 500 });
   }
 }
 
@@ -35,7 +36,8 @@ export async function PATCH(
     return NextResponse.json({ data: plan });
   } catch (error) {
     console.error("PATCH /api/business-plans/[id] error:", error);
-    return NextResponse.json({ error: "Failed to update business plan" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: `Failed to update business plan: ${message}` }, { status: 500 });
   }
 }
 
@@ -48,6 +50,7 @@ export async function DELETE(
     return NextResponse.json({ data: { success: true } });
   } catch (error) {
     console.error("DELETE /api/business-plans/[id] error:", error);
-    return NextResponse.json({ error: "Failed to delete business plan" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: `Failed to delete business plan: ${message}` }, { status: 500 });
   }
 }
