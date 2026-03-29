@@ -23,6 +23,7 @@ import {
   FileSignature,
   Sparkles,
   BookOpen,
+  Archive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +48,7 @@ const STATUS_BADGE_VARIANT: Record<DealStatus, "default" | "secondary" | "destru
   closing: "success",
   closed: "success",
   dead: "issue",
+  archived: "outline",
 };
 
 export default function DealOverviewPage({
@@ -60,6 +62,7 @@ export default function DealOverviewPage({
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [businessPlan, setBusinessPlan] = useState<BusinessPlan | null>(null);
   const [allPlans, setAllPlans] = useState<BusinessPlan[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState<string>("");
   const [changingPlan, setChangingPlan] = useState(false);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
@@ -83,6 +86,7 @@ export default function DealOverviewPage({
       setChecklist(checklistRes.data || []);
       const plans = plansRes.data || [];
       setAllPlans(plans);
+      setSelectedPlanId(d?.business_plan_id || "");
       // Load linked business plan
       if (d?.business_plan_id) {
         const linked = plans.find((p: BusinessPlan) => p.id === d.business_plan_id);
@@ -207,10 +211,12 @@ export default function DealOverviewPage({
 
   const currentPipelineIdx = DEAL_PIPELINE.indexOf(deal.status);
   const isDead = deal.status === "dead";
-  const nextStatus = !isDead && currentPipelineIdx >= 0 && currentPipelineIdx < DEAL_PIPELINE.length - 1
+  const isArchived = deal.status === "archived";
+  const isOffPipeline = isDead || isArchived;
+  const nextStatus = !isOffPipeline && currentPipelineIdx >= 0 && currentPipelineIdx < DEAL_PIPELINE.length - 1
     ? DEAL_PIPELINE[currentPipelineIdx + 1]
     : null;
-  const prevStatus = !isDead && currentPipelineIdx > 0 ? DEAL_PIPELINE[currentPipelineIdx - 1] : null;
+  const prevStatus = !isOffPipeline && currentPipelineIdx > 0 ? DEAL_PIPELINE[currentPipelineIdx - 1] : null;
 
   return (
     <div className="space-y-6 animate-fade-up">
@@ -284,12 +290,35 @@ export default function DealOverviewPage({
               }`}
             />
           </Button>
+          {deal.status !== "archived" ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => changeStatus("archived")}
+              disabled={advancingTo !== null}
+              className="text-muted-foreground hover:text-foreground h-9 w-9"
+              title="Archive deal"
+            >
+              <Archive className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => changeStatus("sourcing")}
+              disabled={advancingTo !== null}
+              className="text-xs h-9"
+            >
+              Unarchive
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
             onClick={deleteDeal}
             disabled={deleting}
             className="text-muted-foreground hover:text-destructive h-9 w-9"
+            title="Delete deal permanently"
           >
             {deleting ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -304,7 +333,7 @@ export default function DealOverviewPage({
       <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-display text-sm">Deal Pipeline</h3>
-          {isDead && (
+          {isOffPipeline && (
             <Button
               variant="outline"
               size="sm"
@@ -314,7 +343,7 @@ export default function DealOverviewPage({
               Reactivate
             </Button>
           )}
-          {!isDead && (
+          {!isOffPipeline && (
             <Button
               variant="ghost"
               size="sm"
@@ -327,9 +356,9 @@ export default function DealOverviewPage({
         </div>
         <div className="flex items-center gap-1 mb-3">
           {DEAL_PIPELINE.map((stage, i) => {
-            const isCompleted = !isDead && currentPipelineIdx > i;
-            const isCurrent = !isDead && currentPipelineIdx === i;
-            const isFuture = isDead || currentPipelineIdx < i;
+            const isCompleted = !isOffPipeline && currentPipelineIdx > i;
+            const isCurrent = !isOffPipeline && currentPipelineIdx === i;
+            const isFuture = isOffPipeline || currentPipelineIdx < i;
             return (
               <div key={stage} className="flex-1 flex flex-col items-center gap-1.5">
                 <button
@@ -340,10 +369,10 @@ export default function DealOverviewPage({
                       ? "gradient-gold"
                       : isCurrent
                       ? "bg-primary/30"
-                      : isFuture && !isDead
+                      : isFuture && !isOffPipeline
                       ? "bg-muted hover:bg-primary/20"
                       : "bg-muted/40"
-                  } ${isDead ? "opacity-30" : ""}`}
+                  } ${isOffPipeline ? "opacity-30" : ""}`}
                   title={`Move to ${DEAL_STAGE_LABELS[stage]}`}
                 />
                 <span
@@ -361,7 +390,7 @@ export default function DealOverviewPage({
             );
           })}
         </div>
-        {!isDead && (prevStatus || nextStatus) && (
+        {!isOffPipeline && (prevStatus || nextStatus) && (
           <div className="flex items-center justify-between mt-2 pt-3 border-t border-border/40">
             <div>
               {prevStatus && (
@@ -464,28 +493,37 @@ export default function DealOverviewPage({
         {/* Plan selector dropdown */}
         <div className="mb-3">
           <select
-            value={deal.business_plan_id || ""}
-            onChange={async (e) => {
-              const planId = e.target.value || null;
+            value={selectedPlanId}
+            onChange={(e) => {
+              const newVal = e.target.value;
+              const planId = newVal || null;
+              // Optimistic update
+              setSelectedPlanId(newVal);
+              const linked = planId ? allPlans.find((p) => p.id === planId) || null : null;
+              setBusinessPlan(linked);
+              // Persist
               setChangingPlan(true);
-              try {
-                const res = await fetch(`/api/deals/${params.id}`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ business_plan_id: planId }),
-                });
-                const json = await res.json();
-                if (json.data) {
-                  setDeal(json.data as Deal);
-                  const linked = planId ? allPlans.find((p) => p.id === planId) || null : null;
-                  setBusinessPlan(linked);
-                  toast.success(planId ? "Business plan linked" : "Business plan removed");
-                }
-              } catch {
-                toast.error("Failed to update business plan");
-              } finally {
-                setChangingPlan(false);
-              }
+              fetch(`/api/deals/${params.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ business_plan_id: planId }),
+              })
+                .then(r => r.json())
+                .then(json => {
+                  if (json.data) {
+                    setDeal(json.data as Deal);
+                    toast.success(planId ? "Business plan linked" : "Business plan removed");
+                  } else {
+                    // Revert on failure
+                    setSelectedPlanId(deal.business_plan_id || "");
+                    toast.error("Failed to update business plan");
+                  }
+                })
+                .catch(() => {
+                  setSelectedPlanId(deal.business_plan_id || "");
+                  toast.error("Failed to update business plan");
+                })
+                .finally(() => setChangingPlan(false));
             }}
             disabled={changingPlan}
             className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background outline-none focus:ring-2 focus:ring-ring"

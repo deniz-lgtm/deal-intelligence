@@ -36,6 +36,7 @@ const STATUS_FILTERS: { value: DealStatus | "all" | "starred"; label: string }[]
   { value: "closing", label: "Closing" },
   { value: "closed", label: "Closed" },
   { value: "dead", label: "Dead" },
+  { value: "archived", label: "Archived" },
 ];
 
 export default function DashboardPage() {
@@ -80,7 +81,8 @@ export default function DashboardPage() {
       d.city.toLowerCase().includes(search.toLowerCase());
 
     const matchesStatus =
-      statusFilter === "all" ||
+      statusFilter === "all" ? d.status !== "archived" :
+      statusFilter === "archived" ? d.status === "archived" :
       (statusFilter === "starred" ? d.starred : d.status === statusFilter);
 
     return matchesSearch && matchesStatus;
@@ -88,7 +90,7 @@ export default function DashboardPage() {
 
   const stats = {
     total: deals.length,
-    active: deals.filter((d) => !["closed", "dead"].includes(d.status)).length,
+    active: deals.filter((d) => !["closed", "dead", "archived"].includes(d.status)).length,
     starred: deals.filter((d) => d.starred).length,
     analyzed: deals.filter((d) => d.om_score != null).length,
   };

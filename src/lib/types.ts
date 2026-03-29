@@ -8,7 +8,8 @@ export type DealStatus =
   | "diligence"
   | "closing"
   | "closed"
-  | "dead";
+  | "dead"
+  | "archived";
 
 export type PropertyType =
   | "industrial"
@@ -41,6 +42,7 @@ export const DEAL_STAGE_LABELS: Record<DealStatus, string> = {
   closing: "Closing",
   closed: "Closed",
   dead: "Dead",
+  archived: "Archived",
 };
 
 // Stage gates: advancing TO this status requires the flag to be true

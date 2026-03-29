@@ -43,6 +43,7 @@ const STATUS_BADGE: Record<
   closing: { variant: "success", dot: "bg-emerald-400" },
   closed: { variant: "success", dot: "bg-emerald-500" },
   dead: { variant: "issue", dot: "bg-red-400" },
+  archived: { variant: "outline", dot: "bg-zinc-300" },
 };
 
 const PROPERTY_ICONS: Record<string, React.ElementType> = {
