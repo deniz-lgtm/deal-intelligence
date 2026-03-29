@@ -859,27 +859,47 @@ export const businessPlanQueries = {
     target_equity_multiple_max?: number | null;
   }): Promise<BusinessPlanRow> => {
     const pool = getPool();
-    const res = await pool.query(
-      `INSERT INTO business_plans (name, description, is_default, investment_theses, target_markets, property_types,
+    const insertQuery = `INSERT INTO business_plans (name, description, is_default, investment_theses, target_markets, property_types,
         hold_period_min, hold_period_max, target_irr_min, target_irr_max, target_equity_multiple_min, target_equity_multiple_max)
        VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12)
-       RETURNING *`,
-      [
-        plan.name,
-        plan.description,
-        plan.is_default ?? false,
-        JSON.stringify(plan.investment_theses ?? []),
-        JSON.stringify(plan.target_markets ?? []),
-        JSON.stringify(plan.property_types ?? []),
-        plan.hold_period_min ?? null,
-        plan.hold_period_max ?? null,
-        plan.target_irr_min ?? null,
-        plan.target_irr_max ?? null,
-        plan.target_equity_multiple_min ?? null,
-        plan.target_equity_multiple_max ?? null,
-      ]
-    );
-    return res.rows[0];
+       RETURNING *`;
+    const insertParams = [
+      plan.name,
+      plan.description,
+      plan.is_default ?? false,
+      JSON.stringify(plan.investment_theses ?? []),
+      JSON.stringify(plan.target_markets ?? []),
+      JSON.stringify(plan.property_types ?? []),
+      plan.hold_period_min ?? null,
+      plan.hold_period_max ?? null,
+      plan.target_irr_min ?? null,
+      plan.target_irr_max ?? null,
+      plan.target_equity_multiple_min ?? null,
+      plan.target_equity_multiple_max ?? null,
+    ];
+    try {
+      const res = await pool.query(insertQuery, insertParams);
+      return res.rows[0];
+    } catch (err) {
+      // If columns are missing, re-run schema migration and retry once
+      if (err instanceof Error && err.message.includes("does not exist")) {
+        console.warn("Business plans schema incomplete, running migration...", err.message);
+        await pool.query(`
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS investment_theses JSONB NOT NULL DEFAULT '[]';
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_markets JSONB NOT NULL DEFAULT '[]';
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS property_types JSONB NOT NULL DEFAULT '[]';
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_min INTEGER;
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_max INTEGER;
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_min NUMERIC;
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_max NUMERIC;
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_min NUMERIC;
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_max NUMERIC;
+        `);
+        const res = await pool.query(insertQuery, insertParams);
+        return res.rows[0];
+      }
+      throw err;
+    }
   },
 
   update: async (id: string, updates: Record<string, unknown>): Promise<BusinessPlanRow | null> => {

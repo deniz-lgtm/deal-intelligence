@@ -7,7 +7,8 @@ export async function GET() {
     return NextResponse.json({ data: plans });
   } catch (error) {
     console.error("GET /api/business-plans error:", error);
-    return NextResponse.json({ error: "Failed to fetch business plans" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: `Failed to fetch business plans: ${message}` }, { status: 500 });
   }
 }
 
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data: plan }, { status: 201 });
   } catch (error) {
     console.error("POST /api/business-plans error:", error);
-    return NextResponse.json({ error: "Failed to create business plan" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: `Failed to create business plan: ${message}` }, { status: 500 });
   }
 }

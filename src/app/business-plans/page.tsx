@@ -683,7 +683,7 @@ export default function BusinessPlansPage() {
       toast.success("Business plan created");
     } catch (err) {
       console.error("Failed to create plan:", err);
-      toast.error("Failed to create business plan");
+      toast.error(err instanceof Error ? err.message : "Failed to create business plan");
     } finally {
       setSaving(false);
     }
@@ -708,7 +708,7 @@ export default function BusinessPlansPage() {
       toast.success("Business plan updated");
     } catch (err) {
       console.error("Failed to update plan:", err);
-      toast.error("Failed to update business plan");
+      toast.error(err instanceof Error ? err.message : "Failed to update business plan");
     }
   }
 
@@ -720,7 +720,7 @@ export default function BusinessPlansPage() {
       toast.success("Business plan deleted");
     } catch (err) {
       console.error("Failed to delete plan:", err);
-      toast.error("Failed to delete business plan");
+      toast.error(err instanceof Error ? err.message : "Failed to delete business plan");
     }
   }
 
