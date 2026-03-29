@@ -25,6 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import {
   INVESTMENT_THESIS_LABELS,
   INVESTMENT_THESIS_DESCRIPTIONS,
@@ -657,6 +658,7 @@ export default function BusinessPlansPage() {
       if (json.data) setPlans(json.data);
     } catch (err) {
       console.error("Failed to load business plans:", err);
+      toast.error("Failed to load business plans");
     } finally {
       setLoading(false);
     }
@@ -678,8 +680,10 @@ export default function BusinessPlansPage() {
         setPlans((prev) => [json.data, ...prev]);
       }
       setCreating(false);
+      toast.success("Business plan created");
     } catch (err) {
       console.error("Failed to create plan:", err);
+      toast.error("Failed to create business plan");
     } finally {
       setSaving(false);
     }
@@ -701,8 +705,10 @@ export default function BusinessPlansPage() {
           prev.map((p) => (p.id === id ? { ...p, ...json.data } : p))
         );
       }
+      toast.success("Business plan updated");
     } catch (err) {
       console.error("Failed to update plan:", err);
+      toast.error("Failed to update business plan");
     }
   }
 
@@ -711,8 +717,10 @@ export default function BusinessPlansPage() {
       const res = await fetch(`/api/business-plans/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Delete failed");
       setPlans((prev) => prev.filter((p) => p.id !== id));
+      toast.success("Business plan deleted");
     } catch (err) {
       console.error("Failed to delete plan:", err);
+      toast.error("Failed to delete business plan");
     }
   }
 
