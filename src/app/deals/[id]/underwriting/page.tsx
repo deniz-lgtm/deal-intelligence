@@ -27,6 +27,8 @@ interface UnitGroup {
   current_rent_per_unit: number; market_rent_per_unit: number;
   // Student Housing (bed-based, monthly)
   beds_per_unit: number; current_rent_per_bed: number; market_rent_per_bed: number;
+  // Renovation penetration — % of units expected to turn over and reach market rent
+  renovation_penetration_pct: number;
 }
 
 interface CapexItem { id: string; label: string; quantity: number; cost_per_unit: number; linked_unit_group_id?: string; }
@@ -73,6 +75,8 @@ interface UWData {
   acq_amort_years: number; acq_io_years: number;
   has_refi: boolean; refi_year: number; refi_ltv: number;
   refi_rate: number; refi_amort_years: number;
+  // Other income (monthly, property-level)
+  rubs_per_unit_monthly: number; parking_monthly: number; laundry_monthly: number;
   exit_cap_rate: number; hold_period_years: number; notes: string; deal_notes: NoteItem[];
   scenarios: Scenario[];
   rent_comps: RentComp[];
@@ -89,6 +93,7 @@ const DEFAULT: UWData = {
   ip_mgmt_annual: 0, ip_taxes_annual: 0, ip_insurance_annual: 0,
   ip_repairs_annual: 0, ip_utilities_annual: 0, ip_other_annual: 0,
   ip_ga_annual: 0, ip_marketing_annual: 0, ip_reserves_annual: 0,
+  rubs_per_unit_monthly: 0, parking_monthly: 0, laundry_monthly: 0,
   has_financing: true, acq_ltc: 65, acq_interest_rate: 6.5,
   acq_amort_years: 25, acq_io_years: 0,
   has_refi: false, refi_year: 3, refi_ltv: 70,
@@ -111,6 +116,7 @@ const newGroup = (): UnitGroup => ({
   current_rent_per_unit: 0, market_rent_per_unit: 0,
   // Student Housing defaults (monthly per bed)
   beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 0,
+  renovation_penetration_pct: 0,
 });
 
 const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity: 1, cost_per_unit: 0 });
@@ -136,7 +142,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const totalSF = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit, 0) : 0;
   const totalBeds = mode === "student_housing" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit, 0) : 0;
 
-  // ── Revenue (pro forma uses effective units, in-place uses current) ────────
+  // ── Revenue (market uses effective units at market rent, in-place uses current) ──
   const gpr = mode === "student_housing"
     ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed * 12, 0)
     : mode === "multifamily"
@@ -148,27 +154,57 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.current_rent_per_unit * 12, 0)
     : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0);
 
+  // ── Proforma GPR — blended rent reflecting renovation penetration ──────────
+  // Units that will be renovated: penetration_pct% at market, rest at in-place
+  // Units NOT being renovated: stay at in-place rent
+  const proformaGPR = d.unit_groups.reduce((s, g) => {
+    const eu = effectiveUnits(g);
+    const pen = (g.renovation_penetration_pct || 0) / 100;
+    if (mode === "student_housing") {
+      const blended = g.current_rent_per_bed + (g.market_rent_per_bed - g.current_rent_per_bed) * pen;
+      return s + eu * g.beds_per_unit * blended * 12;
+    } else if (mode === "multifamily") {
+      const blended = g.current_rent_per_unit + (g.market_rent_per_unit - g.current_rent_per_unit) * pen;
+      return s + eu * blended * 12;
+    } else {
+      const blended = g.current_rent_per_sf + (g.market_rent_per_sf - g.current_rent_per_sf) * pen;
+      return s + eu * g.sf_per_unit * blended;
+    }
+  }, 0);
+
+  // ── Other Income (RUBS, Parking, Laundry) ──────────────────────────────────
+  const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
+  const otherIncomeParking = (d.parking_monthly || 0) * 12;
+  const otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
+  const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry;
+
   const ipVacRate = d.in_place_vacancy_rate ?? d.vacancy_rate;
   const vacancyLoss = gpr * (d.vacancy_rate / 100);
   const inPlaceVacancyLoss = inPlaceGPR * (ipVacRate / 100);
+  const proformaVacancyLoss = proformaGPR * (d.vacancy_rate / 100);
   const egi = gpr - vacancyLoss;
   const inPlaceEGI = inPlaceGPR - inPlaceVacancyLoss;
+  const proformaEGI = proformaGPR - proformaVacancyLoss;
 
   const reimbursements = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.expense_reimbursement_per_sf, 0) : 0;
   const effectiveRevenue = egi + reimbursements;
   const inPlaceEffectiveRevenue = inPlaceEGI + reimbursements;
+  const proformaEffectiveRevenue = proformaEGI + reimbursements + totalOtherIncome;
 
   // ── Operating Expenses ──────────────────────────────────────────────────────
   const mgmtFee = egi * (d.management_fee_pct / 100);
+  const proformaMgmtFee = proformaEGI * (d.management_fee_pct / 100);
   const inPlaceMgmtFee = d.ip_mgmt_annual; // Hard-coded dollar amount, not derived from %
   const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual + (d.ga_annual || 0) + (d.marketing_annual || 0) + (d.reserves_annual || 0);
   const totalOpEx = mgmtFee + fixedOpEx;
+  const proformaTotalOpEx = proformaMgmtFee + fixedOpEx;
   const ipFixedOpEx = (d.ip_taxes_annual || d.taxes_annual) + (d.ip_insurance_annual || d.insurance_annual) + (d.ip_repairs_annual || d.repairs_annual) + (d.ip_utilities_annual || d.utilities_annual) + (d.ip_other_annual || d.other_expenses_annual) + (d.ip_ga_annual || d.ga_annual || 0) + (d.ip_marketing_annual || d.marketing_annual || 0) + (d.ip_reserves_annual || d.reserves_annual || 0);
   const inPlaceTotalOpEx = inPlaceMgmtFee + ipFixedOpEx;
 
   // ── NOI ─────────────────────────────────────────────────────────────────────
   const noi = effectiveRevenue - totalOpEx;
   const inPlaceNOI = inPlaceEffectiveRevenue - inPlaceTotalOpEx;
+  const proformaNOI = proformaEffectiveRevenue - proformaTotalOpEx;
 
   // ── Cost Basis ──────────────────────────────────────────────────────────────
   // Renovation costs are now included in capex_items via linked items — no separate sum
@@ -179,7 +215,8 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   // ── Cap Rates ───────────────────────────────────────────────────────────────
   const inPlaceCapRate = d.purchase_price > 0 ? (inPlaceNOI / d.purchase_price) * 100 : 0;
   const marketCapRate = d.purchase_price > 0 ? (noi / d.purchase_price) * 100 : 0;
-  const yoc = totalCost > 0 ? (noi / totalCost) * 100 : 0;
+  const proformaCapRate = d.purchase_price > 0 ? (proformaNOI / d.purchase_price) * 100 : 0;
+  const yoc = totalCost > 0 ? (proformaNOI / totalCost) * 100 : 0;
 
   // ── Per-Unit Metrics ────────────────────────────────────────────────────────
   const pricePerSF = mode === "commercial" && totalSF > 0 ? d.purchase_price / totalSF : 0;
@@ -204,22 +241,22 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const equity = totalCost - acqLoan;
   // Cash flow uses IO payment during IO period for Year 1 snapshot
   const yr1Debt = d.acq_io_years > 0 ? acqDebtIO : acqDebt;
-  const cashFlow = noi - yr1Debt;
+  const cashFlow = proformaNOI - yr1Debt;
   const coc = equity > 0 ? (cashFlow / equity) * 100 : 0;
   // DSCR always uses amortizing debt service (worst-case obligation)
-  const dscr = acqDebt > 0 ? noi / acqDebt : 0;
+  const dscr = acqDebt > 0 ? proformaNOI / acqDebt : 0;
 
   // ── Refinance ───────────────────────────────────────────────────────────────
   let refiProceeds = 0, refiDebt = 0;
   if (d.has_refi && d.has_financing && d.exit_cap_rate > 0) {
-    const refiLoan = (noi / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100);
+    const refiLoan = (proformaNOI / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100);
     refiProceeds = refiLoan - acqLoan;
     refiDebt = annualPayment(refiLoan, d.refi_rate, d.refi_amort_years);
   }
 
   // ── Exit & Returns ──────────────────────────────────────────────────────────
-  const exitValue = d.exit_cap_rate > 0 ? noi / (d.exit_cap_rate / 100) : 0;
-  const exitLoanBalance = d.has_refi ? (noi / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100) : acqLoan;
+  const exitValue = d.exit_cap_rate > 0 ? proformaNOI / (d.exit_cap_rate / 100) : 0;
+  const exitLoanBalance = d.has_refi ? (proformaNOI / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100) : acqLoan;
   const exitEquity = exitValue - exitLoanBalance;
 
   // Equity multiple: account for IO period, amortizing period, and refi separately
@@ -230,18 +267,19 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     // Pre-refi: split between IO and amortizing periods
     const ioYears = Math.min(d.acq_io_years || 0, preRefiYears);
     const amortYears = preRefiYears - ioYears;
-    const preRefiCF = (noi - acqDebtIO) * ioYears + (noi - acqDebt) * amortYears;
-    totalCashFlows = preRefiCF + (noi - refiDebt) * postRefiYears + refiProceeds;
+    const preRefiCF = (proformaNOI - acqDebtIO) * ioYears + (proformaNOI - acqDebt) * amortYears;
+    totalCashFlows = preRefiCF + (proformaNOI - refiDebt) * postRefiYears + refiProceeds;
   } else {
     // Split hold period between IO and amortizing
     const ioYears = Math.min(d.acq_io_years || 0, d.hold_period_years);
     const amortYears = d.hold_period_years - ioYears;
-    totalCashFlows = (noi - acqDebtIO) * ioYears + (noi - acqDebt) * amortYears;
+    totalCashFlows = (proformaNOI - acqDebtIO) * ioYears + (proformaNOI - acqDebt) * amortYears;
   }
   const em = equity > 0 ? (exitEquity + totalCashFlows) / equity : 0;
 
   // ── GRM + In-Place metrics ────────────────────────────────────────────────
   const grm = d.purchase_price > 0 && gpr > 0 ? d.purchase_price / gpr : 0;
+  const proformaGRM = d.purchase_price > 0 && proformaGPR > 0 ? d.purchase_price / proformaGPR : 0;
   const inPlaceGRM = d.purchase_price > 0 && inPlaceGPR > 0 ? d.purchase_price / inPlaceGPR : 0;
   const inPlaceCashFlow = inPlaceNOI - yr1Debt;
   const inPlaceCoC = equity > 0 ? (inPlaceCashFlow / equity) * 100 : 0;
@@ -254,11 +292,13 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   return {
     totalSF, totalBeds, totalUnits, ipTotalUnits, ipTotalSF, ipTotalBeds,
-    gpr, inPlaceGPR, vacancyLoss, inPlaceVacancyLoss, egi, inPlaceEGI,
-    reimbursements, effectiveRevenue, inPlaceEffectiveRevenue,
-    mgmtFee, inPlaceMgmtFee, totalOpEx, inPlaceTotalOpEx,
-    noi, inPlaceNOI,
-    grm, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
+    gpr, inPlaceGPR, proformaGPR, vacancyLoss, inPlaceVacancyLoss, proformaVacancyLoss, egi, inPlaceEGI, proformaEGI,
+    reimbursements, effectiveRevenue, inPlaceEffectiveRevenue, proformaEffectiveRevenue,
+    totalOtherIncome, otherIncomeRUBS, otherIncomeParking, otherIncomeLaundry,
+    mgmtFee, proformaMgmtFee, inPlaceMgmtFee, totalOpEx, proformaTotalOpEx, inPlaceTotalOpEx,
+    noi, inPlaceNOI, proformaNOI,
+    grm, proformaGRM, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
+    proformaCapRate,
     exitPricePerUnit, exitPricePerBed, exitPricePerSF,
     capexTotal, closingCosts, totalCost,
     inPlaceCapRate, marketCapRate, yoc,
@@ -293,8 +333,8 @@ function NumInput({ label, value, onChange, prefix, suffix, decimals = 0, classN
   );
 }
 
-function CellInput({ value, onChange, decimals = 0, prefix, align = "right", placeholder = "0", className = "" }: {
-  value: number; onChange: (v: number) => void; decimals?: number; prefix?: string; align?: "left" | "right"; placeholder?: string; className?: string;
+function CellInput({ value, onChange, decimals = 0, prefix, suffix, align = "right", placeholder = "0", className = "" }: {
+  value: number; onChange: (v: number) => void; decimals?: number; prefix?: string; suffix?: string; align?: "left" | "right"; placeholder?: string; className?: string;
 }) {
   const v0 = value ?? 0;
   const fmt = (v: number) => !v ? "" : v.toLocaleString("en-US", { maximumFractionDigits: decimals });
@@ -308,6 +348,7 @@ function CellInput({ value, onChange, decimals = 0, prefix, align = "right", pla
         onBlur={() => { const v = parseFloat(raw.replace(/,/g, "")) || 0; onChange(v); setRaw(fmt(v)); }}
         className={`w-full bg-transparent text-sm outline-none tabular-nums text-blue-300 ${align === "right" ? "text-right" : "text-left"}`}
         placeholder={placeholder} />
+      {suffix && <span className="text-xs text-muted-foreground ml-0.5 shrink-0">{suffix}</span>}
     </div>
   );
 }
@@ -360,13 +401,14 @@ function Section({ title, icon, children, open: defaultOpen = true }: { title: s
   );
 }
 
-function ISRow({ label, ip, pf, muted, bold, hi }: { label: string; ip: number; pf: number; muted?: boolean; bold?: boolean; hi?: boolean; }) {
+function ISRow({ label, ip, pf, proforma, muted, bold, hi }: { label: string; ip: number; pf: number; proforma?: number; muted?: boolean; bold?: boolean; hi?: boolean; }) {
   const fmtVal = (v: number) => { const neg = v < 0; return neg ? `(${fc(Math.abs(v))})` : fc(Math.abs(v)); };
   return (
     <tr className={`${bold ? "font-semibold" : ""} ${hi ? "bg-primary/5" : "hover:bg-muted/20"}`}>
       <td className={`px-4 py-1.5 ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{label}</td>
       <td className={`px-4 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""}`}>{fmtVal(ip)}</td>
-      <td className={`px-4 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{fmtVal(pf)}</td>
+      <td className={`px-4 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{proforma !== undefined ? fmtVal(proforma) : fmtVal(pf)}</td>
+      <td className={`px-4 py-1.5 text-right tabular-nums text-muted-foreground/50`}>{fmtVal(pf)}</td>
     </tr>
   );
 }
@@ -833,18 +875,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       {/* Returns — Before (In-Place) vs After (Pro Forma) */}
       <div className={`border rounded-xl bg-card overflow-hidden ${activeScenario ? "ring-2 ring-amber-300/50" : ""}`}>
         <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
-          <h3 className="font-semibold text-sm">Returns — In-Place vs Pro Forma</h3>
+          <h3 className="font-semibold text-sm">Returns — In-Place vs Proforma</h3>
           {activeScenario && (
             <span className="text-2xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{activeScenario.name}</span>
           )}
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-border">
           {([
-            { label: "NOI", ip: fc(m.inPlaceNOI), pf: fc(m.noi) },
-            { label: "Cap Rate", ip: m.inPlaceCapRate > 0 ? `${m.inPlaceCapRate.toFixed(2)}%` : "—", pf: m.marketCapRate > 0 ? `${m.marketCapRate.toFixed(2)}%` : "—" },
+            { label: "NOI", ip: fc(m.inPlaceNOI), pf: fc(m.proformaNOI) },
+            { label: "Cap Rate", ip: m.inPlaceCapRate > 0 ? `${m.inPlaceCapRate.toFixed(2)}%` : "—", pf: m.proformaCapRate > 0 ? `${m.proformaCapRate.toFixed(2)}%` : "—" },
             { label: "Cash-on-Cash", ip: m.inPlaceCoC !== 0 ? `${m.inPlaceCoC.toFixed(2)}%` : "—", pf: m.coc !== 0 ? `${m.coc.toFixed(2)}%` : "—" },
             { label: "DSCR", ip: m.inPlaceDSCR > 0 ? `${m.inPlaceDSCR.toFixed(2)}x` : "—", pf: m.dscr > 0 ? `${m.dscr.toFixed(2)}x` : "—" },
-            { label: "GRM", ip: m.inPlaceGRM > 0 ? m.inPlaceGRM.toFixed(2) : "—", pf: m.grm > 0 ? m.grm.toFixed(2) : "—" },
+            { label: "GRM", ip: m.inPlaceGRM > 0 ? m.inPlaceGRM.toFixed(2) : "—", pf: m.proformaGRM > 0 ? m.proformaGRM.toFixed(2) : "—" },
             { label: "Yield on Cost", ip: "—", pf: m.yoc > 0 ? `${m.yoc.toFixed(2)}%` : "—" },
           ] as const).map(metric => (
             <div key={metric.label} className="bg-card p-3">
@@ -856,7 +898,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </div>
                 <span className="text-muted-foreground/40 text-xs">→</span>
                 <div className="text-right">
-                  <p className="text-[10px] text-muted-foreground/70 uppercase">Pro Forma</p>
+                  <p className="text-[10px] text-muted-foreground/70 uppercase">Proforma</p>
                   <p className="text-sm font-semibold tabular-nums text-primary">{metric.pf}</p>
                 </div>
               </div>
@@ -1166,27 +1208,33 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
                   <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">+/−</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">Beds</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">In-Place/Bed</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">Market/Bed</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">In-Place/Bed</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Market/Bed</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno %</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma/Bed</th>
                   <th className="w-[32px]" />
                 </>) : isMF ? (<>
-                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit Type</th>
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[140px]">Unit Type</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
                   <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">+/−</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[40px]">BD</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[40px]">BA</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">SF</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">In-Place Rent</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Market Rent</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">In-Place Rent</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Market Rent</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno %</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma</th>
                   <th className="w-[32px]" />
                 </>) : (<>
-                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[160px]">Unit / Space</th>
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[140px]">Unit / Space</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">#</th>
                   <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">+/−</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">SF/Unit</th>
-                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">Lease</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Curr $/SF</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Mkt $/SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[65px]">SF/Unit</th>
+                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">Lease</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Curr $/SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Mkt $/SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno %</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Proforma</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Reimb $/SF</th>
                   <th className="w-[32px]" />
                 </>)}
@@ -1206,6 +1254,17 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   : isMF
                   ? effectiveUnits(g) * g.market_rent_per_unit * 12
                   : effectiveUnits(g) * g.sf_per_unit * g.market_rent_per_sf;
+                const pen = (g.renovation_penetration_pct || 0) / 100;
+                const proformaRent = isSH
+                  ? g.current_rent_per_bed + (g.market_rent_per_bed - g.current_rent_per_bed) * pen
+                  : isMF
+                  ? g.current_rent_per_unit + (g.market_rent_per_unit - g.current_rent_per_unit) * pen
+                  : g.current_rent_per_sf + (g.market_rent_per_sf - g.current_rent_per_sf) * pen;
+                const proformaAnnual = isSH
+                  ? effectiveUnits(g) * g.beds_per_unit * proformaRent * 12
+                  : isMF
+                  ? effectiveUnits(g) * proformaRent * 12
+                  : effectiveUnits(g) * g.sf_per_unit * proformaRent;
                 const uc = g.unit_change || "none";
                 const unitChangeCell = (
                   <td className="px-1 py-1">
@@ -1245,7 +1304,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       </td>
                       <td className="px-2 py-1">
                         <CellInput value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" />
-                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(pfAnnual)}/yr</p>
+                      </td>
+                      <td className="px-2 py-1"><CellInput value={g.renovation_penetration_pct || 0} onChange={v => upd(g.id, { renovation_penetration_pct: v })} suffix="%" /></td>
+                      <td className="px-2 py-1">
+                        <span className="block text-right text-sm tabular-nums font-medium">{fc(Math.round(proformaRent))}</span>
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                       </td>
                     </>) : isMF ? (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 1BR/1BA" /></td>
@@ -1260,7 +1323,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       </td>
                       <td className="px-2 py-1">
                         <CellInput value={g.market_rent_per_unit} onChange={v => upd(g.id, { market_rent_per_unit: v })} prefix="$" />
-                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(pfAnnual)}/yr</p>
+                      </td>
+                      <td className="px-2 py-1"><CellInput value={g.renovation_penetration_pct || 0} onChange={v => upd(g.id, { renovation_penetration_pct: v })} suffix="%" /></td>
+                      <td className="px-2 py-1">
+                        <span className="block text-right text-sm tabular-nums font-medium">{fc(Math.round(proformaRent))}</span>
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                       </td>
                     </>) : (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. Suite A" /></td>
@@ -1278,7 +1345,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       </td>
                       <td className="px-2 py-1">
                         <CellInput value={g.market_rent_per_sf} onChange={v => upd(g.id, { market_rent_per_sf: v })} prefix="$" decimals={2} />
-                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(pfAnnual)}/yr</p>
+                      </td>
+                      <td className="px-2 py-1"><CellInput value={g.renovation_penetration_pct || 0} onChange={v => upd(g.id, { renovation_penetration_pct: v })} suffix="%" /></td>
+                      <td className="px-2 py-1">
+                        <span className="block text-right text-sm tabular-nums font-medium">${proformaRent.toFixed(2)}</span>
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                       </td>
                       <td className="px-2 py-1"><CellInput value={g.expense_reimbursement_per_sf} onChange={v => upd(g.id, { expense_reimbursement_per_sf: v })} prefix="$" decimals={2} /></td>
                     </>)}
@@ -1289,7 +1360,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 );
               })}
               {d.unit_groups.length === 0 && (
-                <tr><td colSpan={isSH ? 8 : isMF ? 10 : 10} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
+                <tr><td colSpan={isSH ? 10 : isMF ? 12 : 12} className="px-2 py-4 text-sm text-muted-foreground text-center">No units added yet</td></tr>
               )}
             </tbody>
             </SortableContext>
@@ -1303,16 +1374,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 {isSH ? (<>
                   <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalBeds)}</td>
                   <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fc(m.inPlaceGPR)}<span className="text-muted-foreground/60">/yr</span></td>
-                  <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold">{fc(m.gpr)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fc(m.gpr)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td />
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold text-primary">{fc(m.proformaGPR)}<span className="text-muted-foreground/60">/yr</span></td>
                 </>) : isMF ? (<>
                   <td colSpan={3} />
                   <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fc(m.inPlaceGPR)}<span className="text-muted-foreground/60">/yr</span></td>
-                  <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold">{fc(m.gpr)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fc(m.gpr)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td />
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold text-primary">{fc(m.proformaGPR)}<span className="text-muted-foreground/60">/yr</span></td>
                 </>) : (<>
                   <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fn(m.totalSF)}</td>
                   <td />
                   <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fc(m.inPlaceGPR)}<span className="text-muted-foreground/60">/yr</span></td>
-                  <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold">{fc(m.gpr)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums">{fc(m.gpr)}<span className="text-muted-foreground/60">/yr</span></td>
+                  <td />
+                  <td className="px-2 py-1.5 text-right text-xs tabular-nums font-semibold text-primary">{fc(m.proformaGPR)}<span className="text-muted-foreground/60">/yr</span></td>
                   <td />
                 </>)}
                 <td />
@@ -1334,6 +1411,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               ))}
             </div>
           )}
+          {/* Other Income */}
+          <div className="mt-4 border-t pt-4">
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Other Income</h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <NumInput label="RUBS / Unit / Month" value={d.rubs_per_unit_monthly} onChange={v => set("rubs_per_unit_monthly", v)} prefix="$" decimals={0} />
+              <NumInput label="Parking / Month (total)" value={d.parking_monthly} onChange={v => set("parking_monthly", v)} prefix="$" decimals={0} />
+              <NumInput label="Laundry / Month (total)" value={d.laundry_monthly} onChange={v => set("laundry_monthly", v)} prefix="$" decimals={0} />
+              <div className="p-3 bg-muted/50 rounded-lg">
+                <p className="text-xs text-muted-foreground mb-1">Total Other Income</p>
+                <p className="text-sm font-semibold">{fc(m.totalOtherIncome)}<span className="text-muted-foreground/60 text-xs">/yr</span></p>
+              </div>
+            </div>
+          </div>
         </div>
       </Section>
 
@@ -1553,20 +1643,26 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <thead>
             <tr className="border-b bg-muted/20">
               <th className="text-left px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide">Line Item</th>
-              <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-32">In-Place</th>
-              <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-32">Pro Forma</th>
+              <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-28">In-Place</th>
+              <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-28">Proforma</th>
+              <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground/50 uppercase tracking-wide w-28">Market</th>
             </tr>
           </thead>
           <tbody>
-            <ISRow label="Gross Potential Revenue" ip={m.inPlaceGPR} pf={m.gpr} />
-            <ISRow label={`Less Vacancy`} ip={-m.inPlaceVacancyLoss} pf={-m.vacancyLoss} muted />
-            <ISRow label="Effective Gross Income" ip={m.inPlaceEGI} pf={m.egi} bold />
-            {m.reimbursements > 0 && <>
-              <ISRow label="Expense Reimbursements" ip={m.reimbursements} pf={m.reimbursements} />
-              <ISRow label="Effective Revenue" ip={m.inPlaceEffectiveRevenue} pf={m.effectiveRevenue} bold />
+            <ISRow label="Gross Potential Rent" ip={m.inPlaceGPR} pf={m.gpr} proforma={m.proformaGPR} />
+            <ISRow label={`Less Vacancy`} ip={-m.inPlaceVacancyLoss} pf={-m.vacancyLoss} proforma={-m.proformaVacancyLoss} muted />
+            <ISRow label="Effective Gross Income" ip={m.inPlaceEGI} pf={m.egi} proforma={m.proformaEGI} bold />
+            {m.reimbursements > 0 && <ISRow label="Expense Reimbursements" ip={m.reimbursements} pf={m.reimbursements} />}
+            {m.totalOtherIncome > 0 && <>
+              {m.otherIncomeRUBS > 0 && <ISRow label="RUBS" ip={0} pf={m.otherIncomeRUBS} proforma={m.otherIncomeRUBS} muted />}
+              {m.otherIncomeParking > 0 && <ISRow label="Parking Income" ip={0} pf={m.otherIncomeParking} proforma={m.otherIncomeParking} muted />}
+              {m.otherIncomeLaundry > 0 && <ISRow label="Laundry Income" ip={0} pf={m.otherIncomeLaundry} proforma={m.otherIncomeLaundry} muted />}
             </>}
-            <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
-            <ISRow label={`Management (${d.management_fee_pct}%)`} ip={-m.inPlaceMgmtFee} pf={-m.mgmtFee} muted />
+            {(m.reimbursements > 0 || m.totalOtherIncome > 0) &&
+              <ISRow label="Effective Revenue" ip={m.inPlaceEffectiveRevenue} pf={m.effectiveRevenue + m.totalOtherIncome} proforma={m.proformaEffectiveRevenue} bold />
+            }
+            <tr><td colSpan={4} className="px-4"><div className="border-t" /></td></tr>
+            <ISRow label={`Management (${d.management_fee_pct}%)`} ip={-m.inPlaceMgmtFee} pf={-m.mgmtFee} proforma={-m.proformaMgmtFee} muted />
             <ISRow label="Property Taxes" ip={-(d.ip_taxes_annual || d.taxes_annual)} pf={-d.taxes_annual} muted />
             <ISRow label="Insurance" ip={-(d.ip_insurance_annual || d.insurance_annual)} pf={-d.insurance_annual} muted />
             <ISRow label="Repairs & Maintenance" ip={-(d.ip_repairs_annual || d.repairs_annual)} pf={-d.repairs_annual} muted />
@@ -1575,17 +1671,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             {(d.marketing_annual > 0 || d.ip_marketing_annual > 0) && <ISRow label="Marketing / Leasing" ip={-(d.ip_marketing_annual || d.marketing_annual)} pf={-d.marketing_annual} muted />}
             {(d.reserves_annual > 0 || d.ip_reserves_annual > 0) && <ISRow label="Reserves" ip={-(d.ip_reserves_annual || d.reserves_annual)} pf={-d.reserves_annual} muted />}
             {(d.other_expenses_annual > 0 || d.ip_other_annual > 0) && <ISRow label="Other Expenses" ip={-(d.ip_other_annual || d.other_expenses_annual)} pf={-d.other_expenses_annual} muted />}
-            <ISRow label={`Total Operating Expenses${m.inPlaceEGI > 0 ? ` (${((m.inPlaceTotalOpEx / m.inPlaceEGI) * 100).toFixed(0)}% / ${m.egi > 0 ? ((m.totalOpEx / m.egi) * 100).toFixed(0) : 0}%)` : ""}`} ip={-m.inPlaceTotalOpEx} pf={-m.totalOpEx} />
-            <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
-            <ISRow label="Net Operating Income" ip={m.inPlaceNOI} pf={m.noi} bold hi />
+            <ISRow label={`Total Operating Expenses`} ip={-m.inPlaceTotalOpEx} pf={-m.totalOpEx} proforma={-m.proformaTotalOpEx} />
+            <tr><td colSpan={4} className="px-4"><div className="border-t" /></td></tr>
+            <ISRow label="Net Operating Income" ip={m.inPlaceNOI} pf={m.noi} proforma={m.proformaNOI} bold hi />
             {d.has_financing && <>
               <ISRow label={`Annual Debt Service (Acq)${d.acq_io_years > 0 ? " — IO" : ""}`} ip={-m.yr1Debt} pf={-m.acqDebt} muted />
-              <tr><td colSpan={3} className="px-4"><div className="border-t" /></td></tr>
-              <ISRow label="Cash Flow Before Tax" ip={m.inPlaceCashFlow} pf={m.cashFlow} bold hi={m.cashFlow > 0} />
+              <tr><td colSpan={4} className="px-4"><div className="border-t" /></td></tr>
+              <ISRow label="Cash Flow Before Tax" ip={m.inPlaceCashFlow} pf={m.noi - m.acqDebt} proforma={m.cashFlow} bold hi={m.cashFlow > 0} />
               <tr className="bg-muted/10">
                 <td className="px-4 py-2 text-xs font-medium text-muted-foreground">Cash-on-Cash Return</td>
                 <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums">{m.inPlaceCoC !== 0 ? `${m.inPlaceCoC.toFixed(2)}%` : "—"}</td>
                 <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-primary">{m.coc !== 0 ? `${m.coc.toFixed(2)}%` : "—"}</td>
+                <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-muted-foreground/50">{m.equity > 0 && m.noi - m.acqDebt !== 0 ? `${(((m.noi - m.acqDebt) / m.equity) * 100).toFixed(2)}%` : "—"}</td>
               </tr>
             </>}
           </tbody>
