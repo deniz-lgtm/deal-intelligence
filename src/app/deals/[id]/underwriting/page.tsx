@@ -472,22 +472,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       const updatedGroups = prev.unit_groups.map(g => g.id === groupId ? { ...g, ...updates } : g);
       const group = updatedGroups.find(g => g.id === groupId)!;
       const renoCount = group.renovation_count || 0;
-      let updatedCapex = [...prev.capex_items];
+      // Remove ALL existing linked capex for this group first (prevents duplicates from legacy data)
+      let updatedCapex = prev.capex_items.filter(c => c.linked_unit_group_id !== groupId);
       if (renoCount > 0) {
-        // Ensure linked capex exists and stays in sync
-        const existingIdx = updatedCapex.findIndex(c => c.linked_unit_group_id === groupId);
-        if (existingIdx >= 0) {
-          updatedCapex[existingIdx] = { ...updatedCapex[existingIdx], label: `${group.label || "Unit"} Renovation`, quantity: renoCount, cost_per_unit: group.renovation_cost_per_unit };
-        } else {
-          updatedCapex.push({
-            id: uuidv4(), label: `${group.label || "Unit"} Renovation`,
-            quantity: renoCount, cost_per_unit: group.renovation_cost_per_unit || 0,
-            linked_unit_group_id: groupId,
-          });
-        }
-      } else {
-        // Remove linked capex when reno count goes to 0
-        updatedCapex = updatedCapex.filter(c => c.linked_unit_group_id !== groupId);
+        // Find the first old linked item to preserve its id and cost_per_unit
+        const existing = prev.capex_items.find(c => c.linked_unit_group_id === groupId);
+        updatedCapex.push({
+          id: existing?.id || uuidv4(),
+          label: `${group.label || "Unit"} Renovation`,
+          quantity: renoCount,
+          cost_per_unit: group.renovation_cost_per_unit || existing?.cost_per_unit || 0,
+          linked_unit_group_id: groupId,
+        });
       }
       return { ...prev, unit_groups: updatedGroups, capex_items: updatedCapex };
     });
