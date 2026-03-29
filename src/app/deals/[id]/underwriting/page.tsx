@@ -286,7 +286,7 @@ function NumInput({ label, value, onChange, prefix, suffix, decimals = 0, classN
         <input type="text" inputMode="decimal" value={raw}
           onChange={(e) => setRaw(e.target.value)}
           onBlur={() => { const v = parseFloat(raw.replace(/,/g, "")) || 0; onChange(v); setRaw(fmt(v)); }}
-          className="flex-1 px-2 py-1.5 text-sm outline-none bg-transparent text-blue-700" placeholder="0" />
+          className="flex-1 px-2 py-1.5 text-sm outline-none bg-transparent text-blue-300" placeholder="0" />
         {suffix && <span className="px-2 text-sm text-muted-foreground bg-muted border-l">{suffix}</span>}
       </div>
     </div>
@@ -306,7 +306,7 @@ function CellInput({ value, onChange, decimals = 0, prefix, align = "right", pla
       <input type="text" inputMode="decimal" value={raw}
         onChange={e => setRaw(e.target.value)}
         onBlur={() => { const v = parseFloat(raw.replace(/,/g, "")) || 0; onChange(v); setRaw(fmt(v)); }}
-        className={`w-full bg-transparent text-sm outline-none tabular-nums text-blue-700 ${align === "right" ? "text-right" : "text-left"}`}
+        className={`w-full bg-transparent text-sm outline-none tabular-nums text-blue-300 ${align === "right" ? "text-right" : "text-left"}`}
         placeholder={placeholder} />
     </div>
   );
@@ -315,7 +315,7 @@ function CellInput({ value, onChange, decimals = 0, prefix, align = "right", pla
 function CellText({ value, onChange, placeholder = "" }: { value: string; onChange: (v: string) => void; placeholder?: string; }) {
   return (
     <input type="text" value={value} onChange={e => onChange(e.target.value)}
-      className="w-full bg-transparent text-sm outline-none text-blue-700" placeholder={placeholder} />
+      className="w-full bg-transparent text-sm outline-none text-blue-300" placeholder={placeholder} />
   );
 }
 
@@ -341,7 +341,7 @@ function MBox({ label, value, sub, hi, warn }: { label: string; value: string; s
   return (
     <div className={`p-4 rounded-xl border ${hi ? "border-primary/50 bg-primary/5" : warn ? "border-yellow-400/50 bg-yellow-50/50" : "bg-card"}`}>
       <p className="text-xs text-muted-foreground mb-1">{label}</p>
-      <p className={`text-xl font-bold ${hi ? "text-primary" : warn ? "text-yellow-700" : ""}`}>{value}</p>
+      <p className={`text-xl font-bold ${hi ? "text-primary" : warn ? "text-yellow-400" : ""}`}>{value}</p>
       {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
     </div>
   );
@@ -921,7 +921,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      <Section title="Purchase & Cost Basis" icon={<DollarSign className="h-4 w-4 text-green-600" />}>
+      <Section title="Purchase & Cost Basis" icon={<DollarSign className="h-4 w-4 text-green-400" />}>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
           <NumInput label="Purchase Price" value={d.purchase_price} onChange={v => set("purchase_price", v)} prefix="$" />
           <NumInput label="Closing Costs" value={d.closing_costs_pct} onChange={v => set("closing_costs_pct", v)} suffix="%" decimals={1} />
@@ -1063,24 +1063,24 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           <td className="px-1 py-1"><input type="checkbox" checked={isSelected} onChange={() => setSelectedCompIds(prev => { const next = new Set(prev); next.has(i) ? next.delete(i) : next.add(i); return next; })} className="rounded" /></td>
                           <td className="px-2 py-1">
                             <input type="text" value={comp.name} onChange={e => updateComp(i, { name: e.target.value })}
-                              className="w-full bg-transparent text-xs outline-none font-medium text-blue-700" placeholder="Property name" />
+                              className="w-full bg-transparent text-xs outline-none font-medium text-blue-300" placeholder="Property name" />
                             <input type="text" value={comp.address} onChange={e => updateComp(i, { address: e.target.value })}
-                              className="w-full bg-transparent text-[10px] outline-none text-blue-700/70" placeholder="Address" />
+                              className="w-full bg-transparent text-[10px] outline-none text-blue-300/70" placeholder="Address" />
                           </td>
-                          <td className="px-1 py-1"><input type="text" inputMode="decimal" value={comp.distance_mi || ""} onChange={e => updateComp(i, { distance_mi: parseFloat(e.target.value) || 0 })} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" /></td>
-                          <td className="px-1 py-1"><input type="text" inputMode="numeric" value={comp.year_built || ""} onChange={e => updateComp(i, { year_built: parseInt(e.target.value) || 0 })} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" /></td>
-                          <td className="px-1 py-1"><input type="text" inputMode="numeric" value={comp.units || ""} onChange={e => updateComp(i, { units: parseInt(e.target.value) || 0 })} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" /></td>
-                          <td className="px-1 py-1"><input type="text" inputMode="numeric" value={comp.occupancy_pct || ""} onChange={e => updateComp(i, { occupancy_pct: parseInt(e.target.value) || 0 })} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" /></td>
+                          <td className="px-1 py-1"><input type="text" inputMode="decimal" value={comp.distance_mi || ""} onChange={e => updateComp(i, { distance_mi: parseFloat(e.target.value) || 0 })} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" /></td>
+                          <td className="px-1 py-1"><input type="text" inputMode="numeric" value={comp.year_built || ""} onChange={e => updateComp(i, { year_built: parseInt(e.target.value) || 0 })} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" /></td>
+                          <td className="px-1 py-1"><input type="text" inputMode="numeric" value={comp.units || ""} onChange={e => updateComp(i, { units: parseInt(e.target.value) || 0 })} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" /></td>
+                          <td className="px-1 py-1"><input type="text" inputMode="numeric" value={comp.occupancy_pct || ""} onChange={e => updateComp(i, { occupancy_pct: parseInt(e.target.value) || 0 })} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" /></td>
                           {allTypes.map(t => {
                             const ut = (comp.unit_types || []).find(u => u.type === t);
                             return (
                               <React.Fragment key={t}>
-                                <td className="px-1 py-1 border-l"><input type="text" inputMode="decimal" value={ut?.rent || ""} onChange={e => updateCompUnitType(i, t, "rent", parseFloat(e.target.value.replace(/,/g, "")) || 0)} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" placeholder="—" /></td>
-                                <td className="px-1 py-1"><input type="text" inputMode="numeric" value={ut?.sf || ""} onChange={e => updateCompUnitType(i, t, "sf", parseInt(e.target.value) || 0)} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" placeholder="—" /></td>
+                                <td className="px-1 py-1 border-l"><input type="text" inputMode="decimal" value={ut?.rent || ""} onChange={e => updateCompUnitType(i, t, "rent", parseFloat(e.target.value.replace(/,/g, "")) || 0)} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" placeholder="—" /></td>
+                                <td className="px-1 py-1"><input type="text" inputMode="numeric" value={ut?.sf || ""} onChange={e => updateCompUnitType(i, t, "sf", parseInt(e.target.value) || 0)} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" placeholder="—" /></td>
                               </React.Fragment>
                             );
                           })}
-                          <td className="px-2 py-1"><input type="text" value={comp.notes || ""} onChange={e => updateComp(i, { notes: e.target.value })} className="w-full bg-transparent text-xs outline-none text-blue-700" placeholder="Notes" /></td>
+                          <td className="px-2 py-1"><input type="text" value={comp.notes || ""} onChange={e => updateComp(i, { notes: e.target.value })} className="w-full bg-transparent text-xs outline-none text-blue-300" placeholder="Notes" /></td>
                           <td className="px-1 py-1"><button onClick={() => { setComps(prev => prev.filter((_, j) => j !== i)); setSelectedCompIds(prev => { const next = new Set<number>(); prev.forEach(v => { if (v < i) next.add(v); else if (v > i) next.add(v - 1); }); return next; }); }} className="text-muted-foreground/30 hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button></td>
                         </tr>
                       );
@@ -1131,16 +1131,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     <tr key={i} className={`border-b ${selectedCompIds.has(i) ? "bg-primary/5" : "opacity-40"} group`}>
                       <td className="px-1 py-1"><input type="checkbox" checked={selectedCompIds.has(i)} onChange={() => setSelectedCompIds(prev => { const next = new Set(prev); next.has(i) ? next.delete(i) : next.add(i); return next; })} className="rounded" /></td>
                       <td className="px-2 py-1">
-                        <input type="text" value={comp.name} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, name: e.target.value } : c))} className="w-full bg-transparent text-xs font-medium outline-none text-blue-700" placeholder="Property" />
-                        <input type="text" value={comp.address} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, address: e.target.value } : c))} className="w-full bg-transparent text-[10px] outline-none text-blue-700/70" placeholder="Address" />
+                        <input type="text" value={comp.name} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, name: e.target.value } : c))} className="w-full bg-transparent text-xs font-medium outline-none text-blue-300" placeholder="Property" />
+                        <input type="text" value={comp.address} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, address: e.target.value } : c))} className="w-full bg-transparent text-[10px] outline-none text-blue-300/70" placeholder="Address" />
                       </td>
-                      <td className="px-1 py-1"><input type="text" value={comp.distance_mi || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, distance_mi: parseFloat(e.target.value) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" /></td>
-                      <td className="px-1 py-1"><input type="text" value={comp.year_built || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, year_built: parseInt(e.target.value) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" /></td>
-                      <td className="px-1 py-1"><input type="text" value={comp.total_sf || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, total_sf: parseInt(e.target.value.replace(/,/g, "")) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" /></td>
-                      <td className="px-1 py-1"><input type="text" value={comp.rent_per_sf || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, rent_per_sf: parseFloat(e.target.value) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700 font-medium" /></td>
-                      <td className="px-1 py-1"><input type="text" value={comp.occupancy_pct || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, occupancy_pct: parseInt(e.target.value) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-700" /></td>
-                      <td className="px-1 py-1"><input type="text" value={comp.lease_type || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, lease_type: e.target.value } : c))} className="w-full text-center bg-transparent text-xs outline-none text-blue-700" /></td>
-                      <td className="px-2 py-1"><input type="text" value={comp.notes || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, notes: e.target.value } : c))} className="w-full bg-transparent text-xs outline-none text-blue-700" placeholder="Notes" /></td>
+                      <td className="px-1 py-1"><input type="text" value={comp.distance_mi || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, distance_mi: parseFloat(e.target.value) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" /></td>
+                      <td className="px-1 py-1"><input type="text" value={comp.year_built || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, year_built: parseInt(e.target.value) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" /></td>
+                      <td className="px-1 py-1"><input type="text" value={comp.total_sf || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, total_sf: parseInt(e.target.value.replace(/,/g, "")) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" /></td>
+                      <td className="px-1 py-1"><input type="text" value={comp.rent_per_sf || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, rent_per_sf: parseFloat(e.target.value) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300 font-medium" /></td>
+                      <td className="px-1 py-1"><input type="text" value={comp.occupancy_pct || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, occupancy_pct: parseInt(e.target.value) || 0 } : c))} className="w-full text-right bg-transparent text-xs outline-none tabular-nums text-blue-300" /></td>
+                      <td className="px-1 py-1"><input type="text" value={comp.lease_type || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, lease_type: e.target.value } : c))} className="w-full text-center bg-transparent text-xs outline-none text-blue-300" /></td>
+                      <td className="px-2 py-1"><input type="text" value={comp.notes || ""} onChange={e => setComps(prev => prev.map((c, j) => j === i ? { ...c, notes: e.target.value } : c))} className="w-full bg-transparent text-xs outline-none text-blue-300" placeholder="Notes" /></td>
                       <td className="px-1 py-1"><button onClick={() => { setComps(prev => prev.filter((_, j) => j !== i)); setSelectedCompIds(prev => { const next = new Set<number>(); prev.forEach(v => { if (v < i) next.add(v); else if (v > i) next.add(v - 1); }); return next; }); }} className="text-muted-foreground/30 hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button></td>
                     </tr>
                   ))}
@@ -1155,7 +1155,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
-      <Section title="Revenue — Unit / Space Mix" icon={<Calculator className="h-4 w-4 text-indigo-600" />}>
+      <Section title="Revenue — Unit / Space Mix" icon={<Calculator className="h-4 w-4 text-indigo-400" />}>
         <div className="mt-3 overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
@@ -1337,7 +1337,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
-      <Section title="Capital Expenditures" icon={<Hammer className="h-4 w-4 text-orange-600" />} open={false}>
+      <Section title="Capital Expenditures" icon={<Hammer className="h-4 w-4 text-orange-400" />} open={false}>
         <div className="mt-3 overflow-x-auto">
           {d.capex_items.length === 0 && <p className="text-sm text-muted-foreground py-2">No CapEx items. Click + to add or check "Renovate" on unit types.</p>}
           {d.capex_items.length > 0 && (
@@ -1418,7 +1418,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
-      <Section title="Operating Assumptions" icon={<Calculator className="h-4 w-4 text-blue-600" />}>
+      <Section title="Operating Assumptions" icon={<Calculator className="h-4 w-4 text-blue-400" />}>
         <div className="mt-3 overflow-x-auto">
           {/* Vacancy row */}
           <div className="grid grid-cols-3 gap-4 mb-4">
@@ -1487,7 +1487,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
-      <Section title="Financing" icon={<TrendingUp className="h-4 w-4 text-purple-600" />}>
+      <Section title="Financing" icon={<TrendingUp className="h-4 w-4 text-purple-400" />}>
         <div className="mt-3 space-y-5">
           <div>
             <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold mb-3">
@@ -1503,9 +1503,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Loan Amount</p><p className="text-sm font-semibold">{fc(m.acqLoan)}</p></div>
                 <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Annual Debt Service</p><p className="text-sm font-semibold">{fc(m.acqDebt)}</p></div>
                 <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Equity Required</p><p className="text-sm font-semibold">{fc(m.equity)}</p></div>
-                <div className={`p-3 rounded-lg ${m.dscr >= 1.25 ? "bg-green-50 border border-green-200" : m.dscr > 0 ? "bg-yellow-50 border border-yellow-200" : "bg-muted/50"}`}>
+                <div className={`p-3 rounded-lg ${m.dscr >= 1.25 ? "bg-green-500/10 border border-green-500/20" : m.dscr > 0 ? "bg-yellow-500/10 border border-yellow-500/20" : "bg-muted/50"}`}>
                   <p className="text-xs text-muted-foreground mb-1">DSCR</p>
-                  <p className={`text-sm font-semibold ${m.dscr >= 1.25 ? "text-green-700" : m.dscr > 0 ? "text-yellow-700" : ""}`}>{m.dscr > 0 ? `${m.dscr.toFixed(2)}x` : "—"}</p>
+                  <p className={`text-sm font-semibold ${m.dscr >= 1.25 ? "text-green-400" : m.dscr > 0 ? "text-yellow-400" : ""}`}>{m.dscr > 0 ? `${m.dscr.toFixed(2)}x` : "—"}</p>
                   <p className="text-xs text-muted-foreground">{m.dscr >= 1.25 ? "✓ Good" : m.dscr > 0 ? "⚠ Low" : ""}</p>
                 </div>
               </div>
@@ -1525,7 +1525,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <NumInput label="Refi Amortization" value={d.refi_amort_years} onChange={v => set("refi_amort_years", v)} suffix="yrs" />
                   <div className="p-3 bg-muted/50 rounded-lg">
                     <p className="text-xs text-muted-foreground mb-1">Refi Proceeds</p>
-                    <p className={`text-sm font-semibold ${m.refiProceeds < 0 ? "text-red-600" : "text-green-700"}`}>{fc(m.refiProceeds)}</p>
+                    <p className={`text-sm font-semibold ${m.refiProceeds < 0 ? "text-red-400" : "text-green-400"}`}>{fc(m.refiProceeds)}</p>
                     <p className="text-xs text-muted-foreground">{m.refiProceeds < 0 ? "⚠ Shortfall" : "Cash out"}</p>
                   </div>
                   <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">New Annual Debt</p><p className="text-sm font-semibold">{fc(m.refiDebt)}</p></div>
@@ -1600,7 +1600,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             {(data.deal_notes ?? []).map(note => (
               <div key={note.id} className="flex items-start gap-2 group">
                 <span className={`text-[10px] mt-0.5 px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                  note.category === "context" ? "bg-primary/10 text-primary" : "bg-amber-100 text-amber-700"
+                  note.category === "context" ? "bg-primary/10 text-primary" : "bg-amber-500/10 text-amber-400"
                 }`}>
                   {note.category === "context" ? "AI Context" : "Team Review"}
                 </span>
