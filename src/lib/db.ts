@@ -38,8 +38,11 @@ export function getPool(): Pool {
 
 export async function initSchema(): Promise<void> {
   const pool = getPool();
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS deals (
+
+  // Run each table creation separately so one failure doesn't prevent others
+  const queries = [
+    // Core tables
+    `CREATE TABLE IF NOT EXISTS deals (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       address TEXT NOT NULL DEFAULT '',
@@ -57,16 +60,13 @@ export async function initSchema(): Promise<void> {
       notes TEXT,
       loi_executed BOOLEAN NOT NULL DEFAULT false,
       psa_executed BOOLEAN NOT NULL DEFAULT false,
-      -- OM Intelligence fields
       om_score INTEGER,
       om_extracted JSONB,
-      -- Proforma output fields
       proforma_outputs JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS documents (
+    )`,
+    `CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY,
       deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
@@ -79,12 +79,10 @@ export async function initSchema(): Promise<void> {
       ai_summary TEXT,
       ai_tags JSONB,
       uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_documents_deal_id ON documents(deal_id);
-    CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
-
-    CREATE TABLE IF NOT EXISTS photos (
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_documents_deal_id ON documents(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category)`,
+    `CREATE TABLE IF NOT EXISTS photos (
       id TEXT PRIMARY KEY,
       deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
@@ -94,26 +92,22 @@ export async function initSchema(): Promise<void> {
       mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
       caption TEXT,
       uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_photos_deal_id ON photos(deal_id);
-
-    CREATE TABLE IF NOT EXISTS underwriting (
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_photos_deal_id ON photos(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS underwriting (
       id TEXT PRIMARY KEY,
       deal_id TEXT NOT NULL UNIQUE REFERENCES deals(id) ON DELETE CASCADE,
       data JSONB NOT NULL DEFAULT '{}',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS loi (
+    )`,
+    `CREATE TABLE IF NOT EXISTS loi (
       id TEXT PRIMARY KEY,
       deal_id TEXT NOT NULL UNIQUE REFERENCES deals(id) ON DELETE CASCADE,
       data JSONB NOT NULL DEFAULT '{}',
       executed BOOLEAN NOT NULL DEFAULT false,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS checklist_items (
+    )`,
+    `CREATE TABLE IF NOT EXISTS checklist_items (
       id TEXT PRIMARY KEY,
       deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
       category TEXT NOT NULL,
@@ -123,33 +117,27 @@ export async function initSchema(): Promise<void> {
       ai_filled BOOLEAN NOT NULL DEFAULT false,
       source_document_ids JSONB,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_checklist_deal_id ON checklist_items(deal_id);
-
-    CREATE TABLE IF NOT EXISTS chat_messages (
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_checklist_deal_id ON checklist_items(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS chat_messages (
       id TEXT PRIMARY KEY,
       deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_chat_deal_id ON chat_messages(deal_id);
-
-    CREATE TABLE IF NOT EXISTS om_analyses (
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_chat_deal_id ON chat_messages(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS om_analyses (
       id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       deal_id          TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
       document_id      TEXT,
       status           TEXT NOT NULL DEFAULT 'pending',
-      -- Property
       property_name    TEXT,
       address          TEXT,
       property_type    TEXT,
       year_built       INT,
       sf               INT,
       unit_count       INT,
-      -- Financials
       asking_price     NUMERIC,
       noi              NUMERIC,
       cap_rate         NUMERIC,
@@ -162,18 +150,15 @@ export async function initSchema(): Promise<void> {
       expense_ratio    NUMERIC,
       price_per_sf     NUMERIC,
       price_per_unit   NUMERIC,
-      -- Assumptions
       rent_growth      TEXT,
       hold_period      TEXT,
       leverage         TEXT,
       exit_cap_rate    TEXT,
-      -- Results
       deal_score       INT,
       score_reasoning  TEXT,
       summary          TEXT,
       recommendations  JSONB,
       red_flags        JSONB,
-      -- Meta
       deal_context     TEXT,
       model_used       TEXT,
       tokens_used      INT,
@@ -182,13 +167,12 @@ export async function initSchema(): Promise<void> {
       error_message    TEXT,
       created_at       TIMESTAMPTZ DEFAULT NOW(),
       updated_at       TIMESTAMPTZ DEFAULT NOW()
-    );
-    ALTER TABLE om_analyses ADD COLUMN IF NOT EXISTS deal_context TEXT;
-    ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT;
-    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB;
-    ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT;
-
-    CREATE TABLE IF NOT EXISTS dropbox_accounts (
+    )`,
+    `ALTER TABLE om_analyses ADD COLUMN IF NOT EXISTS deal_context TEXT`,
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT`,
+    `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB`,
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT`,
+    `CREATE TABLE IF NOT EXISTS dropbox_accounts (
       id TEXT PRIMARY KEY DEFAULT 'default',
       access_token TEXT NOT NULL,
       refresh_token TEXT,
@@ -197,12 +181,9 @@ export async function initSchema(): Promise<void> {
       email TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-
-
-    CREATE INDEX IF NOT EXISTS idx_om_analyses_deal_id ON om_analyses(deal_id);
-
-    CREATE TABLE IF NOT EXISTS om_qa (
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_om_analyses_deal_id ON om_analyses(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS om_qa (
       id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       analysis_id   TEXT NOT NULL,
       deal_id       TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
@@ -212,32 +193,37 @@ export async function initSchema(): Promise<void> {
       tokens_used   INT,
       cost_estimate NUMERIC,
       created_at    TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_om_qa_analysis_id ON om_qa(analysis_id);
-    CREATE INDEX IF NOT EXISTS idx_om_qa_deal_id ON om_qa(deal_id);
-
-    CREATE TABLE IF NOT EXISTS business_plans (
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_om_qa_analysis_id ON om_qa(analysis_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_om_qa_deal_id ON om_qa(deal_id)`,
+    // Business plans table + extended columns
+    `CREATE TABLE IF NOT EXISTS business_plans (
       id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name        TEXT NOT NULL,
       description TEXT NOT NULL,
       is_default  BOOLEAN NOT NULL DEFAULT FALSE,
       created_at  TIMESTAMPTZ DEFAULT NOW(),
       updated_at  TIMESTAMPTZ DEFAULT NOW()
-    );
+    )`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS investment_theses JSONB NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_markets JSONB NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS property_types JSONB NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_min INTEGER`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_max INTEGER`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_min NUMERIC`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_max NUMERIC`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_min NUMERIC`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_max NUMERIC`,
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT`,
+  ];
 
-    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS investment_theses JSONB NOT NULL DEFAULT '[]';
-    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_markets JSONB NOT NULL DEFAULT '[]';
-    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS property_types JSONB NOT NULL DEFAULT '[]';
-    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_min INTEGER;
-    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_max INTEGER;
-    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_min NUMERIC;
-    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_max NUMERIC;
-    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_min NUMERIC;
-    ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_max NUMERIC;
-
-    ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT;
-  `);
+  for (const query of queries) {
+    try {
+      await pool.query(query);
+    } catch (err) {
+      console.error("Schema init warning:", (err as Error).message, "\nQuery:", query.slice(0, 80));
+    }
+  }
 }
 
 // ─── Deal queries ─────────────────────────────────────────────────────────────
