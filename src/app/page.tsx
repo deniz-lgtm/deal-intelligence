@@ -11,12 +11,13 @@ import {
   FileSearch,
   BookOpen,
   LayoutGrid,
-  ArrowUpRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import DealCard from "@/components/DealCard";
+import KanbanCard from "@/components/KanbanCard";
 import type { Deal, DealStatus } from "@/lib/types";
+import { DEAL_PIPELINE, DEAL_STAGE_LABELS } from "@/lib/types";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface DealWithStats extends Deal {
   document_count?: number;
@@ -25,24 +26,21 @@ interface DealWithStats extends Deal {
   om_score?: number;
 }
 
-const STATUS_FILTERS: { value: DealStatus | "all" | "starred"; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "starred", label: "Starred" },
-  { value: "sourcing", label: "Sourcing" },
-  { value: "screening", label: "Screening" },
-  { value: "loi", label: "LOI" },
-  { value: "under_contract", label: "Under Contract" },
-  { value: "diligence", label: "Diligence" },
-  { value: "closing", label: "Closing" },
-  { value: "closed", label: "Closed" },
-  { value: "dead", label: "Dead" },
-];
+const COLUMN_COLORS: Record<DealStatus, { dot: string; count: string }> = {
+  sourcing: { dot: "bg-zinc-400", count: "text-zinc-400" },
+  screening: { dot: "bg-blue-400", count: "text-blue-400" },
+  loi: { dot: "bg-amber-400", count: "text-amber-400" },
+  under_contract: { dot: "bg-orange-400", count: "text-orange-400" },
+  diligence: { dot: "bg-primary", count: "text-primary" },
+  closing: { dot: "bg-emerald-400", count: "text-emerald-400" },
+  closed: { dot: "bg-emerald-500", count: "text-emerald-500" },
+  dead: { dot: "bg-red-400", count: "text-red-400" },
+};
 
 export default function DashboardPage() {
   const [deals, setDeals] = useState<DealWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   useEffect(() => {
     loadDeals();
@@ -73,18 +71,21 @@ export default function DashboardPage() {
   };
 
   const filtered = deals.filter((d) => {
-    const matchesSearch =
-      !search ||
-      d.name.toLowerCase().includes(search.toLowerCase()) ||
-      d.address.toLowerCase().includes(search.toLowerCase()) ||
-      d.city.toLowerCase().includes(search.toLowerCase());
-
-    const matchesStatus =
-      statusFilter === "all" ||
-      (statusFilter === "starred" ? d.starred : d.status === statusFilter);
-
-    return matchesSearch && matchesStatus;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      d.name.toLowerCase().includes(q) ||
+      d.address?.toLowerCase().includes(q) ||
+      d.city?.toLowerCase().includes(q)
+    );
   });
+
+  // Group deals by status into columns
+  const columns = [...DEAL_PIPELINE, "dead" as DealStatus];
+  const dealsByStatus = columns.reduce<Record<string, DealWithStats[]>>((acc, status) => {
+    acc[status] = filtered.filter((d) => d.status === status);
+    return acc;
+  }, {});
 
   const stats = {
     total: deals.length,
@@ -94,11 +95,11 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background noise">
+    <div className="min-h-screen bg-background noise flex flex-col">
       {/* ── Hero header ── */}
-      <header className="relative overflow-hidden border-b border-border/40">
+      <header className="relative overflow-hidden border-b border-border/40 shrink-0">
         <div className="absolute inset-0 gradient-mesh" />
-        <div className="relative max-w-7xl mx-auto px-6 sm:px-8">
+        <div className="relative max-w-full mx-auto px-6 sm:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg gradient-gold flex items-center justify-center">
@@ -109,6 +110,19 @@ export default function DashboardPage() {
               </span>
             </div>
             <div className="flex items-center gap-3">
+              {/* Quick stats */}
+              <div className="hidden md:flex items-center gap-4 mr-4">
+                {[
+                  { label: "Active", value: stats.active, accent: "text-emerald-400" },
+                  { label: "Starred", value: stats.starred, accent: "text-amber-400" },
+                  { label: "Analyzed", value: stats.analyzed, accent: "text-blue-400" },
+                ].map(({ label, value, accent }) => (
+                  <div key={label} className="flex items-center gap-1.5 text-xs">
+                    <span className={cn("font-bold tabular-nums", accent)}>{value}</span>
+                    <span className="text-muted-foreground">{label}</span>
+                  </div>
+                ))}
+              </div>
               <Link href="/business-plans">
                 <Button
                   size="sm"
@@ -116,7 +130,7 @@ export default function DashboardPage() {
                   className="text-muted-foreground hover:text-foreground text-xs"
                 >
                   <BookOpen className="h-3.5 w-3.5 mr-1.5" />
-                  Business Plans
+                  Plans
                 </Button>
               </Link>
               <Link href="/deals/new">
@@ -127,140 +141,111 @@ export default function DashboardPage() {
               </Link>
             </div>
           </div>
-
-          {/* Stats strip */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pb-8 pt-4">
-            {[
-              { icon: LayoutGrid, label: "Total Deals", value: stats.total, accent: "text-primary" },
-              { icon: TrendingUp, label: "Active", value: stats.active, accent: "text-emerald-400" },
-              { icon: Star, label: "Starred", value: stats.starred, accent: "text-amber-400" },
-              { icon: FileSearch, label: "OM Analyzed", value: stats.analyzed, accent: "text-blue-400" },
-            ].map(({ icon: Icon, label, value, accent }, i) => (
-              <div
-                key={label}
-                className={`animate-fade-up stagger-${i + 1} group flex items-center gap-4 p-4 rounded-xl border border-border/40 bg-card/50 hover:bg-card hover:border-border transition-all duration-300`}
-              >
-                <div className={`h-10 w-10 rounded-xl bg-muted flex items-center justify-center ${accent}`}>
-                  <Icon className="h-4 w-4" />
-                </div>
-                <div>
-                  <p className="text-3xl font-bold tabular-nums tracking-tight text-foreground">{value}</p>
-                  <p className="text-2xs text-muted-foreground mt-0.5 uppercase tracking-wider">{label}</p>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 sm:px-8 py-8">
-        {/* ── Search + Filters ── */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-8 animate-fade-up stagger-5">
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/40" />
+      {/* ── Search bar ── */}
+      <div className="shrink-0 border-b border-border/30 bg-card/30 backdrop-blur-sm px-6 sm:px-8 py-3">
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40" />
             <input
               type="text"
-              placeholder="Search deals, addresses..."
+              placeholder="Search deals..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 text-sm border border-border/60 rounded-xl bg-card/50 focus:bg-card focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all placeholder:text-muted-foreground/30"
+              className="w-full pl-9 pr-4 py-2 text-xs border border-border/50 rounded-lg bg-background/50 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all placeholder:text-muted-foreground/30"
             />
           </div>
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none">
-            {STATUS_FILTERS.map((f) => (
-              <button
-                key={f.value}
-                onClick={() => setStatusFilter(f.value)}
-                className={`shrink-0 text-2xs px-3 py-2 rounded-lg transition-all duration-200 font-medium ${
-                  statusFilter === f.value
-                    ? "gradient-gold text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
+          <span className="text-2xs text-muted-foreground tabular-nums">
+            {filtered.length} deal{filtered.length !== 1 ? "s" : ""}
+          </span>
         </div>
+      </div>
 
-        {/* ── Deals grid ── */}
+      {/* ── Kanban board ── */}
+      <main className="flex-1 overflow-x-auto px-6 sm:px-8 py-6">
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {[...Array(6)].map((_, i) => (
-              <div
-                key={i}
-                className={`animate-fade-up stagger-${Math.min(i + 1, 6)} h-72 rounded-xl border border-border/40 bg-card/30 overflow-hidden`}
-              >
-                <div className="h-full p-5 flex flex-col">
-                  <div className="flex gap-2 mb-4">
-                    <div className="h-5 w-16 rounded-full bg-muted/50 animate-pulse" />
-                    <div className="h-5 w-20 rounded-full bg-muted/50 animate-pulse" />
-                  </div>
-                  <div className="h-6 w-3/4 rounded bg-muted/50 animate-pulse mb-2" />
-                  <div className="h-4 w-1/2 rounded bg-muted/30 animate-pulse mb-6" />
-                  <div className="flex gap-4 mb-auto">
-                    <div className="h-4 w-24 rounded bg-muted/40 animate-pulse" />
-                    <div className="h-4 w-16 rounded bg-muted/30 animate-pulse" />
-                  </div>
-                  <div className="flex gap-2 mt-4">
-                    <div className="h-9 flex-1 rounded-lg bg-muted/30 animate-pulse" />
-                    <div className="h-9 flex-1 rounded-lg bg-muted/30 animate-pulse" />
-                    <div className="h-9 flex-1 rounded-lg bg-muted/40 animate-pulse" />
-                  </div>
+          <div className="flex gap-4 min-w-max">
+            {columns.map((status) => (
+              <div key={status} className="w-72 shrink-0">
+                <div className="h-8 w-24 rounded bg-muted/30 animate-pulse mb-3" />
+                <div className="space-y-3">
+                  {[1, 2].map((i) => (
+                    <div key={i} className="h-28 rounded-lg border border-border/30 bg-card/30 animate-pulse" />
+                  ))}
                 </div>
               </div>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        ) : deals.length === 0 ? (
           <div className="text-center py-32 animate-fade-up">
             <div className="w-20 h-20 rounded-2xl bg-muted/30 flex items-center justify-center mx-auto mb-6">
               <Building2 className="h-9 w-9 text-muted-foreground/20" />
             </div>
-            <h2 className="font-display text-2xl mb-2 text-foreground">
-              {deals.length === 0 ? "No deals yet" : "No matches"}
-            </h2>
+            <h2 className="font-display text-2xl mb-2 text-foreground">No deals yet</h2>
             <p className="text-sm text-muted-foreground mb-8 max-w-sm mx-auto">
-              {deals.length === 0
-                ? "Create your first deal to start building your pipeline."
-                : "Try adjusting your search or filter criteria."}
+              Create your first deal to start building your pipeline.
             </p>
-            {deals.length === 0 && (
-              <Link href="/deals/new">
-                <Button>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Create your first deal
-                </Button>
-              </Link>
-            )}
+            <Link href="/deals/new">
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Create your first deal
+              </Button>
+            </Link>
           </div>
         ) : (
-          <>
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
-                {filtered.length} deal{filtered.length !== 1 ? "s" : ""}
-                {statusFilter !== "all" || search ? " filtered" : ""}
-              </p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filtered.map((deal, i) => (
-                <div key={deal.id} className={`animate-fade-up stagger-${Math.min(i + 1, 6)}`}>
-                  <DealCard
-                    deal={deal}
-                    documentCount={deal.document_count}
-                    checklistProgress={
-                      deal.checklist_total
-                        ? {
-                            complete: deal.checklist_complete || 0,
-                            total: deal.checklist_total,
-                          }
-                        : undefined
-                    }
-                    onStar={handleStar}
-                  />
+          <div className="flex gap-4 min-w-max animate-fade-up">
+            {columns.map((status) => {
+              const colDeals = dealsByStatus[status] || [];
+              const colors = COLUMN_COLORS[status];
+              const isEmpty = colDeals.length === 0;
+
+              return (
+                <div
+                  key={status}
+                  className="w-72 shrink-0 flex flex-col"
+                >
+                  {/* Column header */}
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <div className="flex items-center gap-2">
+                      <span className={cn("w-2 h-2 rounded-full", colors.dot)} />
+                      <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                        {DEAL_STAGE_LABELS[status]}
+                      </h3>
+                    </div>
+                    <span className={cn("text-xs font-bold tabular-nums", colors.count)}>
+                      {colDeals.length}
+                    </span>
+                  </div>
+
+                  {/* Column body */}
+                  <div
+                    className={cn(
+                      "flex-1 rounded-xl border border-border/30 p-2 space-y-2 min-h-[120px]",
+                      isEmpty
+                        ? "bg-muted/5 border-dashed"
+                        : "bg-muted/10"
+                    )}
+                  >
+                    {isEmpty ? (
+                      <div className="flex items-center justify-center h-full min-h-[100px]">
+                        <p className="text-2xs text-muted-foreground/30">No deals</p>
+                      </div>
+                    ) : (
+                      colDeals.map((deal) => (
+                        <KanbanCard
+                          key={deal.id}
+                          deal={deal}
+                          onStar={handleStar}
+                        />
+                      ))
+                    )}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </>
+              );
+            })}
+          </div>
         )}
       </main>
     </div>
