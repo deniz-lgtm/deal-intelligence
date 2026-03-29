@@ -16,7 +16,7 @@ type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 
 interface UnitGroup {
   id: string; label: string; unit_count: number;
-  will_renovate: boolean; renovation_cost_per_unit: number;
+  renovation_count: number; renovation_cost_per_unit: number;
   unit_change: "none" | "add" | "remove"; unit_change_count: number;
   // Shared
   bedrooms: number; bathrooms: number; sf_per_unit: number;
@@ -27,8 +27,6 @@ interface UnitGroup {
   current_rent_per_unit: number; market_rent_per_unit: number;
   // Student Housing (bed-based, monthly)
   beds_per_unit: number; current_rent_per_bed: number; market_rent_per_bed: number;
-  // Renovation penetration — % of units expected to turn over and reach market rent
-  renovation_penetration_pct: number;
 }
 
 interface CapexItem { id: string; label: string; quantity: number; cost_per_unit: number; linked_unit_group_id?: string; }
@@ -106,7 +104,7 @@ const DEFAULT: UWData = {
 
 const newGroup = (): UnitGroup => ({
   id: uuidv4(), label: "", unit_count: 1,
-  will_renovate: false, renovation_cost_per_unit: 0,
+  renovation_count: 0, renovation_cost_per_unit: 0,
   unit_change: "none" as const, unit_change_count: 0,
   bedrooms: 1, bathrooms: 1, sf_per_unit: 0,
   // Commercial defaults
@@ -116,7 +114,6 @@ const newGroup = (): UnitGroup => ({
   current_rent_per_unit: 0, market_rent_per_unit: 0,
   // Student Housing defaults (monthly per bed)
   beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 0,
-  renovation_penetration_pct: 0,
 });
 
 const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity: 1, cost_per_unit: 0 });
@@ -154,21 +151,18 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.current_rent_per_unit * 12, 0)
     : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0);
 
-  // ── Proforma GPR — blended rent reflecting renovation penetration ──────────
-  // Units that will be renovated: penetration_pct% at market, rest at in-place
-  // Units NOT being renovated: stay at in-place rent
+  // ── Proforma GPR — blended rent reflecting renovation count ─────────────────
+  // renovation_count units at market rent, remaining at in-place
   const proformaGPR = d.unit_groups.reduce((s, g) => {
     const eu = effectiveUnits(g);
-    const pen = (g.renovation_penetration_pct || 0) / 100;
+    const renoUnits = Math.min(g.renovation_count || 0, eu);
+    const unrenoUnits = eu - renoUnits;
     if (mode === "student_housing") {
-      const blended = g.current_rent_per_bed + (g.market_rent_per_bed - g.current_rent_per_bed) * pen;
-      return s + eu * g.beds_per_unit * blended * 12;
+      return s + (renoUnits * g.beds_per_unit * g.market_rent_per_bed + unrenoUnits * g.beds_per_unit * g.current_rent_per_bed) * 12;
     } else if (mode === "multifamily") {
-      const blended = g.current_rent_per_unit + (g.market_rent_per_unit - g.current_rent_per_unit) * pen;
-      return s + eu * blended * 12;
+      return s + (renoUnits * g.market_rent_per_unit + unrenoUnits * g.current_rent_per_unit) * 12;
     } else {
-      const blended = g.current_rent_per_sf + (g.market_rent_per_sf - g.current_rent_per_sf) * pen;
-      return s + eu * g.sf_per_unit * blended;
+      return s + (renoUnits * g.sf_per_unit * g.market_rent_per_sf + unrenoUnits * g.sf_per_unit * g.current_rent_per_sf);
     }
   }, 0);
 
@@ -472,41 +466,29 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       });
     }
   };
-  // Renovation ↔ CapEx sync
-  const toggleRenovation = (groupId: string, checked: boolean) => {
-    setData(prev => {
-      const group = prev.unit_groups.find(g => g.id === groupId);
-      if (!group) return prev;
-      const updatedGroups = prev.unit_groups.map(g => g.id === groupId ? { ...g, will_renovate: checked } : g);
-      let updatedCapex = [...prev.capex_items];
-      if (checked) {
-        // Add linked capex item
-        if (!updatedCapex.some(c => c.linked_unit_group_id === groupId)) {
-          updatedCapex.push({
-            id: uuidv4(),
-            label: `${group.label || "Unit"} Renovation`,
-            quantity: group.unit_count,
-            cost_per_unit: group.renovation_cost_per_unit || 0,
-            linked_unit_group_id: groupId,
-          });
-        }
-      } else {
-        // Remove linked capex item
-        updatedCapex = updatedCapex.filter(c => c.linked_unit_group_id !== groupId);
-      }
-      return { ...prev, unit_groups: updatedGroups, capex_items: updatedCapex };
-    });
-  };
-  // Keep linked capex in sync when unit group changes
+  // Renovation ↔ CapEx sync — driven by renovation_count on each unit group
   const syncLinkedCapex = (groupId: string, updates: Partial<UnitGroup>) => {
     setData(prev => {
       const updatedGroups = prev.unit_groups.map(g => g.id === groupId ? { ...g, ...updates } : g);
       const group = updatedGroups.find(g => g.id === groupId)!;
-      const updatedCapex = prev.capex_items.map(c =>
-        c.linked_unit_group_id === groupId
-          ? { ...c, label: `${group.label || "Unit"} Renovation`, quantity: group.unit_count, cost_per_unit: group.renovation_cost_per_unit }
-          : c
-      );
+      const renoCount = group.renovation_count || 0;
+      let updatedCapex = [...prev.capex_items];
+      if (renoCount > 0) {
+        // Ensure linked capex exists and stays in sync
+        const existingIdx = updatedCapex.findIndex(c => c.linked_unit_group_id === groupId);
+        if (existingIdx >= 0) {
+          updatedCapex[existingIdx] = { ...updatedCapex[existingIdx], label: `${group.label || "Unit"} Renovation`, quantity: renoCount, cost_per_unit: group.renovation_cost_per_unit };
+        } else {
+          updatedCapex.push({
+            id: uuidv4(), label: `${group.label || "Unit"} Renovation`,
+            quantity: renoCount, cost_per_unit: group.renovation_cost_per_unit || 0,
+            linked_unit_group_id: groupId,
+          });
+        }
+      } else {
+        // Remove linked capex when reno count goes to 0
+        updatedCapex = updatedCapex.filter(c => c.linked_unit_group_id !== groupId);
+      }
       return { ...prev, unit_groups: updatedGroups, capex_items: updatedCapex };
     });
   };
@@ -1210,7 +1192,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">Beds</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">In-Place/Bed</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Market/Bed</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno %</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma/Bed</th>
                   <th className="w-[32px]" />
                 </>) : isMF ? (<>
@@ -1222,7 +1204,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">SF</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">In-Place Rent</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Market Rent</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno %</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma</th>
                   <th className="w-[32px]" />
                 </>) : (<>
@@ -1233,7 +1215,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">Lease</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Curr $/SF</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Mkt $/SF</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno %</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Proforma</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Reimb $/SF</th>
                   <th className="w-[32px]" />
@@ -1254,17 +1236,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   : isMF
                   ? effectiveUnits(g) * g.market_rent_per_unit * 12
                   : effectiveUnits(g) * g.sf_per_unit * g.market_rent_per_sf;
-                const pen = (g.renovation_penetration_pct || 0) / 100;
-                const proformaRent = isSH
-                  ? g.current_rent_per_bed + (g.market_rent_per_bed - g.current_rent_per_bed) * pen
-                  : isMF
-                  ? g.current_rent_per_unit + (g.market_rent_per_unit - g.current_rent_per_unit) * pen
-                  : g.current_rent_per_sf + (g.market_rent_per_sf - g.current_rent_per_sf) * pen;
+                const eu = effectiveUnits(g);
+                const renoUnits = Math.min(g.renovation_count || 0, eu);
+                const unrenoUnits = eu - renoUnits;
                 const proformaAnnual = isSH
-                  ? effectiveUnits(g) * g.beds_per_unit * proformaRent * 12
+                  ? (renoUnits * g.beds_per_unit * g.market_rent_per_bed + unrenoUnits * g.beds_per_unit * g.current_rent_per_bed) * 12
                   : isMF
-                  ? effectiveUnits(g) * proformaRent * 12
-                  : effectiveUnits(g) * g.sf_per_unit * proformaRent;
+                  ? (renoUnits * g.market_rent_per_unit + unrenoUnits * g.current_rent_per_unit) * 12
+                  : (renoUnits * g.sf_per_unit * g.market_rent_per_sf + unrenoUnits * g.sf_per_unit * g.current_rent_per_sf);
                 const uc = g.unit_change || "none";
                 const unitChangeCell = (
                   <td className="px-1 py-1">
@@ -1285,7 +1264,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   </td>
                 );
                 const updFn = (id: string, updates: Partial<UnitGroup>) => {
-                  if (g.will_renovate && ("label" in updates || "unit_count" in updates || "renovation_cost_per_unit" in updates)) {
+                  if ("renovation_count" in updates || ((g.renovation_count || 0) > 0 && ("label" in updates || "renovation_cost_per_unit" in updates))) {
                     syncLinkedCapex(id, updates);
                   } else {
                     upd(id, updates);
@@ -1305,9 +1284,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <td className="px-2 py-1">
                         <CellInput value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" />
                       </td>
-                      <td className="px-2 py-1"><CellInput value={g.renovation_penetration_pct || 0} onChange={v => upd(g.id, { renovation_penetration_pct: v })} suffix="%" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.renovation_count || 0} onChange={v => updFn(g.id, { renovation_count: v })} /></td>
                       <td className="px-2 py-1">
-                        <span className="block text-right text-sm tabular-nums font-medium">{fc(Math.round(proformaRent))}</span>
+                        <span className="block text-right text-sm tabular-nums font-medium">{eu > 0 && g.beds_per_unit > 0 ? fc(Math.round(proformaAnnual / eu / g.beds_per_unit / 12)) : "—"}</span>
                         <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                       </td>
                     </>) : isMF ? (<>
@@ -1324,9 +1303,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <td className="px-2 py-1">
                         <CellInput value={g.market_rent_per_unit} onChange={v => upd(g.id, { market_rent_per_unit: v })} prefix="$" />
                       </td>
-                      <td className="px-2 py-1"><CellInput value={g.renovation_penetration_pct || 0} onChange={v => upd(g.id, { renovation_penetration_pct: v })} suffix="%" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.renovation_count || 0} onChange={v => updFn(g.id, { renovation_count: v })} /></td>
                       <td className="px-2 py-1">
-                        <span className="block text-right text-sm tabular-nums font-medium">{fc(Math.round(proformaRent))}</span>
+                        <span className="block text-right text-sm tabular-nums font-medium">{eu > 0 ? fc(Math.round(proformaAnnual / eu / 12)) : "—"}</span>
                         <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                       </td>
                     </>) : (<>
@@ -1346,9 +1325,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <td className="px-2 py-1">
                         <CellInput value={g.market_rent_per_sf} onChange={v => upd(g.id, { market_rent_per_sf: v })} prefix="$" decimals={2} />
                       </td>
-                      <td className="px-2 py-1"><CellInput value={g.renovation_penetration_pct || 0} onChange={v => upd(g.id, { renovation_penetration_pct: v })} suffix="%" /></td>
+                      <td className="px-2 py-1"><CellInput value={g.renovation_count || 0} onChange={v => updFn(g.id, { renovation_count: v })} /></td>
                       <td className="px-2 py-1">
-                        <span className="block text-right text-sm tabular-nums font-medium">${proformaRent.toFixed(2)}</span>
+                        <span className="block text-right text-sm tabular-nums font-medium">{eu > 0 && g.sf_per_unit > 0 ? `$${(proformaAnnual / eu / g.sf_per_unit).toFixed(2)}` : "—"}</span>
                         <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                       </td>
                       <td className="px-2 py-1"><CellInput value={g.expense_reimbursement_per_sf} onChange={v => upd(g.id, { expense_reimbursement_per_sf: v })} prefix="$" decimals={2} /></td>
@@ -1401,16 +1380,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <Plus className="h-4 w-4 mr-2" /> Add Row
             </Button>
           </div>
-          {d.unit_groups.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-3">
-              {d.unit_groups.map(g => (
-                <label key={g.id} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                  <input type="checkbox" checked={g.will_renovate} onChange={e => toggleRenovation(g.id, e.target.checked)} className="rounded" />
-                  <span className="text-muted-foreground">Renovate: {g.label || "Unit"}</span>
-                </label>
-              ))}
-            </div>
-          )}
           {/* Other Income */}
           <div className="mt-4 border-t pt-4">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Other Income</h4>
