@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
 import { generateDDAbstract } from "@/lib/claude";
 import type { Document, ChecklistItem, Deal } from "@/lib/types";
 
@@ -28,11 +28,15 @@ export async function POST(
       rawUw = typeof uwRow.data === "string" ? JSON.parse(uwRow.data) : uwRow.data;
     }
 
-    // Build a comprehensive underwriting summary from the raw data
-    const uwSummary = buildUWSummary(rawUw, deal);
+    // Fetch deal notes from the new unified table
+    const allDealNotes = await dealNoteQueries.getByDealId(params.id);
 
-    // Build business plan context if linked
-    let bpContext = deal.context_notes || "";
+    // Build a comprehensive underwriting summary from the raw data
+    const uwSummary = buildUWSummary(rawUw, deal, allDealNotes);
+
+    // Build context from memory-included deal notes
+    const memoryText = await dealNoteQueries.getMemoryText(params.id);
+    let bpContext = memoryText || "";
     if (deal.business_plan_id) {
       const bp = await businessPlanQueries.getById(deal.business_plan_id);
       if (bp) {
@@ -64,7 +68,8 @@ export async function POST(
 /** Compute key metrics from raw UW data and format as readable text for the AI */
 function buildUWSummary(
   uw: Record<string, unknown> | null,
-  deal: { property_type?: string; asking_price?: number | null }
+  deal: { property_type?: string; asking_price?: number | null },
+  dealNotes?: Array<{ text: string; category: string }>
 ): string {
   if (!uw) return "";
 
@@ -208,16 +213,16 @@ function buildUWSummary(
   }
 
   // --- Deal Notes ---
-  const dealNotes = Array.isArray(uw.deal_notes) ? uw.deal_notes : [];
-  if (dealNotes.length > 0) {
-    lines.push(`\nUNDERWRITER NOTES:`);
+  if (dealNotes && dealNotes.length > 0) {
+    lines.push(`\nDEAL NOTES:`);
+    const categoryLabels: Record<string, string> = { context: "Context", thesis: "Thesis", risk: "Risk", review: "Review" };
     for (const note of dealNotes) {
-      const cat = note.category === "context" ? "Context" : "Review";
+      const cat = categoryLabels[note.category] || note.category;
       lines.push(`  [${cat}] ${note.text}`);
     }
   }
   // Legacy string notes
-  if (typeof uw.notes === "string" && uw.notes.trim()) {
+  if (uw && typeof uw.notes === "string" && (uw.notes as string).trim()) {
     lines.push(`  ${uw.notes}`);
   }
 

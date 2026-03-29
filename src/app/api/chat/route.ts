@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { chatQueries, documentQueries, dealQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
+import { chatQueries, documentQueries, dealQueries, dealNoteQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
 import { chatWithDealIntelligence } from "@/lib/claude";
 import type { Document } from "@/lib/types";
 
@@ -25,6 +25,10 @@ export async function POST(req: NextRequest) {
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
+
+    // Build context_notes from deal_notes table (memory-included categories)
+    const memoryText = await dealNoteQueries.getMemoryText(deal_id);
+    deal.context_notes = memoryText || null;
 
     // Enrich context_notes with business plan if linked
     if (deal.business_plan_id) {
@@ -62,7 +66,13 @@ export async function POST(req: NextRequest) {
     // Execute actions: save context notes, update deal fields, update underwriting
     for (const action of actions) {
       if (action.type === "context_saved" && action.note) {
-        await dealQueries.appendContextNote(deal_id, action.note);
+        await dealNoteQueries.create({
+          id: uuidv4(),
+          deal_id,
+          text: action.note,
+          category: "context",
+          source: "chat",
+        });
       } else if (action.type === "deal_updated" && action.fields) {
         await dealQueries.update(deal_id, action.fields);
       } else if (action.type === "underwriting_updated" && action.fields) {

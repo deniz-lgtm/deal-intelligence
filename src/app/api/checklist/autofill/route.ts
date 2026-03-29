@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { checklistQueries, documentQueries, dealQueries } from "@/lib/db";
+import { checklistQueries, documentQueries, dealQueries, dealNoteQueries } from "@/lib/db";
 import { autoFillChecklist } from "@/lib/claude";
 import { DILIGENCE_CHECKLIST_TEMPLATE } from "@/lib/types";
 import type { Document } from "@/lib/types";
@@ -83,8 +83,11 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Get memory text from deal notes
+    const memoryText = await dealNoteQueries.getMemoryText(deal_id);
+
     // Run AI auto-fill on new documents only
-    const results = await autoFillChecklist(deal.name, newDocuments, existingItems, deal.context_notes);
+    const results = await autoFillChecklist(deal.name, newDocuments, existingItems, memoryText || null);
 
     // Match results back to checklist items by category + item text
     const itemMap = new Map(

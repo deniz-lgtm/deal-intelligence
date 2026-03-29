@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { dealQueries, omAnalysisQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, omAnalysisQueries } from "@/lib/db";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -51,8 +51,9 @@ export async function POST(
 
     const summaryText = analysis?.summary ? `OM SUMMARY: ${analysis.summary}` : "";
 
-    const contextText = deal.context_notes?.trim()
-      ? `ANALYST NOTES (from deal chat):\n${deal.context_notes}`
+    const memoryText = await dealNoteQueries.getMemoryText(params.id);
+    const contextText = memoryText
+      ? `ANALYST NOTES (from deal notes):\n${memoryText}`
       : "";
 
     const prompt = `You are a commercial real estate CapEx estimator. Based on the deal information below, estimate capital expenditure line items for a value-add acquisition. Use realistic 2024-2025 contractor/market pricing.

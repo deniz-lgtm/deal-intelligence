@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, Trash2, Bot, User, Brain, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Send, Loader2, Trash2, Bot, User, Brain, CheckCircle2, ChevronDown, ChevronUp, Lightbulb, AlertTriangle, Users } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import type { DealNote, DealNoteCategory } from "@/lib/types";
+import { DEAL_NOTE_CATEGORIES } from "@/lib/types";
 
 interface ChatAction {
   type: "context_saved" | "deal_updated";
@@ -29,6 +31,13 @@ interface ChatInterfaceProps {
   contextNotes?: string | null;
   onContextUpdated?: () => void;
 }
+
+const MEMORY_CATEGORY_ICONS: Record<string, typeof Brain> = {
+  context: Brain,
+  thesis: Lightbulb,
+  risk: AlertTriangle,
+  review: Users,
+};
 
 const STARTER_QUESTIONS = [
   "What are the key risks identified in the documents?",
@@ -54,16 +63,29 @@ export default function ChatInterface({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
-  const [localContextNotes, setLocalContextNotes] = useState(contextNotes ?? null);
+  const [memoryNotes, setMemoryNotes] = useState<DealNote[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    loadMessages();
+  const loadNotes = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/deals/${dealId}/notes`);
+      const json = await res.json();
+      if (json.data) {
+        // Only show memory-included notes in the memory panel
+        const notes = (json.data as DealNote[]).filter(
+          n => DEAL_NOTE_CATEGORIES[n.category as DealNoteCategory]?.inMemory
+        );
+        setMemoryNotes(notes);
+      }
+    } catch (err) {
+      console.error("Failed to load notes:", err);
+    }
   }, [dealId]);
 
   useEffect(() => {
-    setLocalContextNotes(contextNotes ?? null);
-  }, [contextNotes]);
+    loadMessages();
+    loadNotes();
+  }, [dealId, loadNotes]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -122,9 +144,7 @@ export default function ChatInterface({
 
       const contextSaved = actions?.find((a: ChatAction) => a.type === "context_saved");
       if (contextSaved?.note) {
-        setLocalContextNotes((prev) =>
-          prev ? prev + "\n\n" + contextSaved.note : contextSaved.note
-        );
+        loadNotes();
         onContextUpdated?.();
       }
     } catch (err) {
@@ -168,15 +188,15 @@ export default function ChatInterface({
             onClick={() => setShowMemory((v) => !v)}
             className={cn(
               "flex items-center gap-1.5 text-2xs px-2.5 py-1.5 rounded-lg border transition-all duration-150",
-              localContextNotes
+              memoryNotes.length > 0
                 ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
                 : "border-border/40 text-muted-foreground hover:bg-muted/50"
             )}
           >
             <Brain className="h-3.5 w-3.5" />
             Memory
-            {localContextNotes && (
-              <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+            {memoryNotes.length > 0 && (
+              <span className="ml-0.5 text-[10px] tabular-nums">{memoryNotes.length}</span>
             )}
             {showMemory ? (
               <ChevronUp className="h-3 w-3" />
@@ -199,15 +219,27 @@ export default function ChatInterface({
 
       {/* Memory panel */}
       {showMemory && (
-        <div className="px-4 py-3 border-b border-border/30 bg-primary/[0.05]">
+        <div className="px-4 py-3 border-b border-border/30 bg-primary/[0.05] max-h-48 overflow-y-auto">
           <p className="text-2xs font-semibold text-primary mb-1.5 flex items-center gap-1.5">
             <Brain className="h-3.5 w-3.5" />
             Deal Memory
           </p>
-          {localContextNotes ? (
-            <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">
-              {localContextNotes}
-            </p>
+          {memoryNotes.length > 0 ? (
+            <div className="space-y-1.5">
+              {memoryNotes.map(note => {
+                const Icon = MEMORY_CATEGORY_ICONS[note.category] || Brain;
+                const cfg = DEAL_NOTE_CATEGORIES[note.category as DealNoteCategory];
+                return (
+                  <div key={note.id} className="flex items-start gap-1.5">
+                    <Icon className="h-3 w-3 shrink-0 mt-0.5 text-primary/60" />
+                    <div>
+                      <span className="text-[10px] text-primary/60 font-medium">{cfg?.label || note.category}</span>
+                      <p className="text-xs text-foreground leading-relaxed">{note.text}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           ) : (
             <p className="text-xs text-muted-foreground">
               No context saved yet. Tell me about the deal — seller motivation,
