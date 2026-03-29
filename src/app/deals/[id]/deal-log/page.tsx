@@ -12,6 +12,7 @@ import {
   FileSearch,
   Activity,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface ActivityEvent {
   type: string;
@@ -37,10 +38,10 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  om_analysis: "bg-indigo-100 text-indigo-700",
-  chat: "bg-blue-100 text-blue-700",
-  underwriting: "bg-purple-100 text-purple-700",
-  document: "bg-emerald-100 text-emerald-700",
+  om_analysis: "bg-indigo-500/10 text-indigo-400",
+  chat: "bg-blue-500/10 text-blue-400",
+  underwriting: "bg-purple-500/10 text-purple-400",
+  document: "bg-emerald-500/10 text-emerald-400",
 };
 
 function formatDate(date: string): string {
@@ -78,9 +79,9 @@ export default function DealLogPage({ params }: { params: { id: string } }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-up">
       <div>
-        <h1 className="text-xl font-semibold">Deal Log</h1>
+        <h1 className="font-display text-xl">Deal Log</h1>
         <p className="text-sm text-muted-foreground">
           Activity and AI processing history
         </p>
@@ -89,27 +90,27 @@ export default function DealLogPage({ params }: { params: { id: string } }) {
       {/* Summary cards */}
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="border rounded-xl bg-card p-4">
+          <div className="border border-border/60 rounded-xl bg-card p-4 shadow-card">
             <div className="flex items-center gap-2 text-muted-foreground mb-2">
-              <DollarSign className="h-4 w-4" />
+              <DollarSign className="h-4 w-4 text-emerald-400" />
               <span className="text-xs font-medium">Total AI Cost</span>
             </div>
             <p className="text-2xl font-bold tabular-nums">
               ${summary.total_cost.toFixed(4)}
             </p>
           </div>
-          <div className="border rounded-xl bg-card p-4">
+          <div className="border border-border/60 rounded-xl bg-card p-4 shadow-card">
             <div className="flex items-center gap-2 text-muted-foreground mb-2">
-              <Hash className="h-4 w-4" />
+              <Hash className="h-4 w-4 text-blue-400" />
               <span className="text-xs font-medium">Total Tokens</span>
             </div>
             <p className="text-2xl font-bold tabular-nums">
               {summary.total_tokens.toLocaleString()}
             </p>
           </div>
-          <div className="border rounded-xl bg-card p-4">
+          <div className="border border-border/60 rounded-xl bg-card p-4 shadow-card">
             <div className="flex items-center gap-2 text-muted-foreground mb-2">
-              <Cpu className="h-4 w-4" />
+              <Cpu className="h-4 w-4 text-purple-400" />
               <span className="text-xs font-medium">Models Used</span>
             </div>
             <p className="text-sm font-semibold">
@@ -118,9 +119,9 @@ export default function DealLogPage({ params }: { params: { id: string } }) {
                 : "None"}
             </p>
           </div>
-          <div className="border rounded-xl bg-card p-4">
+          <div className="border border-border/60 rounded-xl bg-card p-4 shadow-card">
             <div className="flex items-center gap-2 text-muted-foreground mb-2">
-              <Activity className="h-4 w-4" />
+              <Activity className="h-4 w-4 text-primary" />
               <span className="text-xs font-medium">Total Events</span>
             </div>
             <p className="text-2xl font-bold tabular-nums">
@@ -131,23 +132,26 @@ export default function DealLogPage({ params }: { params: { id: string } }) {
       )}
 
       {/* Activity feed */}
-      <div className="border rounded-xl bg-card overflow-hidden">
-        <div className="px-4 py-3 border-b bg-muted/30">
-          <h3 className="font-semibold text-sm">Activity Feed</h3>
+      <div className="border border-border/60 rounded-xl bg-card overflow-hidden shadow-card">
+        <div className="px-4 py-3 border-b border-border/30 bg-muted/10">
+          <h3 className="font-display text-sm">Activity Feed</h3>
         </div>
         {events.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
             No activity recorded yet
           </div>
         ) : (
-          <div className="divide-y">
+          <div className="divide-y divide-border/20">
             {events.map((event, i) => {
               const Icon = TYPE_ICONS[event.type] || Activity;
-              const color = TYPE_COLORS[event.type] || "bg-gray-100 text-gray-700";
+              const color = TYPE_COLORS[event.type] || "bg-muted/30 text-muted-foreground";
               return (
-                <div key={i} className="flex items-start gap-3 px-4 py-3">
+                <div key={i} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/10 transition-colors">
                   <div
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${color}`}
+                    className={cn(
+                      "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                      color
+                    )}
                   >
                     <Icon className="h-4 w-4" />
                   </div>
