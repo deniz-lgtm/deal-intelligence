@@ -967,7 +967,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       json.data.forEach((_: unknown, i: number) => next.add(offset + i));
                       return next;
                     });
-                    toast.success(`${json.data.length} comps generated`);
+                    toast.success(`${json.data.length} comps generated${json.source === "knowledge" ? " (AI estimates)" : ""}`);
                   } else { toast.error(json.error || "Failed to generate comps"); }
                 } catch { toast.error("Failed to generate comps"); }
                 finally { setCompsLoading(false); }
