@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ data: deal }, { status: 201 });
   } catch (error) {
     console.error("POST /api/deals error:", error);
-    return NextResponse.json({ error: "Failed to create deal" }, { status: 500 });
+    const msg = error instanceof Error ? error.message : "Failed to create deal";
+    return NextResponse.json({ error: `Failed to create deal: ${msg}` }, { status: 500 });
   }
 }

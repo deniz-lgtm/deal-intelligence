@@ -27,7 +27,8 @@ export async function PATCH(
     return NextResponse.json({ data: deal });
   } catch (error) {
     console.error("PATCH /api/deals/[id] error:", error);
-    return NextResponse.json({ error: "Failed to update deal" }, { status: 500 });
+    const msg = error instanceof Error ? error.message : "Failed to update deal";
+    return NextResponse.json({ error: `Failed to update deal: ${msg}` }, { status: 500 });
   }
 }
 
