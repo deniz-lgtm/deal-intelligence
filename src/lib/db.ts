@@ -60,6 +60,7 @@ export async function initSchema(): Promise<void> {
       notes TEXT,
       loi_executed BOOLEAN NOT NULL DEFAULT false,
       psa_executed BOOLEAN NOT NULL DEFAULT false,
+      business_plan_id TEXT,
       om_score INTEGER,
       om_extracted JSONB,
       proforma_outputs JSONB,
