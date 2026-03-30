@@ -82,6 +82,26 @@ export interface Deal {
 
 export type NewDeal = Omit<Deal, "id" | "created_at" | "updated_at">;
 
+// ─── Deal Notes ───────────────────────────────────────────────────────────
+
+export type DealNoteCategory = "context" | "thesis" | "risk" | "review";
+
+export const DEAL_NOTE_CATEGORIES: Record<DealNoteCategory, { label: string; description: string; inMemory: boolean }> = {
+  context: { label: "Deal Context", description: "Broker intel, seller motivation, market conditions", inMemory: true },
+  thesis: { label: "Investment Thesis", description: "Investment rationale, strategy notes", inMemory: true },
+  risk: { label: "Key Risk", description: "Red flags, concerns, issues to watch", inMemory: true },
+  review: { label: "Team Review", description: "Notes for IC/team discussion", inMemory: false },
+};
+
+export interface DealNote {
+  id: string;
+  deal_id: string;
+  text: string;
+  category: DealNoteCategory;
+  source: "manual" | "chat" | "ai";
+  created_at: string;
+}
+
 // ─── Business Plan ─────────────────────────────────────────────────────────
 
 export type InvestmentThesis =

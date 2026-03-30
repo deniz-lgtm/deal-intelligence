@@ -215,6 +215,17 @@ export async function initSchema(): Promise<void> {
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_min NUMERIC`,
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_max NUMERIC`,
     `ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT`,
+    // Deal notes table (unified notes system)
+    `CREATE TABLE IF NOT EXISTS deal_notes (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'context',
+      source TEXT NOT NULL DEFAULT 'manual',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_notes_deal_id ON deal_notes(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_notes_category ON deal_notes(deal_id, category)`,
   ];
 
   for (const query of queries) {
@@ -304,6 +315,75 @@ export const dealQueries = {
       [note, id]
     );
     return dealQueries.getById(id);
+  },
+};
+
+// ─── Deal Notes queries ──────────────────────────────────────────────────────
+
+// Categories where notes are included in AI memory
+const MEMORY_CATEGORIES = ["context", "thesis", "risk"];
+
+export const dealNoteQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM deal_notes WHERE deal_id = $1 ORDER BY created_at DESC",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (note: { id: string; deal_id: string; text: string; category: string; source?: string }) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO deal_notes (id, deal_id, text, category, source, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [note.id, note.deal_id, note.text, note.category, note.source ?? "manual"]
+    );
+    // Also sync to legacy context_notes if it's a memory category
+    if (MEMORY_CATEGORIES.includes(note.category)) {
+      await dealQueries.appendContextNote(note.deal_id, note.text);
+    }
+    return dealNoteQueries.getById(note.id);
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM deal_notes WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    const note = await dealNoteQueries.getById(id);
+    await pool.query("DELETE FROM deal_notes WHERE id = $1", [id]);
+    // Rebuild context_notes from remaining memory notes
+    if (note && MEMORY_CATEGORIES.includes(note.category)) {
+      await dealNoteQueries.rebuildContextNotes(note.deal_id);
+    }
+    return note;
+  },
+
+  /** Get concatenated text of all memory-included notes for AI consumption */
+  getMemoryText: async (dealId: string): Promise<string> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT text, category FROM deal_notes
+       WHERE deal_id = $1 AND category = ANY($2)
+       ORDER BY created_at ASC`,
+      [dealId, MEMORY_CATEGORIES]
+    );
+    return res.rows.map((r: { text: string }) => r.text).join("\n\n");
+  },
+
+  /** Rebuild the legacy context_notes column from deal_notes */
+  rebuildContextNotes: async (dealId: string): Promise<void> => {
+    const memoryText = await dealNoteQueries.getMemoryText(dealId);
+    const pool = getPool();
+    await pool.query(
+      `UPDATE deals SET context_notes = $1, updated_at = NOW() WHERE id = $2`,
+      [memoryText || null, dealId]
+    );
   },
 };
 

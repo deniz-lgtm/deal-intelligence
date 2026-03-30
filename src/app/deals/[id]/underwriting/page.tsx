@@ -11,6 +11,7 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalList
 import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import DealNotes from "@/components/DealNotes";
 
 type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 
@@ -38,9 +39,6 @@ interface RentComp {
   rent_per_sf?: number; lease_type?: string; tenant_type?: string;
   amenities?: string; notes?: string;
 }
-
-type NoteCategory = "context" | "review";
-interface NoteItem { id: string; text: string; category: NoteCategory; created_at: string; }
 
 type ScenarioType = "custom" | "land_residual" | "rent_target" | "exit_cap";
 interface Scenario {
@@ -75,7 +73,7 @@ interface UWData {
   refi_rate: number; refi_amort_years: number;
   // Other income (monthly, property-level)
   rubs_per_unit_monthly: number; parking_monthly: number; laundry_monthly: number;
-  exit_cap_rate: number; hold_period_years: number; notes: string; deal_notes: NoteItem[];
+  exit_cap_rate: number; hold_period_years: number; notes: string;
   scenarios: Scenario[];
   rent_comps: RentComp[];
   selected_comp_ids: number[];
@@ -96,7 +94,7 @@ const DEFAULT: UWData = {
   acq_amort_years: 25, acq_io_years: 0,
   has_refi: false, refi_year: 3, refi_ltv: 70,
   refi_rate: 6.0, refi_amort_years: 25,
-  exit_cap_rate: 5.5, hold_period_years: 5, notes: "", deal_notes: [],
+  exit_cap_rate: 5.5, hold_period_years: 5, notes: "",
   scenarios: [],
   rent_comps: [],
   selected_comp_ids: [],
@@ -1656,75 +1654,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       <div className="border rounded-xl bg-card p-5">
         <h3 className="font-semibold text-sm mb-3">Deal Notes</h3>
-        {/* Existing notes list */}
-        {(data.deal_notes ?? []).length > 0 && (
-          <div className="space-y-2 mb-3">
-            {(data.deal_notes ?? []).map(note => (
-              <div key={note.id} className="flex items-start gap-2 group">
-                <span className={`text-[10px] mt-0.5 px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                  note.category === "context" ? "bg-primary/10 text-primary" : "bg-amber-500/10 text-amber-400"
-                }`}>
-                  {note.category === "context" ? "AI Context" : "Team Review"}
-                </span>
-                <p className="text-sm flex-1">{note.text}</p>
-                <button
-                  onClick={() => setData(prev => ({ ...prev, deal_notes: (prev.deal_notes ?? []).filter(n => n.id !== note.id) }))}
-                  className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                ><Trash2 className="h-3.5 w-3.5" /></button>
-              </div>
-            ))}
-          </div>
-        )}
-        {/* Add note form */}
-        <div className="flex items-center gap-2">
-          <select
-            id="note-category"
-            defaultValue="context"
-            className="text-xs border rounded-md px-2 py-1.5 bg-background"
-          >
-            <option value="context">AI Context</option>
-            <option value="review">Team Review</option>
-          </select>
-          <input
-            id="note-input"
-            type="text"
-            placeholder="Add a note..."
-            className="flex-1 text-sm border rounded-md px-3 py-1.5 bg-background outline-none focus:ring-2 focus:ring-ring"
-            onKeyDown={e => {
-              if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
-                const input = e.target as HTMLInputElement;
-                const catSelect = document.getElementById("note-category") as HTMLSelectElement;
-                const newNote: NoteItem = {
-                  id: uuidv4(),
-                  text: input.value.trim(),
-                  category: catSelect.value as NoteCategory,
-                  created_at: new Date().toISOString(),
-                };
-                setData(prev => ({ ...prev, deal_notes: [...(prev.deal_notes ?? []), newNote] }));
-                input.value = "";
-              }
-            }}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const input = document.getElementById("note-input") as HTMLInputElement;
-              const catSelect = document.getElementById("note-category") as HTMLSelectElement;
-              if (!input.value.trim()) return;
-              const newNote: NoteItem = {
-                id: uuidv4(),
-                text: input.value.trim(),
-                category: catSelect.value as NoteCategory,
-                created_at: new Date().toISOString(),
-              };
-              setData(prev => ({ ...prev, deal_notes: [...(prev.deal_notes ?? []), newNote] }));
-              input.value = "";
-            }}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-        </div>
+        <DealNotes dealId={params.id} compact />
       </div>
 
       <div className="flex justify-end">

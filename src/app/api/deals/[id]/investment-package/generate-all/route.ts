@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 
 const MODEL = "claude-sonnet-4-5";
@@ -51,6 +51,9 @@ export async function POST(
     ]);
 
     if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+
+    // Use deal notes for context instead of legacy context_notes
+    deal.context_notes = await dealNoteQueries.getMemoryText(params.id) || null;
 
     // Fetch linked business plan if set
     const businessPlan = deal.business_plan_id

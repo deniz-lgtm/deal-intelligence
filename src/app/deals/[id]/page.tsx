@@ -28,6 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import DealNotes from "@/components/DealNotes";
 import { formatCurrency, formatNumber, titleCase } from "@/lib/utils";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
@@ -68,8 +69,6 @@ export default function DealOverviewPage({
   const [deleting, setDeleting] = useState(false);
   const [advancingTo, setAdvancingTo] = useState<DealStatus | null>(null);
   const [showGateWarning, setShowGateWarning] = useState<{ status: DealStatus; message: string } | null>(null);
-  const [editingNotes, setEditingNotes] = useState(false);
-  const [notesValue, setNotesValue] = useState("");
   const [autoFilling, setAutoFilling] = useState(false);
 
   useEffect(() => {
@@ -81,7 +80,6 @@ export default function DealOverviewPage({
     ]).then(async ([dealRes, docsRes, checklistRes, plansRes]) => {
       const d = dealRes.data;
       setDeal(d);
-      setNotesValue(d?.notes || "");
       setDocuments(docsRes.data || []);
       setChecklist(checklistRes.data || []);
       const plans = plansRes.data || [];
@@ -166,18 +164,6 @@ export default function DealOverviewPage({
     } finally {
       setAutoFilling(false);
     }
-  };
-
-  const saveNotes = async () => {
-    if (!deal) return;
-    await fetch(`/api/deals/${params.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notes: notesValue }),
-    });
-    setDeal({ ...deal, notes: notesValue });
-    setEditingNotes(false);
-    toast.success("Notes saved");
   };
 
   if (loading) {
@@ -659,39 +645,13 @@ export default function DealOverviewPage({
         </div>
       )}
 
-      {/* Notes */}
+      {/* Deal Notes */}
       <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
-            <h3 className="font-display text-sm">Notes</h3>
-          </div>
-          {!editingNotes ? (
-            <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setEditingNotes(true)}>
-              Edit
-            </Button>
-          ) : (
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => { setEditingNotes(false); setNotesValue(deal.notes || ""); }}>
-                Cancel
-              </Button>
-              <Button size="sm" className="text-xs h-7" onClick={saveNotes}>Save</Button>
-            </div>
-          )}
+        <div className="flex items-center gap-2 mb-3">
+          <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+          <h3 className="font-display text-sm">Deal Notes</h3>
         </div>
-        {editingNotes ? (
-          <textarea
-            value={notesValue}
-            onChange={(e) => setNotesValue(e.target.value)}
-            rows={4}
-            className="input-field resize-none"
-            placeholder="Investment thesis, deal source, key considerations..."
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
-            {deal.notes || "No notes yet. Click Edit to add."}
-          </p>
-        )}
+        <DealNotes dealId={params.id} />
       </div>
     </div>
   );
