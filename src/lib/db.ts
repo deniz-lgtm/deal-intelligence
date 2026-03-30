@@ -233,7 +233,21 @@ export async function initSchema(): Promise<void> {
     try {
       await pool.query(query);
     } catch (err) {
-      console.error("Schema init warning:", (err as Error).message, "\nQuery:", query.slice(0, 80));
+      console.error("Schema init warning:", (err as Error).message, "\nQuery:", query.slice(0, 120));
+    }
+  }
+
+  // Ensure critical columns exist (belt-and-suspenders for production)
+  const criticalAlters = [
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
+  ];
+  for (const alter of criticalAlters) {
+    try {
+      await pool.query(alter);
+    } catch (err) {
+      console.error("Critical ALTER failed:", (err as Error).message);
     }
   }
 }
