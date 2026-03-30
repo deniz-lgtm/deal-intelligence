@@ -271,6 +271,14 @@ export const dealQueries = {
 
   create: async (deal: Record<string, unknown>) => {
     const pool = getPool();
+
+    // Ensure business_plan_id column exists (self-healing migration)
+    if (deal.business_plan_id) {
+      try {
+        await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT");
+      } catch { /* column already exists */ }
+    }
+
     const cols = [
       "id", "name", "address", "city", "state", "zip", "property_type", "status",
       "starred", "asking_price", "square_footage", "units", "bedrooms", "year_built", "notes",
