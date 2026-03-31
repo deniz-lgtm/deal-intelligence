@@ -221,6 +221,11 @@ export default function DealOverviewPage({
   // Compute financial highlights from underwriting data
   const highlights = computeHighlights(underwriting, deal);
   const coverPhoto = photos.length > 0 ? photos[0] : null;
+  const addressString = [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ");
+  const hasAddress = deal.address || deal.city;
+  const mapsEmbedUrl = hasAddress
+    ? `https://maps.google.com/maps?q=${encodeURIComponent(addressString)}&output=embed&t=k`
+    : null;
 
   return (
     <div className="space-y-6 animate-fade-up">
@@ -311,48 +316,69 @@ export default function DealOverviewPage({
             </div>
           </div>
         ) : (
-          <div className="relative h-32 bg-gradient-to-br from-muted/80 to-muted/30 flex items-end">
-            <div className="absolute top-3 right-3">
+          <div className="relative h-48 md:h-64">
+            {mapsEmbedUrl ? (
+              <iframe
+                src={mapsEmbedUrl}
+                className="w-full h-full border-0 pointer-events-none"
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                title="Property location"
+              />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-br from-muted/80 to-muted/30" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
+            <div className="absolute top-3 right-3 flex items-center gap-2">
+              {hasAddress && (
+                <a
+                  href={`https://www.google.com/maps?layer=c&q=${encodeURIComponent(addressString)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors"
+                >
+                  <MapPin className="h-3 w-3" />
+                  Street View
+                </a>
+              )}
               <Link href={`/deals/${params.id}/photos`}>
-                <Button variant="ghost" size="sm" className="text-2xs gap-1 h-7 bg-background/50 backdrop-blur-sm hover:bg-background/70">
+                <button className="flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors">
                   <Camera className="h-3 w-3" /> Add Photos
-                </Button>
+                </button>
               </Link>
             </div>
-            <div className="p-5 w-full">
+            <div className="absolute bottom-0 left-0 right-0 p-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2 mb-1.5">
                     <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
                       {DEAL_STAGE_LABELS[deal.status]}
                     </Badge>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs text-white/60">
                       {deal.property_type ? titleCase(deal.property_type) : ""}
                     </span>
                     {deal.loi_executed && (
-                      <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                      <span className="text-2xs text-emerald-300 font-medium bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">
                         LOI ✓
                       </span>
                     )}
                     {deal.psa_executed && (
-                      <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                      <span className="text-2xs text-emerald-300 font-medium bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">
                         PSA ✓
                       </span>
                     )}
                   </div>
-                  <h1 className="font-display text-2xl tracking-tight">{deal.name}</h1>
-                  {(deal.address || deal.city) && (
-                    <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-1">
-                      <MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />
-                      {[deal.address, deal.city, deal.state, deal.zip]
-                        .filter(Boolean)
-                        .join(", ")}
+                  <h1 className="font-display text-2xl tracking-tight text-white">{deal.name}</h1>
+                  {hasAddress && (
+                    <p className="text-white/70 text-sm flex items-center gap-1.5 mt-1">
+                      <MapPin className="h-3.5 w-3.5 text-white/40" />
+                      {addressString}
                     </p>
                   )}
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9">
-                    <Star className={`h-4 w-4 ${deal.starred ? "text-amber-400 fill-amber-400" : "text-muted-foreground"}`} />
+                  <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9 text-white/70 hover:text-white hover:bg-white/10">
+                    <Star className={`h-4 w-4 ${deal.starred ? "text-amber-400 fill-amber-400" : ""}`} />
                   </Button>
                 </div>
               </div>
