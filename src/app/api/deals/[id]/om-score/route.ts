@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries } from "@/lib/db";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 /**
  * POST /api/deals/:id/om-score
@@ -25,11 +26,12 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const deal = await dealQueries.getById(params.id);
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
 
+    const deal = await dealQueries.getById(params.id);
     const body = await req.json();
     const { om_score, om_extracted } = body;
 

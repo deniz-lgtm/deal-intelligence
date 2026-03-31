@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs/promises";
 import { dealQueries, documentQueries, omAnalysisQueries } from "@/lib/db";
 import { extractOmMetrics } from "@/lib/om-extraction";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 
@@ -18,11 +19,12 @@ export async function POST(
   let analysisId: string | null = null;
 
   try {
-    const deal = await dealQueries.getById(params.id);
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
 
+    const deal = await dealQueries.getById(params.id);
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const dealContext = (formData.get("deal_context") as string | null)?.trim() || undefined;

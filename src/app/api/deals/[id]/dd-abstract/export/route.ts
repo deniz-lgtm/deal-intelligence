@@ -13,6 +13,7 @@ import {
   WidthType,
   ShadingType,
 } from "docx";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 /**
  * POST /api/deals/:id/dd-abstract/export
@@ -24,6 +25,11 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const body = await req.json();
     const markdown: string = body.markdown ?? "";
     const dealName: string = body.dealName ?? "Deal";

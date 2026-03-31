@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, underwritingQueries, documentQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 const MODEL = "claude-sonnet-4-5";
 let _client: Anthropic | null = null;
@@ -14,6 +15,11 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const { sectionTitle, sectionDescription, notes, refinementPrompt, previousContent, audience } = await req.json();
 
     // Fetch deal context for richer output

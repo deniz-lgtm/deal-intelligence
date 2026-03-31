@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { documentQueries } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const { markdown, dealName } = await req.json();
 
     const docId = uuidv4();

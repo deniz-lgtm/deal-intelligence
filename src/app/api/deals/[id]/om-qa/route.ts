@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, omAnalysisQueries, omQaQueries } from "@/lib/db";
 import { answerOmQuestion } from "@/lib/om-extraction";
 import { documentQueries } from "@/lib/db";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 /**
  * POST /api/deals/:id/om-qa
@@ -17,6 +18,11 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const body = await req.json();
     const { question, analysis_id } = body as {
       question: string;
@@ -25,11 +31,6 @@ export async function POST(
 
     if (!question?.trim()) {
       return NextResponse.json({ error: "question is required" }, { status: 400 });
-    }
-
-    const deal = await dealQueries.getById(params.id);
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
 
     // Get the analysis to answer from
@@ -135,6 +136,11 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const history = await omQaQueries.getByDealId(params.id);
     return NextResponse.json({ data: { history } });
   } catch (error) {
