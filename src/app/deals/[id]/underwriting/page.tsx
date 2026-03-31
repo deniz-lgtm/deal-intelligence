@@ -68,9 +68,12 @@ interface UWData {
   ip_repairs_annual: number; ip_utilities_annual: number; ip_other_annual: number;
   ip_ga_annual: number; ip_marketing_annual: number; ip_reserves_annual: number;
   has_financing: boolean; acq_ltc: number; acq_interest_rate: number;
+  acq_pp_ltv: number; acq_capex_ltv: number;
   acq_amort_years: number; acq_io_years: number;
+  acq_loan_narrative: string;
   has_refi: boolean; refi_year: number; refi_ltv: number;
   refi_rate: number; refi_amort_years: number;
+  refi_loan_narrative: string;
   // Other income (monthly, property-level)
   rubs_per_unit_monthly: number; parking_monthly: number; laundry_monthly: number;
   exit_cap_rate: number; hold_period_years: number; notes: string;
@@ -91,9 +94,12 @@ const DEFAULT: UWData = {
   ip_ga_annual: 0, ip_marketing_annual: 0, ip_reserves_annual: 0,
   rubs_per_unit_monthly: 0, parking_monthly: 0, laundry_monthly: 0,
   has_financing: true, acq_ltc: 65, acq_interest_rate: 6.5,
+  acq_pp_ltv: 70, acq_capex_ltv: 100,
   acq_amort_years: 25, acq_io_years: 0,
+  acq_loan_narrative: "",
   has_refi: false, refi_year: 3, refi_ltv: 70,
   refi_rate: 6.0, refi_amort_years: 25,
+  refi_loan_narrative: "",
   exit_cap_rate: 5.5, hold_period_years: 5, notes: "",
   scenarios: [],
   rent_comps: [],
@@ -218,7 +224,15 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   // ── Acquisition Financing ───────────────────────────────────────────────────
   let acqLoan = 0, acqDebt = 0, acqDebtIO = 0;
   if (d.has_financing && totalCost > 0) {
-    acqLoan = totalCost * (d.acq_ltc / 100);
+    // Split leverage: separate % for purchase price and capex
+    const ppLtv = d.acq_pp_ltv ?? d.acq_ltc ?? 0;
+    const capexLtv = d.acq_capex_ltv ?? d.acq_ltc ?? 0;
+    const purchasePlusCosing = d.purchase_price + closingCosts;
+    const ppLoan = purchasePlusCosing * (ppLtv / 100);
+    const capexLoan = capexTotal * (capexLtv / 100);
+    acqLoan = ppLoan + capexLoan;
+    // Compute blended LTC for display
+    const blendedLtc = totalCost > 0 ? (acqLoan / totalCost) * 100 : 0;
     const isIOOnly = d.acq_amort_years <= 0;
     if (isIOOnly) {
       // Pure interest-only / bullet loan — no amortization at all
@@ -296,7 +310,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     capexTotal, closingCosts, totalCost,
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
-    acqLoan, acqDebt, acqDebtIO, yr1Debt, equity, cashFlow, coc, dscr,
+    acqLoan, acqDebt, acqDebtIO, yr1Debt, equity, cashFlow, coc, dscr, blendedLtc,
     refiProceeds, refiDebt, exitValue, exitEquity, totalCashFlows, em,
   };
 }
@@ -629,19 +643,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       setData(p => ({
         ...p,
         has_financing: true,
-        acq_ltc: est.acq_ltc ?? p.acq_ltc,
+        acq_pp_ltv: est.acq_pp_ltv ?? p.acq_pp_ltv,
+        acq_capex_ltv: est.acq_capex_ltv ?? p.acq_capex_ltv,
         acq_interest_rate: est.acq_interest_rate ?? p.acq_interest_rate,
         acq_amort_years: est.acq_amort_years ?? p.acq_amort_years,
         acq_io_years: est.acq_io_years ?? p.acq_io_years,
+        acq_loan_narrative: est.acq_narrative ?? p.acq_loan_narrative,
         has_refi: est.has_refi ?? p.has_refi,
         refi_year: est.refi_year ?? p.refi_year,
         refi_ltv: est.refi_ltv ?? p.refi_ltv,
         refi_rate: est.refi_rate ?? p.refi_rate,
         refi_amort_years: est.refi_amort_years ?? p.refi_amort_years,
+        refi_loan_narrative: est.refi_narrative ?? p.refi_loan_narrative,
         exit_cap_rate: est.exit_cap_rate ?? p.exit_cap_rate,
         hold_period_years: est.hold_period_years ?? p.hold_period_years,
       }));
-      toast.success(est.basis ? `Loan sized — ${est.basis}` : "Financing terms estimated");
+      toast.success("Acquisition and refinance loans sized");
     } catch { toast.error("Loan sizing failed"); }
     finally { setLoanSizing(false); }
   };
@@ -1622,10 +1639,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 AI Loan Sizer
               </Button>
             </div>
-            {d.has_financing && (
+            {d.has_financing && (<>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <NumInput label="Loan-to-Cost" value={d.acq_ltc} onChange={v => set("acq_ltc", v)} suffix="%" decimals={1} />
+                <NumInput label="Purchase Price LTV" value={d.acq_pp_ltv} onChange={v => set("acq_pp_ltv", v)} suffix="%" decimals={1} />
+                <NumInput label="CapEx LTV" value={d.acq_capex_ltv} onChange={v => set("acq_capex_ltv", v)} suffix="%" decimals={1} />
                 <NumInput label="Interest Rate" value={d.acq_interest_rate} onChange={v => set("acq_interest_rate", v)} suffix="%" decimals={3} />
+                <div className="p-3 bg-primary/5 rounded-lg border border-primary/15">
+                  <p className="text-xs text-muted-foreground mb-1">Blended LTC</p>
+                  <p className="text-sm font-semibold text-primary">{m.blendedLtc > 0 ? `${m.blendedLtc.toFixed(1)}%` : "—"}</p>
+                </div>
                 <NumInput label="Amortization" value={d.acq_amort_years} onChange={v => set("acq_amort_years", v)} suffix="yrs" />
                 <NumInput label="Interest-Only Period" value={d.acq_io_years} onChange={v => set("acq_io_years", v)} suffix="yrs" />
                 <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Loan Amount</p><p className="text-sm font-semibold">{fc(m.acqLoan)}</p></div>
@@ -1637,7 +1659,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <p className="text-xs text-muted-foreground">{m.dscr >= 1.25 ? "✓ Good" : m.dscr > 0 ? "⚠ Low" : ""}</p>
                 </div>
               </div>
-            )}
+              {d.acq_loan_narrative && (
+                <p className="mt-3 text-xs text-muted-foreground leading-relaxed bg-muted/30 rounded-lg px-3 py-2 border border-border/40">{d.acq_loan_narrative}</p>
+              )}
+            </>)}
           </div>
           {d.has_financing && (
             <div className="border-t pt-4">
@@ -1645,7 +1670,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 <input type="checkbox" checked={d.has_refi} onChange={e => set("has_refi", e.target.checked)} className="rounded" />
                 Refinance
               </label>
-              {d.has_refi && (
+              {d.has_refi && (<>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <NumInput label="Refi in Year" value={d.refi_year} onChange={v => set("refi_year", v)} suffix="yr" />
                   <NumInput label="Refi LTV" value={d.refi_ltv} onChange={v => set("refi_ltv", v)} suffix="%" decimals={1} />
@@ -1658,7 +1683,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   </div>
                   <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">New Annual Debt</p><p className="text-sm font-semibold">{fc(m.refiDebt)}</p></div>
                 </div>
-              )}
+                {d.refi_loan_narrative && (
+                  <p className="mt-3 text-xs text-muted-foreground leading-relaxed bg-muted/30 rounded-lg px-3 py-2 border border-border/40">{d.refi_loan_narrative}</p>
+                )}
+              </>)}
             </div>
           )}
         </div>
