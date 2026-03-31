@@ -41,14 +41,19 @@ export default function DealNotes({ dealId, compact, onNotesChanged }: DealNotes
   useEffect(() => { loadNotes(); }, [loadNotes]);
 
   const addNote = async () => {
-    if (!newText.trim() || adding) return;
+    const trimmed = newText.trim();
+    if (!trimmed || adding) return;
     setAdding(true);
     try {
       const res = await fetch(`/api/deals/${dealId}/notes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: newText.trim(), category: newCategory }),
+        body: JSON.stringify({ text: trimmed, category: newCategory }),
       });
+      if (!res.ok) {
+        console.error("Failed to add note:", res.status, await res.text());
+        return;
+      }
       const json = await res.json();
       if (json.data) {
         setNotes(prev => [json.data, ...prev]);
@@ -105,7 +110,7 @@ export default function DealNotes({ dealId, compact, onNotesChanged }: DealNotes
             onChange={(e) => setNewText(e.target.value)}
             placeholder="Add a note..."
             className="flex-1 text-sm border rounded-md px-3 py-1.5 bg-background outline-none focus:ring-2 focus:ring-ring"
-            onKeyDown={(e) => { if (e.key === "Enter") addNote(); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addNote(); } }}
           />
           <Button variant="outline" size="sm" onClick={addNote} disabled={adding || !newText.trim()}>
             {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
