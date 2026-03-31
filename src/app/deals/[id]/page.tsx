@@ -224,7 +224,7 @@ export default function DealOverviewPage({
   const addressString = [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ");
   const hasAddress = deal.address || deal.city;
   const mapsEmbedUrl = hasAddress
-    ? `https://maps.google.com/maps?q=${encodeURIComponent(addressString)}&output=embed&t=k`
+    ? `https://maps.google.com/maps?q=${encodeURIComponent(addressString)}&output=embed&layer=c`
     : null;
 
   return (
@@ -259,7 +259,7 @@ export default function DealOverviewPage({
       )}
 
       {/* Cover Photo Hero */}
-      <div className="relative rounded-2xl overflow-hidden border border-border/60 shadow-card">
+      <div className="relative rounded-2xl overflow-hidden border border-border/60 shadow-card z-0">
         {coverPhoto ? (
           <div className="relative h-48 md:h-64">
             <img
@@ -316,17 +316,17 @@ export default function DealOverviewPage({
             </div>
           </div>
         ) : (
-          <div className="relative h-48 md:h-64">
+          <div className="relative h-48 md:h-64 overflow-hidden">
             {mapsEmbedUrl ? (
               <iframe
                 src={mapsEmbedUrl}
-                className="w-full h-full border-0 pointer-events-none"
+                className="absolute inset-0 w-full h-full border-0 pointer-events-none"
                 loading="lazy"
                 referrerPolicy="no-referrer-when-downgrade"
-                title="Property location"
+                title="Property street view"
               />
             ) : (
-              <div className="w-full h-full bg-gradient-to-br from-muted/80 to-muted/30" />
+              <div className="absolute inset-0 bg-gradient-to-br from-muted/80 to-muted/30" />
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
             <div className="absolute top-3 right-3 flex items-center gap-2">
