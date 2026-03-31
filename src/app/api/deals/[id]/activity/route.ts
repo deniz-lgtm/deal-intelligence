@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 interface ActivityEvent {
   type: string;
@@ -18,6 +19,10 @@ export async function GET(
   const dealId = params.id;
 
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
     // Aggregate from multiple tables in parallel
     const [omRows, chatRows, uwRows, docRows] = await Promise.all([
       pool.query(

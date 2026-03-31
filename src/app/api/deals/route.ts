@@ -2,10 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { dealQueries, checklistQueries } from "@/lib/db";
 import { DILIGENCE_CHECKLIST_TEMPLATE } from "@/lib/types";
+import { requireAuth, syncCurrentUser } from "@/lib/auth";
 
 export async function GET() {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
   try {
-    const deals = await dealQueries.getAll();
+    const deals = await dealQueries.getAll(userId);
     return NextResponse.json({ data: deals });
   } catch (error) {
     console.error("GET /api/deals error:", error);
@@ -14,6 +19,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
   try {
     const body = await req.json();
     const id = uuidv4();
@@ -38,6 +47,7 @@ export async function POST(req: NextRequest) {
       loi_executed: false,
       psa_executed: false,
       business_plan_id: body.business_plan_id ?? null,
+      owner_id: userId,
     });
 
     // Seed the diligence checklist from template

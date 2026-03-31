@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { dealNoteQueries, dealQueries, getPool } from "@/lib/db";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 async function ensureDealNotesTable() {
   const pool = getPool();
@@ -21,10 +22,10 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const deal = await dealQueries.getById(params.id);
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
     let notes;
     try {
       notes = await dealNoteQueries.getByDealId(params.id);
@@ -44,6 +45,10 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
     const body = await req.json();
     const { text, category, source } = body;
 
@@ -81,8 +86,13 @@ export async function POST(
 
 export async function DELETE(
   req: NextRequest,
+  { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
     const { searchParams } = new URL(req.url);
     const noteId = searchParams.get("noteId");
 

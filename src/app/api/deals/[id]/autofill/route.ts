@@ -2,17 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, documentQueries } from "@/lib/db";
 import { extractDealFields } from "@/lib/claude";
 import type { Document } from "@/lib/types";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const deal = await dealQueries.getById(params.id);
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
 
+    const deal = await dealQueries.getById(params.id);
     const documents = (await documentQueries.getByDealId(params.id)) as Document[];
     if (documents.length === 0) {
       return NextResponse.json({ error: "No documents uploaded yet" }, { status: 400 });

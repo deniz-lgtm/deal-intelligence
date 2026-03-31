@@ -21,6 +21,8 @@ import {
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
 import type { DealStatus } from "@/lib/types";
+import { useAuth } from "@clerk/nextjs";
+import ShareDealDialog from "@/components/ShareDealDialog";
 
 interface Deal {
   id: string;
@@ -30,6 +32,7 @@ interface Deal {
   state: string;
   status: DealStatus;
   starred: boolean;
+  owner_id: string | null;
 }
 
 const NAV_ITEMS = [
@@ -66,6 +69,7 @@ export default function DealLayout({
 }) {
   const [deal, setDeal] = useState<Deal | null>(null);
   const pathname = usePathname();
+  const { userId } = useAuth();
 
   useEffect(() => {
     fetch(`/api/deals/${params.id}`)
@@ -92,8 +96,8 @@ export default function DealLayout({
             <span className="text-border text-xs">/</span>
 
             {deal ? (
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="font-display text-sm text-foreground truncate max-w-[180px] sm:max-w-sm">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <span className="font-display text-sm text-foreground truncate max-w-[140px] sm:max-w-xs">
                   {deal.name}
                 </span>
                 {deal.starred && (
@@ -112,6 +116,16 @@ export default function DealLayout({
                 >
                   {DEAL_STAGE_LABELS[deal.status] || deal.status}
                 </span>
+                <div className="ml-auto flex-shrink-0">
+                  {userId && (
+                    <ShareDealDialog
+                      dealId={deal.id}
+                      dealName={deal.name}
+                      ownerId={deal.owner_id}
+                      currentUserId={userId}
+                    />
+                  )}
+                </div>
               </div>
             ) : (
               <div className="h-4 w-40 rounded bg-muted/30 animate-pulse" />
