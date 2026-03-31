@@ -3,7 +3,6 @@ export async function register() {
     const { initSchema } = await import("@/lib/db");
     await initSchema();
     console.log("Database schema initialized");
-    const key = process.env.ANTHROPIC_API_KEY;
-    console.log("ANTHROPIC_API_KEY present:", !!key, "starts with:", key?.slice(0, 14));
+    console.log("ANTHROPIC_API_KEY present:", !!process.env.ANTHROPIC_API_KEY);
   }
 }

@@ -7,8 +7,10 @@ import {
   omAnalysisQueries,
   checklistQueries,
   businessPlanQueries,
+  type OmAnalysisRow,
 } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
+import type { ChecklistItem, DealNote, BusinessPlan } from "@/lib/types";
 
 const MODEL = "claude-sonnet-4-5";
 let _client: Anthropic | null = null;
@@ -54,10 +56,13 @@ export async function POST(
     }
 
     // Checklist may not exist yet — fetch separately to avoid breaking the whole request
-    let checklist: any[] = [];
+    let checklist: ChecklistItem[] = [];
     try {
       checklist = (await checklistQueries.getByDealId(params.id)) || [];
-    } catch { /* no checklist yet */ }
+    } catch (err) {
+      // Non-fatal: checklist table/row may not exist yet
+      console.warn("Could not fetch checklist for deal-score:", (err as Error).message);
+    }
 
     // Parse underwriting data
     const uw = uwRow?.data
@@ -109,10 +114,10 @@ export async function POST(
 
     // Ensure columns exist (self-healing migration)
     const pool = getPool();
-    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER").catch(() => {});
-    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT").catch(() => {});
-    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER").catch(() => {});
-    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT").catch(() => {});
+    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER").catch((e: Error) => console.warn("ALTER uw_score:", e.message));
+    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT").catch((e: Error) => console.warn("ALTER uw_score_reasoning:", e.message));
+    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER").catch((e: Error) => console.warn("ALTER final_score:", e.message));
+    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT").catch((e: Error) => console.warn("ALTER final_score_reasoning:", e.message));
 
     // Store on the deal
     const updateField =
@@ -182,16 +187,17 @@ export async function GET(
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildScorePrompt(
   stage: "underwriting" | "final",
-  deal: any,
-  omAnalysis: any,
-  uw: any,
-  checklist: any[],
-  notes: any[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  deal: any, // Deal + dynamically added score columns not in the static type
+  omAnalysis: OmAnalysisRow | null,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  uw: any, // UnderwritingData shape has evolved beyond the static type
+  checklist: ChecklistItem[],
+  notes: DealNote[],
   memoryText: string,
-  businessPlan: any
+  businessPlan: BusinessPlan | null
 ): string {
   const fc = (n: number) =>
     n ? "$" + Math.round(n).toLocaleString("en-US") : "—";
@@ -204,13 +210,13 @@ function buildScorePrompt(
 
   // ── OM Analysis context
   const omBlock = omAnalysis
-    ? `\nOM ANALYSIS SCORE: ${omAnalysis.deal_score ?? "N/A"}/10\nOM REASONING: ${omAnalysis.score_reasoning ?? "N/A"}\nOM RED FLAGS:\n${(omAnalysis.red_flags || []).map((f: any) => `  - [${f.severity?.toUpperCase()}] ${f.category}: ${f.description}`).join("\n") || "  None"}\nOM RECOMMENDATIONS:\n${(omAnalysis.recommendations || []).map((r: string) => `  - ${r}`).join("\n") || "  None"}\n`
+    ? `\nOM ANALYSIS SCORE: ${omAnalysis.deal_score ?? "N/A"}/10\nOM REASONING: ${omAnalysis.score_reasoning ?? "N/A"}\nOM RED FLAGS:\n${(omAnalysis.red_flags || []).map((f) => `  - [${f.severity?.toUpperCase()}] ${f.category}: ${f.description}`).join("\n") || "  None"}\nOM RECOMMENDATIONS:\n${(omAnalysis.recommendations || []).map((r) => `  - ${r}`).join("\n") || "  None"}\n`
     : "\nOM ANALYSIS: Not yet performed\n";
 
   // ── Notes context (key for the UW score — notes address OM issues)
   const notesBlock =
     notes.length > 0
-      ? `\nDEAL NOTES (added by the analyst during the process):\n${notes.map((n: any) => `  [${n.category.toUpperCase()}] ${n.text}`).join("\n")}\n`
+      ? `\nDEAL NOTES (added by the analyst during the process):\n${notes.map((n) => `  [${n.category.toUpperCase()}] ${n.text}`).join("\n")}\n`
       : "";
 
   // ── Underwriting metrics
@@ -269,7 +275,7 @@ function buildScorePrompt(
     checklist && checklist.length > 0
       ? `\nDILIGENCE CHECKLIST:\n${checklist
           .map(
-            (c: any) =>
+            (c) =>
               `  [${(c.status || "pending").toUpperCase()}] ${c.category}: ${c.item}${c.notes ? ` — ${c.notes}` : ""}`
           )
           .join("\n")}\n`
