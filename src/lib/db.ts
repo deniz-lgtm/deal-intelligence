@@ -282,7 +282,9 @@ export const dealQueries = {
     if (deal.business_plan_id) {
       try {
         await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT");
-      } catch { /* column already exists */ }
+      } catch (err) {
+        console.warn("ALTER business_plan_id:", (err as Error).message);
+      }
     }
 
     const cols = [

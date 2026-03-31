@@ -47,7 +47,7 @@ export async function POST(
       omAnalysisQueries.getByDealId(params.id),
       documentQueries.getByDealId(params.id),
       checklistQueries.getByDealId(params.id),
-      fetch(`${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/api/deals/${params.id}/photos`).then(r => r.json()).catch(() => ({ data: [] })),
+      fetch(`${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/api/deals/${params.id}/photos`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({ data: [] })),
     ]);
 
     if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
@@ -300,7 +300,7 @@ function buildSectionContext(
       const flags = om?.red_flags || [];
       const issues = checklist.filter((c: AnyRecord) => c.status === "issue");
       return [
-        flags.length > 0 ? `OM Red Flags: ${flags.map((f: AnyRecord) => `[${f.severity}] ${f.flag}`).join("; ")}` : "",
+        flags.length > 0 ? `OM Red Flags: ${flags.map((f: AnyRecord) => `[${f.severity}] ${f.description}`).join("; ")}` : "",
         issues.length > 0 ? `Checklist Issues: ${issues.map((i: AnyRecord) => `${i.item}${i.notes ? ` — ${i.notes}` : ""}`).join("; ")}` : "",
       ].filter(Boolean).join("\n");
     }
