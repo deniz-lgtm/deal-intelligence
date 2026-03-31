@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  getPool,
   dealQueries,
   dealNoteQueries,
   underwritingQueries,
@@ -39,12 +40,11 @@ export async function POST(
       return NextResponse.json({ error: "Invalid stage" }, { status: 400 });
     }
 
-    const [deal, omAnalysis, uwRow, checklist, notes, memoryText] =
+    const [deal, omAnalysis, uwRow, notes, memoryText] =
       await Promise.all([
         dealQueries.getById(params.id),
         omAnalysisQueries.getByDealId(params.id),
         underwritingQueries.getByDealId(params.id),
-        checklistQueries.getByDealId(params.id),
         dealNoteQueries.getByDealId(params.id),
         dealNoteQueries.getMemoryText(params.id),
       ]);
@@ -52,6 +52,12 @@ export async function POST(
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     }
+
+    // Checklist may not exist yet — fetch separately to avoid breaking the whole request
+    let checklist: any[] = [];
+    try {
+      checklist = (await checklistQueries.getByDealId(params.id)) || [];
+    } catch { /* no checklist yet */ }
 
     // Parse underwriting data
     const uw = uwRow?.data
@@ -86,14 +92,27 @@ export async function POST(
     const raw =
       response.content[0].type === "text" ? response.content[0].text : "{}";
 
-    // Parse JSON from response
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    const parsed = jsonMatch
-      ? JSON.parse(jsonMatch[0])
-      : { deal_score: 5, score_reasoning: "Unable to score." };
+    // Parse JSON from response — be lenient
+    let parsed: { deal_score: number; score_reasoning: string };
+    try {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      parsed = jsonMatch
+        ? JSON.parse(jsonMatch[0])
+        : { deal_score: 5, score_reasoning: "Unable to score." };
+    } catch {
+      console.error("Failed to parse deal score response:", raw);
+      parsed = { deal_score: 5, score_reasoning: "Unable to parse AI response." };
+    }
 
     const score = Math.max(1, Math.min(10, Math.round(parsed.deal_score ?? 5)));
     const reasoning = parsed.score_reasoning ?? "";
+
+    // Ensure columns exist (self-healing migration)
+    const pool = getPool();
+    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER").catch(() => {});
+    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT").catch(() => {});
+    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER").catch(() => {});
+    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT").catch(() => {});
 
     // Store on the deal
     const updateField =
@@ -118,8 +137,9 @@ export async function POST(
     });
   } catch (error) {
     console.error("POST /api/deals/[id]/deal-score error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: "Failed to calculate deal score" },
+      { error: `Failed to calculate deal score: ${message}` },
       { status: 500 }
     );
   }
