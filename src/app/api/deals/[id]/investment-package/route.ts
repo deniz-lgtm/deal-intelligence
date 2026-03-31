@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 // GET: Load saved package data (stored in underwriting table as a sibling key)
 export async function GET(
@@ -7,6 +8,10 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
     const pool = getPool();
     const res = await pool.query(
       "SELECT data FROM underwriting WHERE deal_id = $1",
@@ -30,6 +35,10 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
     const { sections, meta } = await req.json();
     const pool = getPool();
 

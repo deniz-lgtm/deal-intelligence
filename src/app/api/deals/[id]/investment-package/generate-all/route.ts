@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 const MODEL = "claude-sonnet-4-5";
 let _client: Anthropic | null = null;
@@ -37,6 +38,11 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const body: GenerateRequest = await req.json();
     const { audience, format, sections, existingNotes = {} } = body;
 
@@ -49,8 +55,6 @@ export async function POST(
       checklistQueries.getByDealId(params.id),
       fetch(`${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/api/deals/${params.id}/photos`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({ data: [] })),
     ]);
-
-    if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
 
     // Use deal notes for context instead of legacy context_notes
     deal.context_notes = await dealNoteQueries.getMemoryText(params.id) || null;

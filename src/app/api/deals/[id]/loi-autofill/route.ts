@@ -7,6 +7,7 @@ import {
   dealNoteQueries,
 } from "@/lib/db";
 import type { LOIData, UnderwritingData } from "@/lib/types";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 const MODEL = "claude-sonnet-4-5";
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -35,6 +36,11 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const dealId = params.id;
 
     // ── Fetch all required data in parallel ──────────────────────────────────
@@ -44,10 +50,6 @@ export async function POST(
       omAnalysisQueries.getByDealId(dealId),
       dealNoteQueries.getByDealId(dealId),
     ]);
-
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
 
     // ── Parse underwriting data ──────────────────────────────────────────────
     let uw: Partial<UnderwritingData> = {};

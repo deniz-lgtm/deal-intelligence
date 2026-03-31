@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, omAnalysisQueries } from "@/lib/db";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 /**
  * GET /api/deals/:id/om-analysis
@@ -10,10 +11,10 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const deal = await dealQueries.getById(params.id);
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
 
     const analysis = await omAnalysisQueries.getByDealId(params.id);
 

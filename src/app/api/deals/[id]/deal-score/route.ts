@@ -9,6 +9,7 @@ import {
   businessPlanQueries,
   type OmAnalysisRow,
 } from "@/lib/db";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ChecklistItem, DealNote, BusinessPlan } from "@/lib/types";
 
@@ -35,6 +36,11 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const body = await req.json();
     const { stage } = body as { stage: "underwriting" | "final" };
 
@@ -50,10 +56,6 @@ export async function POST(
         dealNoteQueries.getByDealId(params.id),
         dealNoteQueries.getMemoryText(params.id),
       ]);
-
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
 
     // Checklist may not exist yet — fetch separately to avoid breaking the whole request
     let checklist: ChecklistItem[] = [];
@@ -159,14 +161,15 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const [deal, omAnalysis] = await Promise.all([
       dealQueries.getById(params.id),
       omAnalysisQueries.getByDealId(params.id),
     ]);
-
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
 
     return NextResponse.json({
       data: {

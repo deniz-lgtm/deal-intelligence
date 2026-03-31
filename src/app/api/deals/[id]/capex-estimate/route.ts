@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { dealQueries, dealNoteQueries, omAnalysisQueries } from "@/lib/db";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -27,9 +28,12 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const deal = await dealQueries.getById(params.id);
-    if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
 
+    const deal = await dealQueries.getById(params.id);
     const analysis = await omAnalysisQueries.getByDealId(params.id);
 
     const dealInfo = [

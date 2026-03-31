@@ -2,19 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
 import { generateDDAbstract } from "@/lib/claude";
 import type { Document, ChecklistItem, Deal } from "@/lib/types";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const body = await req.json().catch(() => ({}));
     const sections: string[] | undefined = body.sections;
 
     const deal = await dealQueries.getById(params.id);
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
 
     const [documents, checklist, uwRow] = await Promise.all([
       documentQueries.getByDealId(params.id) as Promise<Document[]>,

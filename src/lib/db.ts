@@ -227,6 +227,26 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_notes_deal_id ON deal_notes(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_deal_notes_category ON deal_notes(deal_id, category)`,
+    // Multi-user: users table (synced from Clerk)
+    `CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    // Multi-user: deal sharing
+    `CREATE TABLE IF NOT EXISTS deal_shares (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      permission TEXT NOT NULL DEFAULT 'edit' CHECK (permission IN ('view', 'edit')),
+      shared_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(deal_id, user_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_shares_deal_id ON deal_shares(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_shares_user_id ON deal_shares(user_id)`,
   ];
 
   for (const query of queries) {
@@ -248,6 +268,7 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS owner_id TEXT",
   ];
   for (const alter of criticalAlters) {
     try {
@@ -261,10 +282,19 @@ export async function initSchema(): Promise<void> {
 // ─── Deal queries ─────────────────────────────────────────────────────────────
 
 export const dealQueries = {
-  getAll: async () => {
+  // Returns all deals visible to a user (owns OR shared with OR legacy null-owner)
+  getAll: async (userId?: string) => {
     const pool = getPool();
+    if (!userId) {
+      const res = await pool.query("SELECT * FROM deals ORDER BY starred DESC, updated_at DESC");
+      return res.rows;
+    }
     const res = await pool.query(
-      "SELECT * FROM deals ORDER BY starred DESC, updated_at DESC"
+      `SELECT DISTINCT d.* FROM deals d
+       LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
+       WHERE d.owner_id IS NULL OR d.owner_id = $1 OR ds.deal_id IS NOT NULL
+       ORDER BY d.starred DESC, d.updated_at DESC`,
+      [userId]
     );
     return res.rows;
   },
@@ -272,6 +302,19 @@ export const dealQueries = {
   getById: async (id: string) => {
     const pool = getPool();
     const res = await pool.query("SELECT * FROM deals WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
+  // Access-checked variant: returns deal only if user is owner, has a share, or deal has no owner (legacy)
+  getByIdWithAccess: async (id: string, userId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT DISTINCT d.* FROM deals d
+       LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $2
+       WHERE d.id = $1
+         AND (d.owner_id IS NULL OR d.owner_id = $2 OR ds.deal_id IS NOT NULL)`,
+      [id, userId]
+    );
     return res.rows[0] ?? null;
   },
 
@@ -307,6 +350,10 @@ export const dealQueries = {
     if (deal.business_plan_id) {
       cols.push("business_plan_id");
       vals.push(deal.business_plan_id);
+    }
+    if (deal.owner_id) {
+      cols.push("owner_id");
+      vals.push(deal.owner_id);
     }
     const placeholders = vals.map((_, i) => `$${i + 1}`).join(",");
     await pool.query(
@@ -1097,5 +1144,102 @@ export const dropboxQueries = {
   disconnect: async (): Promise<void> => {
     const pool = getPool();
     await pool.query("DELETE FROM dropbox_accounts WHERE id = 'default'");
+  },
+};
+
+// ─── User queries ─────────────────────────────────────────────────────────────
+
+export interface UserRow {
+  id: string;
+  email: string;
+  name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const userQueries = {
+  // Upsert a user from Clerk (called on every authenticated request for new users)
+  upsert: async (user: { id: string; email: string; name?: string }): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO users (id, email, name, created_at, updated_at)
+       VALUES ($1, $2, $3, NOW(), NOW())
+       ON CONFLICT (id) DO UPDATE SET email = $2, name = COALESCE($3, users.name), updated_at = NOW()`,
+      [user.id, user.email, user.name ?? null]
+    );
+  },
+
+  getById: async (id: string): Promise<UserRow | null> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM users WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
+  getByEmail: async (email: string): Promise<UserRow | null> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [email]);
+    return res.rows[0] ?? null;
+  },
+
+  search: async (query: string, excludeUserId: string): Promise<UserRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM users
+       WHERE id != $2 AND (LOWER(email) LIKE LOWER($1) OR LOWER(name) LIKE LOWER($1))
+       LIMIT 10`,
+      [`%${query}%`, excludeUserId]
+    );
+    return res.rows;
+  },
+};
+
+// ─── Deal share queries ────────────────────────────────────────────────────────
+
+export interface DealShareRow {
+  id: string;
+  deal_id: string;
+  user_id: string;
+  permission: "view" | "edit";
+  shared_by: string | null;
+  created_at: string;
+  // Joined user fields
+  user_email?: string;
+  user_name?: string | null;
+}
+
+export const dealShareQueries = {
+  getByDealId: async (dealId: string): Promise<DealShareRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT ds.*, u.email AS user_email, u.name AS user_name
+       FROM deal_shares ds
+       JOIN users u ON ds.user_id = u.id
+       WHERE ds.deal_id = $1
+       ORDER BY ds.created_at ASC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (share: { id: string; deal_id: string; user_id: string; permission: string; shared_by: string }): Promise<DealShareRow> => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO deal_shares (id, deal_id, user_id, permission, shared_by, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (deal_id, user_id) DO UPDATE SET permission = $4`,
+      [share.id, share.deal_id, share.user_id, share.permission, share.shared_by]
+    );
+    const res = await pool.query(
+      `SELECT ds.*, u.email AS user_email, u.name AS user_name
+       FROM deal_shares ds JOIN users u ON ds.user_id = u.id
+       WHERE ds.id = $1`,
+      [share.id]
+    );
+    return res.rows[0];
+  },
+
+  delete: async (dealId: string, userId: string): Promise<void> => {
+    const pool = getPool();
+    await pool.query("DELETE FROM deal_shares WHERE deal_id = $1 AND user_id = $2", [dealId, userId]);
   },
 };
