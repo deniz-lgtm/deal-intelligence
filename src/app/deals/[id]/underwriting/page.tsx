@@ -270,9 +270,10 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const em = equity > 0 ? (exitEquity + totalCashFlows) / equity : 0;
 
   // ── GRM + In-Place metrics ────────────────────────────────────────────────
-  const grm = d.purchase_price > 0 && gpr > 0 ? d.purchase_price / gpr : 0;
-  const proformaGRM = d.purchase_price > 0 && proformaGPR > 0 ? d.purchase_price / proformaGPR : 0;
-  const inPlaceGRM = d.purchase_price > 0 && inPlaceGPR > 0 ? d.purchase_price / inPlaceGPR : 0;
+  // Use totalCost (purchase price + closing costs + capex) for all-in GRM
+  const grm = totalCost > 0 && gpr > 0 ? totalCost / gpr : 0;
+  const proformaGRM = totalCost > 0 && proformaGPR > 0 ? totalCost / proformaGPR : 0;
+  const inPlaceGRM = totalCost > 0 && inPlaceGPR > 0 ? totalCost / inPlaceGPR : 0;
   const inPlaceCashFlow = inPlaceNOI - yr1Debt;
   const inPlaceCoC = equity > 0 ? (inPlaceCashFlow / equity) * 100 : 0;
   const inPlaceDSCR = acqDebt > 0 ? inPlaceNOI / acqDebt : 0;
