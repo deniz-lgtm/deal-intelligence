@@ -267,53 +267,14 @@ export default function DealOverviewPage({
               alt={coverPhoto.caption || deal.name}
               className="w-full h-full object-cover"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
             {photos.length > 1 && (
               <Link href={`/deals/${params.id}/photos`}>
-                <button className="absolute top-3 right-3 flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors">
+                <button className="absolute top-3 right-3 flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors z-10">
                   <ImageIcon className="h-3 w-3" />
                   {photos.length} photos
                 </button>
               </Link>
             )}
-            <div className="absolute bottom-0 left-0 right-0 p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
-                      {DEAL_STAGE_LABELS[deal.status]}
-                    </Badge>
-                    <span className="text-xs text-white/60">
-                      {deal.property_type ? titleCase(deal.property_type) : ""}
-                    </span>
-                    {deal.loi_executed && (
-                      <span className="text-2xs text-emerald-300 font-medium bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                        LOI ✓
-                      </span>
-                    )}
-                    {deal.psa_executed && (
-                      <span className="text-2xs text-emerald-300 font-medium bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                        PSA ✓
-                      </span>
-                    )}
-                  </div>
-                  <h1 className="font-display text-2xl tracking-tight text-white">{deal.name}</h1>
-                  {(deal.address || deal.city) && (
-                    <p className="text-white/70 text-sm flex items-center gap-1.5 mt-1">
-                      <MapPin className="h-3.5 w-3.5 text-white/40" />
-                      {[deal.address, deal.city, deal.state, deal.zip]
-                        .filter(Boolean)
-                        .join(", ")}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9 text-white/70 hover:text-white hover:bg-white/10">
-                    <Star className={`h-4 w-4 ${deal.starred ? "text-amber-400 fill-amber-400" : ""}`} />
-                  </Button>
-                </div>
-              </div>
-            </div>
           </div>
         ) : (
           <div className="relative h-48 md:h-64 overflow-hidden">
@@ -329,7 +290,7 @@ export default function DealOverviewPage({
               <div className="absolute inset-0 bg-gradient-to-br from-muted/80 to-muted/30" />
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
-            <div className="absolute top-3 right-3 flex items-center gap-2">
+            <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
               {hasAddress && (
                 <a
                   href={`https://www.google.com/maps?layer=c&q=${encodeURIComponent(addressString)}`}
@@ -347,45 +308,46 @@ export default function DealOverviewPage({
                 </button>
               </Link>
             </div>
-            <div className="absolute bottom-0 left-0 right-0 p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
-                      {DEAL_STAGE_LABELS[deal.status]}
-                    </Badge>
-                    <span className="text-xs text-white/60">
-                      {deal.property_type ? titleCase(deal.property_type) : ""}
-                    </span>
-                    {deal.loi_executed && (
-                      <span className="text-2xs text-emerald-300 font-medium bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                        LOI ✓
-                      </span>
-                    )}
-                    {deal.psa_executed && (
-                      <span className="text-2xs text-emerald-300 font-medium bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                        PSA ✓
-                      </span>
-                    )}
-                  </div>
-                  <h1 className="font-display text-2xl tracking-tight text-white">{deal.name}</h1>
-                  {hasAddress && (
-                    <p className="text-white/70 text-sm flex items-center gap-1.5 mt-1">
-                      <MapPin className="h-3.5 w-3.5 text-white/40" />
-                      {addressString}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9 text-white/70 hover:text-white hover:bg-white/10">
-                    <Star className={`h-4 w-4 ${deal.starred ? "text-amber-400 fill-amber-400" : ""}`} />
-                  </Button>
-                </div>
-              </div>
-            </div>
           </div>
         )}
-        {/* Action bar beneath hero */}
+        {/* Deal info below hero */}
+        <div className="px-5 py-4 bg-card border-t border-border/40">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
+                  {DEAL_STAGE_LABELS[deal.status]}
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  {deal.property_type ? titleCase(deal.property_type) : ""}
+                </span>
+                {deal.loi_executed && (
+                  <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                    LOI ✓
+                  </span>
+                )}
+                {deal.psa_executed && (
+                  <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                    PSA ✓
+                  </span>
+                )}
+              </div>
+              <h1 className="font-display text-3xl tracking-tight">{deal.name}</h1>
+              {hasAddress && (
+                <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-1">
+                  <MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />
+                  {addressString}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9">
+                <Star className={`h-4 w-4 ${deal.starred ? "text-amber-400 fill-amber-400" : "text-muted-foreground"}`} />
+              </Button>
+            </div>
+          </div>
+        </div>
+        {/* Action bar */}
         <div className="flex items-center justify-between px-5 py-2.5 bg-card border-t border-border/40">
           <div className="flex items-center gap-1.5">
             {deal.status !== "archived" ? (
