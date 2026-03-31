@@ -24,11 +24,13 @@ export async function PATCH(
 ) {
   try {
     const body = await req.json();
-    const { category } = body;
-    if (!category) {
-      return NextResponse.json({ error: "category is required" }, { status: 400 });
+    const updates: Record<string, unknown> = {};
+    if (body.category) updates.category = body.category;
+    if (body.is_key !== undefined) updates.is_key = body.is_key;
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
     }
-    const doc = await documentQueries.update(params.id, { category });
+    const doc = await documentQueries.update(params.id, updates);
     if (!doc) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }

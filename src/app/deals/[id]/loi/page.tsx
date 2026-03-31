@@ -8,6 +8,7 @@ import {
   CheckCircle,
   AlertTriangle,
   FileSignature,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/utils";
@@ -70,6 +71,32 @@ export default function LOIPage({ params }: { params: { id: string } }) {
   const [saving, setSaving] = useState(false);
   const [executed, setExecuted] = useState(false);
   const [markingExecuted, setMarkingExecuted] = useState(false);
+  const [autofilling, setAutofilling] = useState(false);
+
+  const autofillLOI = async () => {
+    setAutofilling(true);
+    try {
+      const res = await fetch(`/api/deals/${params.id}/loi-autofill`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) { toast.error(json.error || "Autofill failed"); return; }
+      const d = json.data;
+      setData((prev) => ({
+        ...prev,
+        purchase_price: d.purchase_price ?? prev.purchase_price,
+        earnest_money: d.earnest_money ?? prev.earnest_money,
+        earnest_money_hard_days: d.earnest_money_hard_days ?? prev.earnest_money_hard_days,
+        due_diligence_days: d.due_diligence_days ?? prev.due_diligence_days,
+        financing_contingency_days: d.financing_contingency_days ?? prev.financing_contingency_days,
+        closing_days: d.closing_days ?? prev.closing_days,
+        has_financing_contingency: d.has_financing_contingency ?? prev.has_financing_contingency,
+        as_is: d.as_is ?? prev.as_is,
+        additional_terms: d.additional_terms || prev.additional_terms,
+        loi_date: d.loi_date || prev.loi_date,
+      }));
+      toast.success("LOI auto-filled from underwriting data");
+    } catch { toast.error("Autofill failed"); }
+    finally { setAutofilling(false); }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -164,6 +191,10 @@ export default function LOIPage({ params }: { params: { id: string } }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={autofillLOI} disabled={autofilling}>
+            {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+            AI Autofill
+          </Button>
           <Button variant="outline" onClick={printLOI}>
             <Printer className="h-4 w-4 mr-2" />
             Export / Print

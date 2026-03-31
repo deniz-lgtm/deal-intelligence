@@ -19,6 +19,8 @@ import {
   Building2,
   TrendingUp,
   Clock,
+  Sparkles,
+  Loader2 as Loader2Icon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -647,6 +649,9 @@ export default function BusinessPlansPage() {
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiPrefill, setAiPrefill] = useState<Partial<BusinessPlan> | null>(null);
 
   useEffect(() => {
     loadPlans();
@@ -793,11 +798,53 @@ export default function BusinessPlansPage() {
                 <Plus className="h-4 w-4 text-primary" />
                 New Business Plan
               </CardTitle>
+              {/* AI Quick Setup */}
+              <div className="mt-3 flex items-center gap-2">
+                <div className="flex-1 flex items-center gap-2 border rounded-lg px-3 py-2 bg-background">
+                  <Sparkles className="h-4 w-4 text-primary shrink-0" />
+                  <input
+                    type="text"
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && aiPrompt.trim()) {
+                        e.preventDefault();
+                        setAiGenerating(true);
+                        fetch("/api/business-plans/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description: aiPrompt }) })
+                          .then(r => r.json())
+                          .then(json => { if (json.data) { setAiPrefill(json.data); toast.success("Plan generated — review and save"); } else { toast.error("Generation failed"); } })
+                          .catch(() => toast.error("Generation failed"))
+                          .finally(() => setAiGenerating(false));
+                      }
+                    }}
+                    placeholder="Describe your strategy... e.g. 'Value-add multifamily in Texas, 100-300 units'"
+                    className="flex-1 text-sm bg-transparent outline-none placeholder:text-muted-foreground/50"
+                    disabled={aiGenerating}
+                  />
+                </div>
+                <Button
+                  size="sm" variant="outline"
+                  disabled={aiGenerating || !aiPrompt.trim()}
+                  onClick={() => {
+                    setAiGenerating(true);
+                    fetch("/api/business-plans/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description: aiPrompt }) })
+                      .then(r => r.json())
+                      .then(json => { if (json.data) { setAiPrefill(json.data); toast.success("Plan generated — review and save"); } else { toast.error("Generation failed"); } })
+                      .catch(() => toast.error("Generation failed"))
+                      .finally(() => setAiGenerating(false));
+                  }}
+                >
+                  {aiGenerating ? <Loader2Icon className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Sparkles className="h-3.5 w-3.5 mr-1.5" />}
+                  Generate
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <PlanForm
+                initial={aiPrefill || undefined}
+                key={aiPrefill ? JSON.stringify(aiPrefill) : "empty"}
                 onSave={handleCreate}
-                onCancel={() => { setCreating(false); setCreateError(null); }}
+                onCancel={() => { setCreating(false); setCreateError(null); setAiPrefill(null); setAiPrompt(""); }}
                 saving={saving}
               />
               {createError && (

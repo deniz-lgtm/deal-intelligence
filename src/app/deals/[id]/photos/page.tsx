@@ -12,6 +12,7 @@ import {
   X,
   Edit2,
   Check,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/utils";
@@ -27,6 +28,8 @@ export default function PhotosPage({ params }: { params: { id: string } }) {
   const [editingCaption, setEditingCaption] = useState<string | null>(null);
   const [captionValue, setCaptionValue] = useState("");
   const [deal, setDeal] = useState<{ address: string; city: string; state: string; zip: string } | null>(null);
+  const [captioning, setCaptioning] = useState<string | null>(null);
+  const [captioningAll, setCaptioningAll] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -94,6 +97,38 @@ export default function PhotosPage({ params }: { params: { id: string } }) {
     }
   };
 
+  const autoCaptionPhoto = async (id: string) => {
+    setCaptioning(id);
+    try {
+      const res = await fetch(`/api/photos/${id}/caption`, { method: "POST" });
+      const json = await res.json();
+      if (res.ok && json.data) {
+        setPhotos((prev) => prev.map((p) => p.id === id ? { ...p, caption: json.data.caption } : p));
+        toast.success("Caption generated");
+      } else { toast.error(json.error || "Caption failed"); }
+    } catch { toast.error("Caption failed"); }
+    finally { setCaptioning(null); }
+  };
+
+  const autoCaptionAll = async () => {
+    const uncaptioned = photos.filter((p) => !p.caption);
+    if (uncaptioned.length === 0) { toast.info("All photos already have captions"); return; }
+    setCaptioningAll(true);
+    let count = 0;
+    for (const photo of uncaptioned) {
+      try {
+        const res = await fetch(`/api/photos/${photo.id}/caption`, { method: "POST" });
+        const json = await res.json();
+        if (res.ok && json.data) {
+          setPhotos((prev) => prev.map((p) => p.id === photo.id ? { ...p, caption: json.data.caption } : p));
+          count++;
+        }
+      } catch { /* continue */ }
+    }
+    toast.success(`${count} photo${count !== 1 ? "s" : ""} captioned`);
+    setCaptioningAll(false);
+  };
+
   const googleMapsUrl = deal
     ? `https://maps.google.com/maps?q=${encodeURIComponent([deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", "))}&output=embed`
     : null;
@@ -138,6 +173,12 @@ export default function PhotosPage({ params }: { params: { id: string } }) {
             {photos.length} photo{photos.length !== 1 ? "s" : ""} — property images & street view
           </p>
         </div>
+        {photos.length > 0 && (
+          <Button variant="outline" size="sm" onClick={autoCaptionAll} disabled={captioningAll}>
+            {captioningAll ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+            Auto-Caption All
+          </Button>
+        )}
       </div>
 
       {/* Map + Street View */}
@@ -263,6 +304,14 @@ export default function PhotosPage({ params }: { params: { id: string } }) {
                       {photo.caption || <span className="opacity-50">Add caption...</span>}
                     </p>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => autoCaptionPhoto(photo.id)}
+                        disabled={captioning === photo.id}
+                        className="text-muted-foreground hover:text-primary"
+                        title="AI Caption"
+                      >
+                        {captioning === photo.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                      </button>
                       <button
                         onClick={() => { setEditingCaption(photo.id); setCaptionValue(photo.caption || ""); }}
                         className="text-muted-foreground hover:text-foreground"

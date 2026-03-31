@@ -243,6 +243,7 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",

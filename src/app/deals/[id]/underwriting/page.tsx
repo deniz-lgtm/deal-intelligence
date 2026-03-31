@@ -414,6 +414,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [capexEstimating, setCapexEstimating] = useState(false);
   const [capexPreview, setCapexPreview] = useState<Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string; selected: boolean }> | null>(null);
   const [opexEstimating, setOpexEstimating] = useState(false);
+  const [loanSizing, setLoanSizing] = useState(false);
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [docs, setDocs] = useState<Array<{ id: string; original_name: string; mime_type?: string }>>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
@@ -616,6 +617,33 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       toast.success(est.basis ? `OpEx estimated — ${est.basis}` : "Operating expenses estimated");
     } catch { toast.error("OpEx estimation failed"); }
     finally { setOpexEstimating(false); }
+  };
+
+  const estimateLoan = async () => {
+    setLoanSizing(true);
+    try {
+      const res = await fetch(`/api/deals/${params.id}/loan-size`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) { toast.error(json.error || "Loan sizing failed"); return; }
+      const est = json.data;
+      setData(p => ({
+        ...p,
+        has_financing: true,
+        acq_ltc: est.acq_ltc ?? p.acq_ltc,
+        acq_interest_rate: est.acq_interest_rate ?? p.acq_interest_rate,
+        acq_amort_years: est.acq_amort_years ?? p.acq_amort_years,
+        acq_io_years: est.acq_io_years ?? p.acq_io_years,
+        has_refi: est.has_refi ?? p.has_refi,
+        refi_year: est.refi_year ?? p.refi_year,
+        refi_ltv: est.refi_ltv ?? p.refi_ltv,
+        refi_rate: est.refi_rate ?? p.refi_rate,
+        refi_amort_years: est.refi_amort_years ?? p.refi_amort_years,
+        exit_cap_rate: est.exit_cap_rate ?? p.exit_cap_rate,
+        hold_period_years: est.hold_period_years ?? p.hold_period_years,
+      }));
+      toast.success(est.basis ? `Loan sized — ${est.basis}` : "Financing terms estimated");
+    } catch { toast.error("Loan sizing failed"); }
+    finally { setLoanSizing(false); }
   };
 
   const loadDocs = async () => {
@@ -1584,10 +1612,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       <Section title="Financing" icon={<TrendingUp className="h-4 w-4 text-purple-400" />}>
         <div className="mt-3 space-y-5">
           <div>
-            <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold mb-3">
-              <input type="checkbox" checked={d.has_financing} onChange={e => set("has_financing", e.target.checked)} className="rounded" />
-              Acquisition Loan
-            </label>
+            <div className="flex items-center justify-between mb-3">
+              <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold">
+                <input type="checkbox" checked={d.has_financing} onChange={e => set("has_financing", e.target.checked)} className="rounded" />
+                Acquisition Loan
+              </label>
+              <Button variant="outline" size="sm" onClick={estimateLoan} disabled={loanSizing}>
+                {loanSizing ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Sparkles className="h-4 w-4 mr-1.5" />}
+                AI Loan Sizer
+              </Button>
+            </div>
             {d.has_financing && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <NumInput label="Loan-to-Cost" value={d.acq_ltc} onChange={v => set("acq_ltc", v)} suffix="%" decimals={1} />

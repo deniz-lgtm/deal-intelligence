@@ -15,6 +15,7 @@ import {
   ExternalLink,
   GripVertical,
   CloudDownload,
+  Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -95,6 +96,23 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
       toast.error("Failed to move document");
     } finally {
       setRecategorizing(null);
+    }
+  }, []);
+
+  const toggleKeyDocument = useCallback(async (docId: string, isKey: boolean) => {
+    try {
+      const res = await fetch(`/api/documents/${docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_key: isKey }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      setDocuments((prev) =>
+        prev.map((d) => (d.id === docId ? { ...d, is_key: isKey } : d))
+      );
+      toast.success(isKey ? "Marked as key document" : "Unmarked key document");
+    } catch {
+      toast.error("Failed to update document");
     }
   }, []);
 
@@ -258,6 +276,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           onDelete={deleteDocument}
           onView={(doc) => canPreview(doc) ? setViewingDoc(doc) : window.open(`/api/documents/${doc.id}/view`, "_blank")}
           onRecategorize={recategorize}
+          onToggleKey={toggleKeyDocument}
           recategorizing={recategorizing}
           deleting={deleting}
         />
@@ -314,6 +333,7 @@ function FolderView({
   onDelete,
   onView,
   onRecategorize,
+  onToggleKey,
   recategorizing,
   deleting,
 }: {
@@ -323,6 +343,7 @@ function FolderView({
   onDelete: (id: string) => void;
   onView: (doc: Document) => void;
   onRecategorize: (docId: string, cat: DocumentCategory) => void;
+  onToggleKey: (docId: string, isKey: boolean) => void;
   recategorizing: string | null;
   deleting: string | null;
 }) {
@@ -376,6 +397,7 @@ function FolderView({
                     onDelete={onDelete}
                     onView={onView}
                     onRecategorize={onRecategorize}
+                    onToggleKey={onToggleKey}
                     recategorizing={recategorizing}
                     deleting={deleting}
                   />
@@ -445,13 +467,15 @@ function DocRow({
   onDelete,
   onView,
   onRecategorize,
+  onToggleKey,
   recategorizing,
   deleting,
 }: {
-  doc: Document;
+  doc: Document & { is_key?: boolean };
   onDelete: (id: string) => void;
   onView: (doc: Document) => void;
   onRecategorize: (docId: string, cat: DocumentCategory) => void;
+  onToggleKey: (docId: string, isKey: boolean) => void;
   recategorizing: string | null;
   deleting: string | null;
 }) {
@@ -479,6 +503,13 @@ function DocRow({
       <GripVertical className="h-4 w-4 text-muted-foreground/40 mt-1 shrink-0 cursor-grab active:cursor-grabbing group-hover:text-muted-foreground transition-colors" />
       <button onClick={() => onView(doc)} className="shrink-0 hover:opacity-70 mt-0.5">
         <DocFileIcon mimeType={doc.mime_type} />
+      </button>
+      <button
+        onClick={() => onToggleKey(doc.id, !doc.is_key)}
+        className={`shrink-0 mt-1 transition-colors ${doc.is_key ? "text-amber-400" : "text-muted-foreground/30 hover:text-amber-400/60"}`}
+        title={doc.is_key ? "Key document (click to unmark)" : "Mark as key document"}
+      >
+        <Star className={`h-3.5 w-3.5 ${doc.is_key ? "fill-amber-400" : ""}`} />
       </button>
       <div className="flex-1 min-w-0">
         <button
