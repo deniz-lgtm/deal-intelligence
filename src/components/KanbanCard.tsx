@@ -31,7 +31,7 @@ export default function KanbanCard({ deal, onStar, onDragStart }: KanbanCardProp
     >
       {/* Header: name + star */}
       <div className="flex items-start justify-between gap-2 mb-2">
-        <h4 className="font-display text-sm leading-tight line-clamp-2">
+        <h4 className="font-display text-base leading-tight line-clamp-2">
           <Link
             href={`/deals/${deal.id}`}
             className="hover:text-primary transition-colors"
