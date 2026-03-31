@@ -24,6 +24,9 @@ import {
   Sparkles,
   BookOpen,
   Archive,
+  TrendingUp,
+  Percent,
+  ImageIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +35,7 @@ import DealNotes from "@/components/DealNotes";
 import { formatCurrency, formatNumber, titleCase } from "@/lib/utils";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import type { Deal, DealStatus, Document, ChecklistItem, BusinessPlan, InvestmentThesis } from "@/lib/types";
+import type { Deal, DealStatus, Document, ChecklistItem, BusinessPlan, InvestmentThesis, Photo, UnderwritingData } from "@/lib/types";
 import {
   DEAL_PIPELINE,
   DEAL_STAGE_LABELS,
@@ -70,6 +73,8 @@ export default function DealOverviewPage({
   const [advancingTo, setAdvancingTo] = useState<DealStatus | null>(null);
   const [showGateWarning, setShowGateWarning] = useState<{ status: DealStatus; message: string } | null>(null);
   const [autoFilling, setAutoFilling] = useState(false);
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [underwriting, setUnderwriting] = useState<UnderwritingData | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -77,11 +82,20 @@ export default function DealOverviewPage({
       fetch(`/api/deals/${params.id}/documents`).then((r) => r.json()),
       fetch(`/api/checklist?deal_id=${params.id}`).then((r) => r.json()),
       fetch("/api/business-plans").then((r) => r.json()),
-    ]).then(async ([dealRes, docsRes, checklistRes, plansRes]) => {
+      fetch(`/api/deals/${params.id}/photos`).then((r) => r.json()),
+      fetch(`/api/underwriting?deal_id=${params.id}`).then((r) => r.json()),
+    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes]) => {
       const d = dealRes.data;
       setDeal(d);
       setDocuments(docsRes.data || []);
       setChecklist(checklistRes.data || []);
+      setPhotos(photosRes.data || []);
+      if (uwRes.data?.data) {
+        try {
+          const parsed = typeof uwRes.data.data === "string" ? JSON.parse(uwRes.data.data) : uwRes.data.data;
+          setUnderwriting(parsed);
+        } catch { /* ignore parse errors */ }
+      }
       const plans = plansRes.data || [];
       setAllPlans(plans);
       setSelectedPlanId(d?.business_plan_id || "");
@@ -204,6 +218,10 @@ export default function DealOverviewPage({
     : null;
   const prevStatus = !isOffPipeline && currentPipelineIdx > 0 ? DEAL_PIPELINE[currentPipelineIdx - 1] : null;
 
+  // Compute financial highlights from underwriting data
+  const highlights = computeHighlights(underwriting, deal);
+  const coverPhoto = photos.length > 0 ? photos[0] : null;
+
   return (
     <div className="space-y-6 animate-fade-up">
       {/* Gate warning modal */}
@@ -235,83 +253,159 @@ export default function DealOverviewPage({
         </div>
       )}
 
-      {/* Deal header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5 mb-2">
-            <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
-              {DEAL_STAGE_LABELS[deal.status]}
-            </Badge>
-            <span className="text-xs text-muted-foreground">
-              {deal.property_type ? titleCase(deal.property_type) : ""}
-            </span>
-            {deal.loi_executed && (
-              <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                LOI ✓
-              </span>
-            )}
-            {deal.psa_executed && (
-              <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                PSA ✓
-              </span>
-            )}
-          </div>
-          <h1 className="font-display text-2xl tracking-tight">{deal.name}</h1>
-          {(deal.address || deal.city) && (
-            <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-1">
-              <MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />
-              {[deal.address, deal.city, deal.state, deal.zip]
-                .filter(Boolean)
-                .join(", ")}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9">
-            <Star
-              className={`h-4 w-4 ${
-                deal.starred
-                  ? "text-amber-400 fill-amber-400"
-                  : "text-muted-foreground"
-              }`}
+      {/* Cover Photo Hero */}
+      <div className="relative rounded-2xl overflow-hidden border border-border/60 shadow-card">
+        {coverPhoto ? (
+          <div className="relative h-48 md:h-64">
+            <img
+              src={`/api/photos/${coverPhoto.id}`}
+              alt={coverPhoto.caption || deal.name}
+              className="w-full h-full object-cover"
             />
-          </Button>
-          {deal.status !== "archived" ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => changeStatus("archived")}
-              disabled={advancingTo !== null}
-              className="text-muted-foreground hover:text-foreground h-9 w-9"
-              title="Archive deal"
-            >
-              <Archive className="h-4 w-4" />
-            </Button>
-          ) : (
+            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
+            {photos.length > 1 && (
+              <Link href={`/deals/${params.id}/photos`}>
+                <button className="absolute top-3 right-3 flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors">
+                  <ImageIcon className="h-3 w-3" />
+                  {photos.length} photos
+                </button>
+              </Link>
+            )}
+            <div className="absolute bottom-0 left-0 right-0 p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
+                      {DEAL_STAGE_LABELS[deal.status]}
+                    </Badge>
+                    <span className="text-xs text-white/60">
+                      {deal.property_type ? titleCase(deal.property_type) : ""}
+                    </span>
+                    {deal.loi_executed && (
+                      <span className="text-2xs text-emerald-300 font-medium bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        LOI ✓
+                      </span>
+                    )}
+                    {deal.psa_executed && (
+                      <span className="text-2xs text-emerald-300 font-medium bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        PSA ✓
+                      </span>
+                    )}
+                  </div>
+                  <h1 className="font-display text-2xl tracking-tight text-white">{deal.name}</h1>
+                  {(deal.address || deal.city) && (
+                    <p className="text-white/70 text-sm flex items-center gap-1.5 mt-1">
+                      <MapPin className="h-3.5 w-3.5 text-white/40" />
+                      {[deal.address, deal.city, deal.state, deal.zip]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9 text-white/70 hover:text-white hover:bg-white/10">
+                    <Star className={`h-4 w-4 ${deal.starred ? "text-amber-400 fill-amber-400" : ""}`} />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="relative h-32 bg-gradient-to-br from-muted/80 to-muted/30 flex items-end">
+            <div className="absolute top-3 right-3">
+              <Link href={`/deals/${params.id}/photos`}>
+                <Button variant="ghost" size="sm" className="text-2xs gap-1 h-7 bg-background/50 backdrop-blur-sm hover:bg-background/70">
+                  <Camera className="h-3 w-3" /> Add Photos
+                </Button>
+              </Link>
+            </div>
+            <div className="p-5 w-full">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
+                      {DEAL_STAGE_LABELS[deal.status]}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {deal.property_type ? titleCase(deal.property_type) : ""}
+                    </span>
+                    {deal.loi_executed && (
+                      <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                        LOI ✓
+                      </span>
+                    )}
+                    {deal.psa_executed && (
+                      <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                        PSA ✓
+                      </span>
+                    )}
+                  </div>
+                  <h1 className="font-display text-2xl tracking-tight">{deal.name}</h1>
+                  {(deal.address || deal.city) && (
+                    <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-1">
+                      <MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />
+                      {[deal.address, deal.city, deal.state, deal.zip]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9">
+                    <Star className={`h-4 w-4 ${deal.starred ? "text-amber-400 fill-amber-400" : "text-muted-foreground"}`} />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Action bar beneath hero */}
+        <div className="flex items-center justify-between px-5 py-2.5 bg-card border-t border-border/40">
+          <div className="flex items-center gap-1.5">
+            {deal.status !== "archived" ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => changeStatus("archived")}
+                disabled={advancingTo !== null}
+                className="text-xs text-muted-foreground hover:text-foreground h-7 gap-1"
+              >
+                <Archive className="h-3 w-3" /> Archive
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => changeStatus("sourcing")}
+                disabled={advancingTo !== null}
+                className="text-xs h-7"
+              >
+                Unarchive
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => changeStatus("sourcing")}
-              disabled={advancingTo !== null}
-              className="text-xs h-9"
+              onClick={deleteDeal}
+              disabled={deleting}
+              className="text-xs text-muted-foreground hover:text-destructive h-7 gap-1"
             >
-              Unarchive
+              {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+              Delete
+            </Button>
+          </div>
+          {documents.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs gap-1.5 h-7"
+              onClick={autoFillFromDocs}
+              disabled={autoFilling}
+            >
+              {autoFilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              AI Auto-fill
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={deleteDeal}
-            disabled={deleting}
-            className="text-muted-foreground hover:text-destructive h-9 w-9"
-            title="Delete deal permanently"
-          >
-            {deleting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Trash2 className="h-4 w-4" />
-            )}
-          </Button>
         </div>
       </div>
 
@@ -412,55 +506,110 @@ export default function DealOverviewPage({
         )}
       </div>
 
-      {/* Key metrics */}
-      <div className="flex items-center justify-between">
-        <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">Key Metrics</h3>
-        {documents.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs gap-1.5 h-7"
-            onClick={autoFillFromDocs}
-            disabled={autoFilling}
-          >
-            {autoFilling ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
+      {/* Property Metrics + Deal Metrics side by side */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Property Metrics */}
+        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
+          <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider mb-3">Property</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <MetricCard
+              icon={<DollarSign className="h-4 w-4 text-emerald-400" />}
+              label="Asking Price"
+              value={formatCurrency(deal.asking_price)}
+            />
+            <MetricCard
+              icon={<Maximize2 className="h-4 w-4 text-blue-400" />}
+              label="Square Footage"
+              value={deal.square_footage ? `${formatNumber(deal.square_footage)} SF` : "—"}
+            />
+            <MetricCard
+              icon={<Building2 className="h-4 w-4 text-purple-400" />}
+              label="Units"
+              value={deal.units ? formatNumber(deal.units) : "—"}
+            />
+            {deal.bedrooms ? (
+              <MetricCard
+                icon={<BedDouble className="h-4 w-4 text-indigo-400" />}
+                label="Bedrooms"
+                value={formatNumber(deal.bedrooms)}
+              />
             ) : (
-              <Sparkles className="h-3 w-3" />
+              <MetricCard
+                icon={<Calendar className="h-4 w-4 text-orange-400" />}
+                label="Year Built"
+                value={deal.year_built ? String(deal.year_built) : "—"}
+              />
             )}
-            AI Auto-fill
-          </Button>
-        )}
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard
-          icon={<DollarSign className="h-4 w-4 text-emerald-400" />}
-          label="Asking Price"
-          value={formatCurrency(deal.asking_price)}
-        />
-        <MetricCard
-          icon={<Maximize2 className="h-4 w-4 text-blue-400" />}
-          label="Square Footage"
-          value={deal.square_footage ? `${formatNumber(deal.square_footage)} SF` : "—"}
-        />
-        <MetricCard
-          icon={<Building2 className="h-4 w-4 text-purple-400" />}
-          label="Units"
-          value={deal.units ? formatNumber(deal.units) : "—"}
-        />
-        {deal.bedrooms ? (
-          <MetricCard
-            icon={<BedDouble className="h-4 w-4 text-indigo-400" />}
-            label="Bedrooms"
-            value={formatNumber(deal.bedrooms)}
-          />
-        ) : (
-          <MetricCard
-            icon={<Calendar className="h-4 w-4 text-orange-400" />}
-            label="Year Built"
-            value={deal.year_built ? String(deal.year_built) : "—"}
-          />
-        )}
+          </div>
+        </div>
+
+        {/* Financial Highlights from Underwriting */}
+        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">Financial Highlights</h3>
+            <Link href={`/deals/${params.id}/underwriting`}>
+              <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
+                Underwriting <ArrowRight className="h-3 w-3" />
+              </Button>
+            </Link>
+          </div>
+          {highlights ? (
+            <div className="grid grid-cols-2 gap-3">
+              {highlights.capRate != null && (
+                <MetricCard
+                  icon={<Percent className="h-4 w-4 text-amber-400" />}
+                  label="Cap Rate"
+                  value={`${highlights.capRate.toFixed(1)}%`}
+                />
+              )}
+              {highlights.noi != null && (
+                <MetricCard
+                  icon={<DollarSign className="h-4 w-4 text-emerald-400" />}
+                  label="NOI"
+                  value={formatCurrency(highlights.noi)}
+                />
+              )}
+              {highlights.pricePerUnit != null && (
+                <MetricCard
+                  icon={<Building2 className="h-4 w-4 text-blue-400" />}
+                  label={highlights.pricePerUnitLabel}
+                  value={formatCurrency(highlights.pricePerUnit)}
+                />
+              )}
+              {highlights.cashOnCash != null && (
+                <MetricCard
+                  icon={<TrendingUp className="h-4 w-4 text-purple-400" />}
+                  label="Cash-on-Cash"
+                  value={`${highlights.cashOnCash.toFixed(1)}%`}
+                />
+              )}
+              {highlights.dscr != null && (
+                <MetricCard
+                  icon={<Calculator className="h-4 w-4 text-cyan-400" />}
+                  label="DSCR"
+                  value={`${highlights.dscr.toFixed(2)}x`}
+                />
+              )}
+              {highlights.equityMultiple != null && (
+                <MetricCard
+                  icon={<TrendingUp className="h-4 w-4 text-orange-400" />}
+                  label="Equity Multiple"
+                  value={`${highlights.equityMultiple.toFixed(2)}x`}
+                />
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-6 text-center">
+              <Calculator className="h-8 w-8 text-muted-foreground/30 mb-2" />
+              <p className="text-xs text-muted-foreground">No underwriting data yet</p>
+              <Link href={`/deals/${params.id}/underwriting`}>
+                <Button variant="outline" size="sm" className="text-xs mt-2 h-7">
+                  Start Underwriting
+                </Button>
+              </Link>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Business Plan */}
@@ -657,6 +806,117 @@ export default function DealOverviewPage({
   );
 }
 
+interface FinancialHighlights {
+  capRate: number | null;
+  noi: number | null;
+  pricePerUnit: number | null;
+  pricePerUnitLabel: string;
+  cashOnCash: number | null;
+  dscr: number | null;
+  equityMultiple: number | null;
+}
+
+function computeHighlights(uw: UnderwritingData | null, deal: Deal): FinancialHighlights | null {
+  if (!uw) return null;
+
+  const price = uw.purchase_price || deal.asking_price;
+  if (!price) return null;
+
+  const isCommercial = !["multifamily", "student_housing"].includes(deal.property_type || "");
+  const groups = uw.unit_groups || [];
+  const totalUnits = groups.reduce((s, g) => s + (g.unit_count || 0), 0);
+
+  // Compute gross potential rent
+  let annualGPR = 0;
+  for (const g of groups) {
+    if (isCommercial) {
+      const sf = (g.sf_per_unit || 0) * (g.unit_count || 0);
+      annualGPR += sf * (g.market_rent_per_sf || g.current_rent_per_sf || 0);
+    } else {
+      const beds = (g.beds_per_unit || 1) * (g.unit_count || 0);
+      annualGPR += beds * (g.market_rent_per_bed || g.current_rent_per_bed || 0) * 12;
+    }
+  }
+
+  const vacancy = uw.vacancy_rate || 5;
+  const egi = annualGPR * (1 - vacancy / 100);
+
+  // OpEx
+  const mgmt = egi * (uw.management_fee_pct || 0) / 100;
+  const opex = mgmt + (uw.taxes_annual || 0) + (uw.insurance_annual || 0)
+    + (uw.repairs_per_unit_annual || 0) * totalUnits
+    + (uw.utilities_annual || 0) + (uw.other_expenses_annual || 0);
+
+  const noi = egi - opex;
+  const capRate = price > 0 ? (noi / price) * 100 : null;
+
+  // Price per unit/SF
+  let pricePerUnit: number | null = null;
+  let pricePerUnitLabel = "Price / Unit";
+  if (isCommercial) {
+    const totalSF = groups.reduce((s, g) => s + (g.sf_per_unit || 0) * (g.unit_count || 0), 0);
+    if (totalSF > 0) {
+      pricePerUnit = price / totalSF;
+      pricePerUnitLabel = "Price / SF";
+    }
+  } else if (totalUnits > 0) {
+    pricePerUnit = price / totalUnits;
+    pricePerUnitLabel = deal.property_type === "student_housing" ? "Price / Bed" : "Price / Unit";
+  }
+
+  // Debt service
+  let annualDebtService: number | null = null;
+  if (uw.has_financing && uw.loan_to_value > 0 && uw.interest_rate > 0) {
+    const loanAmt = price * (uw.loan_to_value / 100);
+    const closingCosts = price * ((uw.closing_costs_pct || 2) / 100);
+    const r = uw.interest_rate / 100 / 12;
+    const n = (uw.amortization_years || 30) * 12;
+    const monthlyPayment = uw.io_period_years && uw.io_period_years > 0
+      ? loanAmt * r  // IO period
+      : loanAmt * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+    annualDebtService = monthlyPayment * 12;
+
+    const equity = price + closingCosts - loanAmt;
+    const cashFlow = noi - annualDebtService;
+
+    const cashOnCash = equity > 0 ? (cashFlow / equity) * 100 : null;
+    const dscr = annualDebtService > 0 ? noi / annualDebtService : null;
+
+    // Simple equity multiple: (cumulative CF + exit equity) / initial equity
+    const holdYears = uw.hold_period_years || 5;
+    const exitCap = uw.exit_cap_rate || 0;
+    let equityMultiple: number | null = null;
+    if (exitCap > 0 && equity > 0) {
+      const exitValue = noi / (exitCap / 100);
+      // Rough loan balance (simplified — assume IO for simplicity)
+      const exitEquity = exitValue - loanAmt;
+      const totalCF = cashFlow * holdYears + exitEquity;
+      equityMultiple = totalCF / equity;
+    }
+
+    return {
+      capRate: capRate && capRate > 0 ? capRate : null,
+      noi: noi > 0 ? noi : null,
+      pricePerUnit,
+      pricePerUnitLabel,
+      cashOnCash: cashOnCash && cashOnCash !== 0 ? cashOnCash : null,
+      dscr: dscr && dscr > 0 ? dscr : null,
+      equityMultiple: equityMultiple && equityMultiple > 0 ? equityMultiple : null,
+    };
+  }
+
+  // No financing — just return property-level metrics
+  return {
+    capRate: capRate && capRate > 0 ? capRate : null,
+    noi: noi > 0 ? noi : null,
+    pricePerUnit,
+    pricePerUnitLabel,
+    cashOnCash: null,
+    dscr: null,
+    equityMultiple: null,
+  };
+}
+
 function MetricCard({
   icon,
   label,
@@ -667,12 +927,12 @@ function MetricCard({
   value: string;
 }) {
   return (
-    <div className="border border-border/60 rounded-xl p-4 bg-card shadow-card">
-      <div className="flex items-center gap-2 mb-2">
+    <div className="border border-border/40 rounded-lg p-3 bg-muted/20">
+      <div className="flex items-center gap-1.5 mb-1">
         {icon}
         <span className="text-2xs text-muted-foreground">{label}</span>
       </div>
-      <p className="text-lg font-bold tabular-nums tracking-tight">{value}</p>
+      <p className="text-base font-bold tabular-nums tracking-tight">{value}</p>
     </div>
   );
 }
