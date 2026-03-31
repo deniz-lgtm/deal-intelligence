@@ -1787,21 +1787,25 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             {[
               { label: "OM Analysis", score: dealScores.om_score, reasoning: dealScores.om_reasoning, empty: "Run OM Analysis first" },
               { label: "Post-Underwriting", score: dealScores.uw_score, reasoning: dealScores.uw_score_reasoning, empty: "Score after completing underwriting" },
-            ].map(({ label, score, reasoning, empty }) => (
-              <div key={label} className={`rounded-lg border p-4 ${score ? score >= 8 ? "bg-emerald-500/10 border-emerald-500/30" : score >= 6 ? "bg-amber-500/10 border-amber-500/30" : score >= 4 ? "bg-orange-500/10 border-orange-500/30" : "bg-rose-500/10 border-rose-500/30" : "bg-muted/20"}`}>
-                <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
-                <div className="flex items-baseline gap-1">
-                  <span className={`text-3xl font-bold tabular-nums ${score ? score >= 8 ? "text-emerald-400" : score >= 6 ? "text-amber-400" : score >= 4 ? "text-orange-400" : "text-rose-400" : "text-muted-foreground/30"}`}>
-                    {score ?? "—"}
-                  </span>
-                  {score && <span className="text-sm text-muted-foreground">/10</span>}
+            ].map(({ label, score, reasoning, empty }) => {
+              const accent = score ? score >= 8 ? "border-l-emerald-500" : score >= 6 ? "border-l-amber-500" : score >= 4 ? "border-l-orange-500" : "border-l-rose-500" : "border-l-muted-foreground/20";
+              const numColor = score ? score >= 8 ? "text-emerald-400" : score >= 6 ? "text-amber-400" : score >= 4 ? "text-orange-400" : "text-rose-400" : "text-muted-foreground/30";
+              return (
+                <div key={label} className={`rounded-lg border border-l-4 ${accent} bg-card p-4`}>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
+                  <div className="flex items-baseline gap-1">
+                    <span className={`text-3xl font-bold tabular-nums ${numColor}`}>
+                      {score ?? "—"}
+                    </span>
+                    {score && <span className="text-sm text-muted-foreground">/10</span>}
+                  </div>
+                  {reasoning && (
+                    <p className="text-xs text-foreground/70 mt-2 leading-relaxed">{reasoning}</p>
+                  )}
+                  {!score && <p className="text-xs text-muted-foreground mt-1">{empty}</p>}
                 </div>
-                {reasoning && (
-                  <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{reasoning}</p>
-                )}
-                {!score && <p className="text-xs text-muted-foreground mt-1">{empty}</p>}
-              </div>
-            ))}
+              );
+            })}
           </div>
           {/* Score change indicator */}
           {dealScores.om_score && dealScores.uw_score && (
