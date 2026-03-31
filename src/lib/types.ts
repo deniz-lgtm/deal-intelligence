@@ -157,6 +157,7 @@ export interface BusinessPlan {
 // ─── Document Categories ────────────────────────────────────────────────────
 
 export type DocumentCategory =
+  | "om"
   | "title_ownership"
   | "environmental"
   | "zoning_entitlements"
@@ -175,6 +176,11 @@ export const DOCUMENT_CATEGORIES: Record<
   DocumentCategory,
   { label: string; icon: string; description: string }
 > = {
+  om: {
+    label: "Offering Memorandum",
+    icon: "📄",
+    description: "Offering memorandums, broker packages, investment summaries",
+  },
   title_ownership: {
     label: "Title & Ownership",
     icon: "🏛️",
