@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, omAnalysisQueries } from "@/lib/db";
 import { exportDealToNotion } from "@/lib/notion";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 /**
  * POST /api/deals/:id/om-notion
@@ -11,6 +12,11 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     if (!process.env.NOTION_API_KEY || !process.env.NOTION_DEALS_DATABASE_ID) {
       return NextResponse.json(
         { error: "Notion integration not configured. Add NOTION_API_KEY and NOTION_DEALS_DATABASE_ID to environment variables." },
@@ -19,10 +25,6 @@ export async function POST(
     }
 
     const deal = await dealQueries.getById(params.id);
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
-
     const analysis = await omAnalysisQueries.getByDealId(params.id);
     if (!analysis || analysis.status !== "complete") {
       return NextResponse.json(

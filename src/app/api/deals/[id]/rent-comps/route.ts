@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, documentQueries, underwritingQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 const MODEL = "claude-sonnet-4-5";
 let _client: Anthropic | null = null;
@@ -175,13 +176,16 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const [deal, uwRow, docs] = await Promise.all([
       dealQueries.getById(params.id),
       underwritingQueries.getByDealId(params.id),
       documentQueries.getByDealId(params.id),
     ]);
-
-    if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
 
     const isMF = deal.property_type === "multifamily" || deal.property_type === "student_housing";
     const isSH = deal.property_type === "student_housing";

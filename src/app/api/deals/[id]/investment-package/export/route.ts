@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import PptxGenJS from "pptxgenjs";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from "docx";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 interface ExportSection {
   id: string;
@@ -14,6 +15,11 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    if (accessError) return accessError;
+
     const { sections, dealName, format = "pptx" } = await req.json() as {
       sections: ExportSection[];
       dealName: string;
