@@ -1784,34 +1784,24 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
         <div className="p-4">
           <div className="grid grid-cols-2 gap-4">
-            {/* OM Analysis Score */}
-            <div className={`rounded-lg border p-4 ${dealScores.om_score ? dealScores.om_score >= 8 ? "bg-emerald-50/50 border-emerald-200" : dealScores.om_score >= 6 ? "bg-amber-50/50 border-amber-200" : dealScores.om_score >= 4 ? "bg-orange-50/50 border-orange-200" : "bg-rose-50/50 border-rose-200" : "bg-muted/20"}`}>
-              <p className="text-xs font-medium text-muted-foreground mb-1">OM Analysis</p>
-              <div className="flex items-baseline gap-1">
-                <span className={`text-3xl font-bold tabular-nums ${dealScores.om_score ? dealScores.om_score >= 8 ? "text-emerald-600" : dealScores.om_score >= 6 ? "text-amber-500" : dealScores.om_score >= 4 ? "text-orange-500" : "text-rose-600" : "text-muted-foreground/30"}`}>
-                  {dealScores.om_score ?? "—"}
-                </span>
-                {dealScores.om_score && <span className="text-sm text-muted-foreground">/10</span>}
+            {[
+              { label: "OM Analysis", score: dealScores.om_score, reasoning: dealScores.om_reasoning, empty: "Run OM Analysis first" },
+              { label: "Post-Underwriting", score: dealScores.uw_score, reasoning: dealScores.uw_score_reasoning, empty: "Score after completing underwriting" },
+            ].map(({ label, score, reasoning, empty }) => (
+              <div key={label} className={`rounded-lg border p-4 ${score ? score >= 8 ? "bg-emerald-500/10 border-emerald-500/30" : score >= 6 ? "bg-amber-500/10 border-amber-500/30" : score >= 4 ? "bg-orange-500/10 border-orange-500/30" : "bg-rose-500/10 border-rose-500/30" : "bg-muted/20"}`}>
+                <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
+                <div className="flex items-baseline gap-1">
+                  <span className={`text-3xl font-bold tabular-nums ${score ? score >= 8 ? "text-emerald-400" : score >= 6 ? "text-amber-400" : score >= 4 ? "text-orange-400" : "text-rose-400" : "text-muted-foreground/30"}`}>
+                    {score ?? "—"}
+                  </span>
+                  {score && <span className="text-sm text-muted-foreground">/10</span>}
+                </div>
+                {reasoning && (
+                  <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{reasoning}</p>
+                )}
+                {!score && <p className="text-xs text-muted-foreground mt-1">{empty}</p>}
               </div>
-              {dealScores.om_reasoning && (
-                <p className="text-xs text-muted-foreground mt-2 leading-relaxed line-clamp-3">{dealScores.om_reasoning}</p>
-              )}
-              {!dealScores.om_score && <p className="text-xs text-muted-foreground mt-1">Run OM Analysis first</p>}
-            </div>
-            {/* Post-Underwriting Score */}
-            <div className={`rounded-lg border p-4 ${dealScores.uw_score ? dealScores.uw_score >= 8 ? "bg-emerald-50/50 border-emerald-200" : dealScores.uw_score >= 6 ? "bg-amber-50/50 border-amber-200" : dealScores.uw_score >= 4 ? "bg-orange-50/50 border-orange-200" : "bg-rose-50/50 border-rose-200" : "bg-muted/20"}`}>
-              <p className="text-xs font-medium text-muted-foreground mb-1">Post-Underwriting</p>
-              <div className="flex items-baseline gap-1">
-                <span className={`text-3xl font-bold tabular-nums ${dealScores.uw_score ? dealScores.uw_score >= 8 ? "text-emerald-600" : dealScores.uw_score >= 6 ? "text-amber-500" : dealScores.uw_score >= 4 ? "text-orange-500" : "text-rose-600" : "text-muted-foreground/30"}`}>
-                  {dealScores.uw_score ?? "—"}
-                </span>
-                {dealScores.uw_score && <span className="text-sm text-muted-foreground">/10</span>}
-              </div>
-              {dealScores.uw_score_reasoning && (
-                <p className="text-xs text-muted-foreground mt-2 leading-relaxed line-clamp-3">{dealScores.uw_score_reasoning}</p>
-              )}
-              {!dealScores.uw_score && <p className="text-xs text-muted-foreground mt-1">Score after completing underwriting</p>}
-            </div>
+            ))}
           </div>
           {/* Score change indicator */}
           {dealScores.om_score && dealScores.uw_score && (
