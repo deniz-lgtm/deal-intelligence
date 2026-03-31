@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, FileText, Download, Sparkles,
   ChevronDown, ChevronUp, Edit3, Eye, RefreshCw, AlertTriangle,
-  CheckCircle2, Circle, ArrowRight,
+  CheckCircle2, Circle, ArrowRight, Target, TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -77,6 +77,10 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
   const [dealName, setDealName] = useState("Deal");
   const [uwUpdatedAt, setUwUpdatedAt] = useState<string | null>(null);
 
+  // Deal score state
+  const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null; final_score: number | null; final_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null, final_score: null, final_score_reasoning: null });
+  const [scoringFinal, setScoringFinal] = useState(false);
+
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
@@ -90,9 +94,11 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       fetch(`/api/deals/${params.id}`).then(r => r.json()),
       fetch(`/api/deals/${params.id}/investment-package`).then(r => r.json()).catch(() => null),
       fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).catch(() => null),
-    ]).then(([dealJson, pkgJson, uwJson]) => {
+      fetch(`/api/deals/${params.id}/deal-score`).then(r => r.json()).catch(() => null),
+    ]).then(([dealJson, pkgJson, uwJson, scoresJson]) => {
       if (dealJson.data?.name) setDealName(dealJson.data.name);
       if (uwJson?.data?.updated_at) setUwUpdatedAt(uwJson.data.updated_at);
+      if (scoresJson?.data) setDealScores(scoresJson.data);
       if (pkgJson?.data?.sections) {
         const saved = pkgJson.data.sections as PackageSection[];
         const merged = ALL_SECTIONS.map(ds => {
@@ -369,6 +375,73 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
           </div>
         </div>
       )}
+
+      {/* ─── Deal Score Progression ─────────────────────────────────────── */}
+      <div className="border rounded-xl bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
+          <h3 className="font-semibold text-sm flex items-center gap-2"><Target className="h-4 w-4" /> Deal Score Progression</h3>
+          <Button
+            size="sm" variant="outline"
+            disabled={scoringFinal}
+            onClick={async () => {
+              setScoringFinal(true);
+              try {
+                const res = await fetch(`/api/deals/${params.id}/deal-score`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ stage: "final" }),
+                });
+                const json = await res.json();
+                if (res.ok && json.data) {
+                  setDealScores(prev => ({ ...prev, final_score: json.data.score, final_score_reasoning: json.data.reasoning }));
+                  toast.success("Final deal score updated");
+                } else { toast.error(json.error || "Scoring failed"); }
+              } catch { toast.error("Scoring failed"); }
+              finally { setScoringFinal(false); }
+            }}
+          >
+            {scoringFinal ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Scoring...</> : <><RefreshCw className="h-3.5 w-3.5 mr-1.5" />{dealScores.final_score ? "Re-score" : "Generate Final Score"}</>}
+          </Button>
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-3 gap-4">
+            {/* OM Analysis Score */}
+            {[
+              { label: "OM Analysis", score: dealScores.om_score, reasoning: dealScores.om_reasoning, empty: "Run OM Analysis" },
+              { label: "Post-Underwriting", score: dealScores.uw_score, reasoning: dealScores.uw_score_reasoning, empty: "Score in Underwriting" },
+              { label: "Final Score", score: dealScores.final_score, reasoning: dealScores.final_score_reasoning, empty: "Generate final score" },
+            ].map(({ label, score, reasoning, empty }) => (
+              <div key={label} className={`rounded-lg border p-4 ${score ? score >= 8 ? "bg-emerald-50/50 border-emerald-200" : score >= 6 ? "bg-amber-50/50 border-amber-200" : score >= 4 ? "bg-orange-50/50 border-orange-200" : "bg-rose-50/50 border-rose-200" : "bg-muted/20"}`}>
+                <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
+                <div className="flex items-baseline gap-1">
+                  <span className={`text-3xl font-bold tabular-nums ${score ? score >= 8 ? "text-emerald-600" : score >= 6 ? "text-amber-500" : score >= 4 ? "text-orange-500" : "text-rose-600" : "text-muted-foreground/30"}`}>
+                    {score ?? "—"}
+                  </span>
+                  {score && <span className="text-sm text-muted-foreground">/10</span>}
+                </div>
+                {reasoning && <p className="text-xs text-muted-foreground mt-2 leading-relaxed line-clamp-3">{reasoning}</p>}
+                {!score && <p className="text-xs text-muted-foreground mt-1">{empty}</p>}
+              </div>
+            ))}
+          </div>
+          {/* Score trend */}
+          {(dealScores.om_score || dealScores.uw_score || dealScores.final_score) && (
+            <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+              <span>Trend:</span>
+              {[dealScores.om_score, dealScores.uw_score, dealScores.final_score].filter(Boolean).map((s, i, arr) => (
+                <span key={i} className="flex items-center gap-1">
+                  {i > 0 && (
+                    <span className={s! > arr[i-1]! ? "text-emerald-500" : s! < arr[i-1]! ? "text-rose-500" : "text-muted-foreground"}>
+                      {s! > arr[i-1]! ? <TrendingUp className="h-3 w-3" /> : "→"}
+                    </span>
+                  )}
+                  <span className="font-semibold">{s}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* ─── Sections ───────────────────────────────────────────────────── */}
       <div className="space-y-3">

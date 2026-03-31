@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
-  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3,
+  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3, Target,
 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -429,6 +429,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [wizardResult, setWizardResult] = useState<{ value: number; label: string; scenarioOverrides: Partial<UWData> } | null>(null);
   const [wizardSolving, setWizardSolving] = useState(false);
   const [compsLoading, setCompsLoading] = useState(false);
+  const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null });
+  const [scoringUW, setScoringUW] = useState(false);
   // comps and selectedCompIds are derived from d (effectiveData) below, after the loading guard
   const setComps = (fn: (prev: RentComp[]) => RentComp[]) => setData(p => ({ ...p, rent_comps: fn(p.rent_comps || []) }));
   const setSelectedCompIds = (fn: (prev: Set<number>) => Set<number>) => {
@@ -492,8 +494,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     Promise.all([
       fetch(`/api/deals/${params.id}`).then(r => r.json()),
       fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()),
-    ]).then(async ([dr, ur]) => {
+      fetch(`/api/deals/${params.id}/deal-score`).then(r => r.json()).catch(() => null),
+    ]).then(async ([dr, ur, scoresJson]) => {
       setDeal(dr.data);
+      if (scoresJson?.data) setDealScores(scoresJson.data);
       // Load business plan if linked
       if (dr.data?.business_plan_id) {
         try {
@@ -1651,6 +1655,81 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </>}
           </tbody>
         </table>
+      </div>
+
+      {/* ── Deal Score Progression ── */}
+      <div className="border rounded-xl bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
+          <h3 className="font-semibold text-sm flex items-center gap-2"><Target className="h-4 w-4" /> Deal Score</h3>
+          <Button
+            size="sm" variant="outline"
+            disabled={scoringUW}
+            onClick={async () => {
+              setScoringUW(true);
+              try {
+                await save();
+                const res = await fetch(`/api/deals/${params.id}/deal-score`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ stage: "underwriting" }),
+                });
+                const json = await res.json();
+                if (res.ok && json.data) {
+                  setDealScores(prev => ({ ...prev, uw_score: json.data.score, uw_score_reasoning: json.data.reasoning }));
+                  toast.success("Underwriting score updated");
+                } else { toast.error(json.error || "Scoring failed"); }
+              } catch { toast.error("Scoring failed"); }
+              finally { setScoringUW(false); }
+            }}
+          >
+            {scoringUW ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Scoring...</> : <><RefreshCw className="h-3.5 w-3.5 mr-1.5" />{dealScores.uw_score ? "Re-score" : "Score Deal"}</>}
+          </Button>
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-2 gap-4">
+            {/* OM Analysis Score */}
+            <div className={`rounded-lg border p-4 ${dealScores.om_score ? dealScores.om_score >= 8 ? "bg-emerald-50/50 border-emerald-200" : dealScores.om_score >= 6 ? "bg-amber-50/50 border-amber-200" : dealScores.om_score >= 4 ? "bg-orange-50/50 border-orange-200" : "bg-rose-50/50 border-rose-200" : "bg-muted/20"}`}>
+              <p className="text-xs font-medium text-muted-foreground mb-1">OM Analysis</p>
+              <div className="flex items-baseline gap-1">
+                <span className={`text-3xl font-bold tabular-nums ${dealScores.om_score ? dealScores.om_score >= 8 ? "text-emerald-600" : dealScores.om_score >= 6 ? "text-amber-500" : dealScores.om_score >= 4 ? "text-orange-500" : "text-rose-600" : "text-muted-foreground/30"}`}>
+                  {dealScores.om_score ?? "—"}
+                </span>
+                {dealScores.om_score && <span className="text-sm text-muted-foreground">/10</span>}
+              </div>
+              {dealScores.om_reasoning && (
+                <p className="text-xs text-muted-foreground mt-2 leading-relaxed line-clamp-3">{dealScores.om_reasoning}</p>
+              )}
+              {!dealScores.om_score && <p className="text-xs text-muted-foreground mt-1">Run OM Analysis first</p>}
+            </div>
+            {/* Post-Underwriting Score */}
+            <div className={`rounded-lg border p-4 ${dealScores.uw_score ? dealScores.uw_score >= 8 ? "bg-emerald-50/50 border-emerald-200" : dealScores.uw_score >= 6 ? "bg-amber-50/50 border-amber-200" : dealScores.uw_score >= 4 ? "bg-orange-50/50 border-orange-200" : "bg-rose-50/50 border-rose-200" : "bg-muted/20"}`}>
+              <p className="text-xs font-medium text-muted-foreground mb-1">Post-Underwriting</p>
+              <div className="flex items-baseline gap-1">
+                <span className={`text-3xl font-bold tabular-nums ${dealScores.uw_score ? dealScores.uw_score >= 8 ? "text-emerald-600" : dealScores.uw_score >= 6 ? "text-amber-500" : dealScores.uw_score >= 4 ? "text-orange-500" : "text-rose-600" : "text-muted-foreground/30"}`}>
+                  {dealScores.uw_score ?? "—"}
+                </span>
+                {dealScores.uw_score && <span className="text-sm text-muted-foreground">/10</span>}
+              </div>
+              {dealScores.uw_score_reasoning && (
+                <p className="text-xs text-muted-foreground mt-2 leading-relaxed line-clamp-3">{dealScores.uw_score_reasoning}</p>
+              )}
+              {!dealScores.uw_score && <p className="text-xs text-muted-foreground mt-1">Score after completing underwriting</p>}
+            </div>
+          </div>
+          {/* Score change indicator */}
+          {dealScores.om_score && dealScores.uw_score && (
+            <div className="mt-3 flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Change:</span>
+              {dealScores.uw_score > dealScores.om_score ? (
+                <span className="text-emerald-600 font-medium flex items-center gap-0.5"><TrendingUp className="h-3 w-3" /> +{dealScores.uw_score - dealScores.om_score} from OM</span>
+              ) : dealScores.uw_score < dealScores.om_score ? (
+                <span className="text-rose-600 font-medium">{dealScores.uw_score - dealScores.om_score} from OM</span>
+              ) : (
+                <span className="text-muted-foreground font-medium">No change from OM</span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="border rounded-xl bg-card p-5">

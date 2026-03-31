@@ -242,6 +242,10 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT",
   ];
   for (const alter of criticalAlters) {
     try {
