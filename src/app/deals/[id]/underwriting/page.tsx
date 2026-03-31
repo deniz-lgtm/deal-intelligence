@@ -413,6 +413,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [autofilling, setAutofilling] = useState(false);
   const [capexEstimating, setCapexEstimating] = useState(false);
   const [capexPreview, setCapexPreview] = useState<Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string; selected: boolean }> | null>(null);
+  const [opexEstimating, setOpexEstimating] = useState(false);
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [docs, setDocs] = useState<Array<{ id: string; original_name: string; mime_type?: string }>>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
@@ -590,6 +591,31 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     setData(p => ({ ...p, capex_items: [...p.capex_items, ...newItems] }));
     toast.success(`${selected.length} CapEx item${selected.length !== 1 ? "s" : ""} added`);
     setCapexPreview(null);
+  };
+
+  const estimateOpex = async () => {
+    setOpexEstimating(true);
+    try {
+      const res = await fetch(`/api/deals/${params.id}/opex-estimate`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) { toast.error(json.error || "OpEx estimation failed"); return; }
+      const est = json.data;
+      setData(p => ({
+        ...p,
+        vacancy_rate: est.vacancy_rate ?? p.vacancy_rate,
+        management_fee_pct: est.management_fee_pct ?? p.management_fee_pct,
+        taxes_annual: est.taxes_annual ?? p.taxes_annual,
+        insurance_annual: est.insurance_annual ?? p.insurance_annual,
+        repairs_annual: est.repairs_annual ?? p.repairs_annual,
+        utilities_annual: est.utilities_annual ?? p.utilities_annual,
+        ga_annual: est.ga_annual ?? p.ga_annual,
+        marketing_annual: est.marketing_annual ?? p.marketing_annual,
+        reserves_annual: est.reserves_annual ?? p.reserves_annual,
+        other_expenses_annual: est.other_expenses_annual ?? p.other_expenses_annual,
+      }));
+      toast.success(est.basis ? `OpEx estimated — ${est.basis}` : "Operating expenses estimated");
+    } catch { toast.error("OpEx estimation failed"); }
+    finally { setOpexEstimating(false); }
   };
 
   const loadDocs = async () => {
@@ -1544,9 +1570,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </tr>
             </tbody>
           </table>
-          <div className="flex gap-4 mt-3">
+          <div className="flex items-center gap-4 mt-3">
             <div className="p-3 bg-muted/50 rounded-lg flex-1"><p className="text-xs text-muted-foreground mb-1">EGI</p><p className="text-sm font-semibold">{fc(m.egi)}</p><p className="text-xs text-muted-foreground">{fc(m.vacancyLoss)} vacancy loss</p></div>
             <div className="p-3 bg-muted/50 rounded-lg flex-1"><p className="text-xs text-muted-foreground mb-1">OpEx Ratio</p><p className="text-sm font-semibold">{m.egi > 0 ? ((m.totalOpEx / m.egi) * 100).toFixed(0) : 0}% of EGI</p></div>
+            <Button variant="outline" size="sm" onClick={estimateOpex} disabled={opexEstimating} className="shrink-0">
+              {opexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+              AI Estimate
+            </Button>
           </div>
         </div>
       </Section>
