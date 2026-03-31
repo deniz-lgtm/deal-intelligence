@@ -40,7 +40,7 @@ export async function POST(req: Request) {
       const buffer = Buffer.from(await file.arrayBuffer());
       fs.writeFileSync(filePath, buffer);
 
-      const photo = photoQueries.create({
+      const photo = await photoQueries.create({
         id,
         deal_id: dealId,
         name: safeName,
