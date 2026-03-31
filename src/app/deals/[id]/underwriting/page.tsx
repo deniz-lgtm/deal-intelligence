@@ -222,7 +222,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const pricePerUnit = totalUnits > 0 ? d.purchase_price / totalUnits : 0;
 
   // ── Acquisition Financing ───────────────────────────────────────────────────
-  let acqLoan = 0, acqDebt = 0, acqDebtIO = 0;
+  let acqLoan = 0, acqDebt = 0, acqDebtIO = 0, blendedLtc = 0;
   if (d.has_financing && totalCost > 0) {
     // Split leverage: separate % for purchase price and capex
     const ppLtv = d.acq_pp_ltv ?? d.acq_ltc ?? 0;
@@ -231,8 +231,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     const ppLoan = purchasePlusCosing * (ppLtv / 100);
     const capexLoan = capexTotal * (capexLtv / 100);
     acqLoan = ppLoan + capexLoan;
-    // Compute blended LTC for display
-    const blendedLtc = totalCost > 0 ? (acqLoan / totalCost) * 100 : 0;
+    blendedLtc = totalCost > 0 ? (acqLoan / totalCost) * 100 : 0;
     const isIOOnly = d.acq_amort_years <= 0;
     if (isIOOnly) {
       // Pure interest-only / bullet loan — no amortization at all
