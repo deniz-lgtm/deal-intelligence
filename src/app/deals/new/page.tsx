@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Building2, FileText, Loader2, Sparkles, XCircle, BookOpen, Star, ChevronDown, ExternalLink, Target, MapPin, TrendingUp, Clock } from "lucide-react";
+import { ArrowLeft, Building2, FileText, Loader2, Sparkles, XCircle, BookOpen, Star, ChevronDown, ExternalLink, Target, MapPin, TrendingUp, Clock, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -65,6 +65,8 @@ export default function NewDealPage() {
   const [dragging, setDragging] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [listingUrl, setListingUrl] = useState("");
+  const [extractingUrl, setExtractingUrl] = useState(false);
 
   // Business plan state
   const [plans, setPlans] = useState<BusinessPlan[]>([]);
@@ -130,6 +132,43 @@ export default function NewDealPage() {
       setExtractError(err instanceof Error ? err.message : "Extraction failed");
     } finally {
       setExtracting(false);
+    }
+  }
+
+  async function handleListingUrl(url: string) {
+    if (!url.trim()) return;
+    setExtractingUrl(true);
+    setExtractError(null);
+    try {
+      const res = await fetch("/api/listing-extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Extraction failed");
+
+      const d = json.data;
+      setForm((prev) => ({
+        ...prev,
+        name: d.name || prev.name,
+        address: d.address || prev.address,
+        city: d.city || prev.city,
+        state: d.state || prev.state,
+        zip: d.zip || prev.zip,
+        property_type: d.property_type || prev.property_type,
+        investment_strategy: d.investment_strategy || prev.investment_strategy,
+        year_built: d.year_built ? String(d.year_built) : prev.year_built,
+        square_footage: d.square_footage ? String(d.square_footage) : prev.square_footage,
+        units: d.units ? String(d.units) : prev.units,
+        asking_price: d.asking_price ? String(d.asking_price) : prev.asking_price,
+        notes: d.description ? `${prev.notes ? prev.notes + "\n" : ""}Source: ${url.trim()}\n${d.description}` : prev.notes,
+      }));
+      toast.success("Listing data extracted — review and edit below");
+    } catch (err) {
+      setExtractError(err instanceof Error ? err.message : "Failed to extract listing");
+    } finally {
+      setExtractingUrl(false);
     }
   }
 
@@ -292,6 +331,50 @@ export default function NewDealPage() {
                   if (file) handleOmFile(file);
                 }}
               />
+            </div>
+          )}
+          {/* Listing URL input */}
+          {!omFile && !extracting && (
+            <div className="mt-3">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex-1 h-px bg-border/40" />
+                <span className="text-2xs text-muted-foreground uppercase tracking-wider">or paste a listing link</span>
+                <div className="flex-1 h-px bg-border/40" />
+              </div>
+              <div className="flex items-center gap-2">
+                <div className={cn(
+                  "flex-1 flex items-center gap-2 border rounded-lg px-3 py-2 transition-colors",
+                  extractingUrl ? "bg-primary/5 border-primary/20" : "border-border/60 hover:border-primary/40"
+                )}>
+                  <Link2 className={cn("h-4 w-4 flex-shrink-0", extractingUrl ? "text-primary" : "text-muted-foreground")} />
+                  <input
+                    type="url"
+                    value={listingUrl}
+                    onChange={(e) => setListingUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleListingUrl(listingUrl); } }}
+                    placeholder="https://www.loopnet.com/listing/... or any listing URL"
+                    className="flex-1 text-sm bg-transparent outline-none placeholder:text-muted-foreground/50"
+                    disabled={extractingUrl}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleListingUrl(listingUrl)}
+                  disabled={extractingUrl || !listingUrl.trim()}
+                  className="h-[38px] shrink-0"
+                >
+                  {extractingUrl ? (
+                    <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Extracting...</>
+                  ) : (
+                    <><Sparkles className="h-3.5 w-3.5 mr-1.5" />Extract</>
+                  )}
+                </Button>
+              </div>
+              <p className="text-2xs text-muted-foreground mt-1.5">
+                LoopNet, Crexi, CoStar, or any property listing — AI extracts deal details automatically
+              </p>
             </div>
           )}
           {extractError && (
