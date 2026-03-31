@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { DealStatus, PropertyType, BusinessPlan, InvestmentThesis } from "@/lib/types";
-import { INVESTMENT_THESIS_LABELS } from "@/lib/types";
+import { INVESTMENT_THESIS_LABELS, INVESTMENT_THESIS_DESCRIPTIONS } from "@/lib/types";
 
 const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
   { value: "multifamily", label: "Multifamily" },
@@ -31,6 +31,14 @@ const STATUSES: { value: DealStatus; label: string }[] = [
   { value: "closing", label: "Closing" },
 ];
 
+const STRATEGY_OPTIONS: { value: InvestmentThesis; label: string; desc: string }[] = [
+  { value: "value_add", label: INVESTMENT_THESIS_LABELS.value_add, desc: INVESTMENT_THESIS_DESCRIPTIONS.value_add },
+  { value: "ground_up", label: INVESTMENT_THESIS_LABELS.ground_up, desc: INVESTMENT_THESIS_DESCRIPTIONS.ground_up },
+  { value: "core", label: INVESTMENT_THESIS_LABELS.core, desc: INVESTMENT_THESIS_DESCRIPTIONS.core },
+  { value: "core_plus", label: INVESTMENT_THESIS_LABELS.core_plus, desc: INVESTMENT_THESIS_DESCRIPTIONS.core_plus },
+  { value: "opportunistic", label: INVESTMENT_THESIS_LABELS.opportunistic, desc: INVESTMENT_THESIS_DESCRIPTIONS.opportunistic },
+];
+
 const EMPTY_FORM = {
   name: "",
   address: "",
@@ -38,6 +46,7 @@ const EMPTY_FORM = {
   state: "",
   zip: "",
   property_type: "multifamily" as PropertyType,
+  investment_strategy: "" as string,
   status: "sourcing" as DealStatus,
   asking_price: "",
   square_footage: "",
@@ -143,6 +152,7 @@ export default function NewDealPage() {
           units: form.units ? Number(form.units) : null,
           bedrooms: form.bedrooms ? Number(form.bedrooms) : null,
           year_built: form.year_built ? Number(form.year_built) : null,
+          investment_strategy: form.investment_strategy || null,
           business_plan_id: selectedPlanId,
         }),
       });
@@ -431,7 +441,7 @@ export default function NewDealPage() {
                   className="input-field"
                 />
               </Field>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <Field label="Property Type">
                   <select
                     value={form.property_type}
@@ -441,6 +451,20 @@ export default function NewDealPage() {
                     {PROPERTY_TYPES.map((t) => (
                       <option key={t.value} value={t.value}>
                         {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Investment Strategy">
+                  <select
+                    value={form.investment_strategy}
+                    onChange={(e) => set("investment_strategy", e.target.value)}
+                    className="input-field"
+                  >
+                    <option value="">Select strategy...</option>
+                    {STRATEGY_OPTIONS.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
                       </option>
                     ))}
                   </select>

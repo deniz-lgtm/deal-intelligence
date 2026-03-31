@@ -321,6 +321,11 @@ export default function DealOverviewPage({
                 <span className="text-xs text-muted-foreground">
                   {deal.property_type ? titleCase(deal.property_type) : ""}
                 </span>
+                {deal.investment_strategy && (
+                  <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                    {INVESTMENT_THESIS_LABELS[deal.investment_strategy as InvestmentThesis] || titleCase(deal.investment_strategy)}
+                  </span>
+                )}
                 {deal.loi_executed && (
                   <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                     LOI ✓
@@ -528,6 +533,30 @@ export default function DealOverviewPage({
                 value={deal.year_built ? String(deal.year_built) : "—"}
               />
             )}
+          </div>
+          {/* Investment Strategy */}
+          <div className="mt-3 pt-3 border-t border-border/40">
+            <label className="text-2xs text-muted-foreground font-medium uppercase tracking-wider">Investment Strategy</label>
+            <select
+              value={deal.investment_strategy || ""}
+              onChange={async (e) => {
+                const strategy = e.target.value || null;
+                setDeal((prev: any) => prev ? { ...prev, investment_strategy: strategy } : prev);
+                try {
+                  await fetch(`/api/deals/${params.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ investment_strategy: strategy }),
+                  });
+                } catch { /* ignore */ }
+              }}
+              className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40 transition-colors"
+            >
+              <option value="">Not set</option>
+              {(["value_add", "ground_up", "core", "core_plus", "opportunistic"] as InvestmentThesis[]).map((s) => (
+                <option key={s} value={s}>{INVESTMENT_THESIS_LABELS[s]}</option>
+              ))}
+            </select>
           </div>
         </div>
 

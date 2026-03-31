@@ -242,6 +242,7 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",
@@ -296,6 +297,10 @@ export const dealQueries = {
       deal.year_built ?? null, deal.notes ?? null,
       deal.loi_executed ?? false, deal.psa_executed ?? false,
     ];
+    if (deal.investment_strategy) {
+      cols.push("investment_strategy");
+      vals.push(deal.investment_strategy);
+    }
     if (deal.business_plan_id) {
       cols.push("business_plan_id");
       vals.push(deal.business_plan_id);

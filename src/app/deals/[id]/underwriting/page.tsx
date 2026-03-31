@@ -418,7 +418,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [docViewerOpen, setDocViewerOpen] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
-  const [deal, setDeal] = useState<{ name: string; property_type?: string; business_plan_id?: string } | null>(null);
+  const [deal, setDeal] = useState<{ name: string; property_type?: string; business_plan_id?: string; investment_strategy?: string } | null>(null);
   const [businessPlan, setBusinessPlan] = useState<{ target_irr_min?: number; target_irr_max?: number; target_equity_multiple_min?: number; target_equity_multiple_max?: number; hold_period_min?: number; hold_period_max?: number } | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null); // null = baseline
   const [showScenarioWizard, setShowScenarioWizard] = useState(false);
@@ -1395,9 +1395,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
-      <Section title="Capital Expenditures" icon={<Hammer className="h-4 w-4 text-orange-400" />} open={false}>
+      <Section title={deal?.investment_strategy === "ground_up" ? "Development Budget" : "Capital Expenditures"} icon={<Hammer className="h-4 w-4 text-orange-400" />} open={false}>
         <div className="mt-3 overflow-x-auto">
-          {d.capex_items.length === 0 && <p className="text-sm text-muted-foreground py-2">No CapEx items. Click + to add or check "Renovate" on unit types.</p>}
+          {d.capex_items.length === 0 && (
+            <p className="text-sm text-muted-foreground py-2">
+              {deal?.investment_strategy === "ground_up"
+                ? "No budget items. Click + to add or use AI Estimate for a development cost breakdown (hard costs $/SF + soft costs)."
+                : "No CapEx items. Click + to add or check \"Renovate\" on unit types."}
+            </p>
+          )}
           {d.capex_items.length > 0 && (
             <table className="w-full text-sm border-collapse">
               <thead>
@@ -1405,8 +1411,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="w-[28px]" />
                   <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[30px]">#</th>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Description</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Qty</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">Cost / Unit</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">{deal?.investment_strategy === "ground_up" ? "SF / Qty" : "Qty"}</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">{deal?.investment_strategy === "ground_up" ? "$ / SF" : "Cost / Unit"}</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Total</th>
                   <th className="w-[32px]" />
                 </tr>
@@ -1455,7 +1461,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </DndContext>
               <tfoot>
                 <tr className="border-t bg-muted/20 font-semibold">
-                  <td colSpan={5} className="px-2 py-2 text-right">Total CapEx</td>
+                  <td colSpan={5} className="px-2 py-2 text-right">{deal?.investment_strategy === "ground_up" ? "Total Development Cost" : "Total CapEx"}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{fc(m.capexTotal)}</td>
                   <td />
                 </tr>
@@ -1469,7 +1475,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </Button>
               <Button variant="outline" size="sm" onClick={estimateCapex} disabled={capexEstimating}>
                 {capexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                AI Estimate
+                {deal?.investment_strategy === "ground_up" ? "AI Dev Budget" : "AI Estimate"}
               </Button>
             </div>
           </div>

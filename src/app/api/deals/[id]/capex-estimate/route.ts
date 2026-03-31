@@ -16,8 +16,11 @@ function parseJsonArray(raw: string): unknown[] {
 
 /**
  * POST /api/deals/:id/capex-estimate
- * Use AI to generate estimated CapEx line items based on deal info,
- * OM analysis red flags, and any analyst context notes.
+ * Use AI to generate estimated CapEx / development budget line items based on
+ * deal info, investment strategy, OM analysis, and analyst notes.
+ *
+ * For ground-up: generates hard cost $/SF categories + soft cost categories
+ * For value-add / other: generates traditional CapEx line items
  */
 export async function POST(
   _req: NextRequest,
@@ -31,6 +34,7 @@ export async function POST(
 
     const dealInfo = [
       `Property Type: ${deal.property_type ?? "unknown"}`,
+      deal.investment_strategy ? `Investment Strategy: ${deal.investment_strategy}` : null,
       deal.units ? `Units: ${deal.units}` : null,
       deal.square_footage ? `Total SF: ${deal.square_footage.toLocaleString()}` : null,
       deal.year_built ? `Year Built: ${deal.year_built}` : null,
@@ -56,7 +60,95 @@ export async function POST(
       ? `ANALYST NOTES (from deal notes):\n${memoryText}`
       : "";
 
-    const prompt = `You are a commercial real estate CapEx estimator. Based on the deal information below, estimate capital expenditure line items for a value-add acquisition. Use realistic 2024-2025 contractor/market pricing.
+    const isGroundUp = deal.investment_strategy === "ground_up";
+
+    const prompt = isGroundUp
+      ? buildGroundUpPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText)
+      : buildValueAddPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
+
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 1500,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const raw = response.content[0].type === "text" ? response.content[0].text : "[]";
+    const estimates = parseJsonArray(raw);
+
+    return NextResponse.json({ data: estimates, strategy: deal.investment_strategy || "value_add" });
+  } catch (error) {
+    console.error("POST /api/deals/[id]/capex-estimate error:", error);
+    return NextResponse.json({ error: "Estimation failed" }, { status: 500 });
+  }
+}
+
+function buildGroundUpPrompt(
+  dealInfo: string,
+  summaryText: string,
+  redFlagsText: string,
+  recommendationsText: string,
+  contextText: string,
+): string {
+  return `You are a commercial real estate development cost estimator. Based on the deal information below, generate a ground-up development budget. Use realistic 2024-2025 pricing for the market/region indicated.
+
+${dealInfo}
+${summaryText}
+${redFlagsText}
+${recommendationsText}
+${contextText}
+
+Generate a development budget with HARD COSTS (priced per SF of buildable area) and SOFT COSTS (as lump sums or percentages). Use these categories:
+
+HARD COSTS (per SF):
+- Site Work & Demolition
+- Concrete / Foundation
+- Structural / Framing
+- Building Envelope (exterior walls, windows, roofing)
+- MEP (mechanical, electrical, plumbing)
+- Interior Finishes (flooring, drywall, paint, fixtures)
+- Common Areas / Amenities
+- Parking / Hardscape
+- General Conditions & Contractor Overhead
+
+SOFT COSTS (lump sum):
+- Architecture & Engineering
+- Permits & Impact Fees
+- Legal & Closing Costs
+- Development Management Fee
+- Financing / Interest Reserve
+- Contingency
+
+For hard costs: set quantity = total buildable SF (or estimate it from units × typical SF/unit if not given), and cost_per_unit = $/SF for that category.
+For soft costs: set quantity = 1, and cost_per_unit = total lump sum dollar amount.
+
+Return ONLY a JSON array, no explanation:
+[
+  {
+    "label": "Site Work & Demolition",
+    "quantity": 25000,
+    "unit": "SF",
+    "cost_per_unit": 12,
+    "basis": "Assumes 25,000 SF site, moderate grading and demo"
+  },
+  {
+    "label": "Architecture & Engineering",
+    "quantity": 1,
+    "unit": "lump sum",
+    "cost_per_unit": 350000,
+    "basis": "~3-4% of hard costs, typical for multifamily"
+  }
+]`;
+}
+
+function buildValueAddPrompt(
+  dealInfo: string,
+  summaryText: string,
+  redFlagsText: string,
+  recommendationsText: string,
+  contextText: string,
+): string {
+  return `You are a commercial real estate CapEx estimator. Based on the deal information below, estimate capital expenditure line items for an acquisition. Use realistic 2024-2025 contractor/market pricing.
 
 ${dealInfo}
 ${summaryText}
@@ -87,20 +179,4 @@ Return ONLY a JSON array, no explanation:
     "basis": "4 rooftop units, aged 15+ years per year built"
   }
 ]`;
-
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const raw = response.content[0].type === "text" ? response.content[0].text : "[]";
-    const estimates = parseJsonArray(raw);
-
-    return NextResponse.json({ data: estimates });
-  } catch (error) {
-    console.error("POST /api/deals/[id]/capex-estimate error:", error);
-    return NextResponse.json({ error: "Estimation failed" }, { status: 500 });
-  }
 }

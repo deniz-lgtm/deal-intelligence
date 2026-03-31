@@ -65,6 +65,7 @@ export interface Deal {
   state: string;
   zip: string;
   property_type: PropertyType;
+  investment_strategy: InvestmentThesis | null;
   status: DealStatus;
   starred: boolean;
   asking_price: number | null;
