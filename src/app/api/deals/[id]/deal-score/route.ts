@@ -87,7 +87,7 @@ export async function POST(
       checklist,
       notes,
       memoryText,
-      businessPlan as BusinessPlan | null
+      businessPlan as unknown as BusinessPlan | null
     );
 
     const response = await getClient().messages.create({
