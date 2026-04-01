@@ -337,13 +337,14 @@ export const dealQueries = {
   create: async (deal: Record<string, unknown>) => {
     const pool = getPool();
 
-    // Ensure business_plan_id column exists (self-healing migration)
-    if (deal.business_plan_id) {
-      try {
-        await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT");
-      } catch (err) {
-        console.warn("ALTER business_plan_id:", (err as Error).message);
-      }
+    // Ensure optional columns exist (self-healing migration)
+    try {
+      await pool.query(`
+        ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT;
+        ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT;
+      `);
+    } catch (err) {
+      console.warn("ALTER deals columns:", (err as Error).message);
     }
 
     const cols = [
