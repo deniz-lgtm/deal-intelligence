@@ -22,7 +22,6 @@ import {
   Lightbulb,
   XCircle,
   BookOpen,
-  ChevronRight,
   Star,
   Calculator,
 } from "lucide-react";
@@ -30,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import DealNotes from "@/components/DealNotes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -145,36 +145,54 @@ function severityConfig(severity: string) {
   }
 }
 
-function buildBusinessPlanContext(basePlan: BusinessPlan | null, addendum: string): string {
+function buildPlanContext(basePlan: BusinessPlan | null): string {
+  if (!basePlan) return "";
+  const planLines: string[] = [`BASE BUSINESS PLAN — ${basePlan.name}:`];
+  if ((basePlan.investment_theses || []).length > 0) {
+    planLines.push(`Investment Thesis: ${basePlan.investment_theses.map(t => THESIS_LABELS[t] || t).join(", ")}`);
+  }
+  if ((basePlan.target_markets || []).length > 0) {
+    planLines.push(`Target Markets: ${basePlan.target_markets.join(", ")}`);
+  }
+  if ((basePlan.property_types || []).length > 0) {
+    planLines.push(`Property Types: ${basePlan.property_types.join(", ")}`);
+  }
+  if (basePlan.target_irr_min || basePlan.target_irr_max) {
+    planLines.push(`Target IRR: ${basePlan.target_irr_min ?? "?"}% – ${basePlan.target_irr_max ?? "?"}%`);
+  }
+  if (basePlan.target_equity_multiple_min || basePlan.target_equity_multiple_max) {
+    planLines.push(`Target Equity Multiple: ${basePlan.target_equity_multiple_min ?? "?"}x – ${basePlan.target_equity_multiple_max ?? "?"}x`);
+  }
+  if (basePlan.hold_period_min || basePlan.hold_period_max) {
+    planLines.push(`Hold Period: ${basePlan.hold_period_min ?? "?"}–${basePlan.hold_period_max ?? "?"} years`);
+  }
+  if (basePlan.description?.trim()) {
+    planLines.push(`Strategy Notes: ${basePlan.description.trim()}`);
+  }
+  return planLines.join("\n");
+}
+
+async function fetchDealNotesContext(dealId: string): Promise<string> {
+  try {
+    const res = await fetch(`/api/deals/${dealId}/notes`);
+    const json = await res.json();
+    const notes = json.data as Array<{ text: string; category: string }> | undefined;
+    if (!notes || notes.length === 0) return "";
+    const inMemoryCategories = ["context", "thesis", "risk"];
+    const memoryNotes = notes.filter(n => inMemoryCategories.includes(n.category));
+    if (memoryNotes.length === 0) return "";
+    return "DEAL NOTES (from memory):\n" + memoryNotes.map(n => `- [${n.category}] ${n.text}`).join("\n");
+  } catch {
+    return "";
+  }
+}
+
+async function buildFullDealContext(dealId: string, basePlan: BusinessPlan | null): Promise<string> {
   const parts: string[] = [];
-  if (basePlan) {
-    const planLines: string[] = [`BASE BUSINESS PLAN — ${basePlan.name}:`];
-    if ((basePlan.investment_theses || []).length > 0) {
-      planLines.push(`Investment Thesis: ${basePlan.investment_theses.map(t => THESIS_LABELS[t] || t).join(", ")}`);
-    }
-    if ((basePlan.target_markets || []).length > 0) {
-      planLines.push(`Target Markets: ${basePlan.target_markets.join(", ")}`);
-    }
-    if ((basePlan.property_types || []).length > 0) {
-      planLines.push(`Property Types: ${basePlan.property_types.join(", ")}`);
-    }
-    if (basePlan.target_irr_min || basePlan.target_irr_max) {
-      planLines.push(`Target IRR: ${basePlan.target_irr_min ?? "?"}% – ${basePlan.target_irr_max ?? "?"}%`);
-    }
-    if (basePlan.target_equity_multiple_min || basePlan.target_equity_multiple_max) {
-      planLines.push(`Target Equity Multiple: ${basePlan.target_equity_multiple_min ?? "?"}x – ${basePlan.target_equity_multiple_max ?? "?"}x`);
-    }
-    if (basePlan.hold_period_min || basePlan.hold_period_max) {
-      planLines.push(`Hold Period: ${basePlan.hold_period_min ?? "?"}–${basePlan.hold_period_max ?? "?"} years`);
-    }
-    if (basePlan.description?.trim()) {
-      planLines.push(`Strategy Notes: ${basePlan.description.trim()}`);
-    }
-    parts.push(planLines.join("\n"));
-  }
-  if (addendum.trim()) {
-    parts.push(`DEAL-SPECIFIC NOTES:\n${addendum.trim()}`);
-  }
+  const planCtx = buildPlanContext(basePlan);
+  if (planCtx) parts.push(planCtx);
+  const notesCtx = await fetchDealNotesContext(dealId);
+  if (notesCtx) parts.push(notesCtx);
   return parts.join("\n\n");
 }
 
@@ -211,66 +229,31 @@ interface BusinessPlan {
   is_default: boolean;
 }
 
-// ─── Two-Layer Deal Context Panel ─────────────────────────────────────────────
+// ─── Deal Context Panel (read-only plan + deal notes) ────────────────────────
 
 function DealContextPanel({
   basePlan,
-  setBasePlan,
-  addendum,
-  setAddendum,
-  dealBusinessPlanId,
+  loadingPlan,
+  dealId,
 }: {
   basePlan: BusinessPlan | null;
-  setBasePlan: (plan: BusinessPlan | null) => void;
-  addendum: string;
-  setAddendum: (v: string) => void;
-  dealBusinessPlanId?: string | null;
+  loadingPlan: boolean;
+  dealId: string;
 }) {
-  const [plans, setPlans] = useState<BusinessPlan[]>([]);
-  const [loadingPlans, setLoadingPlans] = useState(true);
-  const [showPlanPicker, setShowPlanPicker] = useState(false);
   const [expanded, setExpanded] = useState(false);
-
-  useEffect(() => {
-    async function loadPlans() {
-      try {
-        const res = await fetch("/api/business-plans");
-        const json = await res.json();
-        if (json.data) {
-          setPlans(json.data);
-          // Auto-select: deal's linked plan > default plan > none
-          if (!basePlan) {
-            const linkedPlan = dealBusinessPlanId
-              ? json.data.find((p: BusinessPlan) => p.id === dealBusinessPlanId) ?? null
-              : null;
-            const defaultPlan = json.data.find((p: BusinessPlan) => p.is_default) ?? null;
-            setBasePlan(linkedPlan || defaultPlan);
-          }
-        }
-      } catch {
-        // ignore
-      } finally {
-        setLoadingPlans(false);
-      }
-    }
-    loadPlans();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const noPlansSaved = !loadingPlans && plans.length === 0;
 
   return (
     <div className="w-full flex flex-col gap-3">
-      {/* Base Plan selector */}
+      {/* Business Plan (read-only from deal) */}
       <div className="border rounded-xl bg-amber-50/60 border-amber-200">
         <div className="flex items-center justify-between px-4 py-3 gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <BookOpen className="h-4 w-4 text-amber-600 flex-shrink-0" />
-            <p className="text-sm font-semibold text-amber-900">Base Business Plan</p>
+            <p className="text-sm font-semibold text-amber-900">Business Plan</p>
           </div>
-          {loadingPlans ? (
+          {loadingPlan ? (
             <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin flex-shrink-0" />
-          ) : noPlansSaved ? (
+          ) : !basePlan ? (
             <Link
               href="/business-plans"
               target="_blank"
@@ -280,53 +263,7 @@ function DealContextPanel({
               Create a plan
             </Link>
           ) : (
-            <div className="relative">
-              <button
-                onClick={() => setShowPlanPicker((v) => !v)}
-                className="flex items-center gap-1.5 text-xs text-amber-700 hover:text-amber-900 font-medium"
-              >
-                Change
-                <ChevronRight className={cn("h-3 w-3 transition-transform", showPlanPicker && "rotate-90")} />
-              </button>
-              {showPlanPicker && (
-                <div className="absolute right-0 top-full mt-1 z-10 w-64 bg-white border border-gray-200 rounded-xl shadow-lg py-1 text-sm max-h-60 overflow-y-auto">
-                  <button
-                    onClick={() => {
-                      setBasePlan(null);
-                      setShowPlanPicker(false);
-                    }}
-                    className="w-full text-left px-3 py-2 hover:bg-gray-100 text-gray-500 text-xs"
-                  >
-                    None (no base plan)
-                  </button>
-                  {plans.map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => {
-                        setBasePlan(p);
-                        setShowPlanPicker(false);
-                      }}
-                      className={cn(
-                        "w-full text-left px-3 py-2 hover:bg-gray-100 flex items-start gap-2",
-                        basePlan?.id === p.id && "bg-amber-50"
-                      )}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          {p.is_default && (
-                            <Star className="h-3 w-3 fill-amber-400 text-amber-400 flex-shrink-0" />
-                          )}
-                          <span className="font-medium text-xs truncate text-gray-900">{p.name}</span>
-                        </div>
-                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">
-                          {p.description}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <p className="text-[10px] text-amber-600 italic">Set at deal creation</p>
           )}
         </div>
 
@@ -338,7 +275,6 @@ function DealContextPanel({
               )}
               <p className="text-xs font-semibold text-amber-800">{basePlan.name}</p>
             </div>
-            {/* Thesis badges */}
             {(basePlan.investment_theses || []).length > 0 && (
               <div className="flex flex-wrap gap-1 mb-1.5">
                 {basePlan.investment_theses.map((t) => (
@@ -348,7 +284,6 @@ function DealContextPanel({
                 ))}
               </div>
             )}
-            {/* Markets & targets summary */}
             <div className="flex items-center gap-3 flex-wrap text-[10px] text-amber-700 mb-1">
               {(basePlan.target_markets || []).length > 0 && (
                 <span>Markets: {basePlan.target_markets.join(", ")}</span>
@@ -379,28 +314,16 @@ function DealContextPanel({
         ) : (
           <div className="border-t border-amber-200 px-4 py-2 bg-amber-50/30">
             <p className="text-xs text-amber-700/70 italic">
-              {noPlansSaved
-                ? "No business plans saved yet — create one to pre-fill strategy context on every analysis."
-                : "No base plan selected — analysis will run without strategy context."}
+              No business plan linked to this deal — analysis will run without strategy context.
             </p>
           </div>
         )}
       </div>
 
-      {/* Deal-specific addendum */}
+      {/* Deal Notes (shared memory system) */}
       <div className="border rounded-xl p-4 bg-card flex flex-col gap-2.5">
-        <div className="flex items-center gap-2">
-          <div className="h-4 w-4 rounded-sm bg-primary/15 flex items-center justify-center flex-shrink-0">
-            <span className="text-[9px] font-bold text-primary">+</span>
-          </div>
-          <p className="text-sm font-semibold">Deal-Specific Notes <span className="text-muted-foreground font-normal text-xs">(optional)</span></p>
-        </div>
-        <Textarea
-          value={addendum}
-          onChange={(e) => setAddendum(e.target.value)}
-          placeholder="Anything specific to this deal? e.g. Seller is motivated — been on market 6+ months. Building has deferred roof. We've already walked it once. Do not flag roof as a surprise."
-          className="min-h-[72px] resize-none text-sm"
-        />
+        <p className="text-sm font-semibold">Deal Notes</p>
+        <DealNotes dealId={dealId} compact />
       </div>
     </div>
   );
@@ -412,23 +335,19 @@ function UploadPanel({
   dealId,
   onAnalysisCreated,
   processing,
-  dealBusinessPlanId,
+  basePlan,
+  loadingPlan,
 }: {
   dealId: string;
   onAnalysisCreated: () => void;
   processing: boolean;
-  dealBusinessPlanId?: string | null;
+  basePlan: BusinessPlan | null;
+  loadingPlan: boolean;
 }) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [basePlan, setBasePlan] = useState<BusinessPlan | null>(null);
-  const [addendum, setAddendum] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-
-  function buildDealContext(): string {
-    return buildBusinessPlanContext(basePlan, addendum);
-  }
 
   async function upload(file: File) {
     setUploading(true);
@@ -436,7 +355,7 @@ function UploadPanel({
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const ctx = buildDealContext();
+      const ctx = await buildFullDealContext(dealId, basePlan);
       if (ctx) fd.append("deal_context", ctx);
       const res = await fetch(`/api/deals/${dealId}/om-upload`, {
         method: "POST",
@@ -485,13 +404,11 @@ function UploadPanel({
         </div>
       ) : (
         <>
-          {/* Two-layer context */}
+          {/* Deal context */}
           <DealContextPanel
             basePlan={basePlan}
-            setBasePlan={setBasePlan}
-            addendum={addendum}
-            setAddendum={setAddendum}
-            dealBusinessPlanId={dealBusinessPlanId}
+            loadingPlan={loadingPlan}
+            dealId={dealId}
           />
 
           {/* Drop zone */}
@@ -916,22 +833,20 @@ function QaChat({
 
 function ReanalyzePanel({
   dealId,
+  basePlan,
+  loadingPlan,
   onDone,
   onCancel,
 }: {
   dealId: string;
+  basePlan: BusinessPlan | null;
+  loadingPlan: boolean;
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [basePlan, setBasePlan] = useState<BusinessPlan | null>(null);
-  const [addendum, setAddendum] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  function buildDealContext(): string {
-    return buildBusinessPlanContext(basePlan, addendum);
-  }
 
   async function upload(file: File) {
     setUploading(true);
@@ -939,7 +854,7 @@ function ReanalyzePanel({
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const ctx = buildDealContext();
+      const ctx = await buildFullDealContext(dealId, basePlan);
       if (ctx) fd.append("deal_context", ctx);
       const res = await fetch(`/api/deals/${dealId}/om-upload`, {
         method: "POST",
@@ -965,9 +880,8 @@ function ReanalyzePanel({
       <CardContent className="pt-0 flex flex-col gap-4">
         <DealContextPanel
           basePlan={basePlan}
-          setBasePlan={setBasePlan}
-          addendum={addendum}
-          setAddendum={setAddendum}
+          loadingPlan={loadingPlan}
+          dealId={dealId}
         />
 
         <div className="flex items-center gap-3">
@@ -1028,14 +942,27 @@ export default function OmAnalysisPage() {
   const [notionResult, setNotionResult] = useState<{ url: string } | null>(null);
   const [showAssumptions, setShowAssumptions] = useState(false);
   const [showReanalyze, setShowReanalyze] = useState(false);
-  const [dealBusinessPlanId, setDealBusinessPlanId] = useState<string | null>(null);
+  const [basePlan, setBasePlan] = useState<BusinessPlan | null>(null);
+  const [loadingPlan, setLoadingPlan] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch deal to get linked business plan
+  // Fetch deal's linked business plan
   useEffect(() => {
-    fetch(`/api/deals/${dealId}`).then(r => r.json()).then(json => {
-      if (json.data?.business_plan_id) setDealBusinessPlanId(json.data.business_plan_id);
-    }).catch(() => {});
+    async function loadPlan() {
+      try {
+        const dealRes = await fetch(`/api/deals/${dealId}`);
+        const dealJson = await dealRes.json();
+        const bpId = dealJson.data?.business_plan_id;
+        if (bpId) {
+          const planRes = await fetch(`/api/business-plans/${bpId}`);
+          const planJson = await planRes.json();
+          if (planJson.data) setBasePlan(planJson.data);
+        }
+      } catch {} finally {
+        setLoadingPlan(false);
+      }
+    }
+    loadPlan();
   }, [dealId]);
 
   const fetchAnalysis = useCallback(async () => {
@@ -1117,7 +1044,8 @@ export default function OmAnalysisPage() {
       <UploadPanel
         dealId={dealId}
         processing={false}
-        dealBusinessPlanId={dealBusinessPlanId}
+        basePlan={basePlan}
+        loadingPlan={loadingPlan}
         onAnalysisCreated={async () => {
           const a = await fetchAnalysis();
           if (a) setAnalysis(a);
@@ -1132,7 +1060,8 @@ export default function OmAnalysisPage() {
       <UploadPanel
         dealId={dealId}
         processing={true}
-        dealBusinessPlanId={dealBusinessPlanId}
+        basePlan={basePlan}
+        loadingPlan={loadingPlan}
         onAnalysisCreated={fetchAnalysis}
       />
     );
@@ -1156,7 +1085,8 @@ export default function OmAnalysisPage() {
         <UploadPanel
           dealId={dealId}
           processing={false}
-          dealBusinessPlanId={dealBusinessPlanId}
+          basePlan={basePlan}
+        loadingPlan={loadingPlan}
           onAnalysisCreated={async () => {
             const a = await fetchAnalysis();
             if (a) setAnalysis(a);
@@ -1236,6 +1166,8 @@ export default function OmAnalysisPage() {
       {showReanalyze && (
         <ReanalyzePanel
           dealId={dealId}
+          basePlan={basePlan}
+          loadingPlan={loadingPlan}
           onDone={async () => {
             setShowReanalyze(false);
             const a = await fetchAnalysis();
