@@ -608,3 +608,120 @@ Answer questions accurately based on the documents. If information isn't availab
 
   return fullText;
 }
+
+// ─── Zoning Analysis ──────────────────────────────────────────────────────────
+
+export interface ZoningAnalysis {
+  structured: {
+    zoning_designation: string;
+    far: number | null;
+    max_height_ft: number | null;
+    max_height_stories: number | null;
+    lot_coverage_pct: number | null;
+    setbacks: { front: number; side: number; rear: number } | null;
+    permitted_uses: string[];
+    overlays: string[];
+    density_bonuses: Array<{ source: string; description: string; additional_density: string }>;
+    parking_requirements: string;
+  };
+  narrative: string;
+  sources: string[];
+}
+
+export async function analyzeZoning(
+  dealName: string,
+  address: string,
+  city: string,
+  state: string,
+  propertyType: string,
+  investmentStrategy: string | null,
+  documents: Array<{
+    name: string;
+    content_text: string | null;
+    ai_summary: string | null;
+  }>
+): Promise<ZoningAnalysis> {
+  const docContext = documents
+    .filter((d) => d.content_text || d.ai_summary)
+    .map(
+      (d) =>
+        `[${d.name}]: ${d.ai_summary || ""}\n${
+          d.content_text ? d.content_text.slice(0, 3000) : ""
+        }`
+    )
+    .join("\n\n");
+
+  const fullAddress = [address, city, state].filter(Boolean).join(", ");
+
+  const prompt = `You are a real estate zoning and entitlements expert. Analyze the zoning for this property.
+
+PROPERTY:
+- Deal: ${dealName}
+- Address: ${fullAddress}
+- Property Type: ${propertyType}
+- Investment Strategy: ${investmentStrategy || "Not specified"}
+
+${docContext ? `UPLOADED ZONING DOCUMENTS:\n${docContext}\n` : "No zoning documents uploaded yet."}
+
+INSTRUCTIONS:
+1. Based on the address, research what you know about the jurisdiction's zoning codes for this location.
+2. If zoning documents were provided, cross-reference them with your knowledge.
+3. Identify the zoning district/designation for this address.
+4. Extract dimensional standards: FAR, height limits, lot coverage, setbacks, parking.
+5. Identify any overlay districts that apply.
+6. Research state-level density bonus programs or legislation that could allow additional density (e.g., California AB 2011, Texas Chapter 245, Florida Live Local Act, etc.).
+7. Flag any use restrictions that conflict with the intended property type (${propertyType}).
+
+Respond with valid JSON only (no markdown):
+{
+  "structured": {
+    "zoning_designation": "<zoning code/district, e.g. M-1, PD-123, C-2>",
+    "far": <number or null if unknown>,
+    "max_height_ft": <number or null>,
+    "max_height_stories": <number or null>,
+    "lot_coverage_pct": <number 0-100 or null>,
+    "setbacks": { "front": <ft>, "side": <ft>, "rear": <ft> } or null,
+    "permitted_uses": ["<use1>", "<use2>"],
+    "overlays": ["<overlay1>"],
+    "density_bonuses": [
+      { "source": "<legislation or program name>", "description": "<what it allows>", "additional_density": "<e.g. +35% FAR>" }
+    ],
+    "parking_requirements": "<brief summary>"
+  },
+  "narrative": "<detailed markdown-formatted zoning memo covering: zoning designation, dimensional standards, permitted uses, overlays, density bonuses, potential conflicts, recommendations for the developer>",
+  "sources": ["<source description or URL>"]
+}
+
+Be thorough in the narrative. Include specific code references where possible. If you're uncertain about specific values, note that in the narrative and provide your best estimate with caveats.`;
+
+  const response = await getClient().messages.create({
+    model: MODEL,
+    max_tokens: 8192,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  try {
+    const text =
+      response.content[0].type === "text" ? response.content[0].text : "{}";
+    // Strip markdown code fences if present
+    const cleaned = text.replace(/^```json\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+    return JSON.parse(cleaned);
+  } catch {
+    return {
+      structured: {
+        zoning_designation: "Unknown",
+        far: null,
+        max_height_ft: null,
+        max_height_stories: null,
+        lot_coverage_pct: null,
+        setbacks: null,
+        permitted_uses: [],
+        overlays: [],
+        density_bonuses: [],
+        parking_requirements: "Unknown",
+      },
+      narrative: "Failed to parse zoning analysis. Please try again.",
+      sources: [],
+    };
+  }
+}

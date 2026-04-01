@@ -534,6 +534,30 @@ export default function DealOverviewPage({
               />
             )}
           </div>
+          {/* Land Acres */}
+          <div className="mt-3 pt-3 border-t border-border/40">
+            <label className="text-2xs text-muted-foreground font-medium uppercase tracking-wider">Land (Acres)</label>
+            <input
+              type="number"
+              step="0.01"
+              value={deal.land_acres ?? ""}
+              placeholder="—"
+              onChange={(e) => {
+                const val = e.target.value ? parseFloat(e.target.value) : null;
+                setDeal((prev: any) => prev ? { ...prev, land_acres: val } : prev);
+              }}
+              onBlur={async () => {
+                try {
+                  await fetch(`/api/deals/${params.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ land_acres: deal.land_acres }),
+                  });
+                } catch { /* ignore */ }
+              }}
+              className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40 transition-colors"
+            />
+          </div>
           {/* Investment Strategy */}
           <div className="mt-3 pt-3 border-t border-border/40">
             <label className="text-2xs text-muted-foreground font-medium uppercase tracking-wider">Investment Strategy</label>
@@ -628,6 +652,16 @@ export default function DealOverviewPage({
           )}
         </div>
       </div>
+
+      {/* Site & Development — Ground-Up Only */}
+      {deal.investment_strategy === "ground_up" && (
+        <SiteDevelopmentCard
+          deal={deal}
+          underwriting={underwriting}
+          dealId={params.id}
+          onUnderwritingUpdate={(updates) => setUnderwriting(prev => prev ? { ...prev, ...updates } : updates as any)}
+        />
+      )}
 
       {/* Business Plan */}
       <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
@@ -818,6 +852,168 @@ export default function DealOverviewPage({
           <h3 className="font-display text-sm">Deal Notes</h3>
         </div>
         <DealNotes dealId={params.id} />
+      </div>
+    </div>
+  );
+}
+
+const EFFICIENCY_DEFAULTS: Record<string, number> = {
+  industrial: 98, multifamily: 80, student_housing: 78,
+  office: 87, retail: 95, mixed_use: 85, other: 90,
+};
+
+function SiteDevelopmentCard({ deal, underwriting, dealId, onUnderwritingUpdate }: {
+  deal: Deal;
+  underwriting: UnderwritingData | null;
+  dealId: string;
+  onUnderwritingUpdate: (updates: Partial<UnderwritingData>) => void;
+}) {
+  const isIndustrial = deal.property_type === "industrial";
+  const isMF = ["multifamily", "student_housing"].includes(deal.property_type || "");
+  const landAcres = deal.land_acres || 0;
+  const landSF = landAcres * 43560;
+
+  // Read current values from underwriting or use defaults
+  const lotCoverage = underwriting?.lot_coverage_pct ?? (isIndustrial ? 40 : 0);
+  const far = underwriting?.far ?? 0;
+  const heightLimit = underwriting?.height_limit_stories ?? 0;
+  const efficiencyDefault = EFFICIENCY_DEFAULTS[deal.property_type || "other"] ?? 90;
+  const efficiency = underwriting?.efficiency_pct ?? efficiencyDefault;
+
+  // Calculate max GSF
+  let maxGSF = 0;
+  if (isIndustrial && landSF > 0 && lotCoverage > 0) {
+    maxGSF = Math.round(landSF * (lotCoverage / 100));
+  } else if (landSF > 0 && far > 0) {
+    maxGSF = Math.round(landSF * far);
+  }
+  const maxNRSF = Math.round(maxGSF * (efficiency / 100));
+
+  const saveToUW = async (updates: Record<string, unknown>) => {
+    onUnderwritingUpdate(updates as Partial<UnderwritingData>);
+    try {
+      // Fetch current UW, merge, save
+      const uwRes = await fetch(`/api/underwriting?deal_id=${dealId}`);
+      const uwJson = await uwRes.json();
+      const currentData = uwJson.data?.data
+        ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
+        : {};
+      const merged = { ...currentData, ...updates, development_mode: true, max_gsf: updates.max_gsf ?? maxGSF, max_nrsf: updates.max_nrsf ?? maxNRSF };
+      await fetch("/api/underwriting", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_id: dealId, data: merged }),
+      });
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
+      <div className="flex items-center gap-2 mb-3">
+        <MapPin className="h-3.5 w-3.5 text-primary" />
+        <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">Site & Development Parameters</h3>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Land info (read-only, comes from deal) */}
+        <div className="p-3 bg-muted/30 rounded-lg">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Land</p>
+          <p className="text-sm font-semibold">{landAcres > 0 ? `${landAcres.toFixed(2)} AC` : "—"}</p>
+          {landSF > 0 && <p className="text-[10px] text-muted-foreground">{Math.round(landSF).toLocaleString()} SF</p>}
+        </div>
+
+        {/* Property-type-specific inputs */}
+        {isIndustrial ? (
+          <div>
+            <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Lot Coverage %</label>
+            <input
+              type="number"
+              step="1"
+              min="0"
+              max="100"
+              value={lotCoverage || ""}
+              placeholder="40"
+              onChange={(e) => {
+                const val = parseFloat(e.target.value) || 0;
+                const newGSF = Math.round(landSF * (val / 100));
+                const newNRSF = Math.round(newGSF * (efficiency / 100));
+                saveToUW({ lot_coverage_pct: val, max_gsf: newGSF, max_nrsf: newNRSF });
+              }}
+              className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40"
+            />
+          </div>
+        ) : (
+          <>
+            <div>
+              <label className="text-[10px] text-muted-foreground uppercase tracking-wide">FAR</label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                value={far || ""}
+                placeholder="0.0"
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value) || 0;
+                  const newGSF = Math.round(landSF * val);
+                  const newNRSF = Math.round(newGSF * (efficiency / 100));
+                  saveToUW({ far: val, max_gsf: newGSF, max_nrsf: newNRSF });
+                }}
+                className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40"
+              />
+            </div>
+            {isMF && (
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Height Limit (Stories)</label>
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={heightLimit || ""}
+                  placeholder="0"
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value) || 0;
+                    saveToUW({ height_limit_stories: val });
+                  }}
+                  className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40"
+                />
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Efficiency */}
+        <div>
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Efficiency (GSF → NRSF)</label>
+          <input
+            type="number"
+            step="1"
+            min="0"
+            max="100"
+            value={efficiency || ""}
+            placeholder={String(efficiencyDefault)}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value) || 0;
+              const newNRSF = Math.round(maxGSF * (val / 100));
+              saveToUW({ efficiency_pct: val, max_nrsf: newNRSF });
+            }}
+            className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40"
+          />
+        </div>
+      </div>
+
+      {/* Calculated results */}
+      <div className="grid grid-cols-2 gap-4 mt-4">
+        <div className="p-3 bg-muted/50 rounded-lg">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Max Gross SF (GSF)</p>
+          <p className="text-lg font-bold">{maxGSF > 0 ? maxGSF.toLocaleString() : "—"}</p>
+          {isIndustrial && maxGSF > 0 && <p className="text-[10px] text-muted-foreground">{lotCoverage}% lot coverage</p>}
+          {!isIndustrial && maxGSF > 0 && <p className="text-[10px] text-muted-foreground">{far}x FAR</p>}
+        </div>
+        <div className="p-3 bg-primary/10 rounded-lg">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Max Net Rentable SF (NRSF)</p>
+          <p className="text-lg font-bold text-primary">{maxNRSF > 0 ? maxNRSF.toLocaleString() : "—"}</p>
+          {maxNRSF > 0 && <p className="text-[10px] text-muted-foreground">{efficiency}% efficiency</p>}
+        </div>
       </div>
     </div>
   );

@@ -79,6 +79,7 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
     // documents table
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
     // chat_messages table
@@ -148,6 +149,7 @@ export async function initSchema(): Promise<void> {
       loi_executed BOOLEAN NOT NULL DEFAULT false,
       psa_executed BOOLEAN NOT NULL DEFAULT false,
       business_plan_id TEXT,
+      land_acres REAL,
       om_score INTEGER,
       om_extracted JSONB,
       proforma_outputs JSONB,
@@ -372,6 +374,7 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS owner_id TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
   ];
   for (const alter of criticalAlters) {
     try {

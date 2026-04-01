@@ -69,6 +69,8 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
   const [autofillResult, setAutofillResult] = useState<{ filled: number; message?: string } | null>(null);
   const [uploadingCategory, setUploadingCategory] = useState<string | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState<Record<string, boolean>>({});
+  const [zoningLoading, setZoningLoading] = useState(false);
+  const [zoningReport, setZoningReport] = useState<{ narrative: string; structured: any } | null>(null);
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
@@ -252,6 +254,29 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
                     style={{ width: `${catPct}%` }}
                   />
                 </div>
+                {category === "Zoning & Entitlements" && (
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setZoningLoading(true);
+                      try {
+                        const res = await fetch(`/api/deals/${dealId}/zoning-report`, { method: "POST" });
+                        const json = await res.json();
+                        if (res.ok && json.data) {
+                          setZoningReport(json.data);
+                          loadAll(); // Refresh checklist items
+                        }
+                      } catch { /* ignore */ }
+                      finally { setZoningLoading(false); }
+                    }}
+                    disabled={zoningLoading}
+                    className="flex items-center gap-1 text-2xs px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                    title="AI-powered zoning code analysis"
+                  >
+                    {zoningLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                    Zoning Report
+                  </button>
+                )}
                 <button
                   onClick={() => setUploadingCategory(uploadingCategory === category ? null : category)}
                   className="text-muted-foreground/40 hover:text-primary transition-colors"
@@ -332,6 +357,61 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
                     />
                   ))}
                 </div>
+                {/* Zoning Report Results */}
+                {category === "Zoning & Entitlements" && zoningReport && (
+                  <div className="border-t border-border/30 px-4 py-3 bg-primary/[0.02]">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold text-primary flex items-center gap-1.5">
+                        <Sparkles className="h-3 w-3" /> AI Zoning Report
+                      </p>
+                      <button onClick={() => setZoningReport(null)} className="text-muted-foreground/40 hover:text-muted-foreground">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {zoningReport.structured && (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+                        <div className="p-2 bg-muted/30 rounded text-xs">
+                          <p className="text-muted-foreground text-[10px] uppercase">Zoning</p>
+                          <p className="font-medium">{zoningReport.structured.zoning_designation || "—"}</p>
+                        </div>
+                        {zoningReport.structured.far != null && (
+                          <div className="p-2 bg-muted/30 rounded text-xs">
+                            <p className="text-muted-foreground text-[10px] uppercase">FAR</p>
+                            <p className="font-medium">{zoningReport.structured.far}</p>
+                          </div>
+                        )}
+                        {zoningReport.structured.lot_coverage_pct != null && (
+                          <div className="p-2 bg-muted/30 rounded text-xs">
+                            <p className="text-muted-foreground text-[10px] uppercase">Lot Coverage</p>
+                            <p className="font-medium">{zoningReport.structured.lot_coverage_pct}%</p>
+                          </div>
+                        )}
+                        {zoningReport.structured.max_height_stories != null && (
+                          <div className="p-2 bg-muted/30 rounded text-xs">
+                            <p className="text-muted-foreground text-[10px] uppercase">Max Height</p>
+                            <p className="font-medium">{zoningReport.structured.max_height_stories} stories</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {zoningReport.structured.density_bonuses?.length > 0 && (
+                      <div className="mb-2">
+                        <p className="text-[10px] font-medium text-muted-foreground uppercase mb-1">Density Bonuses</p>
+                        {zoningReport.structured.density_bonuses.map((b: any, i: number) => (
+                          <div key={i} className="text-xs text-muted-foreground mb-1">
+                            <span className="font-medium text-foreground">{b.source}</span>: {b.description} ({b.additional_density})
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Full narrative report</summary>
+                      <div className="mt-2 prose prose-xs prose-invert max-w-none whitespace-pre-wrap text-muted-foreground">
+                        {zoningReport.narrative}
+                      </div>
+                    </details>
+                  </div>
+                )}
               </div>
             )}
           </div>
