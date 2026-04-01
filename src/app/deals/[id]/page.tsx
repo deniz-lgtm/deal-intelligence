@@ -874,11 +874,13 @@ function SiteDevelopmentCard({ deal, underwriting, dealId, onUnderwritingUpdate 
   const landSF = landAcres * 43560;
 
   // Read current values from underwriting or use defaults
-  const lotCoverage = underwriting?.lot_coverage_pct ?? (isIndustrial ? 40 : 0);
-  const far = underwriting?.far ?? 0;
-  const heightLimit = underwriting?.height_limit_stories ?? 0;
+  // UW data stored as JSONB may have dev fields not in the shared UnderwritingData type
+  const uw = underwriting as any;
+  const lotCoverage = uw?.lot_coverage_pct ?? (isIndustrial ? 40 : 0);
+  const far = uw?.far ?? 0;
+  const heightLimit = uw?.height_limit_stories ?? 0;
   const efficiencyDefault = EFFICIENCY_DEFAULTS[deal.property_type || "other"] ?? 90;
-  const efficiency = underwriting?.efficiency_pct ?? efficiencyDefault;
+  const efficiency = uw?.efficiency_pct ?? efficiencyDefault;
 
   // Calculate max GSF
   let maxGSF = 0;
