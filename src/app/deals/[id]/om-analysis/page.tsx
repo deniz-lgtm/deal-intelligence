@@ -835,21 +835,42 @@ function ReanalyzePanel({
   dealId,
   basePlan,
   loadingPlan,
+  hasExistingDocument,
   onDone,
   onCancel,
 }: {
   dealId: string;
   basePlan: BusinessPlan | null;
   loadingPlan: boolean;
+  hasExistingDocument: boolean;
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [uploading, setUploading] = useState(false);
+  const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  async function upload(file: File) {
-    setUploading(true);
+  async function reanalyzeExisting() {
+    setWorking(true);
+    setError(null);
+    try {
+      const ctx = await buildFullDealContext(dealId, basePlan);
+      const res = await fetch(`/api/deals/${dealId}/om-reanalyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_context: ctx || undefined }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Re-analysis failed");
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Re-analysis failed");
+      setWorking(false);
+    }
+  }
+
+  async function uploadNew(file: File) {
+    setWorking(true);
     setError(null);
     try {
       const fd = new FormData();
@@ -865,7 +886,7 @@ function ReanalyzePanel({
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
-      setUploading(false);
+      setWorking(false);
     }
   }
 
@@ -874,7 +895,7 @@ function ReanalyzePanel({
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <RefreshCw className="h-4 w-4 text-primary" />
-          Re-analyze with Updated Context
+          Re-analyze
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0 flex flex-col gap-4">
@@ -884,26 +905,37 @@ function ReanalyzePanel({
           dealId={dealId}
         />
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {hasExistingDocument && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={reanalyzeExisting}
+              disabled={working}
+            >
+              {working ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Analyzing…
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Re-analyze Current OM
+                </>
+              )}
+            </Button>
+          )}
           <Button
-            variant="default"
+            variant="outline"
             size="sm"
             onClick={() => inputRef.current?.click()}
-            disabled={uploading}
+            disabled={working}
           >
-            {uploading ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Analyzing…
-              </>
-            ) : (
-              <>
-                <Upload className="h-4 w-4 mr-2" />
-                Choose OM File
-              </>
-            )}
+            <Upload className="h-4 w-4 mr-2" />
+            Upload Different OM
           </Button>
-          <Button variant="ghost" size="sm" onClick={onCancel} disabled={uploading}>
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={working}>
             Cancel
           </Button>
           <input
@@ -913,10 +945,16 @@ function ReanalyzePanel({
             className="hidden"
             onChange={(e) => {
               const files = e.target.files;
-              if (files && files[0]) upload(files[0]);
+              if (files && files[0]) uploadNew(files[0]);
             }}
           />
         </div>
+
+        {hasExistingDocument && (
+          <p className="text-xs text-muted-foreground">
+            &ldquo;Re-analyze Current OM&rdquo; uses your previously uploaded document with updated deal notes and business plan context.
+          </p>
+        )}
 
         {error && (
           <div className="flex items-center gap-2 text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-4 py-2.5">
@@ -944,6 +982,7 @@ export default function OmAnalysisPage() {
   const [showReanalyze, setShowReanalyze] = useState(false);
   const [basePlan, setBasePlan] = useState<BusinessPlan | null>(null);
   const [loadingPlan, setLoadingPlan] = useState(true);
+  const [hasExistingDocument, setHasExistingDocument] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Fetch deal's linked business plan
@@ -971,6 +1010,7 @@ export default function OmAnalysisPage() {
       const json = await res.json();
       if (res.ok && json.data?.analysis) {
         setAnalysis(json.data.analysis);
+        if (json.data.hasDocument) setHasExistingDocument(true);
         return json.data.analysis as OmAnalysis;
       }
     } catch {}
@@ -983,6 +1023,24 @@ export default function OmAnalysisPage() {
       const json = await res.json();
       if (res.ok) setQaHistory(json.data.history ?? []);
     } catch {}
+  }, [dealId]);
+
+  // Check if deal has existing OM documents
+  useEffect(() => {
+    async function checkDocuments() {
+      try {
+        const res = await fetch(`/api/deals/${dealId}/documents`);
+        const json = await res.json();
+        if (json.data) {
+          const hasOm = json.data.some((d: { ai_tags?: string[]; original_name?: string }) =>
+            (d.ai_tags || []).includes("offering-memorandum") ||
+            (d.original_name || "").toLowerCase().includes("om")
+          );
+          setHasExistingDocument(hasOm);
+        }
+      } catch {}
+    }
+    checkDocuments();
   }, [dealId]);
 
   useEffect(() => {
@@ -1168,6 +1226,7 @@ export default function OmAnalysisPage() {
           dealId={dealId}
           basePlan={basePlan}
           loadingPlan={loadingPlan}
+          hasExistingDocument={hasExistingDocument}
           onDone={async () => {
             setShowReanalyze(false);
             const a = await fetchAnalysis();

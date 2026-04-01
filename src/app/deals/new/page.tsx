@@ -208,6 +208,20 @@ export default function NewDealPage() {
       if (omFile) {
         const fd = new FormData();
         fd.append("file", omFile);
+        // Pass business plan context so initial OM analysis is calibrated to strategy
+        if (selectedPlanId) {
+          const plan = plans.find(p => p.id === selectedPlanId);
+          if (plan) {
+            const ctxParts: string[] = [`BASE BUSINESS PLAN — ${plan.name}:`];
+            if ((plan.investment_theses || []).length > 0) ctxParts.push(`Investment Thesis: ${plan.investment_theses.map((t: string) => t.replace(/_/g, ' ')).join(', ')}`);
+            if ((plan.target_markets || []).length > 0) ctxParts.push(`Target Markets: ${plan.target_markets.join(', ')}`);
+            if ((plan.property_types || []).length > 0) ctxParts.push(`Property Types: ${plan.property_types.join(', ')}`);
+            if (plan.target_irr_min || plan.target_irr_max) ctxParts.push(`Target IRR: ${plan.target_irr_min ?? '?'}% – ${plan.target_irr_max ?? '?'}%`);
+            if (plan.hold_period_min || plan.hold_period_max) ctxParts.push(`Hold Period: ${plan.hold_period_min ?? '?'}–${plan.hold_period_max ?? '?'} years`);
+            if (plan.description?.trim()) ctxParts.push(`Strategy Notes: ${plan.description.trim()}`);
+            fd.append("deal_context", ctxParts.join('\n'));
+          }
+        }
         await fetch(`/api/deals/${dealId}/om-init`, { method: "POST", body: fd });
         router.push(`/deals/${dealId}/om-analysis`);
       } else {

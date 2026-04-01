@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, omAnalysisQueries } from "@/lib/db";
+import { dealQueries, documentQueries, omAnalysisQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 /**
@@ -18,7 +18,14 @@ export async function GET(
 
     const analysis = await omAnalysisQueries.getByDealId(params.id);
 
-    return NextResponse.json({ data: { analysis } });
+    // Also check if there's an existing OM document for re-analysis capability
+    let hasDocument = false;
+    if (analysis?.document_id) {
+      const doc = await documentQueries.getById(analysis.document_id);
+      hasDocument = !!doc?.content_text;
+    }
+
+    return NextResponse.json({ data: { analysis, hasDocument } });
   } catch (error) {
     console.error("GET /api/deals/[id]/om-analysis error:", error);
     return NextResponse.json({ error: "Failed to fetch analysis" }, { status: 500 });
