@@ -21,6 +21,16 @@ import {
   Clock,
   Sparkles,
   Loader2 as Loader2Icon,
+  Palette,
+  Upload,
+  Image,
+  Type,
+  Globe,
+  Mail,
+  Phone,
+  MapPinIcon,
+  FileText,
+  Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,6 +45,7 @@ import {
   type InvestmentThesis,
   type PropertyType,
   type BusinessPlan,
+  type CompanyBranding,
 } from "@/lib/types";
 
 const ALL_THESES: InvestmentThesis[] = ["value_add", "ground_up", "core", "core_plus", "opportunistic"];
@@ -641,6 +652,516 @@ function PlanCard({
   );
 }
 
+// ─── Branding Section ─────────────────────────────────────────────────────
+
+const DEFAULT_BRANDING: CompanyBranding = {
+  id: "default",
+  company_name: "",
+  tagline: "",
+  logo_url: null,
+  logo_width: null,
+  primary_color: "#4F46E5",
+  secondary_color: "#2F3B52",
+  accent_color: "#10B981",
+  header_font: "Helvetica",
+  body_font: "Calibri",
+  footer_text: "CONFIDENTIAL",
+  website: "",
+  email: "",
+  phone: "",
+  address: "",
+  disclaimer_text: "",
+  created_at: "",
+  updated_at: "",
+};
+
+const FONT_OPTIONS = [
+  "Helvetica", "Arial", "Calibri", "Georgia", "Times New Roman",
+  "Garamond", "Cambria", "Palatino", "Verdana", "Trebuchet MS",
+];
+
+function BrandingSection() {
+  const [expanded, setExpanded] = useState(false);
+  const [branding, setBranding] = useState<CompanyBranding>(DEFAULT_BRANDING);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+
+  async function loadBranding() {
+    if (loaded) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/branding");
+      const json = await res.json();
+      if (json.data) {
+        setBranding({ ...DEFAULT_BRANDING, ...json.data });
+      }
+      setLoaded(true);
+    } catch {
+      toast.error("Failed to load branding");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveBranding() {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/branding", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(branding),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      toast.success("Branding saved — will apply to all exported documents");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save branding");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please upload an image file (PNG, JPG, SVG)");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Logo must be under 2MB");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setBranding((prev) => ({ ...prev, logo_url: reader.result as string }));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handleToggle() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !loaded) loadBranding();
+  }
+
+  const update = (field: keyof CompanyBranding, value: string | number | null) =>
+    setBranding((prev) => ({ ...prev, [field]: value }));
+
+  return (
+    <Card className="overflow-hidden">
+      <button
+        onClick={handleToggle}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/20 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
+            <Palette className="h-4.5 w-4.5 text-primary" />
+          </div>
+          <div className="text-left">
+            <p className="font-display text-sm">Company Branding & Templates</p>
+            <p className="text-2xs text-muted-foreground mt-0.5">
+              Logo, colors, fonts, and contact info applied to all exported documents
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {branding.company_name && (
+            <span className="text-2xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20 font-medium">
+              Configured
+            </span>
+          )}
+          {expanded ? (
+            <ChevronUp className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          )}
+        </div>
+      </button>
+
+      {expanded && (
+        <CardContent className="border-t border-border/40 pt-5 pb-6">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2Icon className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-6">
+              {/* Company Identity */}
+              <div className="flex flex-col gap-4">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <Building2 className="h-3.5 w-3.5" />
+                  Company Identity
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground">Company Name *</label>
+                    <input
+                      type="text"
+                      value={branding.company_name}
+                      onChange={(e) => update("company_name", e.target.value)}
+                      placeholder="e.g. Acme Capital Partners"
+                      className="input-field text-sm"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground">Tagline</label>
+                    <input
+                      type="text"
+                      value={branding.tagline}
+                      onChange={(e) => update("tagline", e.target.value)}
+                      placeholder="e.g. Institutional-quality real estate investment"
+                      className="input-field text-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Logo Upload */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-2xs text-muted-foreground flex items-center gap-1">
+                    <Image className="h-3 w-3" />
+                    Company Logo
+                  </label>
+                  <div className="flex items-start gap-4">
+                    {branding.logo_url ? (
+                      <div className="relative group">
+                        <div className="w-40 h-20 rounded-lg border border-border/60 bg-white flex items-center justify-center p-2 overflow-hidden">
+                          <img
+                            src={branding.logo_url}
+                            alt="Company logo"
+                            className="max-w-full max-h-full object-contain"
+                          />
+                        </div>
+                        <button
+                          onClick={() => update("logo_url", null)}
+                          className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <label className="w-40 h-20 rounded-lg border-2 border-dashed border-border/60 hover:border-primary/40 flex flex-col items-center justify-center cursor-pointer transition-colors bg-muted/10">
+                        <Upload className="h-4 w-4 text-muted-foreground mb-1" />
+                        <span className="text-2xs text-muted-foreground">Upload Logo</span>
+                        <span className="text-2xs text-muted-foreground/50">PNG, JPG, SVG</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleLogoUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                    <div className="flex flex-col gap-1 flex-1">
+                      <label className="text-2xs text-muted-foreground">Logo Width in Docs (px)</label>
+                      <input
+                        type="number"
+                        value={branding.logo_width ?? ""}
+                        onChange={(e) => update("logo_width", e.target.value ? Number(e.target.value) : null)}
+                        placeholder="150"
+                        className="input-field text-sm w-24"
+                      />
+                      <p className="text-2xs text-muted-foreground/60">
+                        Controls logo size in exported PDFs, DOCX, and PPTX files
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Brand Colors */}
+              <div className="flex flex-col gap-3">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <Palette className="h-3.5 w-3.5" />
+                  Brand Colors
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  {([
+                    { key: "primary_color" as const, label: "Primary" },
+                    { key: "secondary_color" as const, label: "Secondary" },
+                    { key: "accent_color" as const, label: "Accent" },
+                  ]).map(({ key, label }) => (
+                    <div key={key} className="flex flex-col gap-1">
+                      <label className="text-2xs text-muted-foreground">{label}</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={branding[key]}
+                          onChange={(e) => update(key, e.target.value)}
+                          className="h-8 w-10 rounded border border-border/60 cursor-pointer bg-transparent"
+                        />
+                        <input
+                          type="text"
+                          value={branding[key]}
+                          onChange={(e) => update(key, e.target.value)}
+                          className="input-field text-sm flex-1 font-mono"
+                          placeholder="#000000"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <div className="flex gap-0.5">
+                    <div className="h-6 w-12 rounded-l-md" style={{ backgroundColor: branding.primary_color }} />
+                    <div className="h-6 w-12" style={{ backgroundColor: branding.secondary_color }} />
+                    <div className="h-6 w-12 rounded-r-md" style={{ backgroundColor: branding.accent_color }} />
+                  </div>
+                  <span className="text-2xs text-muted-foreground">Color preview</span>
+                </div>
+              </div>
+
+              {/* Typography */}
+              <div className="flex flex-col gap-3">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <Type className="h-3.5 w-3.5" />
+                  Typography
+                </h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground">Heading Font</label>
+                    <select
+                      value={branding.header_font}
+                      onChange={(e) => update("header_font", e.target.value)}
+                      className="input-field text-sm"
+                    >
+                      {FONT_OPTIONS.map((f) => (
+                        <option key={f} value={f}>{f}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground">Body Font</label>
+                    <select
+                      value={branding.body_font}
+                      onChange={(e) => update("body_font", e.target.value)}
+                      className="input-field text-sm"
+                    >
+                      {FONT_OPTIONS.map((f) => (
+                        <option key={f} value={f}>{f}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Contact Info */}
+              <div className="flex flex-col gap-3">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <Mail className="h-3.5 w-3.5" />
+                  Contact Information
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground flex items-center gap-1">
+                      <Globe className="h-3 w-3" /> Website
+                    </label>
+                    <input
+                      type="text"
+                      value={branding.website}
+                      onChange={(e) => update("website", e.target.value)}
+                      placeholder="www.acmecapital.com"
+                      className="input-field text-sm"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground flex items-center gap-1">
+                      <Mail className="h-3 w-3" /> Email
+                    </label>
+                    <input
+                      type="email"
+                      value={branding.email}
+                      onChange={(e) => update("email", e.target.value)}
+                      placeholder="deals@acmecapital.com"
+                      className="input-field text-sm"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground flex items-center gap-1">
+                      <Phone className="h-3 w-3" /> Phone
+                    </label>
+                    <input
+                      type="text"
+                      value={branding.phone}
+                      onChange={(e) => update("phone", e.target.value)}
+                      placeholder="(555) 123-4567"
+                      className="input-field text-sm"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground flex items-center gap-1">
+                      <MapPinIcon className="h-3 w-3" /> Address
+                    </label>
+                    <input
+                      type="text"
+                      value={branding.address}
+                      onChange={(e) => update("address", e.target.value)}
+                      placeholder="123 Main St, Suite 500, Dallas, TX 75201"
+                      className="input-field text-sm"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Document Defaults */}
+              <div className="flex flex-col gap-3">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5" />
+                  Document Templates
+                </h3>
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground">Footer Text</label>
+                    <input
+                      type="text"
+                      value={branding.footer_text}
+                      onChange={(e) => update("footer_text", e.target.value)}
+                      placeholder="CONFIDENTIAL — Prepared by Acme Capital Partners"
+                      className="input-field text-sm"
+                    />
+                    <p className="text-2xs text-muted-foreground/60">
+                      Appears at the bottom of LOIs, DD Abstracts, and Investment Packages
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-2xs text-muted-foreground">Legal Disclaimer</label>
+                    <Textarea
+                      value={branding.disclaimer_text}
+                      onChange={(e) => update("disclaimer_text", e.target.value)}
+                      placeholder="This document is for informational purposes only and does not constitute an offer to sell or a solicitation of an offer to buy..."
+                      className="min-h-[80px] resize-none text-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Document type indicators */}
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {[
+                    { label: "LOI", desc: "Letter of Intent" },
+                    { label: "DD Abstract", desc: "Due Diligence Abstract" },
+                    { label: "Investment Package", desc: "PPTX & DOCX" },
+                  ].map((doc) => (
+                    <div
+                      key={doc.label}
+                      className="flex items-center gap-2 text-2xs px-3 py-1.5 rounded-lg bg-muted/20 border border-border/40"
+                    >
+                      <FileText className="h-3 w-3 text-primary" />
+                      <span className="font-medium text-foreground">{doc.label}</span>
+                      <span className="text-muted-foreground">— branding applied</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preview button + Save */}
+              <div className="flex items-center gap-2 pt-2 border-t border-border/40">
+                <Button size="sm" onClick={saveBranding} disabled={saving}>
+                  {saving ? (
+                    <>
+                      <Loader2Icon className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3.5 w-3.5 mr-1.5" />
+                      Save Branding
+                    </>
+                  )}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowPreview((v) => !v)}
+                >
+                  <Eye className="h-3.5 w-3.5 mr-1.5" />
+                  {showPreview ? "Hide Preview" : "Preview"}
+                </Button>
+              </div>
+
+              {/* Document Preview */}
+              {showPreview && (
+                <div className="rounded-xl border border-border/60 overflow-hidden">
+                  <div className="bg-white p-6 text-black">
+                    {/* Simulated document header */}
+                    <div
+                      className="flex items-center justify-between pb-4 mb-4"
+                      style={{ borderBottom: `3px solid ${branding.primary_color}` }}
+                    >
+                      <div className="flex items-center gap-3">
+                        {branding.logo_url && (
+                          <img
+                            src={branding.logo_url}
+                            alt="Logo"
+                            style={{ width: branding.logo_width ?? 120, maxHeight: 50, objectFit: "contain" }}
+                          />
+                        )}
+                        <div>
+                          <p
+                            style={{
+                              fontFamily: branding.header_font,
+                              color: branding.secondary_color,
+                              fontWeight: 700,
+                              fontSize: 18,
+                            }}
+                          >
+                            {branding.company_name || "Company Name"}
+                          </p>
+                          {branding.tagline && (
+                            <p style={{ fontSize: 11, color: "#666", fontFamily: branding.body_font }}>
+                              {branding.tagline}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", fontSize: 10, color: "#888", fontFamily: branding.body_font }}>
+                        {branding.website && <p>{branding.website}</p>}
+                        {branding.email && <p>{branding.email}</p>}
+                        {branding.phone && <p>{branding.phone}</p>}
+                      </div>
+                    </div>
+
+                    {/* Simulated content */}
+                    <p
+                      style={{
+                        fontFamily: branding.header_font,
+                        color: branding.primary_color,
+                        fontWeight: 700,
+                        fontSize: 14,
+                        marginBottom: 8,
+                      }}
+                    >
+                      INVESTMENT PACKAGE
+                    </p>
+                    <p style={{ fontFamily: branding.body_font, color: "#333", fontSize: 12, lineHeight: 1.6 }}>
+                      This is a preview of how your branding will appear in exported documents.
+                      Your company logo, colors, and fonts will be consistently applied across
+                      all LOIs, DD Abstracts, and Investment Packages.
+                    </p>
+
+                    {/* Footer */}
+                    <div
+                      className="mt-6 pt-3 flex items-center justify-between"
+                      style={{ borderTop: `1px solid ${branding.accent_color}40`, fontSize: 10, color: "#999" }}
+                    >
+                      <span>{branding.footer_text || "CONFIDENTIAL"}</span>
+                      <span>{branding.company_name}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────
 
 export default function BusinessPlansPage() {
@@ -789,6 +1310,9 @@ export default function BusinessPlansPage() {
             auto-selected when creating new deals.
           </p>
         </div>
+
+        {/* Company Branding */}
+        <BrandingSection />
 
         {/* Create form */}
         {creating && (

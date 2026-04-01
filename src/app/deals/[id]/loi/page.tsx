@@ -159,12 +159,20 @@ export default function LOIPage({ params }: { params: { id: string } }) {
     }
   };
 
-  const printLOI = () => {
+  const printLOI = async () => {
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
+    // Fetch branding
+    let branding = null;
+    try {
+      const res = await fetch("/api/branding");
+      const json = await res.json();
+      branding = json.data;
+    } catch { /* use defaults */ }
+
     const address = deal ? [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ") : "";
-    const loiHtml = generateLOIHtml(data, address);
+    const loiHtml = generateLOIHtml(data, address, branding);
     printWindow.document.write(loiHtml);
     printWindow.document.close();
     printWindow.print();
@@ -484,33 +492,89 @@ function LOIPreview({ data, address, dealName }: { data: LOIData; address: strin
   );
 }
 
-function generateLOIHtml(data: LOIData, address: string): string {
+interface BrandingData {
+  company_name?: string;
+  tagline?: string;
+  logo_url?: string | null;
+  logo_width?: number | null;
+  primary_color?: string;
+  secondary_color?: string;
+  accent_color?: string;
+  header_font?: string;
+  body_font?: string;
+  footer_text?: string;
+  website?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  disclaimer_text?: string;
+}
+
+function generateLOIHtml(data: LOIData, address: string, branding?: BrandingData | null): string {
+  const b = branding ?? {};
+  const primaryColor = b.primary_color || "#000000";
+  const secondaryColor = b.secondary_color || "#333333";
+  const accentColor = b.accent_color || "#666666";
+  const headerFont = b.header_font || "Georgia";
+  const bodyFont = b.body_font || "Georgia";
+  const footerText = b.footer_text || "CONFIDENTIAL";
+  const companyName = b.company_name || "";
+
   const fmt = (n: number | null) => (n ? `$${n.toLocaleString()}` : "_____________");
   const fmtDays = (n: number | null) => (n ? `${n}` : "___");
   const dateStr = data.loi_date
     ? new Date(data.loi_date + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
     : "_______________";
 
+  const logoHtml = b.logo_url
+    ? `<img src="${b.logo_url}" alt="${companyName}" style="max-height: 50px; width: ${b.logo_width || 150}px; object-fit: contain;" />`
+    : "";
+
+  const contactParts = [b.website, b.email, b.phone].filter(Boolean);
+  const contactHtml = contactParts.length > 0
+    ? `<div style="text-align: right; font-size: 9pt; color: ${accentColor};">${contactParts.join(" · ")}</div>`
+    : "";
+
+  const headerHtml = (logoHtml || companyName)
+    ? `<div class="branded-header">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          ${logoHtml}
+          <div>
+            ${companyName ? `<div style="font-family: ${headerFont}, sans-serif; font-weight: 700; font-size: 14pt; color: ${secondaryColor};">${companyName}</div>` : ""}
+            ${b.tagline ? `<div style="font-size: 9pt; color: ${accentColor};">${b.tagline}</div>` : ""}
+          </div>
+        </div>
+        ${contactHtml}
+      </div>`
+    : "";
+
+  const disclaimerHtml = b.disclaimer_text
+    ? `<p class="disclaimer">${b.disclaimer_text}</p>`
+    : "";
+
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>Letter of Intent</title>
+<title>Letter of Intent${companyName ? ` — ${companyName}` : ""}</title>
 <style>
-  body { font-family: Georgia, serif; font-size: 12pt; line-height: 1.7; color: #000; max-width: 750px; margin: 40px auto; padding: 0 40px; }
-  h1 { text-align: center; font-size: 14pt; letter-spacing: 1px; margin-bottom: 4px; }
-  .subtitle { text-align: center; font-size: 9pt; color: #666; letter-spacing: 2px; text-transform: uppercase; }
+  body { font-family: ${bodyFont}, Georgia, serif; font-size: 12pt; line-height: 1.7; color: #000; max-width: 750px; margin: 40px auto; padding: 0 40px; }
+  h1 { text-align: center; font-size: 14pt; letter-spacing: 1px; margin-bottom: 4px; color: ${secondaryColor}; font-family: ${headerFont}, sans-serif; }
+  .subtitle { text-align: center; font-size: 9pt; color: ${accentColor}; letter-spacing: 2px; text-transform: uppercase; }
   .date { text-align: center; font-size: 10pt; color: #666; margin-bottom: 24px; }
   p { margin: 8px 0; }
+  .branded-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 16px; margin-bottom: 24px; border-bottom: 3px solid ${primaryColor}; }
   .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 48px; }
   .sig-block { }
   .sig-line { border-bottom: 1px solid black; margin-top: 32px; margin-bottom: 4px; }
   .sig-label { font-size: 10pt; color: #333; }
-  .footer { font-size: 9pt; color: #666; border-top: 1px solid #ddd; padding-top: 12px; margin-top: 24px; }
+  .footer { font-size: 9pt; color: ${accentColor}; border-top: 1px solid ${primaryColor}40; padding-top: 12px; margin-top: 24px; display: flex; justify-content: space-between; }
+  .disclaimer { font-size: 8pt; color: #999; margin-top: 16px; line-height: 1.4; }
   @media print { body { margin: 0; padding: 20px; } }
 </style>
 </head>
 <body>
+${headerHtml}
 <p class="subtitle">Letter of Intent</p>
 <h1>NON-BINDING LETTER OF INTENT TO PURCHASE</h1>
 <p class="date">${dateStr}</p>
@@ -529,7 +593,11 @@ ${data.has_financing_contingency ? `<p><strong>${data.as_is ? "5" : "4"}. Financ
 ${data.additional_terms ? `<p><strong>Additional Terms:</strong><br/>${data.additional_terms.replace(/\n/g, "<br/>")}</p>` : ""}
 ${data.broker_name ? `<p><strong>Broker:</strong> ${data.broker_name}${data.broker_commission ? ` — Commission: ${data.broker_commission}` : ""}</p>` : ""}
 
-<p class="footer">This letter is non-binding and is intended solely as a basis for negotiation. Neither party shall be legally bound until a definitive Purchase and Sale Agreement is fully executed.</p>
+<div class="footer">
+  <span>${footerText}</span>
+  <span>${companyName}</span>
+</div>
+${disclaimerHtml}
 
 <div class="sig-grid">
   <div class="sig-block">

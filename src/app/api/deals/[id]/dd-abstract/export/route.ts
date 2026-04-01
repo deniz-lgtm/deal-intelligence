@@ -14,6 +14,7 @@ import {
   ShadingType,
 } from "docx";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { brandingQueries } from "@/lib/db";
 
 /**
  * POST /api/deals/:id/dd-abstract/export
@@ -34,14 +35,21 @@ export async function POST(
     const markdown: string = body.markdown ?? "";
     const dealName: string = body.dealName ?? "Deal";
 
-    const children = parseMarkdownToDocx(markdown, dealName);
+    // Fetch company branding
+    let branding: Record<string, unknown> | null = null;
+    try {
+      branding = await brandingQueries.get();
+    } catch { /* use defaults */ }
 
+    const children = parseMarkdownToDocx(markdown, dealName, branding);
+
+    const docFont = branding?.body_font as string || "Calibri";
     const doc = new Document({
       styles: {
         default: {
           document: {
             run: {
-              font: "Calibri",
+              font: docFont,
               size: 22, // 11pt
             },
             paragraph: {
@@ -91,32 +99,81 @@ export async function POST(
 
 type DocxChild = Paragraph | Table;
 
-function parseMarkdownToDocx(markdown: string, dealName: string): DocxChild[] {
+function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Record<string, unknown> | null): DocxChild[] {
   const children: DocxChild[] = [];
+
+  const b = branding ?? {};
+  const companyName = (b.company_name as string) || "";
+  const primaryColor = ((b.primary_color as string) || "#4F46E5").replace("#", "");
+  const secondaryColor = ((b.secondary_color as string) || "#2F3B52").replace("#", "");
+  const accentColor = ((b.accent_color as string) || "#10B981").replace("#", "");
+  const headerFont = (b.header_font as string) || "Helvetica";
+  const bodyFont = (b.body_font as string) || "Calibri";
+  const footerText = (b.footer_text as string) || "CONFIDENTIAL";
+  const tagline = (b.tagline as string) || "";
+  const website = (b.website as string) || "";
+  const email = (b.email as string) || "";
+  const phone = (b.phone as string) || "";
+  const disclaimerText = (b.disclaimer_text as string) || "";
+
+  // Branded header
+  if (companyName) {
+    children.push(
+      new Paragraph({
+        children: [new TextRun({ text: companyName, size: 32, bold: true, color: secondaryColor, font: headerFont })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 40 },
+      })
+    );
+    if (tagline) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: tagline, size: 18, color: accentColor, font: bodyFont })],
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 40 },
+        })
+      );
+    }
+    const contactParts = [website, email, phone].filter(Boolean);
+    if (contactParts.length > 0) {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: contactParts.join("  ·  "), size: 16, color: "999999", font: bodyFont })],
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 80 },
+        })
+      );
+    }
+    children.push(
+      new Paragraph({
+        border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: primaryColor } },
+        spacing: { after: 200 },
+        children: [],
+      })
+    );
+  }
 
   // Cover title
   children.push(
     new Paragraph({
-      text: "Due Diligence Abstract",
+      children: [new TextRun({ text: "Due Diligence Abstract", size: 36, bold: true, color: secondaryColor, font: headerFont })],
       heading: HeadingLevel.TITLE,
       alignment: AlignmentType.CENTER,
       spacing: { after: 80 },
     }),
     new Paragraph({
-      text: dealName,
+      children: [new TextRun({ text: dealName, size: 26, bold: true, color: primaryColor, font: headerFont })],
       alignment: AlignmentType.CENTER,
       spacing: { after: 240 },
-      run: { bold: true, size: 26 },
     }),
     new Paragraph({
-      text: `Generated: ${new Date().toLocaleDateString("en-US", {
+      children: [new TextRun({ text: `Generated: ${new Date().toLocaleDateString("en-US", {
         month: "long",
         day: "numeric",
         year: "numeric",
-      })}`,
+      })}`, size: 20, color: "666666", font: bodyFont })],
       alignment: AlignmentType.CENTER,
       spacing: { after: 400 },
-      run: { color: "666666", size: 20 },
     })
   );
 
@@ -236,6 +293,34 @@ function parseMarkdownToDocx(markdown: string, dealName: string): DocxChild[] {
       new Paragraph({
         children: parseInlineMarkdown(line),
         spacing: { after: 100 },
+      })
+    );
+  }
+
+  // Branded footer
+  children.push(
+    new Paragraph({
+      border: { top: { style: BorderStyle.SINGLE, size: 2, color: primaryColor + "66" } },
+      spacing: { before: 400 },
+      children: [],
+    })
+  );
+  if (footerText || companyName) {
+    children.push(
+      new Paragraph({
+        children: [
+          new TextRun({ text: footerText, size: 16, color: "999999", font: bodyFont }),
+          ...(companyName ? [new TextRun({ text: `  —  ${companyName}`, size: 16, color: "999999", font: bodyFont })] : []),
+        ],
+        spacing: { after: 60 },
+      })
+    );
+  }
+  if (disclaimerText) {
+    children.push(
+      new Paragraph({
+        children: [new TextRun({ text: disclaimerText, size: 14, color: "AAAAAA", font: bodyFont, italics: true })],
+        spacing: { after: 60 },
       })
     );
   }

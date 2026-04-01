@@ -247,6 +247,27 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_shares_deal_id ON deal_shares(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_deal_shares_user_id ON deal_shares(user_id)`,
+    // Company branding table (singleton-style, one row per user/org)
+    `CREATE TABLE IF NOT EXISTS company_branding (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      company_name TEXT NOT NULL DEFAULT '',
+      tagline TEXT NOT NULL DEFAULT '',
+      logo_url TEXT,
+      logo_width INTEGER,
+      primary_color TEXT NOT NULL DEFAULT '#4F46E5',
+      secondary_color TEXT NOT NULL DEFAULT '#2F3B52',
+      accent_color TEXT NOT NULL DEFAULT '#10B981',
+      header_font TEXT NOT NULL DEFAULT 'Helvetica',
+      body_font TEXT NOT NULL DEFAULT 'Calibri',
+      footer_text TEXT NOT NULL DEFAULT 'CONFIDENTIAL',
+      website TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      disclaimer_text TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
   ];
 
   for (const query of queries) {
@@ -1082,6 +1103,49 @@ export const businessPlanQueries = {
   delete: async (id: string): Promise<void> => {
     const pool = getPool();
     await pool.query("DELETE FROM business_plans WHERE id = $1", [id]);
+  },
+};
+
+// ─── Company Branding queries ────────────────────────────────────────────────
+
+export const brandingQueries = {
+  get: async (): Promise<Record<string, unknown> | null> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM company_branding WHERE id = 'default'");
+    return res.rows[0] ?? null;
+  },
+
+  upsert: async (data: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const pool = getPool();
+    const fields = [
+      "company_name", "tagline", "logo_url", "logo_width",
+      "primary_color", "secondary_color", "accent_color",
+      "header_font", "body_font", "footer_text",
+      "website", "email", "phone", "address", "disclaimer_text",
+    ];
+    const provided = fields.filter((f) => data[f] !== undefined);
+    if (provided.length === 0) {
+      return (await brandingQueries.get()) ?? {};
+    }
+
+    const setClauses = provided.map((f, i) => `"${f}" = $${i + 1}`).join(", ");
+    const values = provided.map((f) => data[f]);
+
+    // Try update first
+    const updateRes = await pool.query(
+      `UPDATE company_branding SET ${setClauses}, updated_at = NOW() WHERE id = 'default' RETURNING *`,
+      values
+    );
+    if (updateRes.rows.length > 0) return updateRes.rows[0];
+
+    // Insert if no row exists
+    const insertFields = ["id", ...provided];
+    const insertPlaceholders = insertFields.map((_, i) => `$${i + 1}`).join(", ");
+    const insertRes = await pool.query(
+      `INSERT INTO company_branding (${insertFields.map(f => `"${f}"`).join(", ")}) VALUES (${insertPlaceholders}) RETURNING *`,
+      ["default", ...values]
+    );
+    return insertRes.rows[0];
   },
 };
 

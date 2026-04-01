@@ -155,6 +155,29 @@ export interface BusinessPlan {
   updated_at: string;
 }
 
+// ─── Company Branding ─────────────────────────────────────────────────────
+
+export interface CompanyBranding {
+  id: string;
+  company_name: string;
+  tagline: string;
+  logo_url: string | null;          // base64 data URL or uploaded file path
+  logo_width: number | null;         // px, for document sizing
+  primary_color: string;             // hex color, e.g. "#4F46E5"
+  secondary_color: string;           // hex color
+  accent_color: string;              // hex color
+  header_font: string;               // font family for headings
+  body_font: string;                 // font family for body text
+  footer_text: string;               // e.g. "Confidential — Prepared by Acme Capital"
+  website: string;
+  email: string;
+  phone: string;
+  address: string;
+  disclaimer_text: string;           // legal disclaimer for documents
+  created_at: string;
+  updated_at: string;
+}
+
 // ─── Document Categories ────────────────────────────────────────────────────
 
 export type DocumentCategory =
