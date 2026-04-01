@@ -1051,6 +1051,7 @@ function ReanalyzePanel({
       <CardContent className="pt-0 flex flex-col gap-4">
         <DealContextPanel
           basePlan={basePlan}
+          setBasePlan={setBasePlan}
           loadingPlan={loadingPlan}
           dealId={dealId}
         />
