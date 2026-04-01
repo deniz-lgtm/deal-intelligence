@@ -31,7 +31,72 @@ export function getPool(): Pool {
     console.error("Unexpected Postgres pool error:", err);
   });
 
+  // Fire-and-forget: ensure all ALTER-added columns exist on first connection
+  ensureColumns().catch(() => {});
+
   return _pool;
+}
+
+// ─── Lazy Column Migration ───────────────────────────────────────────────────
+// Runs once per process to ensure all ALTER-added columns exist.
+// This prevents "column does not exist" errors when the DB hasn't been
+// restarted since new columns were added to initSchema().
+
+let _columnsMigrated = false;
+
+export async function ensureColumns(): Promise<void> {
+  if (_columnsMigrated) return;
+  _columnsMigrated = true; // Set early to prevent concurrent runs
+
+  const pool = getPool();
+  const alters = [
+    // deals table
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS owner_id TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT",
+    // documents table
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
+    // chat_messages table
+    "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB",
+    // business_plans table
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS investment_theses JSONB NOT NULL DEFAULT '[]'",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_markets JSONB NOT NULL DEFAULT '[]'",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS property_types JSONB NOT NULL DEFAULT '[]'",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_min INTEGER",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS hold_period_max INTEGER",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_min NUMERIC",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_max NUMERIC",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_min NUMERIC",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_max NUMERIC",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_company_name TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_tagline TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_logo_url TEXT",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_logo_width INTEGER",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_primary_color TEXT NOT NULL DEFAULT '#4F46E5'",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_secondary_color TEXT NOT NULL DEFAULT '#2F3B52'",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_accent_color TEXT NOT NULL DEFAULT '#10B981'",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_header_font TEXT NOT NULL DEFAULT 'Helvetica'",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_body_font TEXT NOT NULL DEFAULT 'Calibri'",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_footer_text TEXT NOT NULL DEFAULT 'CONFIDENTIAL'",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_website TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_email TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_phone TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_address TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_disclaimer_text TEXT NOT NULL DEFAULT ''",
+  ];
+
+  try {
+    await pool.query(alters.join(";\n"));
+  } catch (err) {
+    // Tables might not exist yet (first boot) — that's fine, initSchema will handle it
+    console.warn("ensureColumns warning:", (err as Error).message?.slice(0, 200));
+  }
 }
 
 // ─── Schema Init ──────────────────────────────────────────────────────────────
@@ -338,14 +403,7 @@ export const dealQueries = {
     const pool = getPool();
 
     // Ensure optional columns exist (self-healing migration)
-    try {
-      await pool.query(`
-        ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT;
-        ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT;
-      `);
-    } catch (err) {
-      console.warn("ALTER deals columns:", (err as Error).message);
-    }
+    await ensureColumns();
 
     const cols = [
       "id", "name", "address", "city", "state", "zip", "property_type", "status",
@@ -381,6 +439,7 @@ export const dealQueries = {
   },
 
   update: async (id: string, updates: Record<string, unknown>) => {
+    await ensureColumns();
     const pool = getPool();
     const keys = Object.keys(updates);
     if (keys.length === 0) return dealQueries.getById(id);
@@ -1118,6 +1177,7 @@ export const businessPlanQueries = {
   },
 
   update: async (id: string, updates: Record<string, unknown>): Promise<BusinessPlanRow | null> => {
+    await ensureColumns();
     const pool = getPool();
     const keys = Object.keys(updates);
     if (keys.length === 0) return businessPlanQueries.getById(id);
@@ -1155,6 +1215,7 @@ export const businessPlanQueries = {
 // ─── Branding helper (fetch from deal's business plan) ───────────────────────
 
 export async function getBrandingForDeal(dealId: string): Promise<Record<string, unknown> | null> {
+  await ensureColumns();
   const pool = getPool();
   const res = await pool.query(
     `SELECT bp.* FROM business_plans bp
