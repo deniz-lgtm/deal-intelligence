@@ -202,10 +202,21 @@ export default function DealOverviewPage({
   const checklistTotal = checklist.length;
   const checklistComplete = checklist.filter((i) => i.status === "complete").length;
   const checklistIssues = checklist.filter((i) => i.status === "issue").length;
+  const checklistNA = checklist.filter((i) => i.status === "na").length;
   const progressPct = checklistTotal > 0 ? Math.round((checklistComplete / checklistTotal) * 100) : 0;
 
   const docsByCategory = documents.reduce<Record<string, number>>((acc, d) => {
     acc[d.category] = (acc[d.category] || 0) + 1;
+    return acc;
+  }, {});
+
+  // Group checklist items by category for the diligence breakdown
+  const checklistByCategory = checklist.reduce<Record<string, { total: number; complete: number; issues: number; na: number }>>((acc, item) => {
+    if (!acc[item.category]) acc[item.category] = { total: 0, complete: 0, issues: 0, na: 0 };
+    acc[item.category].total++;
+    if (item.status === "complete") acc[item.category].complete++;
+    if (item.status === "issue") acc[item.category].issues++;
+    if (item.status === "na") acc[item.category].na++;
     return acc;
   }, {});
 
@@ -499,317 +510,293 @@ export default function DealOverviewPage({
         )}
       </div>
 
-      {/* Property Metrics + Deal Metrics side by side */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Property Metrics */}
-        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider mb-3">Property</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <MetricCard
-              icon={<DollarSign className="h-4 w-4 text-emerald-400" />}
-              label="Asking Price"
-              value={formatCurrency(deal.asking_price)}
-            />
-            <MetricCard
-              icon={<Maximize2 className="h-4 w-4 text-blue-400" />}
-              label="Square Footage"
-              value={deal.square_footage ? `${formatNumber(deal.square_footage)} SF` : "—"}
-            />
-            <MetricCard
-              icon={<Building2 className="h-4 w-4 text-purple-400" />}
-              label="Units"
-              value={deal.units ? formatNumber(deal.units) : "—"}
-            />
-            {deal.bedrooms ? (
-              <MetricCard
-                icon={<BedDouble className="h-4 w-4 text-indigo-400" />}
-                label="Bedrooms"
-                value={formatNumber(deal.bedrooms)}
-              />
-            ) : (
-              <MetricCard
-                icon={<Calendar className="h-4 w-4 text-orange-400" />}
-                label="Year Built"
-                value={deal.year_built ? String(deal.year_built) : "—"}
-              />
-            )}
-          </div>
-          {/* Investment Strategy */}
-          <div className="mt-3 pt-3 border-t border-border/40">
-            <label className="text-2xs text-muted-foreground font-medium uppercase tracking-wider">Investment Strategy</label>
-            <select
-              value={deal.investment_strategy || ""}
-              onChange={async (e) => {
-                const strategy = e.target.value || null;
-                setDeal((prev: any) => prev ? { ...prev, investment_strategy: strategy } : prev);
-                try {
-                  await fetch(`/api/deals/${params.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ investment_strategy: strategy }),
-                  });
-                } catch { /* ignore */ }
-              }}
-              className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40 transition-colors"
-            >
-              <option value="">Not set</option>
-              {(["value_add", "ground_up", "core", "core_plus", "opportunistic"] as InvestmentThesis[]).map((s) => (
-                <option key={s} value={s}>{INVESTMENT_THESIS_LABELS[s]}</option>
-              ))}
-            </select>
-          </div>
+      {/* ── Key Metrics Ribbon ── */}
+      <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/40">
+          <h3 className="font-display text-sm">Key Metrics</h3>
+          <Link href={`/deals/${params.id}/underwriting`}>
+            <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
+              Underwriting <ArrowRight className="h-3 w-3" />
+            </Button>
+          </Link>
         </div>
+        <div className="grid grid-cols-3 md:grid-cols-6 divide-x divide-border/30">
+          <MetricCell label="Asking Price" value={formatCurrency(deal.asking_price)} accent="emerald" />
+          <MetricCell
+            label={deal.units ? "Price / Unit" : "Price / SF"}
+            value={
+              highlights?.pricePerUnit != null
+                ? formatCurrency(highlights.pricePerUnit)
+                : deal.asking_price && deal.units
+                ? formatCurrency(Math.round(deal.asking_price / deal.units))
+                : deal.asking_price && deal.square_footage
+                ? formatCurrency(Math.round(deal.asking_price / deal.square_footage))
+                : "—"
+            }
+            accent="blue"
+          />
+          <MetricCell
+            label="Cap Rate"
+            value={highlights?.capRate != null ? `${highlights.capRate.toFixed(1)}%` : "—"}
+            accent="amber"
+          />
+          <MetricCell
+            label="NOI"
+            value={highlights?.noi != null ? formatCurrency(highlights.noi) : "—"}
+            accent="emerald"
+          />
+          <MetricCell
+            label="Cash-on-Cash"
+            value={highlights?.cashOnCash != null ? `${highlights.cashOnCash.toFixed(1)}%` : "—"}
+            accent="purple"
+          />
+          <MetricCell
+            label="DSCR"
+            value={highlights?.dscr != null ? `${highlights.dscr.toFixed(2)}x` : "—"}
+            accent="cyan"
+          />
+        </div>
+        {/* Secondary property details row */}
+        <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-border/30 border-t border-border/30 bg-muted/10">
+          <MetricCellSmall label="Units" value={deal.units ? formatNumber(deal.units) : "—"} />
+          <MetricCellSmall label="Sq Ft" value={deal.square_footage ? `${formatNumber(deal.square_footage)}` : "—"} />
+          <MetricCellSmall label={deal.bedrooms ? "Bedrooms" : "Year Built"} value={deal.bedrooms ? formatNumber(deal.bedrooms) : deal.year_built ? String(deal.year_built) : "—"} />
+          <MetricCellSmall label="Equity Multiple" value={highlights?.equityMultiple != null ? `${highlights.equityMultiple.toFixed(2)}x` : "—"} />
+          <MetricCellSmall
+            label="Strategy"
+            value={deal.investment_strategy ? (INVESTMENT_THESIS_LABELS[deal.investment_strategy as InvestmentThesis] || titleCase(deal.investment_strategy)) : "Not set"}
+            isEditable
+            onEdit={async (val) => {
+              const strategies = ["value_add", "ground_up", "core", "core_plus", "opportunistic"] as InvestmentThesis[];
+              const current = strategies.indexOf(deal.investment_strategy as InvestmentThesis);
+              const next = strategies[(current + 1) % strategies.length];
+              setDeal((prev: any) => prev ? { ...prev, investment_strategy: next } : prev);
+              try {
+                await fetch(`/api/deals/${params.id}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ investment_strategy: next }),
+                });
+              } catch { /* ignore */ }
+            }}
+          />
+        </div>
+      </div>
 
-        {/* Financial Highlights from Underwriting */}
-        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">Financial Highlights</h3>
-            <Link href={`/deals/${params.id}/underwriting`}>
+      {/* ── Two-Column: Diligence + Sidebar ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Left: Diligence Breakdown */}
+        <div className="lg:col-span-2 border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-border/40">
+            <div className="flex items-center gap-3">
+              <h3 className="font-display text-sm">Diligence Progress</h3>
+              <span className="text-2xs font-bold tabular-nums px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                {progressPct}%
+              </span>
+            </div>
+            <Link href={`/deals/${params.id}/checklist`}>
               <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
-                Underwriting <ArrowRight className="h-3 w-3" />
+                Full Checklist <ArrowRight className="h-3 w-3" />
               </Button>
             </Link>
           </div>
-          {highlights ? (
-            <div className="grid grid-cols-2 gap-3">
-              {highlights.capRate != null && (
-                <MetricCard
-                  icon={<Percent className="h-4 w-4 text-amber-400" />}
-                  label="Cap Rate"
-                  value={`${highlights.capRate.toFixed(1)}%`}
-                />
-              )}
-              {highlights.noi != null && (
-                <MetricCard
-                  icon={<DollarSign className="h-4 w-4 text-emerald-400" />}
-                  label="NOI"
-                  value={formatCurrency(highlights.noi)}
-                />
-              )}
-              {highlights.pricePerUnit != null && (
-                <MetricCard
-                  icon={<Building2 className="h-4 w-4 text-blue-400" />}
-                  label={highlights.pricePerUnitLabel}
-                  value={formatCurrency(highlights.pricePerUnit)}
-                />
-              )}
-              {highlights.cashOnCash != null && (
-                <MetricCard
-                  icon={<TrendingUp className="h-4 w-4 text-purple-400" />}
-                  label="Cash-on-Cash"
-                  value={`${highlights.cashOnCash.toFixed(1)}%`}
-                />
-              )}
-              {highlights.dscr != null && (
-                <MetricCard
-                  icon={<Calculator className="h-4 w-4 text-cyan-400" />}
-                  label="DSCR"
-                  value={`${highlights.dscr.toFixed(2)}x`}
-                />
-              )}
-              {highlights.equityMultiple != null && (
-                <MetricCard
-                  icon={<TrendingUp className="h-4 w-4 text-orange-400" />}
-                  label="Equity Multiple"
-                  value={`${highlights.equityMultiple.toFixed(2)}x`}
-                />
-              )}
+          {/* Overall progress bar */}
+          <div className="px-5 pt-4 pb-2">
+            <Progress value={progressPct} className="h-1.5" />
+            <div className="flex gap-4 mt-2 text-2xs text-muted-foreground">
+              <span className="text-emerald-400 font-medium">{checklistComplete} complete</span>
+              <span>{checklistTotal - checklistComplete - checklistIssues - checklistNA} pending</span>
+              {checklistIssues > 0 && <span className="text-red-400 font-medium">{checklistIssues} issues</span>}
+              {checklistNA > 0 && <span>{checklistNA} n/a</span>}
+            </div>
+          </div>
+          {/* Category breakdown */}
+          {Object.keys(checklistByCategory).length > 0 ? (
+            <div className="px-5 pb-4 pt-1">
+              <div className="space-y-2">
+                {Object.entries(checklistByCategory)
+                  .sort(([, a], [, b]) => {
+                    const aPct = a.total > 0 ? a.complete / a.total : 0;
+                    const bPct = b.total > 0 ? b.complete / b.total : 0;
+                    return aPct - bPct; // least complete first
+                  })
+                  .map(([cat, stats]) => {
+                    const catPct = stats.total > 0 ? Math.round((stats.complete / stats.total) * 100) : 0;
+                    return (
+                      <div key={cat} className="group/cat">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium truncate">{titleCase(cat)}</span>
+                              <span className="text-2xs text-muted-foreground tabular-nums ml-2 shrink-0">
+                                {stats.complete}/{stats.total}
+                                {stats.issues > 0 && (
+                                  <span className="text-red-400 ml-1.5">({stats.issues} issue{stats.issues > 1 ? "s" : ""})</span>
+                                )}
+                              </span>
+                            </div>
+                            <div className="h-1.5 bg-muted/50 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                  stats.issues > 0
+                                    ? "bg-gradient-to-r from-red-500/80 to-red-400/60"
+                                    : catPct === 100
+                                    ? "bg-gradient-to-r from-emerald-500 to-emerald-400"
+                                    : "gradient-gold"
+                                }`}
+                                style={{ width: `${catPct}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center py-6 text-center">
-              <Calculator className="h-8 w-8 text-muted-foreground/30 mb-2" />
-              <p className="text-xs text-muted-foreground">No underwriting data yet</p>
-              <Link href={`/deals/${params.id}/underwriting`}>
+            <div className="flex flex-col items-center justify-center py-8 text-center px-5">
+              <p className="text-xs text-muted-foreground">No checklist items yet</p>
+              <Link href={`/deals/${params.id}/checklist`}>
                 <Button variant="outline" size="sm" className="text-xs mt-2 h-7">
-                  Start Underwriting
+                  Set Up Checklist
                 </Button>
               </Link>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Business Plan */}
-      <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <BookOpen className="h-3.5 w-3.5 text-primary" />
-            <h3 className="font-display text-sm">Business Plan</h3>
-          </div>
-          <Link href="/business-plans">
-            <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
-              Manage <ArrowRight className="h-3 w-3" />
-            </Button>
-          </Link>
-        </div>
-        {/* Plan selector dropdown */}
-        <div className="mb-3">
-          <select
-            value={selectedPlanId}
-            onChange={(e) => {
-              const newVal = e.target.value;
-              const planId = newVal || null;
-              // Optimistic update
-              setSelectedPlanId(newVal);
-              const linked = planId ? allPlans.find((p) => p.id === planId) || null : null;
-              setBusinessPlan(linked);
-              // Persist
-              setChangingPlan(true);
-              fetch(`/api/deals/${params.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ business_plan_id: planId }),
-              })
-                .then(r => r.json())
-                .then(json => {
-                  if (json.data) {
-                    setDeal(json.data as Deal);
-                    toast.success(planId ? "Business plan linked" : "Business plan removed");
-                  } else {
-                    // Revert on failure
-                    setSelectedPlanId(deal.business_plan_id || "");
-                    toast.error("Failed to update business plan");
-                  }
-                })
-                .catch(() => {
-                  setSelectedPlanId(deal.business_plan_id || "");
-                  toast.error("Failed to update business plan");
-                })
-                .finally(() => setChangingPlan(false));
-            }}
-            disabled={changingPlan}
-            className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="">No business plan</option>
-            {allPlans.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}{p.is_default ? " (Default)" : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-        {/* Plan details */}
-        {businessPlan ? (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-1.5">
-              {(businessPlan.investment_theses || []).map((t) => (
-                <span
-                  key={t}
-                  className="text-2xs px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 font-medium"
-                >
-                  {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
-                </span>
+        {/* Right: Quick Actions + Business Plan + Docs */}
+        <div className="space-y-4">
+          {/* Quick Access */}
+          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-border/40">
+              <h3 className="font-display text-sm">Quick Access</h3>
+            </div>
+            <div className="p-2">
+              {[
+                { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3.5 w-3.5 text-blue-400 shrink-0" />, label: "Underwriting" },
+                { href: `/deals/${params.id}/documents`, icon: <FileText className="h-3.5 w-3.5 text-primary shrink-0" />, label: `Documents (${documents.length})` },
+                { href: `/deals/${params.id}/photos`, icon: <Camera className="h-3.5 w-3.5 text-emerald-400 shrink-0" />, label: `Photos (${photos.length})` },
+                { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-3.5 w-3.5 text-orange-400 shrink-0" />, label: deal.loi_executed ? "LOI (Executed)" : "LOI" },
+                { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0" />, label: "DD Abstract" },
+                { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3.5 w-3.5 text-purple-400 shrink-0" />, label: "AI Chat" },
+              ].map(({ href, icon, label }) => (
+                <Link key={href} href={href} className="block">
+                  <button className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-muted/50 transition-colors text-left group/item">
+                    {icon}
+                    <span className="text-xs font-medium flex-1">{label}</span>
+                    <ArrowRight className="h-3 w-3 text-muted-foreground/20 group-hover/item:text-muted-foreground transition-colors" />
+                  </button>
+                </Link>
               ))}
             </div>
-            <div className="flex items-center gap-4 flex-wrap text-2xs text-muted-foreground">
-              {(businessPlan.target_markets || []).length > 0 && (
-                <span className="flex items-center gap-1">
-                  <MapPin className="h-3 w-3" />
-                  {(businessPlan.target_markets || []).join(", ")}
-                </span>
-              )}
-              {(businessPlan.target_irr_min || businessPlan.target_irr_max) && (
-                <span>IRR {businessPlan.target_irr_min ?? "?"}–{businessPlan.target_irr_max ?? "?"}%</span>
-              )}
-              {(businessPlan.target_equity_multiple_min || businessPlan.target_equity_multiple_max) && (
-                <span>EM {businessPlan.target_equity_multiple_min ?? "?"}–{businessPlan.target_equity_multiple_max ?? "?"}x</span>
-              )}
-              {(businessPlan.hold_period_min || businessPlan.hold_period_max) && (
-                <span>{businessPlan.hold_period_min}–{businessPlan.hold_period_max} yr hold</span>
+          </div>
+
+          {/* Business Plan (compact) */}
+          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/40">
+              <div className="flex items-center gap-2">
+                <BookOpen className="h-3.5 w-3.5 text-primary" />
+                <h3 className="font-display text-sm">Business Plan</h3>
+              </div>
+              <Link href="/business-plans">
+                <Button variant="ghost" size="sm" className="text-2xs gap-1 h-5 px-1.5">
+                  Manage <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
+            <div className="p-4">
+              <select
+                value={selectedPlanId}
+                onChange={(e) => {
+                  const newVal = e.target.value;
+                  const planId = newVal || null;
+                  setSelectedPlanId(newVal);
+                  const linked = planId ? allPlans.find((p) => p.id === planId) || null : null;
+                  setBusinessPlan(linked);
+                  setChangingPlan(true);
+                  fetch(`/api/deals/${params.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ business_plan_id: planId }),
+                  })
+                    .then(r => r.json())
+                    .then(json => {
+                      if (json.data) {
+                        setDeal(json.data as Deal);
+                        toast.success(planId ? "Business plan linked" : "Business plan removed");
+                      } else {
+                        setSelectedPlanId(deal.business_plan_id || "");
+                        toast.error("Failed to update business plan");
+                      }
+                    })
+                    .catch(() => {
+                      setSelectedPlanId(deal.business_plan_id || "");
+                      toast.error("Failed to update business plan");
+                    })
+                    .finally(() => setChangingPlan(false));
+                }}
+                disabled={changingPlan}
+                className="w-full text-xs border border-border rounded-lg px-2.5 py-1.5 bg-background outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">No business plan</option>
+                {allPlans.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}{p.is_default ? " (Default)" : ""}
+                  </option>
+                ))}
+              </select>
+              {businessPlan && (
+                <div className="mt-2.5 space-y-1.5">
+                  <div className="flex flex-wrap gap-1">
+                    {(businessPlan.investment_theses || []).map((t) => (
+                      <span key={t} className="text-2xs px-1.5 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 font-medium">
+                        {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap text-2xs text-muted-foreground">
+                    {(businessPlan.target_irr_min || businessPlan.target_irr_max) && (
+                      <span>IRR {businessPlan.target_irr_min ?? "?"}–{businessPlan.target_irr_max ?? "?"}%</span>
+                    )}
+                    {(businessPlan.target_equity_multiple_min || businessPlan.target_equity_multiple_max) && (
+                      <span>EM {businessPlan.target_equity_multiple_min ?? "?"}–{businessPlan.target_equity_multiple_max ?? "?"}x</span>
+                    )}
+                    {(businessPlan.hold_period_min || businessPlan.hold_period_max) && (
+                      <span>{businessPlan.hold_period_min}–{businessPlan.hold_period_max}yr</span>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
-            {businessPlan.description && (
-              <p className="text-2xs text-muted-foreground leading-relaxed line-clamp-2">{businessPlan.description}</p>
-            )}
           </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">No plan linked. Select one above to guide analysis.</p>
-        )}
-      </div>
 
-      {/* Progress + Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2 border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-display text-sm">Diligence Progress</h3>
-            <Link href={`/deals/${params.id}/checklist`}>
-              <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
-                View Checklist <ArrowRight className="h-3 w-3" />
-              </Button>
-            </Link>
-          </div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-muted-foreground">
-              {checklistComplete} of {checklistTotal} items complete
-            </span>
-            <span className="text-xs font-bold tabular-nums">{progressPct}%</span>
-          </div>
-          <Progress value={progressPct} className="h-2 mb-3" />
-          <div className="flex gap-4 text-2xs text-muted-foreground">
-            <span className="text-emerald-400 font-medium">
-              ✓ {checklistComplete} complete
-            </span>
-            <span>
-              ○ {checklistTotal - checklistComplete - checklistIssues} pending
-            </span>
-            {checklistIssues > 0 && (
-              <span className="text-red-400 font-medium">
-                ⚠ {checklistIssues} issues
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Quick actions */}
-        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <h3 className="font-display text-sm mb-3">Quick Access</h3>
-          <div className="space-y-1">
-            {[
-              { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3.5 w-3.5 text-blue-400 shrink-0" />, label: "Underwriting", sub: "Financial model" },
-              { href: `/deals/${params.id}/documents`, icon: <FileText className="h-3.5 w-3.5 text-primary shrink-0" />, label: "Documents", sub: `${documents.length} uploaded` },
-              { href: `/deals/${params.id}/photos`, icon: <Camera className="h-3.5 w-3.5 text-emerald-400 shrink-0" />, label: "Photos", sub: "Property photos" },
-              { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-3.5 w-3.5 text-orange-400 shrink-0" />, label: "LOI", sub: deal.loi_executed ? "Executed ✓" : "Build & track" },
-              { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0" />, label: "DD Abstract", sub: "AI summary" },
-              { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3.5 w-3.5 text-purple-400 shrink-0" />, label: "AI Chat", sub: "Ask about this deal" },
-            ].map(({ href, icon, label, sub }) => (
-              <Link key={href} href={href} className="block">
-                <button className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors text-left group/item">
-                  {icon}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium">{label}</p>
-                    <p className="text-2xs text-muted-foreground truncate">{sub}</p>
-                  </div>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground/20 group-hover/item:text-muted-foreground transition-colors" />
-                </button>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Document breakdown */}
-      {documents.length > 0 && (
-        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-display text-sm">Documents by Category</h3>
-            <Link href={`/deals/${params.id}/documents`}>
-              <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
-                Manage <ArrowRight className="h-3 w-3" />
-              </Button>
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {Object.entries(docsByCategory).map(([cat, count]) => (
-              <div key={cat} className="bg-muted/30 rounded-lg p-3 text-center border border-border/30">
-                <p className="text-xl font-bold tabular-nums">{count}</p>
-                <p className="text-2xs text-muted-foreground mt-0.5">
-                  {titleCase(cat)}
-                </p>
+          {/* Documents breakdown (compact) */}
+          {documents.length > 0 && (
+            <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/40">
+                <h3 className="font-display text-sm">Documents</h3>
+                <Link href={`/deals/${params.id}/documents`}>
+                  <Button variant="ghost" size="sm" className="text-2xs gap-1 h-5 px-1.5">
+                    Manage <ArrowRight className="h-3 w-3" />
+                  </Button>
+                </Link>
               </div>
-            ))}
-          </div>
+              <div className="p-3">
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(docsByCategory).map(([cat, count]) => (
+                    <div key={cat} className="flex items-center justify-between bg-muted/20 rounded-lg px-3 py-2 border border-border/20">
+                      <span className="text-2xs text-muted-foreground truncate">{titleCase(cat)}</span>
+                      <span className="text-xs font-bold tabular-nums ml-2">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Deal Notes */}
       <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
@@ -934,22 +921,59 @@ function computeHighlights(uw: UnderwritingData | null, deal: Deal): FinancialHi
   };
 }
 
-function MetricCard({
-  icon,
+function MetricCell({
   label,
   value,
+  accent = "emerald",
 }: {
-  icon: React.ReactNode;
   label: string;
   value: string;
+  accent?: "emerald" | "blue" | "amber" | "purple" | "cyan" | "orange";
 }) {
+  const dotColor: Record<string, string> = {
+    emerald: "bg-emerald-400",
+    blue: "bg-blue-400",
+    amber: "bg-amber-400",
+    purple: "bg-purple-400",
+    cyan: "bg-cyan-400",
+    orange: "bg-orange-400",
+  };
+  const isDash = value === "—";
   return (
-    <div className="border border-border/40 rounded-lg p-3 bg-muted/20">
-      <div className="flex items-center gap-1.5 mb-1">
-        {icon}
-        <span className="text-2xs text-muted-foreground">{label}</span>
+    <div className="px-4 py-3.5 text-center">
+      <div className="flex items-center justify-center gap-1.5 mb-1">
+        <div className={`h-1.5 w-1.5 rounded-full ${dotColor[accent]} ${isDash ? "opacity-20" : "opacity-60"}`} />
+        <span className="text-2xs text-muted-foreground uppercase tracking-wider">{label}</span>
       </div>
-      <p className="text-base font-bold tabular-nums tracking-tight">{value}</p>
+      <p className={`text-base font-bold tabular-nums tracking-tight ${isDash ? "text-muted-foreground/30" : ""}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function MetricCellSmall({
+  label,
+  value,
+  isEditable,
+  onEdit,
+}: {
+  label: string;
+  value: string;
+  isEditable?: boolean;
+  onEdit?: (val: string) => void;
+}) {
+  const isDash = value === "—" || value === "Not set";
+  return (
+    <div
+      className={`px-3 py-2.5 text-center ${isEditable ? "cursor-pointer hover:bg-muted/30 transition-colors" : ""}`}
+      onClick={() => isEditable && onEdit?.(value)}
+      title={isEditable ? "Click to cycle" : undefined}
+    >
+      <span className="text-2xs text-muted-foreground block">{label}</span>
+      <span className={`text-xs font-semibold tabular-nums ${isDash ? "text-muted-foreground/30" : ""}`}>
+        {value}
+      </span>
     </div>
   );
 }
