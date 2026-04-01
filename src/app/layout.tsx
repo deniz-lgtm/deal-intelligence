@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "sonner";
-import { ClerkProvider, UserButton, SignedIn } from "@clerk/nextjs";
+import { ClerkProvider, UserButton } from "@clerk/nextjs";
 
 export const metadata: Metadata = {
   title: "Deal Intelligence",
@@ -25,18 +25,16 @@ export default function RootLayout({
           />
         </head>
         <body>
-          {/* Global user button — floats top-right on pages that don't have their own header */}
-          <SignedIn>
-            <div className="fixed top-3 right-4 z-50">
-              <UserButton
-                appearance={{
-                  elements: {
-                    avatarBox: "h-7 w-7",
-                  },
-                }}
-              />
-            </div>
-          </SignedIn>
+          {/* Global user button — floats top-right on pages that don't have their own nav header */}
+          <div className="fixed top-3 right-4 z-50">
+            <UserButton
+              appearance={{
+                elements: {
+                  avatarBox: "h-7 w-7",
+                },
+              }}
+            />
+          </div>
           {children}
           <Toaster
             position="bottom-right"
