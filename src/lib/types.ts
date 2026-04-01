@@ -151,29 +151,22 @@ export interface BusinessPlan {
   target_equity_multiple_min: number | null;
   target_equity_multiple_max: number | null;
   is_default: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-// ─── Company Branding ─────────────────────────────────────────────────────
-
-export interface CompanyBranding {
-  id: string;
-  company_name: string;
-  tagline: string;
-  logo_url: string | null;          // base64 data URL or uploaded file path
-  logo_width: number | null;         // px, for document sizing
-  primary_color: string;             // hex color, e.g. "#4F46E5"
-  secondary_color: string;           // hex color
-  accent_color: string;              // hex color
-  header_font: string;               // font family for headings
-  body_font: string;                 // font family for body text
-  footer_text: string;               // e.g. "Confidential — Prepared by Acme Capital"
-  website: string;
-  email: string;
-  phone: string;
-  address: string;
-  disclaimer_text: string;           // legal disclaimer for documents
+  // Branding fields (per-plan)
+  branding_company_name: string;
+  branding_tagline: string;
+  branding_logo_url: string | null;
+  branding_logo_width: number | null;
+  branding_primary_color: string;
+  branding_secondary_color: string;
+  branding_accent_color: string;
+  branding_header_font: string;
+  branding_body_font: string;
+  branding_footer_text: string;
+  branding_website: string;
+  branding_email: string;
+  branding_phone: string;
+  branding_address: string;
+  branding_disclaimer_text: string;
   created_at: string;
   updated_at: string;
 }

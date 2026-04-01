@@ -31,6 +31,21 @@ export async function POST(req: NextRequest) {
       target_irr_max: body.target_irr_max ?? null,
       target_equity_multiple_min: body.target_equity_multiple_min ?? null,
       target_equity_multiple_max: body.target_equity_multiple_max ?? null,
+      branding_company_name: body.branding_company_name,
+      branding_tagline: body.branding_tagline,
+      branding_logo_url: body.branding_logo_url,
+      branding_logo_width: body.branding_logo_width,
+      branding_primary_color: body.branding_primary_color,
+      branding_secondary_color: body.branding_secondary_color,
+      branding_accent_color: body.branding_accent_color,
+      branding_header_font: body.branding_header_font,
+      branding_body_font: body.branding_body_font,
+      branding_footer_text: body.branding_footer_text,
+      branding_website: body.branding_website,
+      branding_email: body.branding_email,
+      branding_phone: body.branding_phone,
+      branding_address: body.branding_address,
+      branding_disclaimer_text: body.branding_disclaimer_text,
     });
     return NextResponse.json({ data: plan }, { status: 201 });
   } catch (error) {

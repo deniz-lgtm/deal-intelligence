@@ -247,27 +247,22 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_shares_deal_id ON deal_shares(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_deal_shares_user_id ON deal_shares(user_id)`,
-    // Company branding table (singleton-style, one row per user/org)
-    `CREATE TABLE IF NOT EXISTS company_branding (
-      id TEXT PRIMARY KEY DEFAULT 'default',
-      company_name TEXT NOT NULL DEFAULT '',
-      tagline TEXT NOT NULL DEFAULT '',
-      logo_url TEXT,
-      logo_width INTEGER,
-      primary_color TEXT NOT NULL DEFAULT '#4F46E5',
-      secondary_color TEXT NOT NULL DEFAULT '#2F3B52',
-      accent_color TEXT NOT NULL DEFAULT '#10B981',
-      header_font TEXT NOT NULL DEFAULT 'Helvetica',
-      body_font TEXT NOT NULL DEFAULT 'Calibri',
-      footer_text TEXT NOT NULL DEFAULT 'CONFIDENTIAL',
-      website TEXT NOT NULL DEFAULT '',
-      email TEXT NOT NULL DEFAULT '',
-      phone TEXT NOT NULL DEFAULT '',
-      address TEXT NOT NULL DEFAULT '',
-      disclaimer_text TEXT NOT NULL DEFAULT '',
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )`,
+    // Branding columns on business_plans
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_company_name TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_tagline TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_logo_url TEXT`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_logo_width INTEGER`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_primary_color TEXT NOT NULL DEFAULT '#4F46E5'`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_secondary_color TEXT NOT NULL DEFAULT '#2F3B52'`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_accent_color TEXT NOT NULL DEFAULT '#10B981'`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_header_font TEXT NOT NULL DEFAULT 'Helvetica'`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_body_font TEXT NOT NULL DEFAULT 'Calibri'`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_footer_text TEXT NOT NULL DEFAULT 'CONFIDENTIAL'`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_website TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_email TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_phone TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_address TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_disclaimer_text TEXT NOT NULL DEFAULT ''`,
   ];
 
   for (const query of queries) {
@@ -1026,11 +1021,31 @@ export const businessPlanQueries = {
     target_irr_max?: number | null;
     target_equity_multiple_min?: number | null;
     target_equity_multiple_max?: number | null;
+    branding_company_name?: string;
+    branding_tagline?: string;
+    branding_logo_url?: string | null;
+    branding_logo_width?: number | null;
+    branding_primary_color?: string;
+    branding_secondary_color?: string;
+    branding_accent_color?: string;
+    branding_header_font?: string;
+    branding_body_font?: string;
+    branding_footer_text?: string;
+    branding_website?: string;
+    branding_email?: string;
+    branding_phone?: string;
+    branding_address?: string;
+    branding_disclaimer_text?: string;
   }): Promise<BusinessPlanRow> => {
     const pool = getPool();
     const insertQuery = `INSERT INTO business_plans (name, description, is_default, investment_theses, target_markets, property_types,
-        hold_period_min, hold_period_max, target_irr_min, target_irr_max, target_equity_multiple_min, target_equity_multiple_max)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12)
+        hold_period_min, hold_period_max, target_irr_min, target_irr_max, target_equity_multiple_min, target_equity_multiple_max,
+        branding_company_name, branding_tagline, branding_logo_url, branding_logo_width,
+        branding_primary_color, branding_secondary_color, branding_accent_color,
+        branding_header_font, branding_body_font, branding_footer_text,
+        branding_website, branding_email, branding_phone, branding_address, branding_disclaimer_text)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12,
+               $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
        RETURNING *`;
     const insertParams = [
       plan.name,
@@ -1045,6 +1060,21 @@ export const businessPlanQueries = {
       plan.target_irr_max ?? null,
       plan.target_equity_multiple_min ?? null,
       plan.target_equity_multiple_max ?? null,
+      plan.branding_company_name ?? "",
+      plan.branding_tagline ?? "",
+      plan.branding_logo_url ?? null,
+      plan.branding_logo_width ?? null,
+      plan.branding_primary_color ?? "#4F46E5",
+      plan.branding_secondary_color ?? "#2F3B52",
+      plan.branding_accent_color ?? "#10B981",
+      plan.branding_header_font ?? "Helvetica",
+      plan.branding_body_font ?? "Calibri",
+      plan.branding_footer_text ?? "CONFIDENTIAL",
+      plan.branding_website ?? "",
+      plan.branding_email ?? "",
+      plan.branding_phone ?? "",
+      plan.branding_address ?? "",
+      plan.branding_disclaimer_text ?? "",
     ];
     try {
       const res = await pool.query(insertQuery, insertParams);
@@ -1106,48 +1136,37 @@ export const businessPlanQueries = {
   },
 };
 
-// ─── Company Branding queries ────────────────────────────────────────────────
+// ─── Branding helper (fetch from deal's business plan) ───────────────────────
 
-export const brandingQueries = {
-  get: async (): Promise<Record<string, unknown> | null> => {
-    const pool = getPool();
-    const res = await pool.query("SELECT * FROM company_branding WHERE id = 'default'");
-    return res.rows[0] ?? null;
-  },
-
-  upsert: async (data: Record<string, unknown>): Promise<Record<string, unknown>> => {
-    const pool = getPool();
-    const fields = [
-      "company_name", "tagline", "logo_url", "logo_width",
-      "primary_color", "secondary_color", "accent_color",
-      "header_font", "body_font", "footer_text",
-      "website", "email", "phone", "address", "disclaimer_text",
-    ];
-    const provided = fields.filter((f) => data[f] !== undefined);
-    if (provided.length === 0) {
-      return (await brandingQueries.get()) ?? {};
-    }
-
-    const setClauses = provided.map((f, i) => `"${f}" = $${i + 1}`).join(", ");
-    const values = provided.map((f) => data[f]);
-
-    // Try update first
-    const updateRes = await pool.query(
-      `UPDATE company_branding SET ${setClauses}, updated_at = NOW() WHERE id = 'default' RETURNING *`,
-      values
-    );
-    if (updateRes.rows.length > 0) return updateRes.rows[0];
-
-    // Insert if no row exists
-    const insertFields = ["id", ...provided];
-    const insertPlaceholders = insertFields.map((_, i) => `$${i + 1}`).join(", ");
-    const insertRes = await pool.query(
-      `INSERT INTO company_branding (${insertFields.map(f => `"${f}"`).join(", ")}) VALUES (${insertPlaceholders}) RETURNING *`,
-      ["default", ...values]
-    );
-    return insertRes.rows[0];
-  },
-};
+export async function getBrandingForDeal(dealId: string): Promise<Record<string, unknown> | null> {
+  const pool = getPool();
+  const res = await pool.query(
+    `SELECT bp.* FROM business_plans bp
+     JOIN deals d ON d.business_plan_id = bp.id::text
+     WHERE d.id = $1`,
+    [dealId]
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  // Normalize branding_ prefix fields into a flat object for document generators
+  return {
+    company_name: row.branding_company_name || "",
+    tagline: row.branding_tagline || "",
+    logo_url: row.branding_logo_url || null,
+    logo_width: row.branding_logo_width || null,
+    primary_color: row.branding_primary_color || "#4F46E5",
+    secondary_color: row.branding_secondary_color || "#2F3B52",
+    accent_color: row.branding_accent_color || "#10B981",
+    header_font: row.branding_header_font || "Helvetica",
+    body_font: row.branding_body_font || "Calibri",
+    footer_text: row.branding_footer_text || "CONFIDENTIAL",
+    website: row.branding_website || "",
+    email: row.branding_email || "",
+    phone: row.branding_phone || "",
+    address: row.branding_address || "",
+    disclaimer_text: row.branding_disclaimer_text || "",
+  };
+}
 
 // ─── Dropbox queries ──────────────────────────────────────────────────────────
 

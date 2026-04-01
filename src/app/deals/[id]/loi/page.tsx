@@ -163,12 +163,33 @@ export default function LOIPage({ params }: { params: { id: string } }) {
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
-    // Fetch branding
+    // Fetch branding from deal's business plan
     let branding = null;
     try {
-      const res = await fetch("/api/branding");
-      const json = await res.json();
-      branding = json.data;
+      if (deal?.business_plan_id) {
+        const res = await fetch(`/api/business-plans/${deal.business_plan_id}`);
+        const json = await res.json();
+        const plan = json.data;
+        if (plan) {
+          branding = {
+            company_name: plan.branding_company_name,
+            tagline: plan.branding_tagline,
+            logo_url: plan.branding_logo_url,
+            logo_width: plan.branding_logo_width,
+            primary_color: plan.branding_primary_color,
+            secondary_color: plan.branding_secondary_color,
+            accent_color: plan.branding_accent_color,
+            header_font: plan.branding_header_font,
+            body_font: plan.branding_body_font,
+            footer_text: plan.branding_footer_text,
+            website: plan.branding_website,
+            email: plan.branding_email,
+            phone: plan.branding_phone,
+            address: plan.branding_address,
+            disclaimer_text: plan.branding_disclaimer_text,
+          };
+        }
+      }
     } catch { /* use defaults */ }
 
     const address = deal ? [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ") : "";

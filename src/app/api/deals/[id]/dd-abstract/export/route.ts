@@ -14,7 +14,7 @@ import {
   ShadingType,
 } from "docx";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { brandingQueries } from "@/lib/db";
+import { getBrandingForDeal } from "@/lib/db";
 
 /**
  * POST /api/deals/:id/dd-abstract/export
@@ -35,10 +35,10 @@ export async function POST(
     const markdown: string = body.markdown ?? "";
     const dealName: string = body.dealName ?? "Deal";
 
-    // Fetch company branding
+    // Fetch branding from deal's business plan
     let branding: Record<string, unknown> | null = null;
     try {
-      branding = await brandingQueries.get();
+      branding = await getBrandingForDeal(params.id);
     } catch { /* use defaults */ }
 
     const children = parseMarkdownToDocx(markdown, dealName, branding);

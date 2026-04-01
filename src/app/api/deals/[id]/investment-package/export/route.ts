@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import PptxGenJS from "pptxgenjs";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from "docx";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { brandingQueries } from "@/lib/db";
+import { getBrandingForDeal } from "@/lib/db";
 
 interface ExportSection {
   id: string;
@@ -27,10 +27,10 @@ export async function POST(
       format?: string;
     };
 
-    // Fetch company branding
+    // Fetch branding from deal's business plan
     let branding: Record<string, unknown> | null = null;
     try {
-      branding = await brandingQueries.get();
+      branding = await getBrandingForDeal(params.id);
     } catch { /* use defaults */ }
 
     const b = branding ?? {};
