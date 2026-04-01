@@ -11,8 +11,9 @@ export async function POST(
   if (errorResponse) return errorResponse;
 
   try {
-    const { deal, errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { deal: rawDeal, errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
+    const deal = rawDeal as any;
 
     if (!deal.address && !deal.city) {
       return NextResponse.json(
