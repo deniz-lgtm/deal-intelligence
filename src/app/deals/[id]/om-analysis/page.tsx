@@ -24,6 +24,7 @@ import {
   BookOpen,
   Star,
   Calculator,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -229,22 +230,54 @@ interface BusinessPlan {
   is_default: boolean;
 }
 
-// ─── Deal Context Panel (read-only plan + deal notes) ────────────────────────
+// ─── Deal Context Panel (plan selector + deal notes) ─────────────────────────
 
 function DealContextPanel({
   basePlan,
+  setBasePlan,
   loadingPlan,
   dealId,
 }: {
   basePlan: BusinessPlan | null;
+  setBasePlan: (plan: BusinessPlan | null) => void;
   loadingPlan: boolean;
   dealId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showPlanPicker, setShowPlanPicker] = useState(false);
+  const [plans, setPlans] = useState<BusinessPlan[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(false);
+
+  async function openPicker() {
+    setShowPlanPicker(true);
+    if (plans.length === 0) {
+      setLoadingPlans(true);
+      try {
+        const res = await fetch("/api/business-plans");
+        const json = await res.json();
+        if (json.data) setPlans(json.data);
+      } catch {} finally {
+        setLoadingPlans(false);
+      }
+    }
+  }
+
+  async function linkPlan(plan: BusinessPlan | null) {
+    setBasePlan(plan);
+    setShowPlanPicker(false);
+    // Persist to deal
+    try {
+      await fetch(`/api/deals/${dealId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ business_plan_id: plan?.id || null }),
+      });
+    } catch {}
+  }
 
   return (
     <div className="w-full flex flex-col gap-3">
-      {/* Business Plan (read-only from deal) */}
+      {/* Business Plan */}
       <div className="border rounded-xl bg-amber-50/60 border-amber-200">
         <div className="flex items-center justify-between px-4 py-3 gap-3">
           <div className="flex items-center gap-2 min-w-0">
@@ -253,17 +286,67 @@ function DealContextPanel({
           </div>
           {loadingPlan ? (
             <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin flex-shrink-0" />
-          ) : !basePlan ? (
-            <Link
-              href="/business-plans"
-              target="_blank"
-              className="flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 underline"
-            >
-              <ExternalLink className="h-3 w-3" />
-              Create a plan
-            </Link>
           ) : (
-            <p className="text-[10px] text-amber-600 italic">Set at deal creation</p>
+            <div className="relative">
+              <button
+                onClick={openPicker}
+                className="flex items-center gap-1.5 text-xs text-amber-700 hover:text-amber-900 font-medium"
+              >
+                {basePlan ? "Change" : "Select plan"}
+                <ChevronRight className={cn("h-3 w-3 transition-transform", showPlanPicker && "rotate-90")} />
+              </button>
+              {showPlanPicker && (
+                <div className="absolute right-0 top-full mt-1 z-10 w-64 bg-white border border-gray-200 rounded-xl shadow-lg py-1 text-sm max-h-60 overflow-y-auto">
+                  {loadingPlans ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : plans.length === 0 ? (
+                    <div className="px-3 py-3 text-center">
+                      <p className="text-xs text-gray-500 mb-2">No business plans yet</p>
+                      <Link
+                        href="/business-plans"
+                        target="_blank"
+                        className="text-xs text-amber-700 hover:text-amber-900 underline"
+                      >
+                        Create one
+                      </Link>
+                    </div>
+                  ) : (
+                    <>
+                      {basePlan && (
+                        <button
+                          onClick={() => linkPlan(null)}
+                          className="w-full text-left px-3 py-2 hover:bg-gray-100 text-gray-500 text-xs"
+                        >
+                          None (no base plan)
+                        </button>
+                      )}
+                      {plans.map((p) => (
+                        <button
+                          key={p.id}
+                          onClick={() => linkPlan(p)}
+                          className={cn(
+                            "w-full text-left px-3 py-2 hover:bg-gray-100 flex items-start gap-2",
+                            basePlan?.id === p.id && "bg-amber-50"
+                          )}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              {p.is_default && (
+                                <Star className="h-3 w-3 fill-amber-400 text-amber-400 flex-shrink-0" />
+                              )}
+                              <span className="font-medium text-xs truncate text-gray-900">{p.name}</span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{p.description}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -314,7 +397,7 @@ function DealContextPanel({
         ) : (
           <div className="border-t border-amber-200 px-4 py-2 bg-amber-50/30">
             <p className="text-xs text-amber-700/70 italic">
-              No business plan linked to this deal — analysis will run without strategy context.
+              No business plan selected — tap &ldquo;Select plan&rdquo; to link one.
             </p>
           </div>
         )}
@@ -336,18 +419,42 @@ function UploadPanel({
   onAnalysisCreated,
   processing,
   basePlan,
+  setBasePlan,
   loadingPlan,
+  hasExistingDocument,
 }: {
   dealId: string;
   onAnalysisCreated: () => void;
   processing: boolean;
   basePlan: BusinessPlan | null;
+  setBasePlan: (plan: BusinessPlan | null) => void;
   loadingPlan: boolean;
+  hasExistingDocument: boolean;
 }) {
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  async function analyzeExisting() {
+    setUploading(true);
+    setError(null);
+    try {
+      const ctx = await buildFullDealContext(dealId, basePlan);
+      const res = await fetch(`/api/deals/${dealId}/om-reanalyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_context: ctx || undefined }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Analysis failed");
+      onAnalysisCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Analysis failed");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function upload(file: File) {
     setUploading(true);
@@ -407,53 +514,94 @@ function UploadPanel({
           {/* Deal context */}
           <DealContextPanel
             basePlan={basePlan}
+            setBasePlan={setBasePlan}
             loadingPlan={loadingPlan}
             dealId={dealId}
           />
 
-          {/* Drop zone */}
-          <div
-            className={cn(
-              "w-full border-2 border-dashed rounded-xl p-10 flex flex-col items-center gap-4 cursor-pointer transition-colors",
-              dragging
-                ? "border-primary bg-primary/5"
-                : "border-border hover:border-primary/50 hover:bg-accent/30"
-            )}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              handleFiles(e.dataTransfer.files);
-            }}
-            onClick={() => inputRef.current?.click()}
-          >
-            <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
-              <FileText className="h-7 w-7 text-primary" />
-            </div>
-            <div className="text-center">
-              <p className="font-semibold">Upload Offering Memorandum</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Drag & drop or click to select — PDF or DOCX
-              </p>
-            </div>
-            {uploading && (
-              <div className="flex items-center gap-2 text-sm text-primary">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Uploading & analyzing…
+          {/* Analyze existing OM or upload new */}
+          {hasExistingDocument ? (
+            <div className="w-full border rounded-xl p-6 flex flex-col items-center gap-4 bg-card">
+              <div className="w-14 h-14 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                <FileText className="h-7 w-7 text-emerald-600" />
               </div>
-            )}
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".pdf,.docx,.doc"
-              className="hidden"
-              onChange={(e) => handleFiles(e.target.files)}
-            />
-          </div>
+              <div className="text-center">
+                <p className="font-semibold">OM Already Uploaded</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  This deal has an Offering Memorandum from when it was created.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <Button onClick={analyzeExisting} disabled={uploading}>
+                  {uploading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Analyzing…
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-4 w-4 mr-2" />
+                      Analyze Existing OM
+                    </>
+                  )}
+                </Button>
+                <Button variant="outline" onClick={() => inputRef.current?.click()} disabled={uploading}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload Different OM
+                </Button>
+              </div>
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".pdf,.docx,.doc"
+                className="hidden"
+                onChange={(e) => handleFiles(e.target.files)}
+              />
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "w-full border-2 border-dashed rounded-xl p-10 flex flex-col items-center gap-4 cursor-pointer transition-colors",
+                dragging
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50 hover:bg-accent/30"
+              )}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragging(false);
+                handleFiles(e.dataTransfer.files);
+              }}
+              onClick={() => inputRef.current?.click()}
+            >
+              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
+                <FileText className="h-7 w-7 text-primary" />
+              </div>
+              <div className="text-center">
+                <p className="font-semibold">Upload Offering Memorandum</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Drag & drop or click to select — PDF or DOCX
+                </p>
+              </div>
+              {uploading && (
+                <div className="flex items-center gap-2 text-sm text-primary">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Uploading & analyzing…
+                </div>
+              )}
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".pdf,.docx,.doc"
+                className="hidden"
+                onChange={(e) => handleFiles(e.target.files)}
+              />
+            </div>
+          )}
 
           {error && (
             <div className="flex items-center gap-2 text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-4 py-2.5 w-full">
@@ -834,6 +982,7 @@ function QaChat({
 function ReanalyzePanel({
   dealId,
   basePlan,
+  setBasePlan,
   loadingPlan,
   hasExistingDocument,
   onDone,
@@ -841,6 +990,7 @@ function ReanalyzePanel({
 }: {
   dealId: string;
   basePlan: BusinessPlan | null;
+  setBasePlan: (plan: BusinessPlan | null) => void;
   loadingPlan: boolean;
   hasExistingDocument: boolean;
   onDone: () => void;
@@ -1103,7 +1253,9 @@ export default function OmAnalysisPage() {
         dealId={dealId}
         processing={false}
         basePlan={basePlan}
+        setBasePlan={setBasePlan}
         loadingPlan={loadingPlan}
+        hasExistingDocument={hasExistingDocument}
         onAnalysisCreated={async () => {
           const a = await fetchAnalysis();
           if (a) setAnalysis(a);
@@ -1119,7 +1271,9 @@ export default function OmAnalysisPage() {
         dealId={dealId}
         processing={true}
         basePlan={basePlan}
+        setBasePlan={setBasePlan}
         loadingPlan={loadingPlan}
+        hasExistingDocument={hasExistingDocument}
         onAnalysisCreated={fetchAnalysis}
       />
     );
@@ -1144,7 +1298,9 @@ export default function OmAnalysisPage() {
           dealId={dealId}
           processing={false}
           basePlan={basePlan}
-        loadingPlan={loadingPlan}
+          setBasePlan={setBasePlan}
+          loadingPlan={loadingPlan}
+          hasExistingDocument={hasExistingDocument}
           onAnalysisCreated={async () => {
             const a = await fetchAnalysis();
             if (a) setAnalysis(a);
@@ -1225,6 +1381,7 @@ export default function OmAnalysisPage() {
         <ReanalyzePanel
           dealId={dealId}
           basePlan={basePlan}
+          setBasePlan={setBasePlan}
           loadingPlan={loadingPlan}
           hasExistingDocument={hasExistingDocument}
           onDone={async () => {

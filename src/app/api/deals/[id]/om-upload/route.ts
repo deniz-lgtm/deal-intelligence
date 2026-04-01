@@ -179,8 +179,9 @@ export async function POST(
       } catch {}
     }
 
+    const msg = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: "OM upload failed" },
+      { error: `OM upload failed: ${msg}` },
       { status: 500 }
     );
   }

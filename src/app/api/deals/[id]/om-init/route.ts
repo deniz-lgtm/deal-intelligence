@@ -75,7 +75,8 @@ export async function POST(
     return NextResponse.json({ data: { analysis_id: analysisId } });
   } catch (error) {
     console.error("POST /api/deals/[id]/om-init error:", error);
-    return NextResponse.json({ error: "Failed to start OM analysis" }, { status: 500 });
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: `Failed to start OM analysis: ${msg}` }, { status: 500 });
   }
 }
 
