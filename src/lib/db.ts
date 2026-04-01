@@ -50,6 +50,25 @@ export async function ensureColumns(): Promise<void> {
 
   const pool = getPool();
   const alters = [
+    // Ensure tables that may be missing on older deployments
+    `CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS deal_shares (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      permission TEXT NOT NULL DEFAULT 'edit' CHECK (permission IN ('view', 'edit')),
+      shared_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(deal_id, user_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_shares_deal_id ON deal_shares(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_shares_user_id ON deal_shares(user_id)`,
     // deals table
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
@@ -91,11 +110,14 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_disclaimer_text TEXT NOT NULL DEFAULT ''",
   ];
 
-  try {
-    await pool.query(alters.join(";\n"));
-  } catch (err) {
-    // Tables might not exist yet (first boot) — that's fine, initSchema will handle it
-    console.warn("ensureColumns warning:", (err as Error).message?.slice(0, 200));
+  // Run each statement individually so one failure doesn't block the rest
+  for (const sql of alters) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      // Tables might not exist yet (first boot) — that's fine, initSchema will handle it
+      console.warn("ensureColumns warning:", (err as Error).message?.slice(0, 120));
+    }
   }
 }
 
