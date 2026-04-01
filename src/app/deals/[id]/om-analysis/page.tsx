@@ -262,7 +262,7 @@ function DealContextPanel({
   return (
     <div className="w-full flex flex-col gap-3">
       {/* Base Plan selector */}
-      <div className="border rounded-xl bg-amber-50/60 border-amber-200 overflow-hidden">
+      <div className="border rounded-xl bg-amber-50/60 border-amber-200">
         <div className="flex items-center justify-between px-4 py-3 gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <BookOpen className="h-4 w-4 text-amber-600 flex-shrink-0" />
