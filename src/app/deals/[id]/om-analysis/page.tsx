@@ -289,13 +289,13 @@ function DealContextPanel({
                 <ChevronRight className={cn("h-3 w-3 transition-transform", showPlanPicker && "rotate-90")} />
               </button>
               {showPlanPicker && (
-                <div className="absolute right-0 top-full mt-1 z-10 w-64 bg-white border rounded-xl shadow-lg py-1 text-sm max-h-60 overflow-y-auto">
+                <div className="absolute right-0 top-full mt-1 z-10 w-64 bg-white border border-gray-200 rounded-xl shadow-lg py-1 text-sm max-h-60 overflow-y-auto">
                   <button
                     onClick={() => {
                       setBasePlan(null);
                       setShowPlanPicker(false);
                     }}
-                    className="w-full text-left px-3 py-2 hover:bg-muted text-muted-foreground text-xs"
+                    className="w-full text-left px-3 py-2 hover:bg-gray-100 text-gray-500 text-xs"
                   >
                     None (no base plan)
                   </button>
@@ -307,7 +307,7 @@ function DealContextPanel({
                         setShowPlanPicker(false);
                       }}
                       className={cn(
-                        "w-full text-left px-3 py-2 hover:bg-muted flex items-start gap-2",
+                        "w-full text-left px-3 py-2 hover:bg-gray-100 flex items-start gap-2",
                         basePlan?.id === p.id && "bg-amber-50"
                       )}
                     >
@@ -316,9 +316,9 @@ function DealContextPanel({
                           {p.is_default && (
                             <Star className="h-3 w-3 fill-amber-400 text-amber-400 flex-shrink-0" />
                           )}
-                          <span className="font-medium text-xs truncate">{p.name}</span>
+                          <span className="font-medium text-xs truncate text-gray-900">{p.name}</span>
                         </div>
-                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">
                           {p.description}
                         </p>
                       </div>
