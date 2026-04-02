@@ -245,11 +245,15 @@ export async function POST(
     });
 
     const buffer = await Packer.toBuffer(doc);
+    const uint8 = new Uint8Array(buffer);
+    const filename = `Zoning-Report-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx`;
 
-    return new NextResponse(buffer, {
+    return new NextResponse(uint8, {
+      status: 200,
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": `attachment; filename="Zoning-Report-${dealName.replace(/[^a-zA-Z0-9]/g, "-")}.docx"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Length": uint8.length.toString(),
       },
     });
   } catch (error) {
