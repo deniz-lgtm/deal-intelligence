@@ -18,6 +18,7 @@ import {
   Activity,
   Presentation,
   MapPin,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -44,6 +45,7 @@ const NAV_ITEMS = [
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/photos", label: "Photos", icon: Camera },
   { href: "/checklist", label: "Checklist", icon: CheckSquare },
+  { href: "/project", label: "Project", icon: ClipboardList },
   { href: "/loi", label: "LOI", icon: FileSignature },
   { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
   { href: "/investment-package", label: "Inv. Package", icon: Presentation },
