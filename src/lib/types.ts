@@ -555,6 +555,64 @@ export const DILIGENCE_CHECKLIST_TEMPLATE: Array<{
   },
 ];
 
+// ─── Project Management ────────────────────────────────────────────────────
+
+export type TaskPriority = "low" | "medium" | "high" | "critical";
+export type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
+
+export interface DealTask {
+  id: string;
+  deal_id: string;
+  title: string;
+  description: string | null;
+  assignee: string | null;
+  due_date: string | null;
+  priority: TaskPriority;
+  status: TaskStatus;
+  milestone_id: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DealMilestone {
+  id: string;
+  deal_id: string;
+  title: string;
+  stage: DealStatus | null;
+  target_date: string | null;
+  completed_at: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const TASK_PRIORITY_CONFIG: Record<TaskPriority, { label: string; color: string }> = {
+  low: { label: "Low", color: "text-zinc-400" },
+  medium: { label: "Medium", color: "text-blue-400" },
+  high: { label: "High", color: "text-amber-400" },
+  critical: { label: "Critical", color: "text-red-400" },
+};
+
+export const TASK_STATUS_CONFIG: Record<TaskStatus, { label: string; color: string }> = {
+  todo: { label: "To Do", color: "bg-zinc-500/20 text-zinc-300" },
+  in_progress: { label: "In Progress", color: "bg-blue-500/20 text-blue-300" },
+  blocked: { label: "Blocked", color: "bg-red-500/20 text-red-300" },
+  done: { label: "Done", color: "bg-emerald-500/20 text-emerald-300" },
+};
+
+export const STAGE_MILESTONE_TEMPLATES: Record<DealStatus, string[]> = {
+  sourcing: ["Initial property screening", "Broker outreach", "Site visit scheduled"],
+  screening: ["Financial review complete", "Market analysis complete", "IC memo drafted"],
+  loi: ["LOI drafted", "LOI negotiated", "LOI executed"],
+  under_contract: ["PSA negotiated", "PSA executed", "Earnest money deposited"],
+  diligence: ["Title review complete", "Environmental clear", "Physical inspections done", "Financing commitment"],
+  closing: ["Final walkthrough", "Closing docs signed", "Funding wired", "Deal closed"],
+  closed: [],
+  dead: [],
+  archived: [],
+};
+
 // ─── Chat ───────────────────────────────────────────────────────────────────
 
 export interface ChatMessage {
