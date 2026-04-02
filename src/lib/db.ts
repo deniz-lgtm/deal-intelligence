@@ -391,13 +391,27 @@ export const dealQueries = {
   // Returns all deals visible to a user (owns OR shared with OR legacy null-owner)
   getAll: async (userId?: string) => {
     const pool = getPool();
+    // Compute total_project_cost from underwriting JSONB for display on dashboard
+    const totalCostExpr = `
+      CASE
+        WHEN u.data IS NOT NULL AND (u.data->>'development_mode')::boolean = true THEN
+          COALESCE((u.data->>'land_cost')::numeric, 0)
+          + COALESCE((u.data->>'hard_cost_per_sf')::numeric, 0) * COALESCE((u.data->>'max_gsf')::numeric, 0)
+          + COALESCE((u.data->>'hard_cost_per_sf')::numeric, 0) * COALESCE((u.data->>'max_gsf')::numeric, 0) * COALESCE((u.data->>'soft_cost_pct')::numeric, 0) / 100
+          + COALESCE((u.data->>'land_cost')::numeric, 0) * COALESCE((u.data->>'closing_costs_pct')::numeric, 0) / 100
+        WHEN u.data IS NOT NULL THEN
+          COALESCE((u.data->>'purchase_price')::numeric, 0)
+          + COALESCE((u.data->>'purchase_price')::numeric, 0) * COALESCE((u.data->>'closing_costs_pct')::numeric, 0) / 100
+        ELSE NULL
+      END as total_project_cost`;
     if (!userId) {
-      const res = await pool.query("SELECT * FROM deals ORDER BY starred DESC, updated_at DESC");
+      const res = await pool.query(`SELECT d.*, ${totalCostExpr} FROM deals d LEFT JOIN underwriting u ON u.deal_id = d.id ORDER BY d.starred DESC, d.updated_at DESC`);
       return res.rows;
     }
     const res = await pool.query(
-      `SELECT DISTINCT d.* FROM deals d
+      `SELECT DISTINCT d.*, ${totalCostExpr} FROM deals d
        LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
+       LEFT JOIN underwriting u ON u.deal_id = d.id
        WHERE d.owner_id IS NULL OR d.owner_id = $1 OR ds.deal_id IS NOT NULL
        ORDER BY d.starred DESC, d.updated_at DESC`,
       [userId]

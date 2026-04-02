@@ -10,7 +10,7 @@ import { formatCurrency, cn, titleCase } from "@/lib/utils";
 import type { Deal } from "@/lib/types";
 
 interface KanbanCardProps {
-  deal: Deal & { om_score?: number; document_count?: number; checklist_complete?: number; checklist_total?: number };
+  deal: Deal & { om_score?: number; document_count?: number; checklist_complete?: number; checklist_total?: number; total_project_cost?: number | null };
   onStar?: (id: string, starred: boolean) => void;
   onDragStart?: (e: React.DragEvent, dealId: string) => void;
 }
@@ -66,12 +66,12 @@ export default function KanbanCard({ deal, onStar, onDragStart }: KanbanCardProp
         </p>
       )}
 
-      {/* Price */}
-      {deal.asking_price && (
+      {/* Total Project Cost */}
+      {(deal.total_project_cost || deal.asking_price) ? (
         <p className="text-xs font-semibold tabular-nums text-foreground mb-2">
-          {formatCurrency(deal.asking_price)}
+          {formatCurrency(deal.total_project_cost && deal.total_project_cost > 0 ? deal.total_project_cost : deal.asking_price)}
         </p>
-      )}
+      ) : null}
 
       {/* Footer row */}
       <div className="flex items-center justify-between text-2xs text-muted-foreground">
