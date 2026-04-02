@@ -62,6 +62,68 @@ Respond with valid JSON only (no markdown):
   }
 }
 
+// ─── Rent Roll Extraction ───────────────────────────────────────────────────
+
+export interface RentRollSummary {
+  total_units: number | null;
+  total_sf: number | null;
+  total_monthly_rent: number | null;
+  avg_rent_per_sf_annual: number | null;
+  occupancy_pct: number | null;
+}
+
+export async function extractRentRollSummary(
+  contentText: string
+): Promise<RentRollSummary | null> {
+  if (!contentText || contentText.length < 50) return null;
+
+  const snippet = contentText.slice(0, 16000);
+
+  const prompt = `You are a commercial real estate analyst. This document is a rent roll. Extract summary totals from it.
+
+RENT ROLL TEXT:
+${snippet}
+
+Extract and return ONLY a JSON object with these fields. Use null if not determinable:
+
+{
+  "total_units": 34,
+  "total_sf": 32375,
+  "total_monthly_rent": 40425,
+  "avg_rent_per_sf_annual": 15.00,
+  "occupancy_pct": 95.0
+}
+
+Rules:
+- total_units: count of distinct leasable units/suites/bays (exclude common areas)
+- total_sf: sum of all unit square footages
+- total_monthly_rent: sum of all current monthly rents across all units
+- avg_rent_per_sf_annual: (total_monthly_rent × 12) / total_sf. Null if no SF data.
+- occupancy_pct: percentage of units that are occupied/leased. 100 if all occupied.
+- All dollar values as plain numbers (no $ signs, no commas)
+- Look for totals rows at the bottom of the rent roll for accuracy
+- If units have $0 rent, they may be vacant — exclude from occupied count
+
+Respond with ONLY the JSON object, no explanation.`;
+
+  try {
+    const response = await getClient().messages.create({
+      model: MODEL,
+      max_tokens: 512,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
+    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    return JSON.parse(match[0]) as RentRollSummary;
+  } catch (err) {
+    console.error("extractRentRollSummary failed:", err);
+    return null;
+  }
+}
+
 // ─── Diligence Chat ──────────────────────────────────────────────────────────
 
 export interface ChatMessage {

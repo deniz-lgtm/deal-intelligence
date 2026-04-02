@@ -131,11 +131,13 @@ async function extractMetrics(text: string): Promise<{
   assumptions: Assumptions;
   tokensUsed: number;
 }> {
-  const snippet = text.slice(0, 12000);
+  const snippet = text.slice(0, 16000);
 
-  const prompt = `You are an expert commercial real estate analyst. Extract all financial metrics and property details from this Offering Memorandum.
+  const prompt = `You are an expert commercial real estate analyst. Extract all financial metrics and property details from this document. It may be an Offering Memorandum, a Rent Roll, or another financial document.
 
-OFFERING MEMORANDUM TEXT:
+If this is a RENT ROLL: extract the total number of units/suites, total square footage (sum of all unit SFs), and compute total annual rent (sum of monthly rents × 12). Set unit_count = total units, sf = total SF, and noi = total annual rent minus a reasonable vacancy estimate.
+
+DOCUMENT TEXT:
 ${snippet}
 
 Extract and return ONLY a JSON object with this exact structure. Use null for any value you cannot find with confidence:

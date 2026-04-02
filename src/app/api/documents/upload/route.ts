@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs/promises";
 import { documentQueries, dealQueries } from "@/lib/db";
-import { classifyDocument } from "@/lib/claude";
+import { classifyDocument, extractRentRollSummary } from "@/lib/claude";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 
@@ -92,6 +92,20 @@ export async function POST(req: NextRequest) {
         ai_summary: summary || null,
         ai_tags: tags.length > 0 ? tags : null,
       });
+
+      // If this looks like a rent roll, extract units/SF/rents and update the deal
+      const isRentRoll = /rent.?roll/i.test(file.name) || tags.some(t => /rent.?roll/i.test(t));
+      if (isRentRoll && contentText) {
+        extractRentRollSummary(contentText).then(async (rrSummary) => {
+          if (!rrSummary) return;
+          const updates: Record<string, unknown> = {};
+          if (rrSummary.total_units) updates.units = rrSummary.total_units;
+          if (rrSummary.total_sf) updates.square_footage = rrSummary.total_sf;
+          if (Object.keys(updates).length > 0) {
+            await dealQueries.update(dealId, updates);
+          }
+        }).catch(err => console.error("Rent roll extraction failed:", err));
+      }
 
       uploaded.push(doc);
     }
