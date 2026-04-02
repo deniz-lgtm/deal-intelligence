@@ -98,6 +98,14 @@ interface UWData {
   max_gsf: number;
   efficiency_pct: number;
   max_nrsf: number;
+  // CAM (Common Area Maintenance) flags — which OpEx categories are reimbursable
+  cam_taxes: boolean; cam_insurance: boolean; cam_repairs: boolean;
+  cam_utilities: boolean; cam_ga: boolean; cam_marketing: boolean;
+  cam_reserves: boolean; cam_other: boolean; cam_management: boolean;
+  // Leasing commissions
+  lc_new_pct: number;       // % of first-year rent for new leases
+  lc_renewal_pct: number;   // % of first-year rent for renewals
+  lc_renewal_prob: number;  // assumed % of tenants that renew
   // Zoning
   zoning_designation: string;
   zoning_data: ZoningData | null;
@@ -136,6 +144,12 @@ const DEFAULT: UWData = {
   max_gsf: 0,
   efficiency_pct: 100,
   max_nrsf: 0,
+  // CAM defaults — for NNN, taxes/insurance/repairs/utilities are typically reimbursable
+  cam_taxes: true, cam_insurance: true, cam_repairs: true,
+  cam_utilities: true, cam_ga: false, cam_marketing: false,
+  cam_reserves: false, cam_other: false, cam_management: false,
+  // Leasing commissions
+  lc_new_pct: 6, lc_renewal_pct: 3, lc_renewal_prob: 60,
   zoning_designation: "",
   zoning_data: null,
 };
@@ -224,11 +238,6 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const inPlaceEGI = inPlaceGPR - inPlaceVacancyLoss;
   const proformaEGI = proformaGPR - proformaVacancyLoss;
 
-  const reimbursements = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.expense_reimbursement_per_sf, 0) : 0;
-  const effectiveRevenue = egi + reimbursements;
-  const inPlaceEffectiveRevenue = inPlaceEGI + reimbursements;
-  const proformaEffectiveRevenue = proformaEGI + reimbursements + totalOtherIncome;
-
   // ── Operating Expenses ──────────────────────────────────────────────────────
   const mgmtFee = egi * (d.management_fee_pct / 100);
   const proformaMgmtFee = proformaEGI * (d.management_fee_pct / 100);
@@ -239,10 +248,52 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const ipFixedOpEx = (d.ip_taxes_annual || d.taxes_annual) + (d.ip_insurance_annual || d.insurance_annual) + (d.ip_repairs_annual || d.repairs_annual) + (d.ip_utilities_annual || d.utilities_annual) + (d.ip_other_annual || d.other_expenses_annual) + (d.ip_ga_annual || d.ga_annual || 0) + (d.ip_marketing_annual || d.marketing_annual || 0) + (d.ip_reserves_annual || d.reserves_annual || 0);
   const inPlaceTotalOpEx = inPlaceMgmtFee + ipFixedOpEx;
 
+  // ── CAM Reimbursements (commercial only) ────────────────────────────────────
+  // Sum all OpEx categories flagged as CAM → this is the reimbursable pool
+  const camPool = (d.cam_taxes ? d.taxes_annual : 0) + (d.cam_insurance ? d.insurance_annual : 0)
+    + (d.cam_repairs ? d.repairs_annual : 0) + (d.cam_utilities ? d.utilities_annual : 0)
+    + (d.cam_ga ? (d.ga_annual || 0) : 0) + (d.cam_marketing ? (d.marketing_annual || 0) : 0)
+    + (d.cam_reserves ? (d.reserves_annual || 0) : 0) + (d.cam_other ? (d.other_expenses_annual || 0) : 0)
+    + (d.cam_management ? proformaMgmtFee : 0);
+  const ipCamPool = (d.cam_taxes ? (d.ip_taxes_annual || d.taxes_annual) : 0)
+    + (d.cam_insurance ? (d.ip_insurance_annual || d.insurance_annual) : 0)
+    + (d.cam_repairs ? (d.ip_repairs_annual || d.repairs_annual) : 0)
+    + (d.cam_utilities ? (d.ip_utilities_annual || d.utilities_annual) : 0)
+    + (d.cam_ga ? (d.ip_ga_annual || d.ga_annual || 0) : 0) + (d.cam_marketing ? (d.ip_marketing_annual || d.marketing_annual || 0) : 0)
+    + (d.cam_reserves ? (d.ip_reserves_annual || d.reserves_annual || 0) : 0)
+    + (d.cam_other ? (d.ip_other_annual || d.other_expenses_annual || 0) : 0)
+    + (d.cam_management ? inPlaceMgmtFee : 0);
+  // Each unit group reimburses its pro-rata share based on lease type
+  // NNN → 100% of CAM pool pro-rata; MG → 100% pro-rata; Gross → 0%
+  let reimbursements = 0;
+  let ipReimbursements = 0;
+  if (mode === "commercial" && totalSF > 0) {
+    for (const g of d.unit_groups) {
+      const share = (effectiveUnits(g) * g.sf_per_unit) / totalSF;
+      const ipShare = ipTotalSF > 0 ? (g.unit_count * g.sf_per_unit) / ipTotalSF : 0;
+      if (g.lease_type === "NNN" || g.lease_type === "MG" || g.lease_type === "Modified Gross") {
+        reimbursements += camPool * share;
+        ipReimbursements += ipCamPool * ipShare;
+      }
+      // Gross leases: no reimbursement
+    }
+  }
+  const effectiveRevenue = egi + reimbursements;
+  const inPlaceEffectiveRevenue = inPlaceEGI + ipReimbursements;
+  const proformaEffectiveRevenue = proformaEGI + reimbursements + totalOtherIncome;
+
+  // ── Leasing Commissions (annualized) ─────────────────────────────────────────
+  // Blended LC rate: renewal_prob * renewal_pct + (1 - renewal_prob) * new_pct
+  const lcBlendedPct = mode === "commercial"
+    ? ((d.lc_renewal_prob / 100) * (d.lc_renewal_pct / 100) + (1 - d.lc_renewal_prob / 100) * (d.lc_new_pct / 100))
+    : 0;
+  const leasingCommissions = proformaEGI * lcBlendedPct;
+  const ipLeasingCommissions = inPlaceEGI * lcBlendedPct;
+
   // ── NOI ─────────────────────────────────────────────────────────────────────
-  const noi = effectiveRevenue - totalOpEx;
-  const inPlaceNOI = inPlaceEffectiveRevenue - inPlaceTotalOpEx;
-  const proformaNOI = proformaEffectiveRevenue - proformaTotalOpEx;
+  const noi = effectiveRevenue - totalOpEx - leasingCommissions;
+  const inPlaceNOI = inPlaceEffectiveRevenue - inPlaceTotalOpEx - ipLeasingCommissions;
+  const proformaNOI = proformaEffectiveRevenue - proformaTotalOpEx - leasingCommissions;
 
   // ── Cost Basis ──────────────────────────────────────────────────────────────
   const capexTotal = d.capex_items.reduce((s, c) => s + c.quantity * c.cost_per_unit, 0);
@@ -355,7 +406,8 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   return {
     totalSF, totalBeds, totalUnits, ipTotalUnits, ipTotalSF, ipTotalBeds,
     gpr, inPlaceGPR, proformaGPR, vacancyLoss, inPlaceVacancyLoss, proformaVacancyLoss, egi, inPlaceEGI, proformaEGI,
-    reimbursements, effectiveRevenue, inPlaceEffectiveRevenue, proformaEffectiveRevenue,
+    reimbursements, ipReimbursements, camPool, ipCamPool, effectiveRevenue, inPlaceEffectiveRevenue, proformaEffectiveRevenue,
+    leasingCommissions, ipLeasingCommissions,
     totalOtherIncome, otherIncomeRUBS, otherIncomeParking, otherIncomeLaundry,
     mgmtFee, proformaMgmtFee, inPlaceMgmtFee, totalOpEx, proformaTotalOpEx, inPlaceTotalOpEx,
     noi, inPlaceNOI, proformaNOI,
@@ -1424,7 +1476,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Proforma</th>}
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Annual Rev</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Reimb $/SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">CAM $/SF</th>
                   <th className="w-[32px]" />
                 </>)}
               </tr>
@@ -1535,8 +1587,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       {!isGroundUp && unitChangeCell}
                       <td className="px-2 py-1"><CellInput value={g.sf_per_unit} onChange={v => upd(g.id, { sf_per_unit: v })} /></td>
                       <td className="px-1 py-1">
-                        <select value={g.lease_type} onChange={e => upd(g.id, { lease_type: e.target.value as LeaseType })} className="w-full bg-transparent text-sm outline-none text-center">
-                          <option value="NNN">NNN</option><option value="MG">MG</option><option value="Gross">Gross</option><option value="Modified Gross">Mod G</option>
+                        <select value={g.lease_type} onChange={e => upd(g.id, { lease_type: e.target.value as LeaseType })} className="w-full bg-muted/80 text-sm outline-none text-center text-blue-300 rounded px-1 py-0.5 border border-border/50 cursor-pointer appearance-auto">
+                          <option value="NNN" className="bg-background text-foreground">NNN</option>
+                          <option value="MG" className="bg-background text-foreground">MG</option>
+                          <option value="Gross" className="bg-background text-foreground">Gross</option>
+                          <option value="Modified Gross" className="bg-background text-foreground">Mod G</option>
                         </select>
                       </td>
                       {!isGroundUp && (
@@ -1558,7 +1613,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <td className="px-2 py-1">
                         <p className="text-right text-sm tabular-nums font-medium">{fc(pfAnnual)}<span className="text-muted-foreground/60 text-[10px]">/yr</span></p>
                       </td>
-                      <td className="px-2 py-1"><CellInput value={g.expense_reimbursement_per_sf} onChange={v => upd(g.id, { expense_reimbursement_per_sf: v })} prefix="$" decimals={2} /></td>
+                      <td className="px-2 py-1 text-right text-sm tabular-nums text-muted-foreground">
+                        {(() => {
+                          const sf = effectiveUnits(g) * g.sf_per_unit;
+                          if (sf <= 0 || g.lease_type === "Gross") return "—";
+                          const share = m.totalSF > 0 ? sf / m.totalSF : 0;
+                          const camPerSF = share * m.camPool / sf;
+                          return camPerSF > 0 ? `$${camPerSF.toFixed(2)}` : "—";
+                        })()}
+                      </td>
                     </>)}
                     <td className="px-1 py-1">
                       <button onClick={() => del(g.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -1726,6 +1789,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <thead>
               <tr className="bg-muted/30 border-b">
                 <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[180px]">Category</th>
+                {!isMF && !isSH && <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]" title="Common Area Maintenance — checked items are reimbursed by NNN/MG tenants">CAM</th>}
                 {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[130px]">In-Place (Annual)</th>}
                 <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[130px]">{isGroundUp ? "Stabilized (Annual)" : "Pro Forma (Annual)"}</th>
                 <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">$/Unit</th>
@@ -1735,6 +1799,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               {/* Management row — in-place is hard $ amount, pro forma is % of EGI */}
               <tr className="border-b hover:bg-muted/20">
                 <td className="px-2 py-1.5 text-muted-foreground">Management <span className="text-xs text-muted-foreground/60">({d.management_fee_pct}% PF)</span></td>
+                {!isMF && !isSH && (
+                  <td className="px-2 py-1.5 text-center">
+                    <input type="checkbox" checked={d.cam_management} onChange={e => set("cam_management", e.target.checked)} className="rounded h-3.5 w-3.5 accent-blue-500" />
+                  </td>
+                )}
                 {!isGroundUp && (
                   <td className="px-2 py-1.5">
                     <CellInput value={d.ip_mgmt_annual} onChange={v => set("ip_mgmt_annual", v)} prefix="$" />
@@ -1745,21 +1814,27 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </tr>
               {/* Editable expense rows */}
               {([
-                { label: "Property Taxes", ipKey: "ip_taxes_annual" as keyof UWData, pfKey: "taxes_annual" as keyof UWData },
-                { label: "Insurance", ipKey: "ip_insurance_annual" as keyof UWData, pfKey: "insurance_annual" as keyof UWData },
-                { label: "Repairs & Maintenance", ipKey: "ip_repairs_annual" as keyof UWData, pfKey: "repairs_annual" as keyof UWData },
-                { label: "Utilities", ipKey: "ip_utilities_annual" as keyof UWData, pfKey: "utilities_annual" as keyof UWData },
-                { label: "General & Admin", ipKey: "ip_ga_annual" as keyof UWData, pfKey: "ga_annual" as keyof UWData },
-                { label: "Marketing / Leasing", ipKey: "ip_marketing_annual" as keyof UWData, pfKey: "marketing_annual" as keyof UWData },
-                { label: "Reserves", ipKey: "ip_reserves_annual" as keyof UWData, pfKey: "reserves_annual" as keyof UWData },
-                { label: "Other", ipKey: "ip_other_annual" as keyof UWData, pfKey: "other_expenses_annual" as keyof UWData },
+                { label: "Property Taxes", ipKey: "ip_taxes_annual" as keyof UWData, pfKey: "taxes_annual" as keyof UWData, camKey: "cam_taxes" as keyof UWData },
+                { label: "Insurance", ipKey: "ip_insurance_annual" as keyof UWData, pfKey: "insurance_annual" as keyof UWData, camKey: "cam_insurance" as keyof UWData },
+                { label: "Repairs & Maintenance", ipKey: "ip_repairs_annual" as keyof UWData, pfKey: "repairs_annual" as keyof UWData, camKey: "cam_repairs" as keyof UWData },
+                { label: "Utilities", ipKey: "ip_utilities_annual" as keyof UWData, pfKey: "utilities_annual" as keyof UWData, camKey: "cam_utilities" as keyof UWData },
+                { label: "General & Admin", ipKey: "ip_ga_annual" as keyof UWData, pfKey: "ga_annual" as keyof UWData, camKey: "cam_ga" as keyof UWData },
+                { label: "Marketing / Leasing", ipKey: "ip_marketing_annual" as keyof UWData, pfKey: "marketing_annual" as keyof UWData, camKey: "cam_marketing" as keyof UWData },
+                { label: "Reserves", ipKey: "ip_reserves_annual" as keyof UWData, pfKey: "reserves_annual" as keyof UWData, camKey: "cam_reserves" as keyof UWData },
+                { label: "Other", ipKey: "ip_other_annual" as keyof UWData, pfKey: "other_expenses_annual" as keyof UWData, camKey: "cam_other" as keyof UWData },
               ]).map(row => {
                 const ipVal = (d[row.ipKey] as number) || 0;
                 const pfVal = (d[row.pfKey] as number) || 0;
                 const perUnit = m.totalUnits > 0 ? pfVal / m.totalUnits : 0;
+                const isCam = d[row.camKey] as boolean;
                 return (
                   <tr key={row.label} className="border-b hover:bg-muted/20">
                     <td className="px-2 py-1.5 text-muted-foreground">{row.label}</td>
+                    {!isMF && !isSH && (
+                      <td className="px-2 py-1.5 text-center">
+                        <input type="checkbox" checked={isCam} onChange={e => set(row.camKey as keyof UWData, e.target.checked)} className="rounded h-3.5 w-3.5 accent-blue-500" />
+                      </td>
+                    )}
                     {!isGroundUp && (
                       <td className="px-2 py-1.5">
                         <CellInput value={ipVal} onChange={v => set(row.ipKey as keyof UWData, v)} prefix="$" />
@@ -1774,10 +1849,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               })}
               <tr className="border-t-2 font-semibold">
                 <td className="px-2 py-2">Total Operating Expenses</td>
+                {!isMF && !isSH && <td />}
                 {!isGroundUp && <td className="px-2 py-2 text-right tabular-nums">{fc(m.inPlaceTotalOpEx)}</td>}
                 <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalOpEx)}</td>
                 <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{m.totalUnits > 0 ? fc(Math.round(m.totalOpEx / m.totalUnits)) : "—"}</td>
               </tr>
+              {!isMF && !isSH && m.camPool > 0 && (
+                <tr className="bg-blue-500/5">
+                  <td className="px-2 py-2 text-blue-400 text-xs font-medium" colSpan={2}>CAM Reimbursable Pool</td>
+                  {!isGroundUp && <td className="px-2 py-2 text-right tabular-nums text-blue-400">{fc(m.ipCamPool)}</td>}
+                  <td className="px-2 py-2 text-right tabular-nums text-blue-400">{fc(m.camPool)}</td>
+                  <td />
+                </tr>
+              )}
             </tbody>
           </table>
           <div className="flex items-center gap-4 mt-3">
@@ -1788,6 +1872,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               AI Estimate
             </Button>
           </div>
+          {/* Leasing Commissions — commercial only */}
+          {!isMF && !isSH && (
+            <div className="mt-4 border-t pt-4">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Leasing Commissions</h4>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <NumInput label="New Lease Commission" value={d.lc_new_pct} onChange={v => set("lc_new_pct", v)} suffix="%" decimals={1} />
+                <NumInput label="Renewal Commission" value={d.lc_renewal_pct} onChange={v => set("lc_renewal_pct", v)} suffix="%" decimals={1} />
+                <NumInput label="Assumed Renewal %" value={d.lc_renewal_prob} onChange={v => set("lc_renewal_prob", v)} suffix="%" decimals={0} />
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Annual LC Cost</p>
+                  <p className="text-sm font-semibold">{fc(m.leasingCommissions)}</p>
+                  <p className="text-xs text-muted-foreground">{m.proformaEGI > 0 ? ((m.leasingCommissions / m.proformaEGI) * 100).toFixed(1) : 0}% of EGI</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </Section>
 
@@ -1883,7 +1983,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <ISRow label="Gross Potential Rent" ip={m.inPlaceGPR} pf={m.gpr} proforma={m.proformaGPR} hideIp={isGroundUp} />
             <ISRow label={`Less Vacancy`} ip={-m.inPlaceVacancyLoss} pf={-m.vacancyLoss} proforma={-m.proformaVacancyLoss} muted hideIp={isGroundUp} />
             <ISRow label="Effective Gross Income" ip={m.inPlaceEGI} pf={m.egi} proforma={m.proformaEGI} bold hideIp={isGroundUp} />
-            {m.reimbursements > 0 && <ISRow label="Expense Reimbursements" ip={m.reimbursements} pf={m.reimbursements} hideIp={isGroundUp} />}
+            {m.reimbursements > 0 && <ISRow label="CAM Reimbursements (NNN/MG)" ip={m.ipReimbursements} pf={m.reimbursements} proforma={m.reimbursements} hideIp={isGroundUp} />}
             {m.totalOtherIncome > 0 && <>
               {m.otherIncomeRUBS > 0 && <ISRow label="RUBS" ip={0} pf={m.otherIncomeRUBS} proforma={m.otherIncomeRUBS} muted hideIp={isGroundUp} />}
               {m.otherIncomeParking > 0 && <ISRow label="Parking Income" ip={0} pf={m.otherIncomeParking} proforma={m.otherIncomeParking} muted hideIp={isGroundUp} />}
@@ -1903,6 +2003,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             {(d.reserves_annual > 0 || d.ip_reserves_annual > 0) && <ISRow label="Reserves" ip={-(d.ip_reserves_annual || d.reserves_annual)} pf={-d.reserves_annual} muted hideIp={isGroundUp} />}
             {(d.other_expenses_annual > 0 || d.ip_other_annual > 0) && <ISRow label="Other Expenses" ip={-(d.ip_other_annual || d.other_expenses_annual)} pf={-d.other_expenses_annual} muted hideIp={isGroundUp} />}
             <ISRow label={`Total Operating Expenses`} ip={-m.inPlaceTotalOpEx} pf={-m.totalOpEx} proforma={-m.proformaTotalOpEx} hideIp={isGroundUp} />
+            {m.leasingCommissions > 0 && <ISRow label="Leasing Commissions" ip={-m.ipLeasingCommissions} pf={-m.leasingCommissions} proforma={-m.leasingCommissions} muted hideIp={isGroundUp} />}
             <tr><td colSpan={isGroundUp ? 2 : 4} className="px-4"><div className="border-t" /></td></tr>
             <ISRow label="Net Operating Income" ip={m.inPlaceNOI} pf={m.noi} proforma={m.proformaNOI} bold hi hideIp={isGroundUp} />
             {d.has_financing && <>
