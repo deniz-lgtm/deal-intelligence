@@ -538,23 +538,21 @@ export default function DealOverviewPage({
           <div className="mt-3 pt-3 border-t border-border/40">
             <label className="text-2xs text-muted-foreground font-medium uppercase tracking-wider">Land (Acres)</label>
             <input
-              type="number"
-              step="0.01"
-              value={deal.land_acres ?? ""}
+              type="text"
+              inputMode="decimal"
+              defaultValue={deal.land_acres ?? ""}
               placeholder="—"
-              onChange={(e) => {
+              onBlur={async (e) => {
                 const val = e.target.value ? parseFloat(e.target.value) : null;
                 setDeal((prev: any) => prev ? { ...prev, land_acres: val } : prev);
-              }}
-              onBlur={async () => {
                 try {
                   await fetch(`/api/deals/${params.id}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ land_acres: deal.land_acres }),
+                    body: JSON.stringify({ land_acres: val }),
                   });
                 } catch { /* ignore */ }
-              }}
+              }}}
               className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40 transition-colors"
             />
           </div>
