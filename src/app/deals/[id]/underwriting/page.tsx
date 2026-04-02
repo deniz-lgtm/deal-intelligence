@@ -406,6 +406,11 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const exitPricePerBed = mode === "student_housing" && totalBeds > 0 && exitValue > 0 ? exitValue / totalBeds : 0;
   const exitPricePerSF = mode === "commercial" && totalSF > 0 && exitValue > 0 ? exitValue / totalSF : 0;
 
+  // ── CapEx per-unit metrics ──────────────────────────────────────────────────
+  const capexPerSF = mode === "commercial" && totalSF > 0 ? capexTotal / totalSF : 0;
+  const capexPerUnit = totalUnits > 0 ? capexTotal / totalUnits : 0;
+  const capexPerBed = mode === "student_housing" && totalBeds > 0 ? capexTotal / totalBeds : 0;
+
   return {
     totalSF, totalBeds, totalUnits, ipTotalUnits, ipTotalSF, ipTotalBeds,
     gpr, inPlaceGPR, proformaGPR, vacancyLoss, inPlaceVacancyLoss, proformaVacancyLoss, egi, inPlaceEGI, proformaEGI,
@@ -417,7 +422,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     grm, proformaGRM, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
     proformaCapRate,
     exitPricePerUnit, exitPricePerBed, exitPricePerSF,
-    capexTotal, closingCosts, totalCost,
+    capexTotal, capexPerSF, capexPerUnit, capexPerBed, closingCosts, totalCost,
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
     acqLoan, acqDebt, acqDebtIO, yr1Debt, equity, cashFlow, coc, dscr, blendedLtc,
@@ -1101,18 +1106,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </div>
             )}
           </div>
-          {/* Price / Unit: purchase → sale */}
+          {/* Price / Unit|SF|Bed: purchase → sale */}
           <div className="bg-card p-3">
-            <p className="text-xs text-muted-foreground mb-2">{isSH ? "Price / Bed" : "Price / Unit"}</p>
+            <p className="text-xs text-muted-foreground mb-2">{isSH ? "Price / Bed" : isMF ? "Price / Unit" : "Price / SF"}</p>
             <div className="flex items-baseline justify-between gap-2">
               <div>
                 <p className="text-[10px] text-muted-foreground/70 uppercase">Purchase</p>
-                <p className="text-sm font-semibold tabular-nums">{isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—"}</p>
+                <p className="text-sm font-semibold tabular-nums">{isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : isMF ? (m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—") : m.pricePerSF > 0 ? fc(m.pricePerSF) : "—"}</p>
               </div>
               <span className="text-muted-foreground/40 text-xs">→</span>
               <div className="text-right">
                 <p className="text-[10px] text-muted-foreground/70 uppercase">Sale</p>
-                <p className="text-sm font-semibold tabular-nums text-primary">{isSH ? (m.exitPricePerBed > 0 ? fc(m.exitPricePerBed) : "—") : m.exitPricePerUnit > 0 ? fc(m.exitPricePerUnit) : "—"}</p>
+                <p className="text-sm font-semibold tabular-nums text-primary">{isSH ? (m.exitPricePerBed > 0 ? fc(m.exitPricePerBed) : "—") : isMF ? (m.exitPricePerUnit > 0 ? fc(m.exitPricePerUnit) : "—") : m.exitPricePerSF > 0 ? fc(m.exitPricePerSF) : "—"}</p>
               </div>
             </div>
           </div>
@@ -1170,10 +1175,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3">
-            <NumInput label="Purchase Price" value={d.purchase_price} onChange={v => set("purchase_price", v)} prefix="$" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+            <div>
+              <NumInput label="Purchase Price" value={d.purchase_price} onChange={v => set("purchase_price", v)} prefix="$" />
+              {d.purchase_price > 0 && (
+                <p className="text-[10px] text-muted-foreground/60 mt-1 text-right tabular-nums">
+                  {isSH ? (m.pricePerBed > 0 ? `${fc(m.pricePerBed)}/bed` : "") : isMF ? (m.pricePerUnit > 0 ? `${fc(m.pricePerUnit)}/unit` : "") : m.pricePerSF > 0 ? `${fc(m.pricePerSF)}/SF` : ""}
+                </p>
+              )}
+            </div>
             <NumInput label="Closing Costs" value={d.closing_costs_pct} onChange={v => set("closing_costs_pct", v)} suffix="%" decimals={1} />
             <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Closing Cost $</p><p className="text-sm font-semibold">{fc(m.closingCosts)}</p></div>
+            <div className="p-3 bg-muted/50 rounded-lg">
+              <p className="text-xs text-muted-foreground mb-1">Total Cost {isSH ? "/ Bed" : isMF ? "/ Unit" : "/ SF"}</p>
+              <p className="text-sm font-semibold">{isSH ? (m.totalBeds > 0 ? fc(m.totalCost / m.totalBeds) : "—") : isMF ? (m.totalUnits > 0 ? fc(m.totalCost / m.totalUnits) : "—") : m.totalSF > 0 ? fc(m.totalCost / m.totalSF) : "—"}</p>
+              <p className="text-[10px] text-muted-foreground/60">PP + closing + CapEx</p>
+            </div>
           </div>
         )}
       </Section>
@@ -1760,7 +1777,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <tfoot>
                 <tr className="border-t bg-muted/20 font-semibold">
                   <td colSpan={5} className="px-2 py-2 text-right">{deal?.investment_strategy === "ground_up" ? "Total Development Cost" : "Total CapEx"}</td>
-                  <td className="px-2 py-2 text-right tabular-nums">{fc(m.capexTotal)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">
+                    {fc(m.capexTotal)}
+                    <p className="text-[10px] text-muted-foreground/60 font-normal tabular-nums">
+                      {isSH ? (m.capexPerBed > 0 ? `${fc(m.capexPerBed)}/bed` : "") : isMF ? (m.capexPerUnit > 0 ? `${fc(m.capexPerUnit)}/unit` : "") : m.capexPerSF > 0 ? `$${m.capexPerSF.toFixed(2)}/SF` : ""}
+                    </p>
+                  </td>
                   <td />
                 </tr>
               </tfoot>
@@ -1964,8 +1986,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
           <NumInput label="Exit Cap Rate" value={d.exit_cap_rate} onChange={v => set("exit_cap_rate", v)} suffix="%" decimals={2} />
           <NumInput label="Hold Period" value={d.hold_period_years} onChange={v => set("hold_period_years", v)} suffix="yrs" />
-          <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Exit Value</p><p className="text-sm font-semibold">{fc(m.exitValue)}</p></div>
-          <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">Equity at Exit</p><p className="text-sm font-semibold">{fc(m.exitEquity)}</p></div>
+          <div className="p-3 bg-muted/50 rounded-lg">
+            <p className="text-xs text-muted-foreground mb-1">Exit Value</p>
+            <p className="text-sm font-semibold">{fc(m.exitValue)}</p>
+            {m.exitValue > 0 && (
+              <p className="text-[10px] text-muted-foreground/60 tabular-nums">
+                {isSH ? (m.exitPricePerBed > 0 ? `${fc(m.exitPricePerBed)}/bed` : "") : isMF ? (m.exitPricePerUnit > 0 ? `${fc(m.exitPricePerUnit)}/unit` : "") : m.exitPricePerSF > 0 ? `${fc(m.exitPricePerSF)}/SF` : ""}
+              </p>
+            )}
+          </div>
+          <div className="p-3 bg-muted/50 rounded-lg">
+            <p className="text-xs text-muted-foreground mb-1">Equity at Exit</p>
+            <p className="text-sm font-semibold">{fc(m.exitEquity)}</p>
+          </div>
         </div>
       </Section>
 
