@@ -1617,17 +1617,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       {!isGroundUp && (
                         <td className="px-2 py-1">
                           <CellInput value={g.current_rent_per_sf} onChange={v => upd(g.id, { current_rent_per_sf: v })} prefix="$" decimals={2} />
-                          <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(ipAnnual)}/yr</p>
+                          <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{g.current_rent_per_sf > 0 ? `$${(g.current_rent_per_sf / 12).toFixed(2)}/mo` : ""}</p>
                         </td>
                       )}
                       <td className="px-2 py-1">
                         <CellInput value={g.market_rent_per_sf} onChange={v => upd(g.id, { market_rent_per_sf: v })} prefix="$" decimals={2} />
+                        <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{g.market_rent_per_sf > 0 ? `$${(g.market_rent_per_sf / 12).toFixed(2)}/mo` : ""}</p>
                       </td>
                       {!isGroundUp && <td className="px-2 py-1"><CellInput value={g.renovation_count || 0} onChange={v => updFn(g.id, { renovation_count: v })} /></td>}
                       {!isGroundUp && (
                         <td className="px-2 py-1">
                           <span className="block text-right text-sm tabular-nums font-medium">{eu > 0 && g.sf_per_unit > 0 ? `$${(proformaAnnual / eu / g.sf_per_unit).toFixed(2)}` : "—"}</span>
-                          <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
+                          <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{eu > 0 && g.sf_per_unit > 0 ? `$${(proformaAnnual / eu / g.sf_per_unit / 12).toFixed(2)}/mo` : ""}</p>
                         </td>
                       )}
                       <td className="px-2 py-1">
@@ -1639,7 +1640,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           if (sf <= 0 || g.lease_type === "Gross") return "—";
                           const share = m.totalSF > 0 ? sf / m.totalSF : 0;
                           const camPerSF = share * m.camPool / sf;
-                          return camPerSF > 0 ? `$${camPerSF.toFixed(2)}` : "—";
+                          if (camPerSF <= 0) return "—";
+                          return <><span>${camPerSF.toFixed(2)}</span><p className="text-[10px] text-muted-foreground/60 tabular-nums">${(camPerSF / 12).toFixed(2)}/mo</p></>;
                         })()}
                       </td>
                     </>)}
