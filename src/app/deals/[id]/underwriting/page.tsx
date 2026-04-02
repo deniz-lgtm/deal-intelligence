@@ -175,6 +175,9 @@ const newGroup = (): UnitGroup => ({
 
 const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity: 1, cost_per_unit: 0 });
 
+/** Use in-place value if it has been entered (> 0), otherwise fall back to pro forma. */
+function ipOr(ip: number, pf: number): number { return ip > 0 ? ip : pf; }
+
 function annualPayment(principal: number, rate: number, years: number): number {
   if (principal <= 0 || rate === 0) return principal > 0 ? principal / years : 0;
   const r = rate / 100 / 12, n = years * 12;
@@ -245,7 +248,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual + (d.ga_annual || 0) + (d.marketing_annual || 0) + (d.reserves_annual || 0);
   const totalOpEx = mgmtFee + fixedOpEx;
   const proformaTotalOpEx = proformaMgmtFee + fixedOpEx;
-  const ipFixedOpEx = (d.ip_taxes_annual || d.taxes_annual) + (d.ip_insurance_annual || d.insurance_annual) + (d.ip_repairs_annual || d.repairs_annual) + (d.ip_utilities_annual || d.utilities_annual) + (d.ip_other_annual || d.other_expenses_annual) + (d.ip_ga_annual || d.ga_annual || 0) + (d.ip_marketing_annual || d.marketing_annual || 0) + (d.ip_reserves_annual || d.reserves_annual || 0);
+  const ipFixedOpEx = ipOr(d.ip_taxes_annual, d.taxes_annual) + ipOr(d.ip_insurance_annual, d.insurance_annual) + ipOr(d.ip_repairs_annual, d.repairs_annual) + ipOr(d.ip_utilities_annual, d.utilities_annual) + ipOr(d.ip_other_annual, d.other_expenses_annual) + ipOr(d.ip_ga_annual, d.ga_annual || 0) + ipOr(d.ip_marketing_annual, d.marketing_annual || 0) + ipOr(d.ip_reserves_annual, d.reserves_annual || 0);
   const inPlaceTotalOpEx = inPlaceMgmtFee + ipFixedOpEx;
 
   // ── CAM Reimbursements (commercial only) ────────────────────────────────────
@@ -255,13 +258,13 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     + (d.cam_ga ? (d.ga_annual || 0) : 0) + (d.cam_marketing ? (d.marketing_annual || 0) : 0)
     + (d.cam_reserves ? (d.reserves_annual || 0) : 0) + (d.cam_other ? (d.other_expenses_annual || 0) : 0)
     + (d.cam_management ? proformaMgmtFee : 0);
-  const ipCamPool = (d.cam_taxes ? (d.ip_taxes_annual || d.taxes_annual) : 0)
-    + (d.cam_insurance ? (d.ip_insurance_annual || d.insurance_annual) : 0)
-    + (d.cam_repairs ? (d.ip_repairs_annual || d.repairs_annual) : 0)
-    + (d.cam_utilities ? (d.ip_utilities_annual || d.utilities_annual) : 0)
-    + (d.cam_ga ? (d.ip_ga_annual || d.ga_annual || 0) : 0) + (d.cam_marketing ? (d.ip_marketing_annual || d.marketing_annual || 0) : 0)
-    + (d.cam_reserves ? (d.ip_reserves_annual || d.reserves_annual || 0) : 0)
-    + (d.cam_other ? (d.ip_other_annual || d.other_expenses_annual || 0) : 0)
+  const ipCamPool = (d.cam_taxes ? ipOr(d.ip_taxes_annual, d.taxes_annual) : 0)
+    + (d.cam_insurance ? ipOr(d.ip_insurance_annual, d.insurance_annual) : 0)
+    + (d.cam_repairs ? ipOr(d.ip_repairs_annual, d.repairs_annual) : 0)
+    + (d.cam_utilities ? ipOr(d.ip_utilities_annual, d.utilities_annual) : 0)
+    + (d.cam_ga ? ipOr(d.ip_ga_annual, d.ga_annual || 0) : 0) + (d.cam_marketing ? ipOr(d.ip_marketing_annual, d.marketing_annual || 0) : 0)
+    + (d.cam_reserves ? ipOr(d.ip_reserves_annual, d.reserves_annual || 0) : 0)
+    + (d.cam_other ? ipOr(d.ip_other_annual, d.other_expenses_annual || 0) : 0)
     + (d.cam_management ? inPlaceMgmtFee : 0);
   // Each unit group reimburses its pro-rata share based on lease type
   // NNN → 100% of CAM pool pro-rata; MG → 100% pro-rata; Gross → 0%
@@ -1994,14 +1997,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             }
             <tr><td colSpan={isGroundUp ? 2 : 4} className="px-4"><div className="border-t" /></td></tr>
             <ISRow label={`Management (${d.management_fee_pct}%)`} ip={-m.inPlaceMgmtFee} pf={-m.mgmtFee} proforma={-m.proformaMgmtFee} muted hideIp={isGroundUp} />
-            <ISRow label="Property Taxes" ip={-(d.ip_taxes_annual || d.taxes_annual)} pf={-d.taxes_annual} muted hideIp={isGroundUp} />
-            <ISRow label="Insurance" ip={-(d.ip_insurance_annual || d.insurance_annual)} pf={-d.insurance_annual} muted hideIp={isGroundUp} />
-            <ISRow label="Repairs & Maintenance" ip={-(d.ip_repairs_annual || d.repairs_annual)} pf={-d.repairs_annual} muted hideIp={isGroundUp} />
-            {(d.utilities_annual > 0 || d.ip_utilities_annual > 0) && <ISRow label="Utilities" ip={-(d.ip_utilities_annual || d.utilities_annual)} pf={-d.utilities_annual} muted hideIp={isGroundUp} />}
-            {(d.ga_annual > 0 || d.ip_ga_annual > 0) && <ISRow label="General & Admin" ip={-(d.ip_ga_annual || d.ga_annual)} pf={-d.ga_annual} muted hideIp={isGroundUp} />}
-            {(d.marketing_annual > 0 || d.ip_marketing_annual > 0) && <ISRow label="Marketing / Leasing" ip={-(d.ip_marketing_annual || d.marketing_annual)} pf={-d.marketing_annual} muted hideIp={isGroundUp} />}
-            {(d.reserves_annual > 0 || d.ip_reserves_annual > 0) && <ISRow label="Reserves" ip={-(d.ip_reserves_annual || d.reserves_annual)} pf={-d.reserves_annual} muted hideIp={isGroundUp} />}
-            {(d.other_expenses_annual > 0 || d.ip_other_annual > 0) && <ISRow label="Other Expenses" ip={-(d.ip_other_annual || d.other_expenses_annual)} pf={-d.other_expenses_annual} muted hideIp={isGroundUp} />}
+            <ISRow label="Property Taxes" ip={-ipOr(d.ip_taxes_annual, d.taxes_annual)} pf={-d.taxes_annual} muted hideIp={isGroundUp} />
+            <ISRow label="Insurance" ip={-ipOr(d.ip_insurance_annual, d.insurance_annual)} pf={-d.insurance_annual} muted hideIp={isGroundUp} />
+            <ISRow label="Repairs & Maintenance" ip={-ipOr(d.ip_repairs_annual, d.repairs_annual)} pf={-d.repairs_annual} muted hideIp={isGroundUp} />
+            {(d.utilities_annual > 0 || d.ip_utilities_annual > 0) && <ISRow label="Utilities" ip={-ipOr(d.ip_utilities_annual, d.utilities_annual)} pf={-d.utilities_annual} muted hideIp={isGroundUp} />}
+            {(d.ga_annual > 0 || d.ip_ga_annual > 0) && <ISRow label="General & Admin" ip={-ipOr(d.ip_ga_annual, d.ga_annual)} pf={-d.ga_annual} muted hideIp={isGroundUp} />}
+            {(d.marketing_annual > 0 || d.ip_marketing_annual > 0) && <ISRow label="Marketing / Leasing" ip={-ipOr(d.ip_marketing_annual, d.marketing_annual)} pf={-d.marketing_annual} muted hideIp={isGroundUp} />}
+            {(d.reserves_annual > 0 || d.ip_reserves_annual > 0) && <ISRow label="Reserves" ip={-ipOr(d.ip_reserves_annual, d.reserves_annual)} pf={-d.reserves_annual} muted hideIp={isGroundUp} />}
+            {(d.other_expenses_annual > 0 || d.ip_other_annual > 0) && <ISRow label="Other Expenses" ip={-ipOr(d.ip_other_annual, d.other_expenses_annual)} pf={-d.other_expenses_annual} muted hideIp={isGroundUp} />}
             <ISRow label={`Total Operating Expenses`} ip={-m.inPlaceTotalOpEx} pf={-m.totalOpEx} proforma={-m.proformaTotalOpEx} hideIp={isGroundUp} />
             {m.leasingCommissions > 0 && <ISRow label="Leasing Commissions" ip={-m.ipLeasingCommissions} pf={-m.leasingCommissions} proforma={-m.leasingCommissions} muted hideIp={isGroundUp} />}
             <tr><td colSpan={isGroundUp ? 2 : 4} className="px-4"><div className="border-t" /></td></tr>
