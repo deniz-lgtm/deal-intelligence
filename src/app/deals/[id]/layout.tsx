@@ -17,6 +17,7 @@ import {
   FileSearch,
   Activity,
   Presentation,
+  MapPin,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -38,6 +39,7 @@ interface Deal {
 const NAV_ITEMS = [
   { href: "", label: "Overview", icon: LayoutDashboard },
   { href: "/om-analysis", label: "OM Analysis", icon: FileSearch },
+  { href: "/site-zoning", label: "Site & Zoning", icon: MapPin },
   { href: "/underwriting", label: "Underwriting", icon: Calculator },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/photos", label: "Photos", icon: Camera },

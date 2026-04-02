@@ -911,17 +911,50 @@ function SiteDevelopmentCard({ deal, underwriting, dealId, onUnderwritingUpdate 
 
   return (
     <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-      <div className="flex items-center gap-2 mb-3">
-        <MapPin className="h-3.5 w-3.5 text-primary" />
-        <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">Site & Development Parameters</h3>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-3.5 w-3.5 text-primary" />
+          <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">Site & Development Parameters</h3>
+        </div>
+        <Link href={`/deals/${dealId}/site-zoning`}>
+          <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
+            Full Site & Zoning <ArrowRight className="h-3 w-3" />
+          </Button>
+        </Link>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* Land info (read-only, comes from deal) */}
-        <div className="p-3 bg-muted/30 rounded-lg">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Land</p>
-          <p className="text-sm font-semibold">{landAcres > 0 ? `${landAcres.toFixed(2)} AC` : "—"}</p>
-          {landSF > 0 && <p className="text-[10px] text-muted-foreground">{Math.round(landSF).toLocaleString()} SF</p>}
+        {/* Land Acres — editable */}
+        <div>
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Land (Acres)</label>
+          <input
+            type="number"
+            step="0.01"
+            value={landAcres || ""}
+            placeholder="0"
+            onChange={(e) => {
+              const val = parseFloat(e.target.value) || 0;
+              // Optimistic update via parent deal state is handled by onBlur
+              deal.land_acres = val;
+            }}
+            onBlur={async (e) => {
+              const val = parseFloat(e.target.value) || 0;
+              try {
+                await fetch(`/api/deals/${dealId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ land_acres: val }),
+                });
+                // Recalc GSF with new acres
+                const newSF = val * 43560;
+                const newGSF = isIndustrial ? Math.round(newSF * (lotCoverage / 100)) : Math.round(newSF * far);
+                const newNRSF = Math.round(newGSF * (efficiency / 100));
+                saveToUW({ max_gsf: newGSF, max_nrsf: newNRSF });
+              } catch {}
+            }}
+            className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40"
+          />
+          {landSF > 0 && <p className="text-[10px] text-muted-foreground mt-0.5">{Math.round(landSF).toLocaleString()} SF</p>}
         </div>
 
         {/* Property-type-specific inputs */}
