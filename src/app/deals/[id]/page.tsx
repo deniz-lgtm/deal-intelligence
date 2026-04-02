@@ -552,7 +552,7 @@ export default function DealOverviewPage({
                     body: JSON.stringify({ land_acres: val }),
                   });
                 } catch { /* ignore */ }
-              }}}
+              }}
               className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40 transition-colors"
             />
           </div>
