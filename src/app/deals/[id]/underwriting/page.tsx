@@ -90,7 +90,7 @@ interface UWData {
   development_mode: boolean;
   land_cost: number;
   hard_cost_per_sf: number;
-  soft_costs: number;
+  soft_cost_pct: number;  // % of hard costs
   // Site & building calc
   lot_coverage_pct: number;
   far: number;
@@ -137,7 +137,7 @@ const DEFAULT: UWData = {
   development_mode: false,
   land_cost: 0,
   hard_cost_per_sf: 0,
-  soft_costs: 0,
+  soft_cost_pct: 0,
   lot_coverage_pct: 40,
   far: 0,
   height_limit_stories: 0,
@@ -300,12 +300,13 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   // ── Cost Basis ──────────────────────────────────────────────────────────────
   const capexTotal = d.capex_items.reduce((s, c) => s + c.quantity * c.cost_per_unit, 0);
+  const totalHardCosts = d.development_mode ? d.hard_cost_per_sf * (d.max_gsf || 0) : 0;
+  const softCostsTotal = d.development_mode ? totalHardCosts * (d.soft_cost_pct / 100) : 0;
   let closingCosts: number, totalCost: number;
   if (d.development_mode) {
-    // Ground-up: land + hard costs (per GSF) + soft costs + closing on land
-    const totalHardCosts = d.hard_cost_per_sf * (d.max_gsf || 0);
+    // Ground-up: land + hard costs (per GSF) + soft costs (% of hard) + closing on land
     closingCosts = d.land_cost * (d.closing_costs_pct / 100);
-    totalCost = d.land_cost + totalHardCosts + d.soft_costs + closingCosts;
+    totalCost = d.land_cost + totalHardCosts + softCostsTotal + closingCosts;
   } else {
     // Value-add / acquisition: purchase + closing + capex
     closingCosts = d.purchase_price * (d.closing_costs_pct / 100);
@@ -422,7 +423,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     grm, proformaGRM, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
     proformaCapRate,
     exitPricePerUnit, exitPricePerBed, exitPricePerSF,
-    capexTotal, capexPerSF, capexPerUnit, capexPerBed, closingCosts, totalCost,
+    capexTotal, capexPerSF, capexPerUnit, capexPerBed, closingCosts, totalCost, totalHardCosts, softCostsTotal,
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
     acqLoan, acqDebt, acqDebtIO, yr1Debt, equity, cashFlow, coc, dscr, blendedLtc,
@@ -655,6 +656,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           }));
         }
         const merged = { ...DEFAULT, ...parsed };
+        // Migrate legacy soft_costs (lump sum) → soft_cost_pct (% of hard costs)
+        if (typeof (parsed as Record<string, unknown>).soft_costs === "number" && parsed.soft_cost_pct == null) {
+          const legacySoft = (parsed as Record<string, unknown>).soft_costs as number;
+          const hc = (merged.hard_cost_per_sf || 0) * (merged.max_gsf || 0);
+          merged.soft_cost_pct = hc > 0 ? (legacySoft / hc) * 100 : 25;
+        }
         // Auto-set development_mode for ground-up deals
         if (dr.data?.investment_strategy === "ground_up" && !parsed.development_mode) {
           merged.development_mode = true;
@@ -713,12 +720,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       const res = await fetch(`/api/deals/${params.id}/capex-estimate`, { method: "POST" });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "Estimation failed"); return; }
-      // Filter out renovation-type items if we already have linked renovation capex
-      const hasLinkedRenos = data.capex_items.some(c => c.linked_unit_group_id);
-      const renoKeywords = /\breno(vat|v)|unit (upgrade|improve|rehab)|interior (upgrade|improve)/i;
-      const items = (json.data as Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string }>)
-        .map(item => ({ ...item, selected: hasLinkedRenos && renoKeywords.test(item.label) ? false : true }));
-      setCapexPreview(items);
+      if (isGroundUp && json.hard_cost_per_sf != null) {
+        // Ground-up: AI returns hard_cost_per_sf and soft_cost_pct directly
+        setData(p => ({
+          ...p,
+          hard_cost_per_sf: json.hard_cost_per_sf,
+          soft_cost_pct: json.soft_cost_pct ?? 25,
+        }));
+        toast.success(`Dev budget set: $${json.hard_cost_per_sf}/GSF hard costs, ${json.soft_cost_pct ?? 25}% soft costs`);
+      } else {
+        // Value-add: show preview modal for capex line items
+        const hasLinkedRenos = data.capex_items.some(c => c.linked_unit_group_id);
+        const renoKeywords = /\breno(vat|v)|unit (upgrade|improve|rehab)|interior (upgrade|improve)/i;
+        const items = (json.data as Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string }>)
+          .map(item => ({ ...item, selected: hasLinkedRenos && renoKeywords.test(item.label) ? false : true }));
+        setCapexPreview(items);
+      }
     } catch { toast.error("CapEx estimation failed"); } finally { setCapexEstimating(false); }
   };
 
@@ -1153,24 +1170,27 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <div className="mt-3 space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <NumInput label="Land Acquisition Cost" value={d.land_cost} onChange={v => set("land_cost", v)} prefix="$" />
-              <NumInput label="Hard Cost / GSF" value={d.hard_cost_per_sf} onChange={v => set("hard_cost_per_sf", v)} prefix="$" decimals={2} />
-              <NumInput label="Soft Costs (Total)" value={d.soft_costs} onChange={v => set("soft_costs", v)} prefix="$" />
               <NumInput label="Closing Costs" value={d.closing_costs_pct} onChange={v => set("closing_costs_pct", v)} suffix="%" decimals={1} />
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="p-3 bg-muted/50 rounded-lg">
                 <p className="text-xs text-muted-foreground mb-1">Total Hard Costs</p>
-                <p className="text-sm font-semibold">{fc(d.hard_cost_per_sf * (d.max_gsf || 0))}</p>
+                <p className="text-sm font-semibold">{fc(m.totalHardCosts)}</p>
                 <p className="text-[10px] text-muted-foreground/60">{fn(d.max_gsf || 0)} GSF × ${d.hard_cost_per_sf.toFixed(2)}/SF</p>
               </div>
               <div className="p-3 bg-muted/50 rounded-lg">
-                <p className="text-xs text-muted-foreground mb-1">Closing Cost $</p>
-                <p className="text-sm font-semibold">{fc(d.land_cost * (d.closing_costs_pct / 100))}</p>
+                <p className="text-xs text-muted-foreground mb-1">Soft Costs</p>
+                <p className="text-sm font-semibold">{fc(m.softCostsTotal)}</p>
+                <p className="text-[10px] text-muted-foreground/60">{d.soft_cost_pct.toFixed(1)}% of hard costs</p>
               </div>
-              <div className="p-3 bg-primary/10 rounded-lg col-span-2">
+              <div className="p-3 bg-muted/50 rounded-lg">
+                <p className="text-xs text-muted-foreground mb-1">Closing Cost $</p>
+                <p className="text-sm font-semibold">{fc(m.closingCosts)}</p>
+              </div>
+              <div className="p-3 bg-primary/10 rounded-lg">
                 <p className="text-xs text-muted-foreground mb-1">Total Development Cost</p>
                 <p className="text-lg font-bold text-primary">{fc(m.totalCost)}</p>
-                <p className="text-[10px] text-muted-foreground/60">Land + Hard Costs + Soft Costs + Closing</p>
+                <p className="text-[10px] text-muted-foreground/60">Land + Hard + Soft + Closing</p>
               </div>
             </div>
           </div>
@@ -1712,13 +1732,60 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
-      <Section title={deal?.investment_strategy === "ground_up" ? "Development Budget" : "Capital Expenditures"} icon={<Hammer className="h-4 w-4 text-orange-400" />} open={false}>
+      <Section title={isGroundUp ? "Development Budget" : "Capital Expenditures"} icon={<Hammer className="h-4 w-4 text-orange-400" />} open={isGroundUp}>
         <div className="mt-3 overflow-x-auto">
+          {isGroundUp ? (
+            <>
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-muted/30 border-b">
+                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Description</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Qty</th>
+                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Units</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">$ / Unit</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Hard Costs row */}
+                  <tr className="border-b hover:bg-muted/10">
+                    <td className="px-2 py-1.5 font-medium">Hard Costs</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{fn(d.max_gsf || 0)}</td>
+                    <td className="px-2 py-1.5 text-xs text-muted-foreground">GSF</td>
+                    <td className="px-2 py-1.5"><CellInput value={d.hard_cost_per_sf} onChange={v => set("hard_cost_per_sf", v)} prefix="$" decimals={2} /></td>
+                    <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(m.totalHardCosts)}</td>
+                  </tr>
+                  {/* Soft Costs row */}
+                  <tr className="border-b hover:bg-muted/10">
+                    <td className="px-2 py-1.5 font-medium">Soft Costs</td>
+                    <td className="px-2 py-1.5"><CellInput value={d.soft_cost_pct} onChange={v => set("soft_cost_pct", v)} decimals={1} /></td>
+                    <td className="px-2 py-1.5 text-xs text-muted-foreground">% of Hard</td>
+                    <td className="px-2 py-1.5 text-right text-muted-foreground">—</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(m.softCostsTotal)}</td>
+                  </tr>
+                </tbody>
+                <tfoot>
+                  <tr className="border-t bg-muted/20 font-semibold">
+                    <td colSpan={4} className="px-2 py-2 text-right">Total Hard + Soft Costs</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalHardCosts + m.softCostsTotal)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              <div className="flex items-center justify-between mt-3">
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={estimateCapex} disabled={capexEstimating}>
+                    {capexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                    AI Dev Budget
+                  </Button>
+                </div>
+                {!d.max_gsf && <p className="text-xs text-amber-500">Set GSF in Site &amp; Zoning to enable budget calculations</p>}
+              </div>
+            </>
+          ) : (
+            <>
           {d.capex_items.length === 0 && (
             <p className="text-sm text-muted-foreground py-2">
-              {deal?.investment_strategy === "ground_up"
-                ? "No budget items. Click + to add or use AI Estimate for a development cost breakdown (hard costs $/SF + soft costs)."
-                : "No CapEx items. Click + to add or check \"Renovate\" on unit types."}
+              No CapEx items. Click + to add or check &quot;Renovate&quot; on unit types.
             </p>
           )}
           {d.capex_items.length > 0 && (
@@ -1728,8 +1795,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="w-[28px]" />
                   <th className="text-center px-1 py-1.5 text-xs font-medium text-muted-foreground w-[30px]">#</th>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Description</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">{deal?.investment_strategy === "ground_up" ? "SF / Qty" : "Qty"}</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">{deal?.investment_strategy === "ground_up" ? "$ / SF" : "Cost / Unit"}</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Qty</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">Cost / Unit</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Total</th>
                   <th className="w-[32px]" />
                 </tr>
@@ -1741,7 +1808,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   const isLinked = !!c.linked_unit_group_id;
                   const updCapex = (updates: Partial<CapexItem>) => {
                     updC(c.id, updates);
-                    // Sync back to unit group if linked
                     if (isLinked) {
                       setData(prev => ({
                         ...prev,
@@ -1778,7 +1844,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </DndContext>
               <tfoot>
                 <tr className="border-t bg-muted/20 font-semibold">
-                  <td colSpan={5} className="px-2 py-2 text-right">{deal?.investment_strategy === "ground_up" ? "Total Development Cost" : "Total CapEx"}</td>
+                  <td colSpan={5} className="px-2 py-2 text-right">Total CapEx</td>
                   <td className="px-2 py-2 text-right tabular-nums">
                     {fc(m.capexTotal)}
                     <p className="text-[10px] text-muted-foreground/60 font-normal tabular-nums">
@@ -1797,10 +1863,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </Button>
               <Button variant="outline" size="sm" onClick={estimateCapex} disabled={capexEstimating}>
                 {capexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                {deal?.investment_strategy === "ground_up" ? "AI Dev Budget" : "AI Estimate"}
+                AI Estimate
               </Button>
             </div>
           </div>
+            </>
+          )}
         </div>
       </Section>
 

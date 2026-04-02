@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { dealQueries, dealNoteQueries, omAnalysisQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, omAnalysisQueries, underwritingQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 const MODEL = "claude-sonnet-4-5";
@@ -12,6 +12,16 @@ function parseJsonArray(raw: string): unknown[] {
     return JSON.parse(match[0]);
   } catch {
     return [];
+  }
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
   }
 }
 
@@ -35,12 +45,17 @@ export async function POST(
 
     const deal = await dealQueries.getById(params.id);
     const analysis = await omAnalysisQueries.getByDealId(params.id);
+    const uw = await underwritingQueries.getByDealId(params.id);
+
+    // Use project-level GSF from underwriting data, fall back to OM/deal SF
+    const uwData = uw?.data ? (typeof uw.data === "string" ? JSON.parse(uw.data) : uw.data) : null;
+    const projectGSF = uwData?.max_gsf || deal.square_footage || 0;
 
     const dealInfo = [
       `Property Type: ${deal.property_type ?? "unknown"}`,
       deal.investment_strategy ? `Investment Strategy: ${deal.investment_strategy}` : null,
       deal.units ? `Units: ${deal.units}` : null,
-      deal.square_footage ? `Total SF: ${deal.square_footage.toLocaleString()}` : null,
+      projectGSF ? `Project GSF: ${projectGSF.toLocaleString()}` : null,
       deal.year_built ? `Year Built: ${deal.year_built}` : null,
       [deal.address, deal.city, deal.state].filter(Boolean).length
         ? `Address: ${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}`
@@ -66,11 +81,26 @@ export async function POST(
 
     const isGroundUp = deal.investment_strategy === "ground_up";
 
-    const prompt = isGroundUp
-      ? buildGroundUpPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText)
-      : buildValueAddPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
-
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    if (isGroundUp) {
+      const prompt = buildGroundUpPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
+      const response = await client.messages.create({
+        model: MODEL,
+        max_tokens: 500,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
+      const parsed = parseJsonObject(raw);
+      return NextResponse.json({
+        hard_cost_per_sf: parsed?.hard_cost_per_sf ?? 150,
+        soft_cost_pct: parsed?.soft_cost_pct ?? 25,
+        basis: parsed?.basis ?? "",
+        strategy: "ground_up",
+      });
+    }
+
+    const prompt = buildValueAddPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 1500,
@@ -94,7 +124,7 @@ function buildGroundUpPrompt(
   recommendationsText: string,
   contextText: string,
 ): string {
-  return `You are a commercial real estate development cost estimator. Based on the deal information below, generate a ground-up development budget. Use realistic 2024-2025 pricing for the market/region indicated.
+  return `You are a commercial real estate development cost estimator. Based on the deal information below, estimate construction costs. Use realistic 2024-2025 pricing for the market/region indicated.
 
 ${dealInfo}
 ${summaryText}
@@ -102,47 +132,18 @@ ${redFlagsText}
 ${recommendationsText}
 ${contextText}
 
-Generate a development budget with HARD COSTS (priced per SF of buildable area) and SOFT COSTS (as lump sums or percentages). Use these categories:
+Provide TWO numbers:
+1. hard_cost_per_sf: All-in hard construction cost per gross square foot ($/GSF). This includes site work, foundations, structure, envelope, MEP, interior finishes, amenities, parking, and general conditions.
+2. soft_cost_pct: Total soft costs as a percentage of hard costs. This includes A&E, permits, legal, development management, financing/interest reserve, and contingency.
 
-HARD COSTS (per SF):
-- Site Work & Demolition
-- Concrete / Foundation
-- Structural / Framing
-- Building Envelope (exterior walls, windows, roofing)
-- MEP (mechanical, electrical, plumbing)
-- Interior Finishes (flooring, drywall, paint, fixtures)
-- Common Areas / Amenities
-- Parking / Hardscape
-- General Conditions & Contractor Overhead
+Consider: property type, market location, construction type (wood-frame, steel, concrete), and current market conditions.
 
-SOFT COSTS (lump sum):
-- Architecture & Engineering
-- Permits & Impact Fees
-- Legal & Closing Costs
-- Development Management Fee
-- Financing / Interest Reserve
-- Contingency
-
-For hard costs: set quantity = total buildable SF (or estimate it from units × typical SF/unit if not given), and cost_per_unit = $/SF for that category.
-For soft costs: set quantity = 1, and cost_per_unit = total lump sum dollar amount.
-
-Return ONLY a JSON array, no explanation:
-[
-  {
-    "label": "Site Work & Demolition",
-    "quantity": 25000,
-    "unit": "SF",
-    "cost_per_unit": 12,
-    "basis": "Assumes 25,000 SF site, moderate grading and demo"
-  },
-  {
-    "label": "Architecture & Engineering",
-    "quantity": 1,
-    "unit": "lump sum",
-    "cost_per_unit": 350000,
-    "basis": "~3-4% of hard costs, typical for multifamily"
-  }
-]`;
+Return ONLY a JSON object, no explanation:
+{
+  "hard_cost_per_sf": 185,
+  "soft_cost_pct": 25,
+  "basis": "Wood-frame multifamily in Austin, TX — typical 2024 range $170-200/GSF hard, 20-30% soft"
+}`;
 }
 
 function buildValueAddPrompt(
