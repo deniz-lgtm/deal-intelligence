@@ -503,7 +503,7 @@ export default function DealOverviewPage({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Property Metrics */}
         <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider mb-3">Property</h3>
+          <h3 className="font-display text-sm text-muted-foreground uppercase tracking-wider mb-3">Property</h3>
           <div className="grid grid-cols-2 gap-3">
             <MetricCard
               icon={<DollarSign className="h-4 w-4 text-emerald-400" />}
@@ -533,28 +533,13 @@ export default function DealOverviewPage({
                 value={deal.year_built ? String(deal.year_built) : "—"}
               />
             )}
-          </div>
-          {/* Land Acres */}
-          <div className="mt-3 pt-3 border-t border-border/40">
-            <label className="text-2xs text-muted-foreground font-medium uppercase tracking-wider">Land (Acres)</label>
-            <input
-              type="text"
-              inputMode="decimal"
-              defaultValue={deal.land_acres ?? ""}
-              placeholder="—"
-              onBlur={async (e) => {
-                const val = e.target.value ? parseFloat(e.target.value) : null;
-                setDeal((prev: any) => prev ? { ...prev, land_acres: val } : prev);
-                try {
-                  await fetch(`/api/deals/${params.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ land_acres: val }),
-                  });
-                } catch { /* ignore */ }
-              }}
-              className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40 transition-colors"
-            />
+            {deal.land_acres != null && (
+              <MetricCard
+                icon={<Maximize2 className="h-4 w-4 text-green-400" />}
+                label="Land (Acres)"
+                value={deal.land_acres.toFixed(2)}
+              />
+            )}
           </div>
           {/* Investment Strategy */}
           <div className="mt-3 pt-3 border-t border-border/40">
@@ -585,7 +570,7 @@ export default function DealOverviewPage({
         {/* Financial Highlights from Underwriting */}
         <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">Financial Highlights</h3>
+            <h3 className="font-display text-sm text-muted-foreground uppercase tracking-wider">Financial Highlights</h3>
             <Link href={`/deals/${params.id}/underwriting`}>
               <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
                 Underwriting <ArrowRight className="h-3 w-3" />
@@ -912,7 +897,7 @@ function SiteDevelopmentCard({ deal, underwriting, dealId, onUnderwritingUpdate 
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <MapPin className="h-3.5 w-3.5 text-primary" />
-          <h3 className="font-display text-xs text-muted-foreground uppercase tracking-wider">Site & Development Parameters</h3>
+          <h3 className="font-display text-sm text-muted-foreground uppercase tracking-wider">Site & Development Parameters</h3>
         </div>
         <Link href={`/deals/${dealId}/site-zoning`}>
           <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
