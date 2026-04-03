@@ -72,17 +72,9 @@ export interface RentRollSummary {
   occupancy_pct: number | null;
 }
 
-export async function extractRentRollSummary(
-  contentText: string
-): Promise<RentRollSummary | null> {
-  if (!contentText || contentText.length < 50) return null;
+const RENT_ROLL_PROMPT = `You are a commercial real estate analyst. This document is a rent roll — a standard output from property management software (e.g. Yardi, AppFolio, RealPage, Buildium).
 
-  const snippet = contentText.slice(0, 16000);
-
-  const prompt = `You are a commercial real estate analyst. This document is a rent roll. Extract summary totals from it.
-
-RENT ROLL TEXT:
-${snippet}
+Extract summary totals from it. The document typically has columns like: Unit, Tenant, Sqft, Rent, Deposit, Lease From/To.
 
 Extract and return ONLY a JSON object with these fields. Use null if not determinable:
 
@@ -95,22 +87,48 @@ Extract and return ONLY a JSON object with these fields. Use null if not determi
 }
 
 Rules:
-- total_units: count of distinct leasable units/suites/bays (exclude common areas)
-- total_sf: sum of all unit square footages
-- total_monthly_rent: sum of all current monthly rents across all units
+- total_units: count of distinct leasable units/suites/bays (exclude common areas, headers, subtotals)
+- total_sf: sum of all unit square footages. Look for a "Total" row at the bottom, or sum the Sqft column.
+- total_monthly_rent: sum of all current monthly rents. Look for a "Total" row, or sum the Rent column.
 - avg_rent_per_sf_annual: (total_monthly_rent × 12) / total_sf. Null if no SF data.
-- occupancy_pct: percentage of units that are occupied/leased. 100 if all occupied.
+- occupancy_pct: percentage of units that are occupied/leased. Units with $0.00 rent or no tenant are likely vacant.
 - All dollar values as plain numbers (no $ signs, no commas)
-- Look for totals rows at the bottom of the rent roll for accuracy
-- If units have $0 rent, they may be vacant — exclude from occupied count
+- IMPORTANT: Use the totals row at the bottom of the rent roll if available — it's the most accurate source.
 
 Respond with ONLY the JSON object, no explanation.`;
 
+export async function extractRentRollSummary(
+  contentText: string,
+  pdfBuffer?: Buffer
+): Promise<RentRollSummary | null> {
+  if (!contentText && !pdfBuffer) return null;
+
   try {
+    // Prefer sending the PDF directly so Claude can see the table layout
+    const content: Anthropic.MessageCreateParams["messages"][0]["content"] = [];
+
+    if (pdfBuffer) {
+      content.push({
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: pdfBuffer.toString("base64"),
+        },
+      } as unknown as Anthropic.TextBlockParam);
+    } else if (contentText) {
+      content.push({
+        type: "text",
+        text: `RENT ROLL TEXT:\n${contentText.slice(0, 16000)}`,
+      });
+    }
+
+    content.push({ type: "text", text: RENT_ROLL_PROMPT });
+
     const response = await getClient().messages.create({
       model: MODEL,
       max_tokens: 512,
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content }],
     });
 
     const raw = response.content[0].type === "text" ? response.content[0].text : "{}";

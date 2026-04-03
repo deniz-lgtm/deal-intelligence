@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
+import fs from "fs/promises";
 import { dealQueries, documentQueries, omAnalysisQueries } from "@/lib/db";
 import { extractOmMetrics } from "@/lib/om-extraction";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
@@ -71,6 +72,7 @@ export async function POST(
       docId: newDocId,
       pdfText,
       dealContext,
+      filePath: doc.file_path as string | undefined,
     }).catch((err) => console.error("Background OM re-analysis error:", err));
 
     return NextResponse.json({ data: { analysis_id: analysisId } });
@@ -92,15 +94,22 @@ async function runReanalysisBackground({
   docId,
   pdfText,
   dealContext,
+  filePath,
 }: {
   analysisId: string;
   dealId: string;
   docId: string;
   pdfText: string;
   dealContext: string | undefined;
+  filePath?: string;
 }) {
   try {
-    const extraction = await extractOmMetrics(pdfText, dealContext);
+    // Read PDF buffer for native document input if file path available
+    let pdfBuffer: Buffer | undefined;
+    if (filePath) {
+      try { pdfBuffer = await fs.readFile(filePath); } catch { /* use text fallback */ }
+    }
+    const extraction = await extractOmMetrics(pdfText, dealContext, pdfBuffer);
     const full = extraction.full_result;
 
     await omAnalysisQueries.setResult(analysisId, {

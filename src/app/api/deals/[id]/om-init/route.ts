@@ -100,7 +100,7 @@ async function runAnalysisBackground({
   dealContext: string | undefined;
 }) {
   try {
-    const extraction = await extractOmMetrics(pdfText, dealContext);
+    const extraction = await extractOmMetrics(pdfText, dealContext, buffer);
     const full = extraction.full_result;
 
     await omAnalysisQueries.setResult(analysisId, {

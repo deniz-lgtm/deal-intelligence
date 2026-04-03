@@ -73,7 +73,7 @@ export async function POST(
     analysisId = analysisRow.id;
 
     // ── Run 4-stage LLM analysis ─────────────────────────────────────────────
-    const extraction = await extractOmMetrics(pdfText, dealContext);
+    const extraction = await extractOmMetrics(pdfText, dealContext, buffer);
     const full = extraction.full_result;
 
     // ── Save full analysis to om_analyses ────────────────────────────────────

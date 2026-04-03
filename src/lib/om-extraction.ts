@@ -125,7 +125,7 @@ function parseJson<T>(raw: string, fallback: T): T {
 
 // ─── Stage 1 — Metrics Extraction ────────────────────────────────────────────
 
-async function extractMetrics(text: string): Promise<{
+async function extractMetrics(text: string, pdfBuffer?: Buffer): Promise<{
   property_details: PropertyDetails;
   financial_metrics: FinancialMetrics;
   assumptions: Assumptions;
@@ -137,8 +137,7 @@ async function extractMetrics(text: string): Promise<{
 
 If this is a RENT ROLL: extract the total number of units/suites, total square footage (sum of all unit SFs), and compute total annual rent (sum of monthly rents × 12). Set unit_count = total units, sf = total SF, and noi = total annual rent minus a reasonable vacancy estimate.
 
-DOCUMENT TEXT:
-${snippet}
+${pdfBuffer ? "(The PDF document is attached above for reference.)" : `DOCUMENT TEXT:\n${snippet}`}
 
 Extract and return ONLY a JSON object with this exact structure. Use null for any value you cannot find with confidence:
 
@@ -179,11 +178,21 @@ Rules:
 - If value has units (M, K) convert to full number
 - Respond with ONLY the JSON object, no explanation`;
 
+  // Build message content: PDF document first (if available), then text prompt
+  const msgContent: Anthropic.MessageCreateParams["messages"][0]["content"] = [];
+  if (pdfBuffer) {
+    msgContent.push({
+      type: "document",
+      source: { type: "base64", media_type: "application/pdf", data: pdfBuffer.toString("base64") },
+    } as unknown as Anthropic.TextBlockParam);
+  }
+  msgContent.push({ type: "text", text: prompt });
+
   const response = await withRetry(() =>
     getClient().messages.create({
       model: MODEL,
       max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: msgContent }],
     })
   );
 
@@ -405,12 +414,12 @@ Return ONLY a JSON object with this structure. The recommendations array should 
 
 // ─── Main entry point — 4-stage pipeline ─────────────────────────────────────
 
-export async function extractOmFull(pdfText: string, dealContext?: string): Promise<OmFullResult> {
+export async function extractOmFull(pdfText: string, dealContext?: string, pdfBuffer?: Buffer): Promise<OmFullResult> {
   const startMs = Date.now();
   let totalTokens = 0;
 
-  // Stage 1: Metrics (no context needed)
-  const stage1 = await extractMetrics(pdfText);
+  // Stage 1: Metrics (send PDF buffer for better table parsing)
+  const stage1 = await extractMetrics(pdfText, pdfBuffer);
   totalTokens += stage1.tokensUsed;
 
   // Stage 2: Red Flags (context-aware)
@@ -464,8 +473,8 @@ export async function extractOmFull(pdfText: string, dealContext?: string): Prom
 
 // ─── Legacy wrapper for backwards compat ─────────────────────────────────────
 
-export async function extractOmMetrics(pdfText: string, dealContext?: string): Promise<OmExtractionResult> {
-  const full = await extractOmFull(pdfText, dealContext);
+export async function extractOmMetrics(pdfText: string, dealContext?: string, pdfBuffer?: Buffer): Promise<OmExtractionResult> {
+  const full = await extractOmFull(pdfText, dealContext, pdfBuffer);
 
   const om_extracted: OmExtracted = {
     asking_price: full.financial_metrics.asking_price ?? undefined,

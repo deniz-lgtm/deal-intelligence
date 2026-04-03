@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import fs from "fs/promises";
 import { dealQueries, omAnalysisQueries, getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
@@ -51,6 +52,8 @@ interface DocRow {
   original_name: string;
   content_text: string;
   ai_tags: string[] | null;
+  file_path: string;
+  mime_type: string;
 }
 
 /**
@@ -85,11 +88,10 @@ export async function POST(
     // Priority order: dedicated rent roll > OM > other financial docs
     const pool = getPool();
     const docRes = await pool.query<DocRow>(
-      `SELECT original_name, content_text, ai_tags
+      `SELECT original_name, content_text, ai_tags, file_path, mime_type
        FROM documents
        WHERE deal_id = $1
-         AND content_text IS NOT NULL
-         AND content_text != ''
+         AND (content_text IS NOT NULL AND content_text != '' OR mime_type = 'application/pdf')
          ${docIds ? `AND id = ANY($2::text[])` : ""}
        ORDER BY
          -- rent roll documents first
@@ -116,23 +118,33 @@ export async function POST(
       );
     }
 
-    // ── Build combined document text, labelled by source ─────────────────────
-    // Budget ~14 000 chars total; give rent roll docs more room
+    // ── Build combined document content ────────────────────────────────────────
+    // For rent roll PDFs: send the actual PDF so Claude can see table layout.
+    // For other docs: send extracted text.
     const MAX_TOTAL = 16000;
+    const pdfDocBlocks: Array<{ type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } }> = [];
     const sections: string[] = [];
     let remaining = MAX_TOTAL;
 
     for (const row of docRes.rows) {
-      if (remaining <= 0) break;
       const isRentRoll = /rent.?roll/i.test(row.original_name);
-      const isOm =
-        Array.isArray(row.ai_tags) && row.ai_tags.includes("offering-memorandum");
-      const label = isRentRoll
-        ? "RENT ROLL DOCUMENT"
-        : isOm
-        ? "OFFERING MEMORANDUM"
-        : "FINANCIAL DOCUMENT";
+      const isPdf = row.mime_type === "application/pdf";
 
+      // For rent roll PDFs, send the file directly for better table parsing
+      if (isRentRoll && isPdf && pdfDocBlocks.length === 0) {
+        try {
+          const pdfBuf = await fs.readFile(row.file_path);
+          pdfDocBlocks.push({
+            type: "document",
+            source: { type: "base64", media_type: "application/pdf", data: pdfBuf.toString("base64") },
+          });
+          continue;
+        } catch { /* fall through to text */ }
+      }
+
+      if (remaining <= 0 || !row.content_text) continue;
+      const isOm = Array.isArray(row.ai_tags) && row.ai_tags.includes("offering-memorandum");
+      const label = isRentRoll ? "RENT ROLL DOCUMENT" : isOm ? "OFFERING MEMORANDUM" : "FINANCIAL DOCUMENT";
       const allotment = isRentRoll ? Math.min(remaining, 8000) : Math.min(remaining, 5000);
       const snippet = row.content_text.slice(0, allotment);
       sections.push(`--- ${label}: ${row.original_name} ---\n${snippet}`);
@@ -234,10 +246,17 @@ ${unitGroupRules}
 Respond with ONLY the JSON object, no explanation.`;
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    // Build message content: PDF documents first (if any), then text prompt
+    const messageContent: Anthropic.MessageCreateParams["messages"][0]["content"] = [];
+    for (const pdfBlock of pdfDocBlocks) {
+      messageContent.push(pdfBlock as unknown as Anthropic.TextBlockParam);
+    }
+    messageContent.push({ type: "text", text: prompt });
+
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 2048,
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: messageContent }],
     });
 
     const raw = response.content[0].type === "text" ? response.content[0].text : "{}";

@@ -95,8 +95,9 @@ export async function POST(req: NextRequest) {
 
       // If this looks like a rent roll, extract units/SF/rents and update the deal
       const isRentRoll = /rent.?roll/i.test(file.name) || tags.some(t => /rent.?roll/i.test(t));
-      if (isRentRoll && contentText) {
-        extractRentRollSummary(contentText).then(async (rrSummary) => {
+      if (isRentRoll && (contentText || file.type === "application/pdf")) {
+        const pdfBuf = file.type === "application/pdf" ? buffer : undefined;
+        extractRentRollSummary(contentText, pdfBuf).then(async (rrSummary) => {
           if (!rrSummary) return;
           const updates: Record<string, unknown> = {};
           if (rrSummary.total_units) updates.units = rrSummary.total_units;
