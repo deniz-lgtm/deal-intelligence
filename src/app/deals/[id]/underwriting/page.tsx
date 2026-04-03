@@ -40,6 +40,16 @@ interface RentComp {
   amenities?: string; notes?: string;
 }
 
+type DCFYear = {
+  year: number;
+  noi: number;
+  debtService: number;
+  debtLabel: string;
+  cashFlow: number;
+  coc: number;
+  refiProceeds: number;
+};
+
 type ScenarioType = "custom" | "land_residual" | "rent_target" | "exit_cap";
 interface Scenario {
   id: string;
@@ -370,6 +380,40 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     refiDebt = annualPayment(refiLoan, d.refi_rate, d.refi_amort_years);
   }
 
+  // ── Year-by-Year DCF ─────────────────────────────────────────────────────────
+  const yearlyDCF: DCFYear[] = [];
+  for (let yr = 1; yr <= 5; yr++) {
+    let ds = 0;
+    let label = "—";
+    if (d.has_financing) {
+      if (d.has_refi && yr > d.refi_year) {
+        ds = refiDebt;
+        label = "Refi";
+      } else if (yr <= (d.acq_io_years || 0)) {
+        ds = acqDebtIO;
+        label = "IO";
+      } else {
+        ds = acqDebt;
+        label = "Amort";
+      }
+    }
+    const yrRefiProceeds = (d.has_refi && d.has_financing && yr === d.refi_year) ? refiProceeds : 0;
+    const cf = proformaNOI - ds + yrRefiProceeds;
+    yearlyDCF.push({
+      year: yr,
+      noi: proformaNOI,
+      debtService: ds,
+      debtLabel: label,
+      cashFlow: cf,
+      coc: equity > 0 ? (cf / equity) * 100 : 0,
+      refiProceeds: yrRefiProceeds,
+    });
+  }
+  const inPlaceDCF = {
+    debtService: yr1Debt,
+    debtLabel: d.has_financing ? (d.acq_io_years > 0 ? "IO" : "Amort") : "—",
+  };
+
   // ── Exit & Returns ──────────────────────────────────────────────────────────
   const exitValue = d.exit_cap_rate > 0 ? proformaNOI / (d.exit_cap_rate / 100) : 0;
   const exitLoanBalance = d.has_refi ? (proformaNOI / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100) : acqLoan;
@@ -428,6 +472,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     pricePerSF, pricePerBed, pricePerUnit,
     acqLoan, acqDebt, acqDebtIO, yr1Debt, equity, cashFlow, coc, dscr, blendedLtc,
     refiProceeds, refiDebt, exitValue, exitEquity, totalCashFlows, em,
+    yearlyDCF, inPlaceDCF,
   };
 }
 
@@ -532,6 +577,26 @@ function ISRow({ label, ip, pf, proforma, muted, bold, hi, hideIp }: { label: st
       {!hideIp && <td className={`px-4 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""}`}>{fmtVal(ip)}</td>}
       <td className={`px-4 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{proforma !== undefined ? fmtVal(proforma) : fmtVal(pf)}</td>
       {!hideIp && <td className={`px-4 py-1.5 text-right tabular-nums text-muted-foreground/50`}>{fmtVal(pf)}</td>}
+    </tr>
+  );
+}
+
+function DCFRow({ label, yr0, yr1to5, muted, bold, hi, isPct }: {
+  label: string; yr0: number; yr1to5: number[];
+  muted?: boolean; bold?: boolean; hi?: boolean; isPct?: boolean;
+}) {
+  const fmt = (v: number) => {
+    if (isPct) return v !== 0 ? `${v.toFixed(2)}%` : "—";
+    const neg = v < 0;
+    return neg ? `(${fc(Math.abs(v))})` : fc(Math.abs(v));
+  };
+  return (
+    <tr className={`${bold ? "font-semibold" : ""} ${hi ? "bg-primary/5" : "hover:bg-muted/20"}`}>
+      <td className={`px-4 py-1.5 ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{label}</td>
+      <td className={`px-4 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""}`}>{fmt(yr0)}</td>
+      {yr1to5.map((v, i) => (
+        <td key={i} className={`px-4 py-1.5 text-right tabular-nums ${muted ? "text-muted-foreground" : ""} ${hi ? "text-primary" : ""}`}>{fmt(v)}</td>
+      ))}
     </tr>
   );
 }
@@ -2074,57 +2139,62 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       <div className="border rounded-xl bg-card overflow-hidden">
         <div className="px-4 py-3 border-b bg-muted/30">
-          <h3 className="font-semibold text-sm">Income Statement</h3>
+          <h3 className="font-semibold text-sm">Discounted Cash Flow</h3>
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-muted/20">
-              <th className="text-left px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide">Line Item</th>
-              {!isGroundUp && <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-28">In-Place</th>}
-              <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-28">{isGroundUp ? "Stabilized" : "Proforma"}</th>
-              {!isGroundUp && <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground/50 uppercase tracking-wide w-28">Market</th>}
-            </tr>
-          </thead>
-          <tbody>
-            <ISRow label="Gross Potential Rent" ip={m.inPlaceGPR} pf={m.gpr} proforma={m.proformaGPR} hideIp={isGroundUp} />
-            <ISRow label={`Less Vacancy`} ip={-m.inPlaceVacancyLoss} pf={-m.vacancyLoss} proforma={-m.proformaVacancyLoss} muted hideIp={isGroundUp} />
-            <ISRow label="Effective Gross Income" ip={m.inPlaceEGI} pf={m.egi} proforma={m.proformaEGI} bold hideIp={isGroundUp} />
-            {m.reimbursements > 0 && <ISRow label="CAM Reimbursements (NNN/MG)" ip={m.ipReimbursements} pf={m.reimbursements} proforma={m.reimbursements} hideIp={isGroundUp} />}
-            {m.totalOtherIncome > 0 && <>
-              {m.otherIncomeRUBS > 0 && <ISRow label="RUBS" ip={0} pf={m.otherIncomeRUBS} proforma={m.otherIncomeRUBS} muted hideIp={isGroundUp} />}
-              {m.otherIncomeParking > 0 && <ISRow label="Parking Income" ip={0} pf={m.otherIncomeParking} proforma={m.otherIncomeParking} muted hideIp={isGroundUp} />}
-              {m.otherIncomeLaundry > 0 && <ISRow label="Laundry Income" ip={0} pf={m.otherIncomeLaundry} proforma={m.otherIncomeLaundry} muted hideIp={isGroundUp} />}
-            </>}
-            {(m.reimbursements > 0 || m.totalOtherIncome > 0) &&
-              <ISRow label="Effective Revenue" ip={m.inPlaceEffectiveRevenue} pf={m.effectiveRevenue + m.totalOtherIncome} proforma={m.proformaEffectiveRevenue} bold hideIp={isGroundUp} />
-            }
-            <tr><td colSpan={isGroundUp ? 2 : 4} className="px-4"><div className="border-t" /></td></tr>
-            <ISRow label={`Management (${d.management_fee_pct}%)`} ip={-m.inPlaceMgmtFee} pf={-m.mgmtFee} proforma={-m.proformaMgmtFee} muted hideIp={isGroundUp} />
-            <ISRow label="Property Taxes" ip={-ipOr(d.ip_taxes_annual, d.taxes_annual)} pf={-d.taxes_annual} muted hideIp={isGroundUp} />
-            <ISRow label="Insurance" ip={-ipOr(d.ip_insurance_annual, d.insurance_annual)} pf={-d.insurance_annual} muted hideIp={isGroundUp} />
-            <ISRow label="Repairs & Maintenance" ip={-ipOr(d.ip_repairs_annual, d.repairs_annual)} pf={-d.repairs_annual} muted hideIp={isGroundUp} />
-            {(d.utilities_annual > 0 || d.ip_utilities_annual > 0) && <ISRow label="Utilities" ip={-ipOr(d.ip_utilities_annual, d.utilities_annual)} pf={-d.utilities_annual} muted hideIp={isGroundUp} />}
-            {(d.ga_annual > 0 || d.ip_ga_annual > 0) && <ISRow label="General & Admin" ip={-ipOr(d.ip_ga_annual, d.ga_annual)} pf={-d.ga_annual} muted hideIp={isGroundUp} />}
-            {(d.marketing_annual > 0 || d.ip_marketing_annual > 0) && <ISRow label="Marketing / Leasing" ip={-ipOr(d.ip_marketing_annual, d.marketing_annual)} pf={-d.marketing_annual} muted hideIp={isGroundUp} />}
-            {(d.reserves_annual > 0 || d.ip_reserves_annual > 0) && <ISRow label="Reserves" ip={-ipOr(d.ip_reserves_annual, d.reserves_annual)} pf={-d.reserves_annual} muted hideIp={isGroundUp} />}
-            {(d.other_expenses_annual > 0 || d.ip_other_annual > 0) && <ISRow label="Other Expenses" ip={-ipOr(d.ip_other_annual, d.other_expenses_annual)} pf={-d.other_expenses_annual} muted hideIp={isGroundUp} />}
-            <ISRow label={`Total Operating Expenses`} ip={-m.inPlaceTotalOpEx} pf={-m.totalOpEx} proforma={-m.proformaTotalOpEx} hideIp={isGroundUp} />
-            {m.leasingCommissions > 0 && <ISRow label="Leasing Commissions" ip={-m.ipLeasingCommissions} pf={-m.leasingCommissions} proforma={-m.leasingCommissions} muted hideIp={isGroundUp} />}
-            <tr><td colSpan={isGroundUp ? 2 : 4} className="px-4"><div className="border-t" /></td></tr>
-            <ISRow label="Net Operating Income" ip={m.inPlaceNOI} pf={m.noi} proforma={m.proformaNOI} bold hi hideIp={isGroundUp} />
-            {d.has_financing && <>
-              <ISRow label={`Annual Debt Service (Acq)${d.acq_io_years > 0 ? " — IO" : ""}`} ip={-m.yr1Debt} pf={-m.acqDebt} muted hideIp={isGroundUp} />
-              <tr><td colSpan={isGroundUp ? 2 : 4} className="px-4"><div className="border-t" /></td></tr>
-              <ISRow label="Cash Flow Before Tax" ip={m.inPlaceCashFlow} pf={m.noi - m.acqDebt} proforma={m.cashFlow} bold hi={m.cashFlow > 0} hideIp={isGroundUp} />
-              <tr className="bg-muted/10">
-                <td className="px-4 py-2 text-xs font-medium text-muted-foreground">Cash-on-Cash Return</td>
-                {!isGroundUp && <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums">{m.inPlaceCoC !== 0 ? `${m.inPlaceCoC.toFixed(2)}%` : "—"}</td>}
-                <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-primary">{m.coc !== 0 ? `${m.coc.toFixed(2)}%` : "—"}</td>
-                {!isGroundUp && <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-muted-foreground/50">{m.equity > 0 && m.noi - m.acqDebt !== 0 ? `${(((m.noi - m.acqDebt) / m.equity) * 100).toFixed(2)}%` : "—"}</td>}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/20">
+                <th className="text-left px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide">Line Item</th>
+                <th className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-24">{isGroundUp ? "Stabilized" : "In-Place"}</th>
+                {[1,2,3,4,5].map(yr => (
+                  <th key={yr} className="text-right px-4 py-2 font-medium text-xs text-muted-foreground uppercase tracking-wide w-24">Year {yr}</th>
+                ))}
               </tr>
-            </>}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              <DCFRow label="Gross Potential Rent" yr0={isGroundUp ? m.proformaGPR : m.inPlaceGPR} yr1to5={Array(5).fill(m.proformaGPR)} />
+              <DCFRow label="Less Vacancy" yr0={isGroundUp ? -m.proformaVacancyLoss : -m.inPlaceVacancyLoss} yr1to5={Array(5).fill(-m.proformaVacancyLoss)} muted />
+              <DCFRow label="Effective Gross Income" yr0={isGroundUp ? m.proformaEGI : m.inPlaceEGI} yr1to5={Array(5).fill(m.proformaEGI)} bold />
+              {m.reimbursements > 0 && <DCFRow label="CAM Reimbursements" yr0={isGroundUp ? m.reimbursements : m.ipReimbursements} yr1to5={Array(5).fill(m.reimbursements)} />}
+              {m.totalOtherIncome > 0 && <DCFRow label="Other Income" yr0={0} yr1to5={Array(5).fill(m.totalOtherIncome)} muted />}
+              <tr><td colSpan={7} className="px-4"><div className="border-t" /></td></tr>
+              <DCFRow label="Total Operating Expenses" yr0={isGroundUp ? -m.proformaTotalOpEx : -m.inPlaceTotalOpEx} yr1to5={Array(5).fill(-m.proformaTotalOpEx)} />
+              {m.leasingCommissions > 0 && <DCFRow label="Leasing Commissions" yr0={isGroundUp ? -m.leasingCommissions : -m.ipLeasingCommissions} yr1to5={Array(5).fill(-m.leasingCommissions)} muted />}
+              <tr><td colSpan={7} className="px-4"><div className="border-t" /></td></tr>
+              <DCFRow label="Net Operating Income" yr0={isGroundUp ? m.proformaNOI : m.inPlaceNOI} yr1to5={m.yearlyDCF.map(y => y.noi)} bold hi />
+              {d.has_financing && <>
+                <tr className="hover:bg-muted/20">
+                  <td className="px-4 py-1.5 text-muted-foreground">Annual Debt Service</td>
+                  <td className="px-4 py-1.5 text-right tabular-nums text-muted-foreground">
+                    <span>{m.inPlaceDCF.debtService > 0 ? `(${fc(m.inPlaceDCF.debtService)})` : "—"}</span>
+                    {m.inPlaceDCF.debtLabel !== "—" && <span className="block text-[10px] text-muted-foreground/60">{m.inPlaceDCF.debtLabel}</span>}
+                  </td>
+                  {m.yearlyDCF.map((y, i) => (
+                    <td key={i} className="px-4 py-1.5 text-right tabular-nums text-muted-foreground">
+                      <span>{y.debtService > 0 ? `(${fc(y.debtService)})` : "—"}</span>
+                      {y.debtLabel !== "—" && <span className="block text-[10px] text-muted-foreground/60">{y.debtLabel}</span>}
+                    </td>
+                  ))}
+                </tr>
+                {d.has_refi && m.yearlyDCF.some(y => y.refiProceeds !== 0) && (
+                  <tr className="hover:bg-muted/20">
+                    <td className="px-4 py-1.5 text-muted-foreground italic">Refinance Proceeds</td>
+                    <td className="px-4 py-1.5 text-right tabular-nums">—</td>
+                    {m.yearlyDCF.map((y, i) => (
+                      <td key={i} className={`px-4 py-1.5 text-right tabular-nums ${y.refiProceeds > 0 ? "text-green-400 font-medium" : ""}`}>
+                        {y.refiProceeds !== 0 ? fc(y.refiProceeds) : "—"}
+                      </td>
+                    ))}
+                  </tr>
+                )}
+                <tr><td colSpan={7} className="px-4"><div className="border-t" /></td></tr>
+                <DCFRow label="Cash Flow Before Tax" yr0={isGroundUp ? m.cashFlow : m.inPlaceCashFlow} yr1to5={m.yearlyDCF.map(y => y.cashFlow)} bold hi={m.cashFlow > 0} />
+                <DCFRow label="Cash-on-Cash Return" yr0={isGroundUp ? m.coc : m.inPlaceCoC} yr1to5={m.yearlyDCF.map(y => y.coc)} isPct />
+              </>}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* ── Deal Score Progression ── */}
