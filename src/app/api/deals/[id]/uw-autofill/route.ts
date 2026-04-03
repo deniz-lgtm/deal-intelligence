@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs/promises";
 import { dealQueries, omAnalysisQueries, getPool } from "@/lib/db";
+import { pdfToImages, imageContentBlocks } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 const MODEL = "claude-sonnet-4-5";
@@ -119,10 +120,10 @@ export async function POST(
     }
 
     // ── Build combined document content ────────────────────────────────────────
-    // For rent roll PDFs: send the actual PDF so Claude can see table layout.
+    // For rent roll PDFs: convert to images so Claude can see table layout.
     // For other docs: send extracted text.
     const MAX_TOTAL = 16000;
-    const pdfDocBlocks: Array<{ type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } }> = [];
+    const pdfImageBlocks: Anthropic.ImageBlockParam[] = [];
     const sections: string[] = [];
     let remaining = MAX_TOTAL;
 
@@ -130,16 +131,18 @@ export async function POST(
       const isRentRoll = /rent.?roll/i.test(row.original_name);
       const isPdf = row.mime_type === "application/pdf";
 
-      // For rent roll PDFs, send the file directly for better table parsing
-      if (isRentRoll && isPdf && pdfDocBlocks.length === 0) {
+      // For rent roll PDFs, convert to images for reliable table parsing
+      if (isRentRoll && isPdf && pdfImageBlocks.length === 0) {
         try {
           const pdfBuf = await fs.readFile(row.file_path);
-          pdfDocBlocks.push({
-            type: "document",
-            source: { type: "base64", media_type: "application/pdf", data: pdfBuf.toString("base64") },
-          });
-          continue;
-        } catch { /* fall through to text */ }
+          const images = await pdfToImages(pdfBuf, 8);
+          if (images.length > 0) {
+            pdfImageBlocks.push(...imageContentBlocks(images));
+            continue;
+          }
+        } catch (err) {
+          console.error("PDF to image failed for rent roll, using text:", err);
+        }
       }
 
       if (remaining <= 0 || !row.content_text) continue;
@@ -246,10 +249,10 @@ ${unitGroupRules}
 Respond with ONLY the JSON object, no explanation.`;
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    // Build message content: PDF documents first (if any), then text prompt
+    // Build message content: rent roll images first (if any), then text prompt
     const messageContent: Anthropic.MessageCreateParams["messages"][0]["content"] = [];
-    for (const pdfBlock of pdfDocBlocks) {
-      messageContent.push(pdfBlock as unknown as Anthropic.TextBlockParam);
+    if (pdfImageBlocks.length > 0) {
+      messageContent.push(...pdfImageBlocks);
     }
     messageContent.push({ type: "text", text: prompt });
 

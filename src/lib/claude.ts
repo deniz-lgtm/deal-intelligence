@@ -7,6 +7,59 @@ function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
 
+// ─── PDF to Images ──────────────────────────────────────────────────────────
+
+/**
+ * Convert a PDF buffer into an array of base64 PNG images (one per page).
+ * Uses pdf2pic + sharp. Returns up to maxPages images.
+ */
+export async function pdfToImages(
+  pdfBuffer: Buffer,
+  maxPages = 10,
+  dpi = 200
+): Promise<string[]> {
+  const { fromBuffer } = await import("pdf2pic");
+  const converter = fromBuffer(pdfBuffer, {
+    density: dpi,
+    format: "png",
+    width: 1600,
+    height: 2200,
+    saveFilename: "page",
+    savePath: "/tmp",
+  });
+
+  const images: string[] = [];
+  for (let i = 1; i <= maxPages; i++) {
+    try {
+      const result = await converter(i, { responseType: "base64" });
+      if (result.base64) {
+        images.push(result.base64);
+      } else {
+        break; // no more pages
+      }
+    } catch {
+      break; // past end of document
+    }
+  }
+  return images;
+}
+
+/**
+ * Build Claude message content blocks from PDF page images.
+ */
+export function imageContentBlocks(
+  base64Images: string[]
+): Anthropic.ImageBlockParam[] {
+  return base64Images.map((data) => ({
+    type: "image" as const,
+    source: {
+      type: "base64" as const,
+      media_type: "image/png" as const,
+      data,
+    },
+  }));
+}
+
 // ─── Document Classification ─────────────────────────────────────────────────
 
 export async function classifyDocument(
@@ -104,25 +157,26 @@ export async function extractRentRollSummary(
   if (!contentText && !pdfBuffer) return null;
 
   try {
-    // Prefer sending the PDF directly so Claude can see the table layout
     const content: Anthropic.MessageCreateParams["messages"][0]["content"] = [];
 
+    // Convert PDF to images for reliable table parsing
     if (pdfBuffer) {
-      content.push({
-        type: "document",
-        source: {
-          type: "base64",
-          media_type: "application/pdf",
-          data: pdfBuffer.toString("base64"),
-        },
-      } as unknown as Anthropic.TextBlockParam);
-    } else if (contentText) {
-      content.push({
-        type: "text",
-        text: `RENT ROLL TEXT:\n${contentText.slice(0, 16000)}`,
-      });
+      try {
+        const images = await pdfToImages(pdfBuffer, 8);
+        if (images.length > 0) {
+          content.push(...imageContentBlocks(images));
+        }
+      } catch (err) {
+        console.error("PDF to image conversion failed, using text fallback:", err);
+      }
     }
 
+    // Fallback to text if no images were produced
+    if (content.length === 0 && contentText) {
+      content.push({ type: "text", text: `RENT ROLL TEXT:\n${contentText.slice(0, 16000)}` });
+    }
+
+    if (content.length === 0) return null;
     content.push({ type: "text", text: RENT_ROLL_PROMPT });
 
     const response = await getClient().messages.create({

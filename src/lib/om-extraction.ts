@@ -4,6 +4,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { pdfToImages, imageContentBlocks } from "./claude";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -178,13 +179,17 @@ Rules:
 - If value has units (M, K) convert to full number
 - Respond with ONLY the JSON object, no explanation`;
 
-  // Build message content: PDF document first (if available), then text prompt
+  // Build message content: PDF page images first (if available), then text prompt
   const msgContent: Anthropic.MessageCreateParams["messages"][0]["content"] = [];
   if (pdfBuffer) {
-    msgContent.push({
-      type: "document",
-      source: { type: "base64", media_type: "application/pdf", data: pdfBuffer.toString("base64") },
-    } as unknown as Anthropic.TextBlockParam);
+    try {
+      const images = await pdfToImages(pdfBuffer, 6);
+      if (images.length > 0) {
+        msgContent.push(...imageContentBlocks(images));
+      }
+    } catch (err) {
+      console.error("PDF to image conversion failed, using text only:", err);
+    }
   }
   msgContent.push({ type: "text", text: prompt });
 
