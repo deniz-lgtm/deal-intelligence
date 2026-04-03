@@ -16,6 +16,8 @@ import {
   Flag,
   User,
   Diamond,
+  Loader2,
+  FileSearch,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +34,7 @@ import {
   TASK_PRIORITY_CONFIG,
   TASK_STATUS_CONFIG,
   DEAL_STAGE_LABELS,
+  STAGE_MILESTONE_TEMPLATES,
 } from "@/lib/types";
 import type {
   DealTask,
@@ -72,6 +75,9 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
   const [filterStatus, setFilterStatus] = useState<TaskStatus | "all">("all");
   const [filterMilestone, setFilterMilestone] = useState<string | "all">("all");
 
+  const [suggesting, setSuggesting] = useState(false);
+  const [aiSuggesting, setAiSuggesting] = useState(false);
+
   // Dialog state
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [milestoneDialogOpen, setMilestoneDialogOpen] = useState(false);
@@ -94,21 +100,33 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
     target_date: "",
   });
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (isInitial = false) => {
     try {
-      const [tasksRes, milestonesRes, dealRes] = await Promise.all([
+      const dealRes = await fetch(`/api/deals/${dealId}`);
+      const dealJson = await dealRes.json();
+      if (dealJson.data?.status) setDealStatus(dealJson.data.status);
+
+      if (isInitial) {
+        // Auto-seed defaults on first visit (no-ops if already seeded)
+        const seedRes = await fetch(`/api/deals/${dealId}/tasks/seed`, { method: "POST" });
+        const seedJson = await seedRes.json();
+        if (seedJson.data) {
+          setTasks(seedJson.data.tasks || []);
+          setMilestones(seedJson.data.milestones || []);
+          return;
+        }
+      }
+
+      const [tasksRes, milestonesRes] = await Promise.all([
         fetch(`/api/deals/${dealId}/tasks`),
         fetch(`/api/deals/${dealId}/milestones`),
-        fetch(`/api/deals/${dealId}`),
       ]);
-      const [tasksJson, milestonesJson, dealJson] = await Promise.all([
+      const [tasksJson, milestonesJson] = await Promise.all([
         tasksRes.json(),
         milestonesRes.json(),
-        dealRes.json(),
       ]);
       setTasks(tasksJson.data || []);
       setMilestones(milestonesJson.data || []);
-      if (dealJson.data?.status) setDealStatus(dealJson.data.status);
     } catch (error) {
       console.error("Failed to load project data:", error);
     } finally {
@@ -117,7 +135,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
   }, [dealId]);
 
   useEffect(() => {
-    loadData();
+    loadData(true);
   }, [loadData]);
 
   // ── Stats ──
@@ -265,16 +283,13 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
   };
 
   const handleSuggestMilestones = async () => {
+    setSuggesting(true);
     try {
-      const res = await fetch(`/api/deals/${dealId}/milestones/suggest`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage: dealStatus }),
-      });
-      const json = await res.json();
-      const suggestions: string[] = json.data || [];
-      const existingTitles = new Set(milestones.map((m) => m.title));
-      const newSuggestions = suggestions.filter((s) => !existingTitles.has(s));
+      const suggestions = STAGE_MILESTONE_TEMPLATES[dealStatus] || [];
+      const existingTitles = new Set(milestones.map((m) => m.title.toLowerCase()));
+      const newSuggestions = suggestions.filter((s) => !existingTitles.has(s.toLowerCase()));
+
+      if (newSuggestions.length === 0) return;
 
       for (const title of newSuggestions) {
         await fetch(`/api/deals/${dealId}/milestones`, {
@@ -283,9 +298,31 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
           body: JSON.stringify({ title, stage: dealStatus }),
         });
       }
-      loadData();
+      await loadData();
     } catch (error) {
       console.error("Failed to suggest milestones:", error);
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const handleAiSuggest = async () => {
+    setAiSuggesting(true);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/tasks/ai-suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = await res.json();
+      if (json.error) {
+        alert(json.error);
+        return;
+      }
+      await loadData();
+    } catch (error) {
+      console.error("Failed to get AI suggestions:", error);
+    } finally {
+      setAiSuggesting(false);
     }
   };
 
@@ -444,8 +481,14 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                 </DialogContent>
               </Dialog>
 
-              <Button variant="outline" size="sm" className="text-xs" onClick={handleSuggestMilestones}>
-                <Sparkles className="h-3 w-3 mr-1" /> Suggest for {DEAL_STAGE_LABELS[dealStatus]}
+              <Button variant="outline" size="sm" className="text-xs" onClick={handleSuggestMilestones} disabled={suggesting}>
+                {suggesting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
+                Suggest for {DEAL_STAGE_LABELS[dealStatus]}
+              </Button>
+
+              <Button variant="outline" size="sm" className="text-xs" onClick={handleAiSuggest} disabled={aiSuggesting}>
+                {aiSuggesting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileSearch className="h-3 w-3 mr-1" />}
+                {aiSuggesting ? "Analyzing docs..." : "AI Suggest from Docs"}
               </Button>
             </div>
 
@@ -628,6 +671,11 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                   </div>
                 </DialogContent>
               </Dialog>
+
+              <Button variant="outline" size="sm" className="text-xs" onClick={handleAiSuggest} disabled={aiSuggesting}>
+                {aiSuggesting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <FileSearch className="h-3 w-3 mr-1" />}
+                {aiSuggesting ? "Analyzing..." : "AI from Docs"}
+              </Button>
 
               <div className="flex items-center gap-1 ml-auto">
                 <span className="text-2xs text-muted-foreground mr-1">Filter:</span>

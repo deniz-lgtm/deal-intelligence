@@ -613,6 +613,46 @@ export const STAGE_MILESTONE_TEMPLATES: Record<DealStatus, string[]> = {
   archived: [],
 };
 
+// Default milestones that always seed regardless of stage
+export const DEFAULT_MILESTONES: Array<{ title: string; stage: DealStatus }> = [
+  { title: "Site visit completed", stage: "sourcing" },
+  { title: "OM reviewed & scored", stage: "screening" },
+  { title: "Underwriting model complete", stage: "screening" },
+  { title: "IC approval obtained", stage: "screening" },
+  { title: "LOI submitted", stage: "loi" },
+  { title: "LOI executed", stage: "loi" },
+  { title: "PSA executed", stage: "under_contract" },
+  { title: "Earnest money deposited", stage: "under_contract" },
+  { title: "Title & survey clear", stage: "diligence" },
+  { title: "Environmental clear", stage: "diligence" },
+  { title: "Physical inspections complete", stage: "diligence" },
+  { title: "Financing secured", stage: "diligence" },
+  { title: "Closing docs signed", stage: "closing" },
+  { title: "Deal closed", stage: "closing" },
+];
+
+// Default tasks that always seed
+export const DEFAULT_TASKS: Array<{ title: string; priority: TaskPriority; milestone_title?: string }> = [
+  { title: "Request offering memorandum from broker", priority: "high" },
+  { title: "Review OM and score deal", priority: "high", milestone_title: "OM reviewed & scored" },
+  { title: "Schedule property site visit", priority: "high", milestone_title: "Site visit completed" },
+  { title: "Run initial underwriting model", priority: "high", milestone_title: "Underwriting model complete" },
+  { title: "Pull market comps and rent survey", priority: "medium" },
+  { title: "Prepare IC memo / investment summary", priority: "high", milestone_title: "IC approval obtained" },
+  { title: "Draft LOI terms", priority: "high", milestone_title: "LOI submitted" },
+  { title: "Negotiate LOI with seller/broker", priority: "high", milestone_title: "LOI executed" },
+  { title: "Engage title company", priority: "medium", milestone_title: "Title & survey clear" },
+  { title: "Order Phase I ESA", priority: "high", milestone_title: "Environmental clear" },
+  { title: "Order ALTA survey", priority: "medium", milestone_title: "Title & survey clear" },
+  { title: "Schedule property condition assessment", priority: "high", milestone_title: "Physical inspections complete" },
+  { title: "Obtain insurance quotes", priority: "medium" },
+  { title: "Finalize loan application", priority: "high", milestone_title: "Financing secured" },
+  { title: "Review all lease abstracts", priority: "medium" },
+  { title: "Confirm zoning & permitted uses", priority: "medium" },
+  { title: "Final walkthrough before closing", priority: "high", milestone_title: "Closing docs signed" },
+  { title: "Wire closing funds", priority: "critical", milestone_title: "Deal closed" },
+];
+
 // ─── Chat ───────────────────────────────────────────────────────────────────
 
 export interface ChatMessage {
