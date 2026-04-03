@@ -218,7 +218,8 @@ export default function DashboardPage() {
   // ── Analytics computation ──
   const activeDeals = deals.filter((d) => !["closed", "dead", "archived"].includes(d.status));
   const dealCost = (d: DealWithStats) => (d.total_project_cost && d.total_project_cost > 0 ? d.total_project_cost : d.asking_price) || 0;
-  const totalPipelineValue = activeDeals.reduce((sum, d) => sum + dealCost(d), 0);
+  const pipelineDeals = deals.filter((d) => ["under_contract", "diligence", "closing", "closed"].includes(d.status));
+  const totalPipelineValue = pipelineDeals.reduce((sum, d) => sum + dealCost(d), 0);
   const avgScore = (() => {
     const scored = deals.filter((d) => d.om_score != null);
     if (scored.length === 0) return null;
