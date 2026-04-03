@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { photoQueries } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
-import path from "path";
-import fs from "fs";
-
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
+import { uploadBlob } from "@/lib/blob-storage";
 
 export async function POST(req: Request) {
   try {
@@ -21,11 +18,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No files provided" }, { status: 400 });
     }
 
-    const photoDir = path.join(UPLOAD_DIR, dealId, "photos");
-    if (!fs.existsSync(photoDir)) {
-      fs.mkdirSync(photoDir, { recursive: true });
-    }
-
     const saved = [];
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
@@ -35,17 +27,17 @@ export async function POST(req: Request) {
       const id = uuidv4();
       const ext = file.name.split(".").pop() || "jpg";
       const safeName = `${id}.${ext}`;
-      const filePath = path.join(photoDir, safeName);
+      const blobPath = `${dealId}/photos/${safeName}`;
 
       const buffer = Buffer.from(await file.arrayBuffer());
-      fs.writeFileSync(filePath, buffer);
+      const fileUrl = await uploadBlob(blobPath, buffer, file.type);
 
       const photo = await photoQueries.create({
         id,
         deal_id: dealId,
         name: safeName,
         original_name: file.name,
-        file_path: filePath,
+        file_path: fileUrl,
         file_size: buffer.length,
         mime_type: file.type,
         caption: caption || null,

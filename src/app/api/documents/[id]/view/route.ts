@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { documentQueries } from "@/lib/db";
-import fs from "fs";
-import path from "path";
+import { isBlobUrl, readFile } from "@/lib/blob-storage";
 import type { Document } from "@/lib/types";
 
 export async function GET(
@@ -14,17 +13,18 @@ export async function GET(
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
 
-    const filePath = path.isAbsolute(doc.file_path)
-      ? doc.file_path
-      : path.join(process.cwd(), doc.file_path);
+    // If file_path is a blob URL, redirect to it (fastest, no proxy needed)
+    if (isBlobUrl(doc.file_path)) {
+      return NextResponse.redirect(doc.file_path);
+    }
 
-    if (!fs.existsSync(filePath)) {
+    // Local file fallback (dev mode or legacy)
+    const fileBuffer = await readFile(doc.file_path);
+    if (!fileBuffer) {
       return NextResponse.json({ error: "File not found on disk" }, { status: 404 });
     }
 
-    const fileBuffer = fs.readFileSync(filePath);
-
-    return new NextResponse(fileBuffer, {
+    return new NextResponse(new Uint8Array(fileBuffer), {
       headers: {
         "Content-Type": doc.mime_type,
         "Content-Disposition": `inline; filename="${encodeURIComponent(doc.original_name)}"`,

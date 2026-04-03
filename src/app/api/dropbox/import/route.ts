@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
-import fs from "fs/promises";
 import { dropboxQueries, dealQueries, documentQueries } from "@/lib/db";
 import { downloadFile, refreshAccessToken, guessMimeType } from "@/lib/dropbox";
 import { classifyDocument } from "@/lib/claude";
-
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
+import { uploadBlob } from "@/lib/blob-storage";
 
 async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
   if (mimeType === "application/pdf") {
@@ -49,9 +47,6 @@ export async function POST(req: NextRequest) {
       await dealQueries.update(deal_id, { dropbox_folder_path: firstFolder });
     }
 
-    const dealUploadDir = path.join(UPLOAD_DIR, deal_id);
-    await fs.mkdir(dealUploadDir, { recursive: true });
-
     // Fetch existing document names to skip duplicates
     const existing = await documentQueries.getByDealId(deal_id) as Array<{ original_name: string }>;
     const existingNames = new Set(existing.map((d) => d.original_name.toLowerCase()));
@@ -88,11 +83,10 @@ export async function POST(req: NextRequest) {
         const id = uuidv4();
         const ext = path.extname(metadata.name);
         const safeName = `${id}${ext}`;
-        const filePath = path.join(dealUploadDir, safeName);
-
-        await fs.writeFile(filePath, buffer);
+        const blobPath = `${deal_id}/${safeName}`;
 
         const mimeType = guessMimeType(metadata.name);
+        const fileUrl = await uploadBlob(blobPath, buffer, mimeType);
         const rawText = await extractText(buffer, mimeType);
         const contentText = rawText.replace(/\x00/g, "").replace(/[\uFFFD]/g, "");
 
@@ -116,7 +110,7 @@ export async function POST(req: NextRequest) {
           name: baseName,
           original_name: metadata.name,
           category,
-          file_path: filePath,
+          file_path: fileUrl,
           file_size: buffer.length,
           mime_type: mimeType,
           content_text: contentText || null,

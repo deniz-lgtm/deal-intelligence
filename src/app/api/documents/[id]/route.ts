@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs/promises";
 import { documentQueries } from "@/lib/db";
+import { deleteBlob } from "@/lib/blob-storage";
 
 export async function GET(
   _req: NextRequest,
@@ -48,7 +48,7 @@ export async function DELETE(
   try {
     const doc = await documentQueries.delete(params.id) as { file_path?: string } | null;
     if (doc?.file_path) {
-      await fs.unlink(doc.file_path).catch(() => {});
+      await deleteBlob(doc.file_path);
     }
     return NextResponse.json({ data: { success: true } });
   } catch (error) {

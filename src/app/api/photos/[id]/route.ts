@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { photoQueries } from "@/lib/db";
-import fs from "fs";
+import { isBlobUrl, readFile, deleteBlob } from "@/lib/blob-storage";
 import type { Photo } from "@/lib/types";
 
 export async function GET(
@@ -12,11 +12,19 @@ export async function GET(
     if (!photo) {
       return NextResponse.json({ error: "Photo not found" }, { status: 404 });
     }
-    if (!fs.existsSync(photo.file_path)) {
+
+    // If file_path is a blob URL, redirect to it
+    if (isBlobUrl(photo.file_path)) {
+      return NextResponse.redirect(photo.file_path);
+    }
+
+    // Local file fallback
+    const buffer = await readFile(photo.file_path);
+    if (!buffer) {
       return NextResponse.json({ error: "File not found" }, { status: 404 });
     }
-    const buffer = fs.readFileSync(photo.file_path);
-    return new NextResponse(buffer, {
+
+    return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": photo.mime_type,
         "Content-Disposition": `inline; filename="${encodeURIComponent(photo.original_name)}"`,
@@ -49,8 +57,8 @@ export async function DELETE(
 ) {
   try {
     const photo = (await photoQueries.delete(params.id)) as { file_path: string } | undefined;
-    if (photo?.file_path && fs.existsSync(photo.file_path)) {
-      fs.unlinkSync(photo.file_path);
+    if (photo?.file_path) {
+      await deleteBlob(photo.file_path);
     }
     return NextResponse.json({ data: { deleted: true } });
   } catch (err) {

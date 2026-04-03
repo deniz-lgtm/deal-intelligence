@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
-import fs from "fs/promises";
 import { dealQueries, documentQueries, omAnalysisQueries } from "@/lib/db";
 import { extractOmMetrics } from "@/lib/om-extraction";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
+import { uploadBlob } from "@/lib/blob-storage";
 
 /**
  * POST /api/deals/:id/om-upload
@@ -49,12 +47,10 @@ export async function POST(
     const docId = uuidv4();
     const ext = path.extname(file.name) || ".pdf";
     const safeName = `${docId}${ext}`;
-    const dealUploadDir = path.join(UPLOAD_DIR, params.id);
-    await fs.mkdir(dealUploadDir, { recursive: true });
-    const filePath = path.join(dealUploadDir, safeName);
+    const blobPath = `${params.id}/${safeName}`;
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(filePath, buffer);
+    const fileUrl = await uploadBlob(blobPath, buffer, file.type || "application/pdf");
 
     // ── Extract text ─────────────────────────────────────────────────────────
     let pdfText = "";
@@ -144,7 +140,7 @@ export async function POST(
       name: file.name.replace(ext, "").slice(0, 200),
       original_name: file.name,
       category: "financial",
-      file_path: filePath,
+      file_path: fileUrl,
       file_size: buffer.length,
       mime_type: file.type,
       content_text: pdfText || null,

@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
-import fs from "fs/promises";
 import { documentQueries, dealQueries } from "@/lib/db";
 import { classifyDocument, extractRentRollSummary } from "@/lib/claude";
-
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
+import { uploadBlob } from "@/lib/blob-storage";
 
 async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
   if (mimeType === "application/pdf") {
@@ -46,19 +44,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No files provided" }, { status: 400 });
     }
 
-    const dealUploadDir = path.join(UPLOAD_DIR, dealId);
-    await fs.mkdir(dealUploadDir, { recursive: true });
-
     const uploaded = [];
 
     for (const file of files) {
       const id = uuidv4();
       const ext = path.extname(file.name);
       const safeName = `${id}${ext}`;
-      const filePath = path.join(dealUploadDir, safeName);
+      const blobPath = `${dealId}/${safeName}`;
 
       const buffer = Buffer.from(await file.arrayBuffer());
-      await fs.writeFile(filePath, buffer);
+      const fileUrl = await uploadBlob(blobPath, buffer, file.type || "application/octet-stream");
 
       const rawText = await extractText(buffer, file.type);
       // Strip null bytes and non-UTF8 characters that Postgres rejects
@@ -85,7 +80,7 @@ export async function POST(req: NextRequest) {
         name: file.name.replace(ext, "").slice(0, 200),
         original_name: file.name,
         category,
-        file_path: filePath,
+        file_path: fileUrl,
         file_size: buffer.length,
         mime_type: file.type || "application/octet-stream",
         content_text: contentText || null,
