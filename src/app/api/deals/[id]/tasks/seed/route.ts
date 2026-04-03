@@ -1,8 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { milestoneQueries, taskQueries } from "@/lib/db";
+import { milestoneQueries, taskQueries, getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { DEFAULT_MILESTONES, DEFAULT_TASKS } from "@/lib/types";
+
+async function ensureProjectTables() {
+  const pool = getPool();
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS deal_milestones (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      stage TEXT,
+      target_date DATE,
+      completed_at TIMESTAMPTZ,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS deal_tasks (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT,
+      assignee TEXT,
+      due_date DATE,
+      priority TEXT NOT NULL DEFAULT 'medium',
+      status TEXT NOT NULL DEFAULT 'todo',
+      milestone_id TEXT REFERENCES deal_milestones(id) ON DELETE SET NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
 
 export async function POST(
   _req: NextRequest,
@@ -13,6 +46,9 @@ export async function POST(
     if (errorResponse) return errorResponse;
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
+
+    // Ensure tables exist before querying
+    await ensureProjectTables();
 
     // Check if already seeded (has any milestones or tasks)
     const existingMilestones = await milestoneQueries.getByDealId(params.id);
