@@ -1,18 +1,51 @@
-import { put, del } from "@vercel/blob";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 
 /**
- * Upload a file to Vercel Blob storage.
- * Returns the public URL of the uploaded blob.
+ * Cloudflare R2 storage via S3-compatible API.
  *
- * Falls back to local filesystem if BLOB_READ_WRITE_TOKEN is not configured,
- * enabling local development without Vercel Blob.
+ * Required env vars for production:
+ *   R2_ACCOUNT_ID        — Cloudflare account ID
+ *   R2_ACCESS_KEY_ID     — R2 API token access key
+ *   R2_SECRET_ACCESS_KEY — R2 API token secret key
+ *   R2_BUCKET_NAME       — R2 bucket name
+ *   R2_PUBLIC_URL        — Public URL prefix (e.g., https://files.yourdomain.com)
+ *
+ * Falls back to local filesystem when R2_ACCOUNT_ID is not set (local dev).
+ */
+
+let _client: S3Client | null = null;
+
+function getR2Client(): S3Client {
+  if (_client) return _client;
+  _client = new S3Client({
+    region: "auto",
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+    },
+  });
+  return _client;
+}
+
+function getBucket(): string {
+  return process.env.R2_BUCKET_NAME || "deal-intelligence";
+}
+
+function isR2Configured(): boolean {
+  return !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY);
+}
+
+/**
+ * Upload a file to R2.
+ * Returns the public URL of the uploaded object.
  */
 export async function uploadBlob(
   pathname: string,
   buffer: Buffer,
   contentType: string
 ): Promise<string> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  if (!isR2Configured()) {
     // Fallback: save to local disk (dev mode)
     const path = await import("path");
     const fs = await import("fs/promises");
@@ -23,23 +56,26 @@ export async function uploadBlob(
     return `local://${filePath}`;
   }
 
-  const blob = await put(pathname, buffer, {
-    access: "public",
-    contentType,
-    addRandomSuffix: false,
-  });
+  const client = getR2Client();
+  await client.send(new PutObjectCommand({
+    Bucket: getBucket(),
+    Key: pathname,
+    Body: buffer,
+    ContentType: contentType,
+  }));
 
-  return blob.url;
+  // Return public URL
+  const publicBase = process.env.R2_PUBLIC_URL || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${getBucket()}`;
+  return `${publicBase}/${pathname}`;
 }
 
 /**
- * Delete a blob by URL.
- * No-ops gracefully for local:// paths or missing tokens.
+ * Delete an object by URL or key.
+ * No-ops gracefully for local:// paths or missing config.
  */
 export async function deleteBlob(url: string): Promise<void> {
   if (!url || url.startsWith("local://")) {
-    // Local file — try to delete from disk
-    if (url.startsWith("local://")) {
+    if (url?.startsWith("local://")) {
       const filePath = url.replace("local://", "");
       try {
         const fs = await import("fs/promises");
@@ -49,36 +85,64 @@ export async function deleteBlob(url: string): Promise<void> {
     return;
   }
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return;
+  if (!isR2Configured()) return;
 
   try {
-    await del(url);
+    // Extract key from URL
+    const publicBase = process.env.R2_PUBLIC_URL || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${getBucket()}`;
+    const key = url.startsWith(publicBase) ? url.slice(publicBase.length + 1) : url;
+
+    const client = getR2Client();
+    await client.send(new DeleteObjectCommand({
+      Bucket: getBucket(),
+      Key: key,
+    }));
   } catch (err) {
-    console.warn("Failed to delete blob:", err);
+    console.warn("Failed to delete from R2:", err);
   }
 }
 
 /**
- * Check if a file_path is a blob URL (vs local path).
+ * Check if a file_path is a remote URL (vs local path).
  */
 export function isBlobUrl(filePath: string): boolean {
   return filePath.startsWith("http://") || filePath.startsWith("https://");
 }
 
 /**
- * Read a file — either fetch from blob URL or read from local disk.
+ * Read a file — either fetch from R2 URL or read from local disk.
  * Returns the buffer content.
  */
 export async function readFile(filePath: string): Promise<Buffer | null> {
   if (isBlobUrl(filePath)) {
+    // Try public URL fetch first (fastest)
     try {
       const response = await fetch(filePath);
-      if (!response.ok) return null;
-      const arrayBuffer = await response.arrayBuffer();
-      return Buffer.from(arrayBuffer);
-    } catch {
-      return null;
+      if (response.ok) {
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+      }
+    } catch {}
+
+    // Fallback: use S3 GetObject if public fetch fails
+    if (isR2Configured()) {
+      try {
+        const publicBase = process.env.R2_PUBLIC_URL || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${getBucket()}`;
+        const key = filePath.startsWith(publicBase) ? filePath.slice(publicBase.length + 1) : filePath;
+
+        const client = getR2Client();
+        const result = await client.send(new GetObjectCommand({
+          Bucket: getBucket(),
+          Key: key,
+        }));
+        if (result.Body) {
+          const bytes = await result.Body.transformToByteArray();
+          return Buffer.from(bytes);
+        }
+      } catch {}
     }
+
+    return null;
   }
 
   // Local file (dev or legacy)
