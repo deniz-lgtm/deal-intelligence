@@ -104,6 +104,8 @@ export async function POST(req: NextRequest) {
           .map((name) => {
             const doc = documents.find(
               (d) => d.name === name || d.original_name === name
+                || d.name.toLowerCase() === name.toLowerCase()
+                || d.original_name.toLowerCase() === name.toLowerCase()
             );
             return doc?.id;
           })

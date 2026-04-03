@@ -443,11 +443,27 @@ export interface ChecklistFillResult {
   source_document_names: string[];
 }
 
+// Map checklist categories → relevant document categories
+const CHECKLIST_DOC_CATEGORIES: Record<string, string[]> = {
+  "Title & Ownership": ["title_ownership"],
+  "Environmental": ["environmental"],
+  "Zoning & Entitlements": ["zoning_entitlements"],
+  "Financial": ["financial"],
+  "Leases": ["leases"],
+  "Physical Inspections": ["surveys_engineering", "inspections"],
+  "Legal & Contracts": ["legal"],
+  "Utilities & Infrastructure": ["other", "utilities"],
+  "Permits & Compliance": ["zoning_entitlements", "legal", "permits"],
+  "Market & Valuation": ["financial", "market"],
+  "Insurance": ["insurance"],
+};
+
 export async function autoFillChecklist(
   dealName: string,
   documents: Array<{
     id: string;
     name: string;
+    original_name?: string;
     category: string;
     content_text: string | null;
     ai_summary: string | null;
@@ -457,59 +473,98 @@ export async function autoFillChecklist(
 ): Promise<ChecklistFillResult[]> {
   if (documents.length === 0 || checklistItems.length === 0) return [];
 
-  const docContext = documents
-    .filter((d) => d.content_text || d.ai_summary)
-    .map(
-      (d) =>
-        `[${d.name}] (${d.category}): ${d.ai_summary || ""}\n${
-          d.content_text ? d.content_text.slice(0, 1500) : ""
-        }`
-    )
-    .join("\n\n");
+  // Group checklist items by category
+  const categories = Array.from(new Set(checklistItems.map((i) => i.category)));
 
-  const itemsList = checklistItems
-    .map((i) => `- ${i.category} | ${i.item}`)
-    .join("\n");
+  // Build per-category context: pair relevant docs with their checklist items
+  const categoryBlocks = categories.map((cat) => {
+    const items = checklistItems.filter((i) => i.category === cat);
+    const relevantDocCats = CHECKLIST_DOC_CATEGORIES[cat] || [];
+
+    // Primary docs: match by document category
+    const primaryDocs = documents.filter((d) => relevantDocCats.includes(d.category));
+    // Secondary docs: all others (may still contain relevant info)
+    const secondaryDocs = documents.filter((d) => !relevantDocCats.includes(d.category));
+
+    const formatDoc = (d: typeof documents[0], maxChars: number) => {
+      const name = d.original_name || d.name;
+      const summary = d.ai_summary ? `Summary: ${d.ai_summary}` : "";
+      const content = d.content_text ? d.content_text.slice(0, maxChars) : "";
+      return `  [${name}] (category: ${d.category}):\n  ${summary}\n  ${content}`;
+    };
+
+    // Give primary docs much more content space
+    const primaryContext = primaryDocs.map((d) => formatDoc(d, 10000)).join("\n\n");
+    // Give secondary docs just summary + short content
+    const secondaryContext = secondaryDocs.map((d) => formatDoc(d, 1500)).join("\n\n");
+
+    const itemsList = items.map((i) => `  - ${i.item}`).join("\n");
+
+    return `
+=== CATEGORY: ${cat} ===
+CHECKLIST ITEMS:
+${itemsList}
+
+PRIMARY DOCUMENTS (directly relevant):
+${primaryContext || "  (none uploaded)"}
+
+OTHER DOCUMENTS (may contain relevant info):
+${secondaryContext || "  (none)"}`;
+  }).join("\n\n");
 
   const memorySection = contextNotes?.trim()
     ? `\nDEAL MEMORY (additional context):\n${contextNotes}\n`
     : "";
 
+  // Document inventory for the AI
+  const docInventory = documents.map(d => `- "${d.original_name || d.name}" (category: ${d.category})`).join("\n");
+
   const prompt = `You are a real estate due diligence expert reviewing documents for deal: "${dealName}".
 ${memorySection}
-DOCUMENTS AVAILABLE:
-${docContext}
+UPLOADED DOCUMENTS INVENTORY:
+${docInventory}
 
-DILIGENCE CHECKLIST ITEMS TO ASSESS:
-${itemsList}
+${categoryBlocks}
 
-For each checklist item, determine its status based on the documents. Respond with valid JSON array only (no markdown):
+INSTRUCTIONS:
+You must assess EVERY checklist item and return a result for each one.
+
+For each checklist item, carefully review the documents — especially the PRIMARY documents for that category. Pay close attention to:
+1. Document NAMES — a document named "Preliminary Title Report" or "PRELIM" IS the preliminary title report. If it exists and has content, that item should be "complete".
+2. Document CONTENT — look for specific information that addresses the checklist item.
+3. Document SUMMARIES — the AI summary may confirm what the document covers.
+
+IMPORTANT STATUS RULES:
+- "complete": A relevant document EXISTS and contains information that addresses this item. If a preliminary title report document is uploaded, "Preliminary title report reviewed" is COMPLETE. If title documents exist, "Chain of title confirmed" should be assessed from their content. Be generous — if the document is present and relevant, mark complete with a note about what was found.
+- "issue": The document reveals a specific problem, red flag, lien, encumbrance, or concern. Always explain what the issue is.
+- "na": Clearly not applicable to this deal/property type.
+- "pending": ONLY use this when no relevant document exists at all or the document truly does not address this item. Do NOT default to pending when a relevant document is present.
+
+For notes: Reference the SPECIFIC document name and what you found (or didn't find). Be concise but specific. Example: "PRELIM-as of 10.1.25.PDF — Standard preliminary title report present, shows vesting in [entity name]."
+
+Respond with valid JSON array only (no markdown, no code fences):
 [
   {
-    "category": "<exact category text>",
-    "item": "<exact item text>",
+    "category": "<exact category text from above>",
+    "item": "<exact item text from above>",
     "status": "complete" | "pending" | "na" | "issue",
-    "notes": "<brief explanation referencing specific documents>",
-    "source_document_names": ["<doc name>"]
+    "notes": "<brief explanation referencing specific document names>",
+    "source_document_names": ["<exact document name as shown in inventory>"]
   }
-]
-
-Status meanings:
-- complete: Document(s) confirm this item is addressed
-- pending: Item not yet addressed or document missing
-- na: Not applicable to this property type
-- issue: Document reveals a problem or red flag`;
+]`;
 
   const response = await getClient().messages.create({
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: [{ role: "user", content: prompt }],
   });
 
   try {
     const text =
       response.content[0].type === "text" ? response.content[0].text : "[]";
-    return JSON.parse(text.trim());
+    // Strip any markdown code fences the model might add
+    const cleaned = text.trim().replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+    return JSON.parse(cleaned);
   } catch {
     return [];
   }
