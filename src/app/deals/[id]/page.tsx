@@ -227,8 +227,28 @@ export default function DealOverviewPage({
     ? `https://maps.google.com/maps?q=${encodeURIComponent(addressString)}&output=embed&layer=c`
     : null;
 
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const [editingProperty, setEditingProperty] = useState(false);
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const [editFields, setEditFields] = useState({ year_built: deal.year_built, land_acres: deal.land_acres, investment_strategy: deal.investment_strategy });
+
+  const savePropertyEdits = async () => {
+    setDeal((prev: any) => prev ? { ...prev, ...editFields } : prev);
+    setEditingProperty(false);
+    try {
+      const res = await fetch(`/api/deals/${params.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editFields),
+      });
+      const json = await res.json();
+      if (json.data) setDeal(json.data as Deal);
+      toast.success("Property details saved");
+    } catch { toast.error("Failed to save"); }
+  };
+
   return (
-    <div className="space-y-6 animate-fade-up">
+    <div className="space-y-4 animate-fade-up">
       {/* Gate warning modal */}
       {showGateWarning && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
@@ -243,59 +263,37 @@ export default function DealOverviewPage({
               </div>
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowGateWarning(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => changeStatus(showGateWarning.status, true)}
-              >
-                Move Anyway
-              </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowGateWarning(null)}>Cancel</Button>
+              <Button variant="destructive" size="sm" onClick={() => changeStatus(showGateWarning.status, true)}>Move Anyway</Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Cover Photo Hero */}
+      {/* ═══ HERO: Photo + Deal Info + Pipeline ═══ */}
       <div className="relative rounded-2xl overflow-hidden border border-border/60 shadow-card z-0">
         {coverPhoto ? (
-          <div className="relative h-48 md:h-64">
-            <img
-              src={`/api/photos/${coverPhoto.id}`}
-              alt={coverPhoto.caption || deal.name}
-              className="w-full h-full object-cover"
-            />
+          <div className="relative h-40 md:h-52">
+            <img src={`/api/photos/${coverPhoto.id}`} alt={coverPhoto.caption || deal.name} className="w-full h-full object-cover" />
             {photos.length > 1 && (
               <Link href={`/deals/${params.id}/photos`}>
                 <button className="absolute top-3 right-3 flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors z-10">
-                  <ImageIcon className="h-3 w-3" />
-                  {photos.length} photos
+                  <ImageIcon className="h-3 w-3" />{photos.length} photos
                 </button>
               </Link>
             )}
           </div>
         ) : (
-          <div className="relative h-48 md:h-64 overflow-hidden">
+          <div className="relative h-40 md:h-52 overflow-hidden">
             {mapsEmbedUrl ? (
-              <iframe
-                src={mapsEmbedUrl}
-                className="absolute inset-0 w-full h-full border-0 pointer-events-none"
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-                title="Property street view"
-              />
+              <iframe src={mapsEmbedUrl} className="absolute inset-0 w-full h-full border-0 pointer-events-none" loading="lazy" referrerPolicy="no-referrer-when-downgrade" title="Property street view" />
             ) : (
               <div className="absolute inset-0 bg-gradient-to-br from-muted/80 to-muted/30" />
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
             <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
               {hasAddress && (
-                <a
-                  href={`https://www.google.com/maps?layer=c&q=${encodeURIComponent(addressString)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <a href={`https://www.google.com/maps?layer=c&q=${encodeURIComponent(addressString)}`} target="_blank" rel="noopener noreferrer"
                   className="flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors"
                 >
                   <MapPin className="h-3 w-3" />
@@ -310,553 +308,345 @@ export default function DealOverviewPage({
             </div>
           </div>
         )}
-        {/* Deal info below hero */}
-        <div className="px-5 py-4 bg-card border-t border-border/40">
+        {/* Deal info overlay */}
+        <div className="px-5 py-3 bg-card border-t border-border/40">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2 mb-1.5">
-                <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>
-                  {DEAL_STAGE_LABELS[deal.status]}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  {deal.property_type ? titleCase(deal.property_type) : ""}
-                </span>
+              <div className="flex items-center gap-2 mb-1">
+                <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>{DEAL_STAGE_LABELS[deal.status]}</Badge>
+                <span className="text-xs text-muted-foreground">{deal.property_type ? titleCase(deal.property_type) : ""}</span>
                 {deal.investment_strategy && (
                   <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
                     {INVESTMENT_THESIS_LABELS[deal.investment_strategy as InvestmentThesis] || titleCase(deal.investment_strategy)}
                   </span>
                 )}
-                {deal.loi_executed && (
-                  <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                    LOI ✓
-                  </span>
-                )}
-                {deal.psa_executed && (
-                  <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                    PSA ✓
-                  </span>
-                )}
+                {deal.loi_executed && <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">LOI ✓</span>}
+                {deal.psa_executed && <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">PSA ✓</span>}
               </div>
-              <h1 className="font-display text-3xl tracking-tight">{deal.name}</h1>
-              {hasAddress && (
-                <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-1">
-                  <MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />
-                  {addressString}
-                </p>
-              )}
+              <h1 className="font-display text-2xl tracking-tight">{deal.name}</h1>
+              {hasAddress && <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-0.5"><MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />{addressString}</p>}
             </div>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" onClick={toggleStar} className="h-9 w-9">
+              <Button variant="ghost" size="icon" onClick={toggleStar} className="h-8 w-8">
                 <Star className={`h-4 w-4 ${deal.starred ? "text-amber-400 fill-amber-400" : "text-muted-foreground"}`} />
               </Button>
+              {documents.length > 0 && (
+                <Button variant="outline" size="sm" className="text-xs gap-1.5 h-7" onClick={autoFillFromDocs} disabled={autoFilling}>
+                  {autoFilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} AI Auto-fill
+                </Button>
+              )}
             </div>
           </div>
         </div>
+
+        {/* Compact pipeline bar */}
+        <div className="px-5 py-2.5 bg-card border-t border-border/40">
+          <div className="flex items-center gap-1">
+            {DEAL_PIPELINE.map((stage, i) => {
+              const isCompleted = !isOffPipeline && currentPipelineIdx > i;
+              const isCurrent = !isOffPipeline && currentPipelineIdx === i;
+              return (
+                <button key={stage} onClick={() => changeStatus(stage)} disabled={advancingTo !== null}
+                  className={`flex-1 h-1.5 rounded-full transition-all cursor-pointer hover:opacity-80 ${isCompleted ? "gradient-gold" : isCurrent ? "bg-primary/40" : "bg-muted/50"} ${isOffPipeline ? "opacity-30" : ""}`}
+                  title={DEAL_STAGE_LABELS[stage]}
+                />
+              );
+            })}
+            {nextStatus && (
+              <Button size="sm" className="text-2xs gap-1 h-6 ml-2 shrink-0" onClick={() => changeStatus(nextStatus)} disabled={advancingTo !== null}>
+                {advancingTo === nextStatus ? <Loader2 className="h-3 w-3 animate-spin" /> : <ChevronRight className="h-3 w-3" />}
+                {DEAL_STAGE_LABELS[nextStatus]}
+              </Button>
+            )}
+            {isOffPipeline && (
+              <Button variant="outline" size="sm" className="text-2xs h-6 ml-2" onClick={() => changeStatus("sourcing")}>Reactivate</Button>
+            )}
+          </div>
+          <div className="flex items-center gap-1 mt-1">
+            {DEAL_PIPELINE.map((stage, i) => {
+              const isCurrent = !isOffPipeline && currentPipelineIdx === i;
+              return <span key={stage} className={`flex-1 text-[9px] text-center ${isCurrent ? "text-primary font-semibold" : "text-muted-foreground/40"}`}>{DEAL_STAGE_LABELS[stage]}</span>;
+            })}
+            {(nextStatus || isOffPipeline) && <span className="w-[80px] ml-2 shrink-0" />}
+          </div>
+        </div>
+
         {/* Action bar */}
-        <div className="flex items-center justify-between px-5 py-2.5 bg-card border-t border-border/40">
-          <div className="flex items-center gap-1.5">
-            {deal.status !== "archived" ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => changeStatus("archived")}
-                disabled={advancingTo !== null}
-                className="text-xs text-muted-foreground hover:text-foreground h-7 gap-1"
-              >
-                <Archive className="h-3 w-3" /> Archive
-              </Button>
-            ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => changeStatus("sourcing")}
-                disabled={advancingTo !== null}
-                className="text-xs h-7"
-              >
-                Unarchive
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={deleteDeal}
-              disabled={deleting}
-              className="text-xs text-muted-foreground hover:text-destructive h-7 gap-1"
-            >
-              {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-              Delete
+        <div className="flex items-center px-5 py-1.5 bg-card border-t border-border/40 gap-1.5">
+          {deal.status !== "archived" ? (
+            <Button variant="ghost" size="sm" onClick={() => changeStatus("archived")} disabled={advancingTo !== null} className="text-2xs text-muted-foreground hover:text-foreground h-6 gap-1">
+              <Archive className="h-3 w-3" /> Archive
             </Button>
-          </div>
-          {documents.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs gap-1.5 h-7"
-              onClick={autoFillFromDocs}
-              disabled={autoFilling}
-            >
-              {autoFilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-              AI Auto-fill
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Deal Pipeline */}
-      <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-display text-sm">Deal Pipeline</h3>
-          {isOffPipeline && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-7"
-              onClick={() => changeStatus("sourcing")}
-            >
-              Reactivate
-            </Button>
-          )}
-          {!isOffPipeline && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs h-7 text-muted-foreground hover:text-destructive"
-              onClick={() => changeStatus("dead")}
-            >
-              Mark Dead
-            </Button>
-          )}
-        </div>
-        <div className="flex items-center gap-1 mb-3">
-          {DEAL_PIPELINE.map((stage, i) => {
-            const isCompleted = !isOffPipeline && currentPipelineIdx > i;
-            const isCurrent = !isOffPipeline && currentPipelineIdx === i;
-            const isFuture = isOffPipeline || currentPipelineIdx < i;
-            return (
-              <div key={stage} className="flex-1 flex flex-col items-center gap-1.5">
-                <button
-                  onClick={() => changeStatus(stage)}
-                  disabled={advancingTo !== null}
-                  className={`w-full h-1.5 rounded-full transition-all cursor-pointer hover:opacity-80 ${
-                    isCompleted
-                      ? "gradient-gold"
-                      : isCurrent
-                      ? "bg-primary/30"
-                      : isFuture && !isOffPipeline
-                      ? "bg-muted hover:bg-primary/20"
-                      : "bg-muted/40"
-                  } ${isOffPipeline ? "opacity-30" : ""}`}
-                  title={`Move to ${DEAL_STAGE_LABELS[stage]}`}
-                />
-                <span
-                  className={`text-[10px] text-center leading-tight transition-colors ${
-                    isCurrent
-                      ? "text-primary font-semibold"
-                      : isCompleted
-                      ? "text-muted-foreground"
-                      : "text-muted-foreground/40"
-                  }`}
-                >
-                  {DEAL_STAGE_LABELS[stage]}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-        {!isOffPipeline && (prevStatus || nextStatus) && (
-          <div className="flex items-center justify-between mt-2 pt-3 border-t border-border/40">
-            <div>
-              {prevStatus && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs text-muted-foreground h-7"
-                  onClick={() => changeStatus(prevStatus)}
-                  disabled={advancingTo !== null}
-                >
-                  ← {DEAL_STAGE_LABELS[prevStatus]}
-                </Button>
-              )}
-            </div>
-            <div>
-              {nextStatus && (
-                <Button
-                  size="sm"
-                  className="text-xs gap-1 h-8"
-                  onClick={() => changeStatus(nextStatus)}
-                  disabled={advancingTo !== null}
-                >
-                  {advancingTo === nextStatus ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3" />
-                  )}
-                  Advance to {DEAL_STAGE_LABELS[nextStatus]}
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Property Metrics + Deal Metrics side by side */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Property Metrics */}
-        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <h3 className="font-display text-sm text-muted-foreground uppercase tracking-wider mb-3">Property</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <MetricCard
-              icon={<DollarSign className="h-4 w-4 text-emerald-400" />}
-              label="Asking Price"
-              value={formatCurrency(deal.asking_price)}
-            />
-            <MetricCard
-              icon={<Maximize2 className="h-4 w-4 text-blue-400" />}
-              label="Square Footage"
-              value={deal.square_footage ? `${formatNumber(deal.square_footage)} SF` : "—"}
-            />
-            <MetricCard
-              icon={<Building2 className="h-4 w-4 text-purple-400" />}
-              label="Units"
-              value={deal.units ? formatNumber(deal.units) : "—"}
-            />
-            {deal.bedrooms ? (
-              <MetricCard
-                icon={<BedDouble className="h-4 w-4 text-indigo-400" />}
-                label="Bedrooms"
-                value={formatNumber(deal.bedrooms)}
-              />
-            ) : (
-              <MetricCard
-                icon={<Calendar className="h-4 w-4 text-orange-400" />}
-                label="Year Built"
-                value={deal.year_built ? String(deal.year_built) : "—"}
-              />
-            )}
-            {deal.land_acres != null && (
-              <MetricCard
-                icon={<Maximize2 className="h-4 w-4 text-green-400" />}
-                label="Land (Acres)"
-                value={deal.land_acres.toFixed(2)}
-              />
-            )}
-          </div>
-          {/* Land Acres — editable */}
-          <div className="mt-3 pt-3 border-t border-border/40">
-            <label className="text-2xs text-muted-foreground font-medium uppercase tracking-wider">Land (Acres)</label>
-            <input
-              type="text"
-              inputMode="decimal"
-              defaultValue={deal.land_acres ?? ""}
-              placeholder="—"
-              onBlur={async (e) => {
-                const val = e.target.value ? parseFloat(e.target.value) : null;
-                setDeal((prev: any) => prev ? { ...prev, land_acres: val } : prev);
-                try {
-                  await fetch(`/api/deals/${params.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ land_acres: val }),
-                  });
-                } catch { /* ignore */ }
-              }}
-              className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40 transition-colors"
-            />
-          </div>
-          {/* Investment Strategy */}
-          <div className="mt-3 pt-3 border-t border-border/40">
-            <label className="text-2xs text-muted-foreground font-medium uppercase tracking-wider">Investment Strategy</label>
-            <select
-              value={deal.investment_strategy || ""}
-              onChange={async (e) => {
-                const strategy = e.target.value || null;
-                setDeal((prev: any) => prev ? { ...prev, investment_strategy: strategy } : prev);
-                try {
-                  await fetch(`/api/deals/${params.id}`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ investment_strategy: strategy }),
-                  });
-                } catch { /* ignore */ }
-              }}
-              className="mt-1 w-full text-sm bg-muted/30 border border-border/40 rounded-lg px-3 py-1.5 outline-none focus:border-primary/40 transition-colors"
-            >
-              <option value="">Not set</option>
-              {(["value_add", "ground_up", "core", "core_plus", "opportunistic"] as InvestmentThesis[]).map((s) => (
-                <option key={s} value={s}>{INVESTMENT_THESIS_LABELS[s]}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Financial Highlights from Underwriting */}
-        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-display text-sm text-muted-foreground uppercase tracking-wider">Financial Highlights</h3>
-            <Link href={`/deals/${params.id}/underwriting`}>
-              <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
-                Underwriting <ArrowRight className="h-3 w-3" />
-              </Button>
-            </Link>
-          </div>
-          {highlights ? (
-            <div className="grid grid-cols-2 gap-3">
-              {highlights.capRate != null && (
-                <MetricCard
-                  icon={<Percent className="h-4 w-4 text-amber-400" />}
-                  label="Cap Rate"
-                  value={`${highlights.capRate.toFixed(1)}%`}
-                />
-              )}
-              {highlights.noi != null && (
-                <MetricCard
-                  icon={<DollarSign className="h-4 w-4 text-emerald-400" />}
-                  label="NOI"
-                  value={formatCurrency(highlights.noi)}
-                />
-              )}
-              {highlights.pricePerUnit != null && (
-                <MetricCard
-                  icon={<Building2 className="h-4 w-4 text-blue-400" />}
-                  label={highlights.pricePerUnitLabel}
-                  value={formatCurrency(highlights.pricePerUnit)}
-                />
-              )}
-              {highlights.cashOnCash != null && (
-                <MetricCard
-                  icon={<TrendingUp className="h-4 w-4 text-purple-400" />}
-                  label="Cash-on-Cash"
-                  value={`${highlights.cashOnCash.toFixed(1)}%`}
-                />
-              )}
-              {highlights.dscr != null && (
-                <MetricCard
-                  icon={<Calculator className="h-4 w-4 text-cyan-400" />}
-                  label="DSCR"
-                  value={`${highlights.dscr.toFixed(2)}x`}
-                />
-              )}
-              {highlights.equityMultiple != null && (
-                <MetricCard
-                  icon={<TrendingUp className="h-4 w-4 text-orange-400" />}
-                  label="Equity Multiple"
-                  value={`${highlights.equityMultiple.toFixed(2)}x`}
-                />
-              )}
-            </div>
           ) : (
-            <div className="flex flex-col items-center justify-center py-6 text-center">
-              <Calculator className="h-8 w-8 text-muted-foreground/30 mb-2" />
-              <p className="text-xs text-muted-foreground">No underwriting data yet</p>
-              <Link href={`/deals/${params.id}/underwriting`}>
-                <Button variant="outline" size="sm" className="text-xs mt-2 h-7">
-                  Start Underwriting
-                </Button>
-              </Link>
+            <Button variant="ghost" size="sm" onClick={() => changeStatus("sourcing")} disabled={advancingTo !== null} className="text-2xs h-6">Unarchive</Button>
+          )}
+          {!isOffPipeline && !isDead && (
+            <Button variant="ghost" size="sm" className="text-2xs h-6 text-muted-foreground hover:text-destructive" onClick={() => changeStatus("dead")}>Mark Dead</Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={deleteDeal} disabled={deleting} className="text-2xs text-muted-foreground hover:text-destructive h-6 gap-1">
+            {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Delete
+          </Button>
+        </div>
+      </div>
+
+      {/* ═══ KEY METRICS STRIP ═══ */}
+      {highlights ? (
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-px bg-border rounded-xl overflow-hidden border border-border/60">
+          {[
+            { label: "Cap Rate", value: highlights.capRate != null ? `${highlights.capRate.toFixed(2)}%` : null, color: "text-amber-400" },
+            { label: "NOI", value: highlights.noi != null ? formatCurrency(highlights.noi) : null, color: "text-emerald-400" },
+            { label: highlights.pricePerUnitLabel, value: highlights.pricePerUnit != null ? formatCurrency(highlights.pricePerUnit) : null, color: "text-blue-400" },
+            { label: "Cash-on-Cash", value: highlights.cashOnCash != null ? `${highlights.cashOnCash.toFixed(2)}%` : null, color: "text-purple-400" },
+            { label: "DSCR", value: highlights.dscr != null ? `${highlights.dscr.toFixed(2)}x` : null, color: "text-cyan-400" },
+            { label: "Equity Multiple", value: highlights.equityMultiple != null ? `${highlights.equityMultiple.toFixed(2)}x` : null, color: "text-orange-400" },
+          ].map(({ label, value, color }) => (
+            <Link key={label} href={`/deals/${params.id}/underwriting`} className="bg-card p-3 hover:bg-muted/30 transition-colors">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
+              <p className={`text-lg font-bold tabular-nums tracking-tight ${value ? color : "text-muted-foreground/30"}`}>{value || "—"}</p>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <Link href={`/deals/${params.id}/underwriting`} className="block">
+          <div className="border border-border/60 rounded-xl p-4 bg-card hover:bg-muted/30 transition-colors flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Calculator className="h-5 w-5 text-muted-foreground/40" />
+              <div>
+                <p className="text-sm font-medium">No underwriting data yet</p>
+                <p className="text-2xs text-muted-foreground">Start underwriting to see financial highlights</p>
+              </div>
+            </div>
+            <ArrowRight className="h-4 w-4 text-muted-foreground/40" />
+          </div>
+        </Link>
+      )}
+
+      {/* ═══ TWO-COLUMN BODY ═══ */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        {/* LEFT COLUMN: Property + Business Plan */}
+        <div className="md:col-span-3 space-y-4">
+          {/* Property Details — with Edit toggle */}
+          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+              <h3 className="font-display text-sm">Property Details</h3>
+              {editingProperty ? (
+                <div className="flex items-center gap-1.5">
+                  <Button variant="ghost" size="sm" className="text-2xs h-6" onClick={() => { setEditingProperty(false); setEditFields({ year_built: deal.year_built, land_acres: deal.land_acres, investment_strategy: deal.investment_strategy }); }}>Cancel</Button>
+                  <Button size="sm" className="text-2xs h-6 gap-1" onClick={savePropertyEdits}><Edit2 className="h-3 w-3" /> Save</Button>
+                </div>
+              ) : (
+                <Button variant="outline" size="sm" className="text-2xs h-6 gap-1" onClick={() => setEditingProperty(true)}><Edit2 className="h-3 w-3" /> Edit</Button>
+              )}
+            </div>
+            <div className="p-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Asking Price</p>
+                  <p className="text-sm font-semibold tabular-nums">{formatCurrency(deal.asking_price)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Square Footage</p>
+                  <p className="text-sm font-semibold tabular-nums">{deal.square_footage ? `${formatNumber(deal.square_footage)} SF` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Units</p>
+                  <p className="text-sm font-semibold tabular-nums">{deal.units ? formatNumber(deal.units) : "—"}</p>
+                </div>
+                {deal.bedrooms != null && deal.bedrooms > 0 && (
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Bedrooms</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatNumber(deal.bedrooms)}</p>
+                  </div>
+                )}
+                {/* Year Built — editable */}
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Year Built</p>
+                  {editingProperty ? (
+                    <input type="number" value={editFields.year_built ?? ""} placeholder="—"
+                      onChange={e => setEditFields(p => ({ ...p, year_built: e.target.value ? parseInt(e.target.value) : null }))}
+                      className="w-full text-sm font-semibold bg-muted/30 border border-border/50 rounded px-2 py-0.5 outline-none focus:border-primary/50 tabular-nums" />
+                  ) : (
+                    <p className="text-sm font-semibold tabular-nums">{deal.year_built ?? "—"}</p>
+                  )}
+                </div>
+                {/* Land Acres — editable */}
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Land (Acres)</p>
+                  {editingProperty ? (
+                    <input type="text" inputMode="decimal" value={editFields.land_acres ?? ""} placeholder="—"
+                      onChange={e => setEditFields(p => ({ ...p, land_acres: e.target.value ? parseFloat(e.target.value) : null }))}
+                      className="w-full text-sm font-semibold bg-muted/30 border border-border/50 rounded px-2 py-0.5 outline-none focus:border-primary/50 tabular-nums" />
+                  ) : (
+                    <p className="text-sm font-semibold tabular-nums">{deal.land_acres != null ? deal.land_acres.toFixed(2) : "—"}</p>
+                  )}
+                </div>
+                {/* Investment Strategy — editable */}
+                <div className="col-span-2 md:col-span-1">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Strategy</p>
+                  {editingProperty ? (
+                    <select value={editFields.investment_strategy || ""} onChange={e => setEditFields(p => ({ ...p, investment_strategy: (e.target.value || null) as InvestmentThesis | null }))}
+                      className="w-full text-sm font-semibold bg-muted/30 border border-border/50 rounded px-2 py-0.5 outline-none focus:border-primary/50">
+                      <option value="">Not set</option>
+                      {(["value_add", "ground_up", "core", "core_plus", "opportunistic"] as InvestmentThesis[]).map(s => (
+                        <option key={s} value={s}>{INVESTMENT_THESIS_LABELS[s]}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-sm font-semibold">{deal.investment_strategy ? INVESTMENT_THESIS_LABELS[deal.investment_strategy as InvestmentThesis] || titleCase(deal.investment_strategy) : "—"}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Site & Development — Ground-Up Only */}
+          {deal.investment_strategy === "ground_up" && (
+            <SiteDevelopmentCard deal={deal} underwriting={underwriting} dealId={params.id} onUnderwritingUpdate={(updates) => setUnderwriting(prev => prev ? { ...prev, ...updates } : updates as any)} />
+          )}
+
+          {/* Financial Summary (from UW) */}
+          {highlights && (
+            <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+                <h3 className="font-display text-sm">Financial Summary</h3>
+                <Link href={`/deals/${params.id}/underwriting`}>
+                  <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">Full Model <ArrowRight className="h-3 w-3" /></Button>
+                </Link>
+              </div>
+              <div className="p-4">
+                <table className="w-full text-sm">
+                  <tbody>
+                    {[
+                      { label: "Purchase Price", value: underwriting?.purchase_price ? formatCurrency(underwriting.purchase_price) : formatCurrency(deal.asking_price) },
+                      { label: "Vacancy", value: underwriting?.vacancy_rate ? `${underwriting.vacancy_rate}%` : null },
+                      { label: "Net Operating Income", value: highlights.noi != null ? formatCurrency(highlights.noi) : null, bold: true },
+                      { label: "In-Place Cap Rate", value: highlights.capRate != null ? `${highlights.capRate.toFixed(2)}%` : null },
+                      ...(highlights.cashOnCash != null ? [{ label: "Cash-on-Cash Return", value: `${highlights.cashOnCash.toFixed(2)}%` }] : []),
+                      ...(highlights.dscr != null ? [{ label: "DSCR", value: `${highlights.dscr.toFixed(2)}x` }] : []),
+                      ...(highlights.equityMultiple != null ? [{ label: "Equity Multiple", value: `${highlights.equityMultiple.toFixed(2)}x` }] : []),
+                      ...(underwriting?.exit_cap_rate ? [{ label: "Exit Cap Rate", value: `${underwriting.exit_cap_rate}%` }] : []),
+                      ...(underwriting?.hold_period_years ? [{ label: "Hold Period", value: `${underwriting.hold_period_years} years` }] : []),
+                    ].filter(r => r.value).map(({ label, value, bold }: any) => (
+                      <tr key={label} className={`border-b border-border/20 ${bold ? "font-semibold" : ""}`}>
+                        <td className="py-1.5 text-muted-foreground">{label}</td>
+                        <td className="py-1.5 text-right tabular-nums">{value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
-        </div>
-      </div>
 
-      {/* Site & Development — Ground-Up Only */}
-      {deal.investment_strategy === "ground_up" && (
-        <SiteDevelopmentCard
-          deal={deal}
-          underwriting={underwriting}
-          dealId={params.id}
-          onUnderwritingUpdate={(updates) => setUnderwriting(prev => prev ? { ...prev, ...updates } : updates as any)}
-        />
-      )}
-
-      {/* Business Plan */}
-      <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <BookOpen className="h-3.5 w-3.5 text-primary" />
-            <h3 className="font-display text-sm">Business Plan</h3>
+          {/* Deal Notes */}
+          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border/40">
+              <h3 className="font-display text-sm">Deal Notes</h3>
+            </div>
+            <div className="p-4">
+              <DealNotes dealId={params.id} />
+            </div>
           </div>
-          <Link href="/business-plans">
-            <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
-              Manage <ArrowRight className="h-3 w-3" />
-            </Button>
+        </div>
+
+        {/* RIGHT COLUMN: Diligence + Docs + Quick Access + Business Plan */}
+        <div className="md:col-span-2 space-y-4">
+          {/* Diligence Progress — compact */}
+          <Link href={`/deals/${params.id}/checklist`} className="block">
+            <div className="border border-border/60 rounded-xl p-4 bg-card shadow-card hover:bg-muted/20 transition-colors">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-display text-sm">Diligence</h3>
+                <span className="text-xs font-bold tabular-nums text-primary">{progressPct}%</span>
+              </div>
+              <Progress value={progressPct} className="h-1.5 mb-2" />
+              <div className="flex items-center gap-3 text-2xs text-muted-foreground">
+                <span className="text-emerald-400 font-medium">✓ {checklistComplete}</span>
+                <span>○ {checklistTotal - checklistComplete - checklistIssues}</span>
+                {checklistIssues > 0 && <span className="text-red-400 font-medium">⚠ {checklistIssues}</span>}
+                <span className="ml-auto text-muted-foreground/40">{checklistTotal} items</span>
+              </div>
+            </div>
           </Link>
-        </div>
-        {/* Plan selector dropdown */}
-        <div className="mb-3">
-          <select
-            value={selectedPlanId}
-            onChange={(e) => {
-              const newVal = e.target.value;
-              const planId = newVal || null;
-              // Optimistic update
-              setSelectedPlanId(newVal);
-              const linked = planId ? allPlans.find((p) => p.id === planId) || null : null;
-              setBusinessPlan(linked);
-              // Persist
-              setChangingPlan(true);
-              fetch(`/api/deals/${params.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ business_plan_id: planId }),
-              })
-                .then(r => r.json())
-                .then(json => {
-                  if (json.data) {
-                    setDeal(json.data as Deal);
-                    toast.success(planId ? "Business plan linked" : "Business plan removed");
-                  } else {
-                    // Revert on failure
-                    setSelectedPlanId(deal.business_plan_id || "");
-                    toast.error("Failed to update business plan");
-                  }
-                })
-                .catch(() => {
-                  setSelectedPlanId(deal.business_plan_id || "");
-                  toast.error("Failed to update business plan");
-                })
-                .finally(() => setChangingPlan(false));
-            }}
-            disabled={changingPlan}
-            className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="">No business plan</option>
-            {allPlans.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}{p.is_default ? " (Default)" : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-        {/* Plan details */}
-        {businessPlan ? (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-1.5">
-              {(businessPlan.investment_theses || []).map((t) => (
-                <span
-                  key={t}
-                  className="text-2xs px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20 font-medium"
-                >
-                  {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
-                </span>
-              ))}
-            </div>
-            <div className="flex items-center gap-4 flex-wrap text-2xs text-muted-foreground">
-              {(businessPlan.target_markets || []).length > 0 && (
-                <span className="flex items-center gap-1">
-                  <MapPin className="h-3 w-3" />
-                  {(businessPlan.target_markets || []).join(", ")}
-                </span>
-              )}
-              {(businessPlan.target_irr_min || businessPlan.target_irr_max) && (
-                <span>IRR {businessPlan.target_irr_min ?? "?"}–{businessPlan.target_irr_max ?? "?"}%</span>
-              )}
-              {(businessPlan.target_equity_multiple_min || businessPlan.target_equity_multiple_max) && (
-                <span>EM {businessPlan.target_equity_multiple_min ?? "?"}–{businessPlan.target_equity_multiple_max ?? "?"}x</span>
-              )}
-              {(businessPlan.hold_period_min || businessPlan.hold_period_max) && (
-                <span>{businessPlan.hold_period_min}–{businessPlan.hold_period_max} yr hold</span>
+
+          {/* Documents Summary — compact */}
+          <Link href={`/deals/${params.id}/documents`} className="block">
+            <div className="border border-border/60 rounded-xl p-4 bg-card shadow-card hover:bg-muted/20 transition-colors">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-display text-sm">Documents</h3>
+                <span className="text-xs font-bold tabular-nums">{documents.length}</span>
+              </div>
+              {documents.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(docsByCategory).map(([cat, count]) => (
+                    <span key={cat} className="text-2xs px-2 py-0.5 rounded-md bg-muted/50 text-muted-foreground border border-border/30">
+                      {titleCase(cat)} <span className="font-semibold tabular-nums">{count}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-2xs text-muted-foreground">No documents uploaded yet</p>
               )}
             </div>
-            {businessPlan.description && (
-              <p className="text-2xs text-muted-foreground leading-relaxed line-clamp-2">{businessPlan.description}</p>
-            )}
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">No plan linked. Select one above to guide analysis.</p>
-        )}
-      </div>
+          </Link>
 
-      {/* Progress + Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2 border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-display text-sm">Diligence Progress</h3>
-            <Link href={`/deals/${params.id}/checklist`}>
-              <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
-                View Checklist <ArrowRight className="h-3 w-3" />
-              </Button>
-            </Link>
-          </div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-muted-foreground">
-              {checklistComplete} of {checklistTotal} items complete
-            </span>
-            <span className="text-xs font-bold tabular-nums">{progressPct}%</span>
-          </div>
-          <Progress value={progressPct} className="h-2 mb-3" />
-          <div className="flex gap-4 text-2xs text-muted-foreground">
-            <span className="text-emerald-400 font-medium">
-              ✓ {checklistComplete} complete
-            </span>
-            <span>
-              ○ {checklistTotal - checklistComplete - checklistIssues} pending
-            </span>
-            {checklistIssues > 0 && (
-              <span className="text-red-400 font-medium">
-                ⚠ {checklistIssues} issues
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Quick actions */}
-        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <h3 className="font-display text-sm mb-3">Quick Access</h3>
-          <div className="space-y-1">
-            {[
-              { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3.5 w-3.5 text-blue-400 shrink-0" />, label: "Underwriting", sub: "Financial model" },
-              { href: `/deals/${params.id}/documents`, icon: <FileText className="h-3.5 w-3.5 text-primary shrink-0" />, label: "Documents", sub: `${documents.length} uploaded` },
-              { href: `/deals/${params.id}/photos`, icon: <Camera className="h-3.5 w-3.5 text-emerald-400 shrink-0" />, label: "Photos", sub: "Property photos" },
-              { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-3.5 w-3.5 text-orange-400 shrink-0" />, label: "LOI", sub: deal.loi_executed ? "Executed ✓" : "Build & track" },
-              { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0" />, label: "DD Abstract", sub: "AI summary" },
-              { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3.5 w-3.5 text-purple-400 shrink-0" />, label: "AI Chat", sub: "Ask about this deal" },
-            ].map(({ href, icon, label, sub }) => (
-              <Link key={href} href={href} className="block">
-                <button className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors text-left group/item">
-                  {icon}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium">{label}</p>
-                    <p className="text-2xs text-muted-foreground truncate">{sub}</p>
+          {/* Business Plan — compact */}
+          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+              <h3 className="font-display text-sm">Business Plan</h3>
+              <Link href="/business-plans"><Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">Manage <ArrowRight className="h-3 w-3" /></Button></Link>
+            </div>
+            <div className="p-4">
+              <select value={selectedPlanId} onChange={(e) => {
+                const newVal = e.target.value; const planId = newVal || null;
+                setSelectedPlanId(newVal);
+                setBusinessPlan(planId ? allPlans.find((p) => p.id === planId) || null : null);
+                setChangingPlan(true);
+                fetch(`/api/deals/${params.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ business_plan_id: planId }) })
+                  .then(r => r.json()).then(json => { if (json.data) { setDeal(json.data as Deal); toast.success(planId ? "Business plan linked" : "Business plan removed"); } else { setSelectedPlanId(deal.business_plan_id || ""); toast.error("Failed to update"); } })
+                  .catch(() => { setSelectedPlanId(deal.business_plan_id || ""); toast.error("Failed to update"); })
+                  .finally(() => setChangingPlan(false));
+              }} disabled={changingPlan} className="w-full text-xs border border-border rounded-lg px-2.5 py-1.5 bg-background outline-none focus:ring-1 focus:ring-ring mb-2">
+                <option value="">No business plan</option>
+                {allPlans.map((p) => <option key={p.id} value={p.id}>{p.name}{p.is_default ? " (Default)" : ""}</option>)}
+              </select>
+              {businessPlan && (
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap gap-1">
+                    {(businessPlan.investment_theses || []).map((t) => (
+                      <span key={t} className="text-2xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-medium">
+                        {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
+                      </span>
+                    ))}
                   </div>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground/20 group-hover/item:text-muted-foreground transition-colors" />
-                </button>
+                  <div className="flex items-center gap-3 flex-wrap text-2xs text-muted-foreground">
+                    {(businessPlan.target_irr_min || businessPlan.target_irr_max) && <span>IRR {businessPlan.target_irr_min ?? "?"}–{businessPlan.target_irr_max ?? "?"}%</span>}
+                    {(businessPlan.target_equity_multiple_min || businessPlan.target_equity_multiple_max) && <span>EM {businessPlan.target_equity_multiple_min ?? "?"}–{businessPlan.target_equity_multiple_max ?? "?"}x</span>}
+                    {(businessPlan.hold_period_min || businessPlan.hold_period_max) && <span>{businessPlan.hold_period_min}–{businessPlan.hold_period_max}yr</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Links — compact grid */}
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-4 w-4 text-blue-400" />, label: "UW" },
+              { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-4 w-4 text-orange-400" />, label: deal.loi_executed ? "LOI ✓" : "LOI" },
+              { href: `/deals/${params.id}/photos`, icon: <Camera className="h-4 w-4 text-emerald-400" />, label: `Photos${photos.length > 0 ? ` (${photos.length})` : ""}` },
+              { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-4 w-4 text-amber-400" />, label: "Abstract" },
+              { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-4 w-4 text-purple-400" />, label: "Chat" },
+              { href: `/deals/${params.id}/deal-log`, icon: <FileText className="h-4 w-4 text-muted-foreground" />, label: "Log" },
+            ].map(({ href, icon, label }) => (
+              <Link key={href} href={href}>
+                <div className="border border-border/40 rounded-lg p-2.5 bg-card hover:bg-muted/30 transition-colors text-center">
+                  <div className="flex justify-center mb-1">{icon}</div>
+                  <p className="text-2xs font-medium truncate">{label}</p>
+                </div>
               </Link>
             ))}
           </div>
         </div>
-      </div>
-
-      {/* Document breakdown */}
-      {documents.length > 0 && (
-        <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-display text-sm">Documents by Category</h3>
-            <Link href={`/deals/${params.id}/documents`}>
-              <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
-                Manage <ArrowRight className="h-3 w-3" />
-              </Button>
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {Object.entries(docsByCategory).map(([cat, count]) => (
-              <div key={cat} className="bg-muted/30 rounded-lg p-3 text-center border border-border/30">
-                <p className="text-xl font-bold tabular-nums">{count}</p>
-                <p className="text-2xs text-muted-foreground mt-0.5">
-                  {titleCase(cat)}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Deal Notes */}
-      <div className="border border-border/60 rounded-xl p-5 bg-card shadow-card">
-        <div className="flex items-center gap-2 mb-3">
-          <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
-          <h3 className="font-display text-sm">Deal Notes</h3>
-        </div>
-        <DealNotes dealId={params.id} />
       </div>
     </div>
   );
