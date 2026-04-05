@@ -2023,6 +2023,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 const pfVal = (d[row.pfKey] as number) || 0;
                 const perUnit = m.totalUnits > 0 ? pfVal / m.totalUnits : 0;
                 const isCam = d[row.camKey] as boolean;
+                const ipIsDefault = ipVal === 0;
                 return (
                   <tr key={row.label} className="border-b hover:bg-muted/20">
                     <td className="px-2 py-1.5 text-muted-foreground">{row.label}</td>
@@ -2033,7 +2034,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     )}
                     {!isGroundUp && (
                       <td className="px-2 py-1.5">
-                        <CellInput value={ipVal} onChange={v => set(row.ipKey as keyof UWData, v)} prefix="$" />
+                        <CellInput value={ipVal} onChange={v => set(row.ipKey as keyof UWData, v)} prefix="$" placeholder={pfVal > 0 ? `${Math.round(pfVal).toLocaleString()}` : undefined} />
                       </td>
                     )}
                     <td className="px-2 py-1.5">
