@@ -244,7 +244,7 @@ export default function DashboardPage() {
       <header className="relative overflow-hidden border-b border-border/40 shrink-0">
         <div className="absolute inset-0 gradient-mesh" />
         <div className="relative max-w-full mx-auto px-6 sm:px-8">
-          <div className="flex items-center justify-between h-14">
+          <div className="flex items-center justify-between h-14 min-w-0">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg gradient-gold flex items-center justify-center">
                 <Building2 className="h-4 w-4 text-primary-foreground" />
@@ -253,37 +253,22 @@ export default function DashboardPage() {
                 Deal Intelligence
               </span>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                className={cn(
-                  "text-xs gap-1.5",
-                  showFeed ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                )}
-                onClick={toggleFeed}
-              >
-                <Activity className="h-3.5 w-3.5" />
-                Feed
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              <Button size="sm" variant="ghost"
+                className={cn("text-xs gap-1.5 hidden sm:inline-flex", showFeed ? "text-primary" : "text-muted-foreground hover:text-foreground")}
+                onClick={toggleFeed}>
+                <Activity className="h-3.5 w-3.5" /> Feed
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className={cn(
-                  "text-xs gap-1.5",
-                  showAnalytics ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                )}
-                onClick={() => setShowAnalytics((v) => !v)}
-              >
-                <BarChart3 className="h-3.5 w-3.5" />
-                Analytics
+              <Button size="sm" variant="ghost"
+                className={cn("text-xs gap-1.5 hidden sm:inline-flex", showAnalytics ? "text-primary" : "text-muted-foreground hover:text-foreground")}
+                onClick={() => setShowAnalytics((v) => !v)}>
+                <BarChart3 className="h-3.5 w-3.5" /> Analytics
                 {showAnalytics ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               </Button>
-              <div className="w-px h-5 bg-border/40 mx-1" />
+              <div className="w-px h-5 bg-border/40 mx-1 hidden sm:block" />
               <Link href="/business-plans">
-                <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground text-xs">
-                  <BookOpen className="h-3.5 w-3.5 mr-1.5" />
-                  Plans
+                <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground text-xs hidden sm:inline-flex">
+                  <BookOpen className="h-3.5 w-3.5 mr-1.5" /> Plans
                 </Button>
               </Link>
               <Link href="/deals/new">

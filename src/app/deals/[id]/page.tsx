@@ -75,6 +75,8 @@ export default function DealOverviewPage({
   const [autoFilling, setAutoFilling] = useState(false);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [underwriting, setUnderwriting] = useState<UnderwritingData | null>(null);
+  const [editingProperty, setEditingProperty] = useState(false);
+  const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null }>({ year_built: null, land_acres: null, investment_strategy: null });
 
   useEffect(() => {
     Promise.all([
@@ -226,11 +228,6 @@ export default function DealOverviewPage({
   const mapsEmbedUrl = hasAddress
     ? `https://maps.google.com/maps?q=${encodeURIComponent(addressString)}&output=embed&layer=c`
     : null;
-
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const [editingProperty, setEditingProperty] = useState(false);
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const [editFields, setEditFields] = useState({ year_built: deal.year_built, land_acres: deal.land_acres, investment_strategy: deal.investment_strategy });
 
   const savePropertyEdits = async () => {
     setDeal((prev: any) => prev ? { ...prev, ...editFields } : prev);
@@ -435,7 +432,7 @@ export default function DealOverviewPage({
                   <Button size="sm" className="text-2xs h-6 gap-1" onClick={savePropertyEdits}><Edit2 className="h-3 w-3" /> Save</Button>
                 </div>
               ) : (
-                <Button variant="outline" size="sm" className="text-2xs h-6 gap-1" onClick={() => setEditingProperty(true)}><Edit2 className="h-3 w-3" /> Edit</Button>
+                <Button variant="outline" size="sm" className="text-2xs h-6 gap-1" onClick={() => { setEditFields({ year_built: deal.year_built, land_acres: deal.land_acres, investment_strategy: deal.investment_strategy }); setEditingProperty(true); }}><Edit2 className="h-3 w-3" /> Edit</Button>
               )}
             </div>
             <div className="p-4">

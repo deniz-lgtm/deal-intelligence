@@ -989,20 +989,20 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   return (
     <div className={`flex gap-4 ${docViewerOpen ? "" : ""}`}>
     <div className={`space-y-5 min-w-0 ${docViewerOpen ? "flex-1" : "w-full"}`}>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <h2 className="text-xl font-bold">Underwriting</h2>
           <p className="text-sm text-muted-foreground">{deal?.name}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={openDocViewer}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={openDocViewer}>
             <Eye className="h-4 w-4 mr-2" />Docs
           </Button>
-          <Button variant="outline" onClick={openDocPicker} disabled={autofilling || saving}>
+          <Button variant="outline" size="sm" onClick={openDocPicker} disabled={autofilling || saving}>
             {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
             Autofill
           </Button>
-          <Button onClick={save} disabled={saving || autofilling}>
+          <Button size="sm" onClick={save} disabled={saving || autofilling}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
         </div>
