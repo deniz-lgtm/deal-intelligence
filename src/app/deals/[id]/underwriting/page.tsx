@@ -42,6 +42,13 @@ interface RentComp {
 
 type DCFYear = {
   year: number;
+  gpr: number;
+  vacancyLoss: number;
+  egi: number;
+  otherIncome: number;
+  reimbursements: number;
+  totalOpEx: number;
+  leasingCommissions: number;
   noi: number;
   debtService: number;
   debtLabel: string;
@@ -92,6 +99,7 @@ interface UWData {
   refi_loan_narrative: string;
   // Other income (monthly, property-level)
   rubs_per_unit_monthly: number; parking_monthly: number; laundry_monthly: number;
+  rent_growth_pct: number; expense_growth_pct: number;
   exit_cap_rate: number; hold_period_years: number; notes: string;
   scenarios: Scenario[];
   rent_comps: RentComp[];
@@ -139,6 +147,7 @@ const DEFAULT: UWData = {
   has_refi: false, refi_year: 3, refi_ltv: 70,
   refi_rate: 6.0, refi_amort_years: 25,
   refi_loan_narrative: "",
+  rent_growth_pct: 3, expense_growth_pct: 2,
   exit_cap_rate: 5.5, hold_period_years: 5, notes: "",
   scenarios: [],
   rent_comps: [],
@@ -381,8 +390,24 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   }
 
   // ── Year-by-Year DCF ─────────────────────────────────────────────────────────
+  const rg = (d.rent_growth_pct || 0) / 100;
+  const eg = (d.expense_growth_pct || 0) / 100;
   const yearlyDCF: DCFYear[] = [];
   for (let yr = 1; yr <= 5; yr++) {
+    const rentMult = Math.pow(1 + rg, yr);
+    const expMult = Math.pow(1 + eg, yr);
+    const yrGPR = proformaGPR * rentMult;
+    const yrVacLoss = yrGPR * (d.vacancy_rate / 100);
+    const yrEGI = yrGPR - yrVacLoss;
+    const yrOtherIncome = totalOtherIncome * rentMult;
+    const yrReimb = reimbursements * rentMult;
+    const yrMgmt = yrEGI * (d.management_fee_pct / 100);
+    const yrFixedOpEx = (fixedOpEx) * expMult;
+    const yrTotalOpEx = yrMgmt + yrFixedOpEx;
+    const yrLC = leasingCommissions * rentMult;
+    const yrEffRev = yrEGI + yrReimb + yrOtherIncome;
+    const yrNOI = yrEffRev - yrTotalOpEx - yrLC;
+
     let ds = 0;
     let label = "—";
     if (d.has_financing) {
@@ -398,10 +423,17 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
       }
     }
     const yrRefiProceeds = (d.has_refi && d.has_financing && yr === d.refi_year) ? refiProceeds : 0;
-    const cf = proformaNOI - ds + yrRefiProceeds;
+    const cf = yrNOI - ds + yrRefiProceeds;
     yearlyDCF.push({
       year: yr,
-      noi: proformaNOI,
+      gpr: yrGPR,
+      vacancyLoss: yrVacLoss,
+      egi: yrEGI,
+      otherIncome: yrOtherIncome,
+      reimbursements: yrReimb,
+      totalOpEx: yrTotalOpEx,
+      leasingCommissions: yrLC,
+      noi: yrNOI,
       debtService: ds,
       debtLabel: label,
       cashFlow: cf,
@@ -414,26 +446,30 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     debtLabel: d.has_financing ? (d.acq_io_years > 0 ? "IO" : "Amort") : "—",
   };
 
-  // ── Exit & Returns ──────────────────────────────────────────────────────────
-  const exitValue = d.exit_cap_rate > 0 ? proformaNOI / (d.exit_cap_rate / 100) : 0;
-  const exitLoanBalance = d.has_refi ? (proformaNOI / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100) : acqLoan;
+  // ── Exit & Returns (uses terminal-year NOI with growth) ──────────────────────
+  const holdYrs = d.hold_period_years || 5;
+  const terminalNOI = proformaNOI * Math.pow(1 + rg, holdYrs);  // NOI at exit year (rent growth on revenue side)
+  const exitValue = d.exit_cap_rate > 0 ? terminalNOI / (d.exit_cap_rate / 100) : 0;
+  const exitLoanBalance = d.has_refi ? (terminalNOI / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100) : acqLoan;
   const exitEquity = exitValue - exitLoanBalance;
 
-  // Equity multiple: account for IO period, amortizing period, and refi separately
+  // Equity multiple: sum actual per-year cash flows from DCF (handles IO, amort, refi, and growth)
   let totalCashFlows = 0;
-  if (d.has_refi && d.has_financing) {
-    const preRefiYears = Math.min(d.refi_year, d.hold_period_years);
-    const postRefiYears = Math.max(0, d.hold_period_years - d.refi_year);
-    // Pre-refi: split between IO and amortizing periods
-    const ioYears = Math.min(d.acq_io_years || 0, preRefiYears);
-    const amortYears = preRefiYears - ioYears;
-    const preRefiCF = (proformaNOI - acqDebtIO) * ioYears + (proformaNOI - acqDebt) * amortYears;
-    totalCashFlows = preRefiCF + (proformaNOI - refiDebt) * postRefiYears + refiProceeds;
-  } else {
-    // Split hold period between IO and amortizing
-    const ioYears = Math.min(d.acq_io_years || 0, d.hold_period_years);
-    const amortYears = d.hold_period_years - ioYears;
-    totalCashFlows = (proformaNOI - acqDebtIO) * ioYears + (proformaNOI - acqDebt) * amortYears;
+  // Use yearlyDCF for years within the 5-year window, extrapolate beyond if hold > 5
+  for (let yr = 1; yr <= holdYrs; yr++) {
+    if (yr <= 5) {
+      totalCashFlows += yearlyDCF[yr - 1].cashFlow;
+    } else {
+      // Extrapolate beyond year 5 using same growth pattern
+      const yrNOI = proformaNOI * Math.pow(1 + rg, yr) - (fixedOpEx * Math.pow(1 + eg, yr)) - (proformaEGI * Math.pow(1 + rg, yr) * (d.management_fee_pct / 100));
+      let ds = 0;
+      if (d.has_financing) {
+        if (d.has_refi && yr > d.refi_year) ds = refiDebt;
+        else if (yr <= (d.acq_io_years || 0)) ds = acqDebtIO;
+        else ds = acqDebt;
+      }
+      totalCashFlows += yrNOI - ds;
+    }
   }
   const em = equity > 0 ? (exitEquity + totalCashFlows) / equity : 0;
 
@@ -2138,8 +2174,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </Section>
 
       <div className="border rounded-xl bg-card overflow-hidden">
-        <div className="px-4 py-3 border-b bg-muted/30">
+        <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between gap-4">
           <h3 className="font-semibold text-sm">Discounted Cash Flow</h3>
+          <div className="flex items-center gap-3">
+            <NumInput label="Rent Growth" value={d.rent_growth_pct} onChange={v => set("rent_growth_pct", v)} suffix="%" decimals={1} className="w-28" />
+            <NumInput label="Expense Growth" value={d.expense_growth_pct} onChange={v => set("expense_growth_pct", v)} suffix="%" decimals={1} className="w-28" />
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -2153,14 +2193,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </tr>
             </thead>
             <tbody>
-              <DCFRow label="Gross Potential Rent" yr0={isGroundUp ? m.proformaGPR : m.inPlaceGPR} yr1to5={Array(5).fill(m.proformaGPR)} />
-              <DCFRow label="Less Vacancy" yr0={isGroundUp ? -m.proformaVacancyLoss : -m.inPlaceVacancyLoss} yr1to5={Array(5).fill(-m.proformaVacancyLoss)} muted />
-              <DCFRow label="Effective Gross Income" yr0={isGroundUp ? m.proformaEGI : m.inPlaceEGI} yr1to5={Array(5).fill(m.proformaEGI)} bold />
-              {m.reimbursements > 0 && <DCFRow label="CAM Reimbursements" yr0={isGroundUp ? m.reimbursements : m.ipReimbursements} yr1to5={Array(5).fill(m.reimbursements)} />}
-              {m.totalOtherIncome > 0 && <DCFRow label="Other Income" yr0={0} yr1to5={Array(5).fill(m.totalOtherIncome)} muted />}
+              <DCFRow label="Gross Potential Rent" yr0={isGroundUp ? m.proformaGPR : m.inPlaceGPR} yr1to5={m.yearlyDCF.map(y => y.gpr)} />
+              <DCFRow label="Less Vacancy" yr0={isGroundUp ? -m.proformaVacancyLoss : -m.inPlaceVacancyLoss} yr1to5={m.yearlyDCF.map(y => -y.vacancyLoss)} muted />
+              <DCFRow label="Effective Gross Income" yr0={isGroundUp ? m.proformaEGI : m.inPlaceEGI} yr1to5={m.yearlyDCF.map(y => y.egi)} bold />
+              {m.reimbursements > 0 && <DCFRow label="CAM Reimbursements" yr0={isGroundUp ? m.reimbursements : m.ipReimbursements} yr1to5={m.yearlyDCF.map(y => y.reimbursements)} />}
+              {m.totalOtherIncome > 0 && <DCFRow label="Other Income" yr0={0} yr1to5={m.yearlyDCF.map(y => y.otherIncome)} muted />}
               <tr><td colSpan={7} className="px-4"><div className="border-t" /></td></tr>
-              <DCFRow label="Total Operating Expenses" yr0={isGroundUp ? -m.proformaTotalOpEx : -m.inPlaceTotalOpEx} yr1to5={Array(5).fill(-m.proformaTotalOpEx)} />
-              {m.leasingCommissions > 0 && <DCFRow label="Leasing Commissions" yr0={isGroundUp ? -m.leasingCommissions : -m.ipLeasingCommissions} yr1to5={Array(5).fill(-m.leasingCommissions)} muted />}
+              <DCFRow label="Total Operating Expenses" yr0={isGroundUp ? -m.proformaTotalOpEx : -m.inPlaceTotalOpEx} yr1to5={m.yearlyDCF.map(y => -y.totalOpEx)} />
+              {m.leasingCommissions > 0 && <DCFRow label="Leasing Commissions" yr0={isGroundUp ? -m.leasingCommissions : -m.ipLeasingCommissions} yr1to5={m.yearlyDCF.map(y => -y.leasingCommissions)} muted />}
               <tr><td colSpan={7} className="px-4"><div className="border-t" /></td></tr>
               <DCFRow label="Net Operating Income" yr0={isGroundUp ? m.proformaNOI : m.inPlaceNOI} yr1to5={m.yearlyDCF.map(y => y.noi)} bold hi />
               {d.has_financing && <>
