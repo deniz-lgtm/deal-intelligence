@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { chatQueries, documentQueries, dealQueries, dealNoteQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
 import { chatWithDealIntelligence } from "@/lib/claude";
+import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
 import type { Document } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
   try {
     const body = await req.json();
     const { deal_id, message } = body;
@@ -16,15 +21,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const deal = await dealQueries.getById(deal_id) as {
+    const { deal: accessDeal, errorResponse: accessError } = await requireDealAccess(deal_id, userId);
+    if (accessError) return accessError;
+
+    const deal = accessDeal as {
       id: string;
       name: string;
       context_notes?: string | null;
       business_plan_id?: string | null;
-    } | null;
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
+    };
 
     // Build context_notes from deal_notes table (memory-included categories)
     const memoryText = await dealNoteQueries.getMemoryText(deal_id);
@@ -108,12 +113,20 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
   try {
     const { searchParams } = new URL(req.url);
     const dealId = searchParams.get("deal_id");
     if (!dealId) {
       return NextResponse.json({ error: "deal_id is required" }, { status: 400 });
     }
+
+    const { errorResponse: accessError } = await requireDealAccess(dealId, userId);
+    if (accessError) return accessError;
+
     const messages = await chatQueries.getByDealId(dealId);
     return NextResponse.json({ data: messages });
   } catch (error) {
@@ -123,12 +136,20 @@ export async function GET(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
   try {
     const { searchParams } = new URL(req.url);
     const dealId = searchParams.get("deal_id");
     if (!dealId) {
       return NextResponse.json({ error: "deal_id is required" }, { status: 400 });
     }
+
+    const { errorResponse: accessError } = await requireDealAccess(dealId, userId);
+    if (accessError) return accessError;
+
     await chatQueries.clear(dealId);
     return NextResponse.json({ data: { success: true } });
   } catch (error) {

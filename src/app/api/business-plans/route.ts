@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { businessPlanQueries } from "@/lib/db";
+import { requireAuth, syncCurrentUser } from "@/lib/auth";
 
 export async function GET() {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
   try {
-    const plans = await businessPlanQueries.getAll();
+    const plans = await businessPlanQueries.getAll(userId);
     return NextResponse.json({ data: plans });
   } catch (error) {
     console.error("GET /api/business-plans error:", error);
@@ -13,6 +18,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
   try {
     const body = await req.json();
     if (!body.name?.trim()) {
@@ -22,6 +31,7 @@ export async function POST(req: NextRequest) {
       name: body.name.trim(),
       description: (body.description || "").trim(),
       is_default: body.is_default ?? false,
+      owner_id: userId,
       investment_theses: body.investment_theses ?? [],
       target_markets: body.target_markets ?? [],
       property_types: body.property_types ?? [],

@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 import { photoQueries } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { uploadBlob } from "@/lib/blob-storage";
+import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
 
 export async function POST(req: Request) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
   try {
     const formData = await req.formData();
     const dealId = formData.get("deal_id") as string;
@@ -12,6 +17,9 @@ export async function POST(req: Request) {
     if (!dealId) {
       return NextResponse.json({ error: "deal_id is required" }, { status: 400 });
     }
+
+    const { errorResponse: accessError } = await requireDealAccess(dealId, userId);
+    if (accessError) return accessError;
 
     const files = formData.getAll("files") as File[];
     if (files.length === 0) {

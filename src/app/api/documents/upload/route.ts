@@ -4,6 +4,7 @@ import path from "path";
 import { documentQueries, dealQueries } from "@/lib/db";
 import { classifyDocument, extractRentRollSummary } from "@/lib/claude";
 import { uploadBlob } from "@/lib/blob-storage";
+import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
 
 async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
   if (mimeType === "application/pdf") {
@@ -26,6 +27,10 @@ async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
   try {
     const formData = await req.formData();
     const dealId = formData.get("deal_id") as string;
@@ -35,10 +40,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "deal_id is required" }, { status: 400 });
     }
 
-    const deal = await dealQueries.getById(dealId);
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
+    const { errorResponse: accessError } = await requireDealAccess(dealId, userId);
+    if (accessError) return accessError;
 
     if (!files || files.length === 0) {
       return NextResponse.json({ error: "No files provided" }, { status: 400 });

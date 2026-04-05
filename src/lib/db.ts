@@ -332,6 +332,7 @@ export async function initSchema(): Promise<void> {
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_max NUMERIC`,
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_min NUMERIC`,
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_max NUMERIC`,
+    `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS owner_id TEXT`,
     `ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT`,
     // Deal notes table (unified notes system)
     `CREATE TABLE IF NOT EXISTS deal_notes (
@@ -857,6 +858,12 @@ export const checklistQueries = {
     );
   },
 
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM checklist_items WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
   updateStatus: async (id: string, status: string, notes: string | null) => {
     const pool = getPool();
     await pool.query(
@@ -1135,16 +1142,24 @@ export interface BusinessPlanRow {
   target_irr_max: number | null;
   target_equity_multiple_min: number | null;
   target_equity_multiple_max: number | null;
+  owner_id: string | null;
   is_default: boolean;
   created_at: string;
   updated_at: string;
 }
 
 export const businessPlanQueries = {
-  getAll: async (): Promise<BusinessPlanRow[]> => {
+  getAll: async (userId?: string): Promise<BusinessPlanRow[]> => {
     const pool = getPool();
+    if (!userId) {
+      const res = await pool.query(
+        "SELECT * FROM business_plans ORDER BY is_default DESC, name ASC"
+      );
+      return res.rows;
+    }
     const res = await pool.query(
-      "SELECT * FROM business_plans ORDER BY is_default DESC, name ASC"
+      "SELECT * FROM business_plans WHERE owner_id IS NULL OR owner_id = $1 ORDER BY is_default DESC, name ASC",
+      [userId]
     );
     return res.rows;
   },
@@ -1155,10 +1170,26 @@ export const businessPlanQueries = {
     return res.rows[0] ?? null;
   },
 
-  getDefault: async (): Promise<BusinessPlanRow | null> => {
+  getByIdWithAccess: async (id: string, userId: string): Promise<BusinessPlanRow | null> => {
     const pool = getPool();
     const res = await pool.query(
-      "SELECT * FROM business_plans WHERE is_default = true LIMIT 1"
+      "SELECT * FROM business_plans WHERE id = $1 AND (owner_id IS NULL OR owner_id = $2)",
+      [id, userId]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  getDefault: async (userId?: string): Promise<BusinessPlanRow | null> => {
+    const pool = getPool();
+    if (!userId) {
+      const res = await pool.query(
+        "SELECT * FROM business_plans WHERE is_default = true LIMIT 1"
+      );
+      return res.rows[0] ?? null;
+    }
+    const res = await pool.query(
+      "SELECT * FROM business_plans WHERE is_default = true AND (owner_id IS NULL OR owner_id = $1) LIMIT 1",
+      [userId]
     );
     return res.rows[0] ?? null;
   },
@@ -1167,6 +1198,7 @@ export const businessPlanQueries = {
     name: string;
     description: string;
     is_default?: boolean;
+    owner_id?: string;
     investment_theses?: string[];
     target_markets?: string[];
     property_types?: string[];
@@ -1193,19 +1225,20 @@ export const businessPlanQueries = {
     branding_disclaimer_text?: string;
   }): Promise<BusinessPlanRow> => {
     const pool = getPool();
-    const insertQuery = `INSERT INTO business_plans (name, description, is_default, investment_theses, target_markets, property_types,
+    const insertQuery = `INSERT INTO business_plans (name, description, is_default, owner_id, investment_theses, target_markets, property_types,
         hold_period_min, hold_period_max, target_irr_min, target_irr_max, target_equity_multiple_min, target_equity_multiple_max,
         branding_company_name, branding_tagline, branding_logo_url, branding_logo_width,
         branding_primary_color, branding_secondary_color, branding_accent_color,
         branding_header_font, branding_body_font, branding_footer_text,
         branding_website, branding_email, branding_phone, branding_address, branding_disclaimer_text)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11, $12,
-               $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13,
+               $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
        RETURNING *`;
     const insertParams = [
       plan.name,
       plan.description,
       plan.is_default ?? false,
+      plan.owner_id ?? null,
       JSON.stringify(plan.investment_theses ?? []),
       JSON.stringify(plan.target_markets ?? []),
       JSON.stringify(plan.property_types ?? []),
@@ -1248,6 +1281,7 @@ export const businessPlanQueries = {
           ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_irr_max NUMERIC;
           ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_min NUMERIC;
           ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_equity_multiple_max NUMERIC;
+          ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS owner_id TEXT;
           ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_company_name TEXT NOT NULL DEFAULT '';
           ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_tagline TEXT NOT NULL DEFAULT '';
           ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_logo_url TEXT;
@@ -1294,10 +1328,14 @@ export const businessPlanQueries = {
     return businessPlanQueries.getById(id);
   },
 
-  setDefault: async (id: string): Promise<void> => {
+  setDefault: async (id: string, userId?: string): Promise<void> => {
     const pool = getPool();
-    // Clear all defaults first, then set the target
-    await pool.query("UPDATE business_plans SET is_default = false, updated_at = NOW() WHERE is_default = true");
+    // Clear all defaults for this user first, then set the target
+    if (userId) {
+      await pool.query("UPDATE business_plans SET is_default = false, updated_at = NOW() WHERE is_default = true AND (owner_id IS NULL OR owner_id = $1)", [userId]);
+    } else {
+      await pool.query("UPDATE business_plans SET is_default = false, updated_at = NOW() WHERE is_default = true");
+    }
     await pool.query("UPDATE business_plans SET is_default = true, updated_at = NOW() WHERE id = $1", [id]);
   },
 
