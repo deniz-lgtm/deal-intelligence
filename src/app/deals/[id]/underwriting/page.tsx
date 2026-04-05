@@ -195,7 +195,8 @@ const newGroup = (): UnitGroup => ({
 const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity: 1, cost_per_unit: 0 });
 
 /** Use in-place value if it has been entered (> 0), otherwise fall back to pro forma. */
-function ipOr(ip: number, pf: number): number { return ip > 0 ? ip : pf; }
+/** Return the in-place value as-is (0 means not entered → stays 0). */
+function ipOr(ip: number, _pf: number): number { return ip || 0; }
 
 function annualPayment(principal: number, rate: number, years: number): number {
   if (principal <= 0 || rate === 0) return principal > 0 ? principal / years : 0;
