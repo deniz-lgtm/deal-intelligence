@@ -50,28 +50,52 @@ export async function requireDealAccess(
 export async function syncCurrentUser(userId: string): Promise<void> {
   try {
     const existing = await userQueries.getById(userId);
-    if (existing) {
-      // Promote bootstrap admins if email matches but role isn't yet admin
-      if (existing.role !== "admin" && isBootstrapAdmin(existing.email)) {
-        await userQueries.setRole(existing.id, "admin");
+
+    // Always check Clerk's emails for bootstrap admin promotion. Stored email
+    // may be stale, mis-cased, or differ from Clerk's primary email.
+    const adminList = bootstrapAdminList();
+    let emails: string[] = existing ? [existing.email] : [];
+    let primaryEmail = existing?.email ?? "";
+    let name = existing?.name ?? null;
+
+    if (!existing || (adminList.length > 0 && existing.role !== "admin")) {
+      const user = await currentUser();
+      if (user) {
+        emails = user.emailAddresses.map((e) => e.emailAddress).filter(Boolean);
+        primaryEmail = emails[0] ?? primaryEmail;
+        name = [user.firstName, user.lastName].filter(Boolean).join(" ") || name;
       }
-      return;
     }
 
-    // First time we've seen this user — fetch from Clerk and persist
-    const user = await currentUser();
-    if (!user) return;
+    if (!existing) {
+      await userQueries.upsert({
+        id: userId,
+        email: primaryEmail,
+        name: name ?? undefined,
+      });
+    }
 
-    const email = user.emailAddresses[0]?.emailAddress ?? "";
-    const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || null;
-
-    await userQueries.upsert({ id: userId, email, name: name ?? undefined });
-    if (isBootstrapAdmin(email)) {
-      await userQueries.setRole(userId, "admin");
+    if (adminList.length > 0) {
+      const isAdminEmail = emails.some((e) => adminList.includes(e.toLowerCase()));
+      if (isAdminEmail && (!existing || existing.role !== "admin")) {
+        await userQueries.setRole(userId, "admin");
+      }
     }
   } catch (err) {
     console.warn("syncCurrentUser failed:", (err as Error).message);
   }
+}
+
+function bootstrapAdminList(): string[] {
+  return (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isBootstrapAdmin(email: string): boolean {
+  if (!email) return false;
+  return bootstrapAdminList().includes(email.toLowerCase());
 }
 
 function isBootstrapAdmin(email: string): boolean {
