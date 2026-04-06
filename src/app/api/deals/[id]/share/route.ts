@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { dealShareQueries, userQueries } from "@/lib/db";
-import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { requireAuth, requireDealAccess, requirePermission } from "@/lib/auth";
 
 /**
  * GET /api/deals/:id/share
@@ -35,7 +35,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const { userId, errorResponse } = await requireAuth();
+  const { userId, errorResponse } = await requirePermission("deals.share");
   if (errorResponse) return errorResponse;
 
   const { deal, errorResponse: accessError } = await requireDealAccess(params.id, userId);

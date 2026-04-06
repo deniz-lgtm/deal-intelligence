@@ -84,6 +84,50 @@ function isBootstrapAdmin(email: string): boolean {
 }
 
 /**
+ * Asserts the request is authenticated AND the user has the given permission
+ * (or is an admin, which bypasses all permission checks).
+ */
+export async function requirePermission(permission: string): Promise<
+  { userId: string; errorResponse: null } |
+  { userId: null; errorResponse: NextResponse }
+> {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return { userId: null, errorResponse };
+  await syncCurrentUser(userId);
+  const user = await userQueries.getById(userId);
+  if (!user) {
+    return {
+      userId: null,
+      errorResponse: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    };
+  }
+  if (user.role === "admin" || (user.permissions ?? []).includes(permission)) {
+    return { userId, errorResponse: null };
+  }
+  return {
+    userId: null,
+    errorResponse: NextResponse.json(
+      { error: `Missing permission: ${permission}` },
+      { status: 403 }
+    ),
+  };
+}
+
+/**
+ * Returns the effective set of granted features for a user: admins get all,
+ * regular users get whatever is in their permissions column.
+ */
+export async function getEffectivePermissions(userId: string): Promise<{
+  role: "user" | "admin";
+  permissions: string[];
+}> {
+  await syncCurrentUser(userId);
+  const user = await userQueries.getById(userId);
+  if (!user) return { role: "user", permissions: [] };
+  return { role: user.role, permissions: user.permissions ?? [] };
+}
+
+/**
  * Asserts the request is authenticated AND the user has the admin role.
  * Returns { userId } or a 401/403 NextResponse.
  */

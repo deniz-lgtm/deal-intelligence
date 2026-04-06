@@ -4,7 +4,7 @@ import path from "path";
 import { documentQueries, dealQueries } from "@/lib/db";
 import { classifyDocument, extractRentRollSummary } from "@/lib/claude";
 import { uploadBlob } from "@/lib/blob-storage";
-import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
+import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
 
 async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
   if (mimeType === "application/pdf") {
@@ -27,7 +27,7 @@ async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
-  const { userId, errorResponse } = await requireAuth();
+  const { userId, errorResponse } = await requirePermission("documents.upload");
   if (errorResponse) return errorResponse;
   await syncCurrentUser(userId);
 

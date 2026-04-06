@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { dealQueries, checklistQueries } from "@/lib/db";
 import { DILIGENCE_CHECKLIST_TEMPLATE } from "@/lib/types";
-import { requireAuth, syncCurrentUser } from "@/lib/auth";
+import { requireAuth, requirePermission, syncCurrentUser } from "@/lib/auth";
 
 export async function GET() {
   const { userId, errorResponse } = await requireAuth();
@@ -19,9 +19,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { userId, errorResponse } = await requireAuth();
+  const { userId, errorResponse } = await requirePermission("deals.create");
   if (errorResponse) return errorResponse;
-  await syncCurrentUser(userId);
 
   try {
     const body = await req.json();

@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { chatQueries, documentQueries, dealQueries, dealNoteQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
 import { chatWithDealIntelligence } from "@/lib/claude";
-import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
+import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
 import type { Document } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
-  const { userId, errorResponse } = await requireAuth();
+  const { userId, errorResponse } = await requirePermission("ai.chat");
   if (errorResponse) return errorResponse;
-  await syncCurrentUser(userId);
 
   try {
     const body = await req.json();
