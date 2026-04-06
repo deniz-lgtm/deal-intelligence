@@ -2197,9 +2197,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <tbody>
               <DCFRow label="Gross Potential Rent" yr0={isGroundUp ? m.proformaGPR : m.inPlaceGPR} yr1to5={m.yearlyDCF.map(y => y.gpr)} />
               <DCFRow label="Less Vacancy" yr0={isGroundUp ? -m.proformaVacancyLoss : -m.inPlaceVacancyLoss} yr1to5={m.yearlyDCF.map(y => -y.vacancyLoss)} muted />
-              <DCFRow label="Effective Gross Income" yr0={isGroundUp ? m.proformaEGI : m.inPlaceEGI} yr1to5={m.yearlyDCF.map(y => y.egi)} bold />
-              {m.reimbursements > 0 && <DCFRow label="CAM Reimbursements" yr0={isGroundUp ? m.reimbursements : m.ipReimbursements} yr1to5={m.yearlyDCF.map(y => y.reimbursements)} />}
-              {m.totalOtherIncome > 0 && <DCFRow label="Other Income" yr0={0} yr1to5={m.yearlyDCF.map(y => y.otherIncome)} muted />}
+              {m.reimbursements > 0 && <DCFRow label="CAM Reimbursements" yr0={isGroundUp ? m.reimbursements : m.ipReimbursements} yr1to5={m.yearlyDCF.map(y => y.reimbursements)} muted />}
+              {m.totalOtherIncome > 0 && <DCFRow label="Other Income" yr0={isGroundUp ? m.totalOtherIncome : 0} yr1to5={m.yearlyDCF.map(y => y.otherIncome)} muted />}
+              <DCFRow label="Effective Gross Income" yr0={isGroundUp ? m.proformaEffectiveRevenue : m.inPlaceEffectiveRevenue} yr1to5={m.yearlyDCF.map(y => y.egi + y.reimbursements + y.otherIncome)} bold />
               <tr><td colSpan={7} className="px-4"><div className="border-t" /></td></tr>
               <DCFRow label="Total Operating Expenses" yr0={isGroundUp ? -m.proformaTotalOpEx : -m.inPlaceTotalOpEx} yr1to5={m.yearlyDCF.map(y => -y.totalOpEx)} />
               {m.leasingCommissions > 0 && <DCFRow label="Leasing Commissions" yr0={isGroundUp ? -m.leasingCommissions : -m.ipLeasingCommissions} yr1to5={m.yearlyDCF.map(y => -y.leasingCommissions)} muted />}
