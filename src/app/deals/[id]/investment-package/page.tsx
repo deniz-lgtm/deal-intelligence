@@ -411,15 +411,15 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
               { label: "Post-Underwriting", score: dealScores.uw_score, reasoning: dealScores.uw_score_reasoning, empty: "Score in Underwriting" },
               { label: "Final Score", score: dealScores.final_score, reasoning: dealScores.final_score_reasoning, empty: "Generate final score" },
             ].map(({ label, score, reasoning, empty }) => (
-              <div key={label} className={`rounded-lg border p-4 ${score ? score >= 8 ? "bg-emerald-50/50 border-emerald-200" : score >= 6 ? "bg-amber-50/50 border-amber-200" : score >= 4 ? "bg-orange-50/50 border-orange-200" : "bg-rose-50/50 border-rose-200" : "bg-muted/20"}`}>
-                <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
+              <div key={label} className={`rounded-lg border p-4 ${score ? score >= 8 ? "bg-emerald-500/10 border-emerald-500/30" : score >= 6 ? "bg-amber-500/10 border-amber-500/30" : score >= 4 ? "bg-orange-500/10 border-orange-500/30" : "bg-rose-500/10 border-rose-500/30" : "bg-muted/20 border-border"}`}>
+                <p className="text-xs font-medium text-foreground/80 mb-1">{label}</p>
                 <div className="flex items-baseline gap-1">
-                  <span className={`text-3xl font-bold tabular-nums ${score ? score >= 8 ? "text-emerald-600" : score >= 6 ? "text-amber-500" : score >= 4 ? "text-orange-500" : "text-rose-600" : "text-muted-foreground/30"}`}>
+                  <span className={`text-3xl font-bold tabular-nums ${score ? score >= 8 ? "text-emerald-400" : score >= 6 ? "text-amber-400" : score >= 4 ? "text-orange-400" : "text-rose-400" : "text-muted-foreground/40"}`}>
                     {score ?? "—"}
                   </span>
                   {score && <span className="text-sm text-muted-foreground">/10</span>}
                 </div>
-                {reasoning && <p className="text-xs text-muted-foreground mt-2 leading-relaxed line-clamp-3">{reasoning}</p>}
+                {reasoning && <p className="text-xs text-foreground/70 mt-2 leading-relaxed line-clamp-3">{reasoning}</p>}
                 {!score && <p className="text-xs text-muted-foreground mt-1">{empty}</p>}
               </div>
             ))}
