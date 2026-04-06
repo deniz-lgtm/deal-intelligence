@@ -439,74 +439,98 @@ export default function LOIPage({ params }: { params: { id: string } }) {
 }
 
 function LOIPreview({ data, address, dealName }: { data: LOIData; address: string; dealName: string }) {
-  const fmt = (n: number | null) => (n ? formatCurrency(n) : "_____________");
-  const fmtDays = (n: number | null) => (n ? `${n}` : "___");
+  const fmt = (n: number | null) => (n ? formatCurrency(n) : "[$ AMOUNT]");
+  const fmtDays = (n: number | null) => (n ? `${n} days` : "[# DAYS]");
+  const dateStr = data.loi_date
+    ? new Date(data.loi_date + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+    : "[DATE]";
+
+  const paymentTerms = data.as_is ? "All cash to Seller" : "[PAYMENT TERMS]";
+  const financingLine = data.has_financing_contingency
+    ? `${fmtDays(data.financing_contingency_days)} financing contingency${data.lender_name ? ` (anticipated lender: ${data.lender_name})` : ""}`
+    : "None — Buyer obtaining loan without contingency";
 
   return (
     <div className="space-y-4">
-      <div className="text-center border-b pb-4 mb-4">
-        <p className="text-xs text-gray-500 uppercase tracking-widest mb-1">Letter of Intent</p>
-        <p className="font-bold text-base">NON-BINDING LETTER OF INTENT TO PURCHASE</p>
-        <p className="text-xs text-gray-500 mt-1">{data.loi_date ? new Date(data.loi_date + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "_______________"}</p>
+      {/* Header placeholder — real logo/branding rendered in printed/exported version */}
+      <div className="border-b-2 border-black pb-3 mb-4 flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-16 h-16 border-2 border-dashed border-gray-400 flex items-center justify-center text-[9px] text-gray-400 text-center leading-tight shrink-0">
+            LOGO
+          </div>
+          <div className="text-xs leading-snug">
+            <div className="font-bold text-sm">[ENTITY NAME]</div>
+            <div>[ENTITY ADDRESS LINE 1]</div>
+            <div>[CITY, STATE ZIP]</div>
+            <div>[PHONE]  |  [EMAIL]</div>
+          </div>
+        </div>
       </div>
 
-      <p><strong>{data.seller_name || "________________________"}</strong>{data.seller_address ? `, ${data.seller_address}` : ""} ("Seller")</p>
-      <p>RE: Letter of Intent — {dealName || address || "___________________"}</p>
-
-      <p>
-        This letter sets forth the non-binding terms under which <strong>{data.buyer_entity || "________________________"}</strong> ("Buyer")
-        proposes to acquire the property located at <strong>{address || "________________________"}</strong> (the "Property") from Seller.
-      </p>
+      <p><strong>Date:</strong> {dateStr}</p>
 
       <div>
-        <p><strong>1. Purchase Price:</strong> {fmt(data.purchase_price)}</p>
-        <p><strong>2. Earnest Money:</strong> {fmt(data.earnest_money)}, deposited within 3 business days of PSA execution.
-          {data.earnest_money_hard_days ? ` Earnest money becomes non-refundable after the end of the due diligence period (${fmtDays(data.earnest_money_hard_days)} days).` : ""}
-        </p>
-        {data.as_is && <p><strong>3. Condition:</strong> Property to be purchased "As-Is, Where-Is" with no representations or warranties from Seller regarding condition.</p>}
+        <p><strong>TO:</strong> {data.seller_name || "[SELLER / SELLER'S REP NAME]"}</p>
+        <p>[Company / Brokerage Name]</p>
+        <p>{data.seller_address || "[Address]"}</p>
+        <p>[Email]</p>
       </div>
 
-      <div>
-        <p><strong>{data.as_is ? "4" : "3"}. Due Diligence:</strong> Buyer shall have <strong>{fmtDays(data.due_diligence_days)} days</strong> from PSA execution to complete all inspections and investigations.</p>
-        {data.has_financing_contingency && (
-          <p><strong>{data.as_is ? "5" : "4"}. Financing Contingency:</strong> This offer is subject to Buyer obtaining financing. Financing contingency expires <strong>{fmtDays(data.financing_contingency_days)} days</strong> from PSA execution.{data.lender_name ? ` Anticipated lender: ${data.lender_name}.` : ""}</p>
+      <p><strong>Re:</strong> Letter of Intent for the purchase of <strong>{address || dealName || "[PROPERTY ADDRESS], [CITY, STATE]"}</strong> (the &ldquo;Property&rdquo;)</p>
+
+      <p>For your consideration, please find the following Letter of Intent for the above-referenced Property at the terms outlined below.</p>
+
+      <p>This letter sets forth the general terms and conditions for the proposed acquisition of the Property, but shall remain non-binding:</p>
+
+      <p className="font-bold mt-4">Proposed Terms</p>
+      <ol className="list-decimal ml-6 space-y-1">
+        <li><strong>Purchase Price:</strong> {fmt(data.purchase_price)}</li>
+        <li><strong>Terms:</strong> {paymentTerms}</li>
+        <li><strong>Earnest Money:</strong> {fmt(data.earnest_money)}{data.earnest_money_hard_days ? ` (non-refundable after ${data.earnest_money_hard_days} days)` : ""}</li>
+        <li><strong>Form of PSA:</strong> [PSA TERMS]</li>
+        <li><strong>Inspection Contingency:</strong> {fmtDays(data.due_diligence_days)}</li>
+        <li><strong>Financing Contingency:</strong> {financingLine}</li>
+        <li><strong>Title &amp; Escrow:</strong> [TITLE/ESCROW TERMS]</li>
+        <li><strong>Buyer&rsquo;s Broker:</strong> {data.broker_name || "[BROKER NAME / ENTITY]"}{data.broker_commission ? ` — ${data.broker_commission}` : ""}</li>
+        <li><strong>Closing Timeline:</strong> {data.closing_days ? `${data.closing_days} days from removal of inspection contingencies` : "[CLOSING TERMS]"}</li>
+      </ol>
+
+      <p className="font-bold mt-4">Additional Terms (Optional)</p>
+      <ol start={10} className="list-decimal ml-6 space-y-1">
+        <li><strong>Seller Representations:</strong> [REPS &amp; WARRANTIES TERMS]</li>
+        <li><strong>Assignment:</strong> [ASSIGNMENT RIGHTS]</li>
+        <li><strong>Seller&rsquo;s Deliverables:</strong> [DUE DILIGENCE ITEMS]</li>
+        <li><strong>Conditions Precedent:</strong> [CONDITIONS]</li>
+        {data.additional_terms && (
+          <li className="whitespace-pre-wrap">{data.additional_terms}</li>
         )}
-        <p><strong>{data.as_is ? (data.has_financing_contingency ? "6" : "5") : (data.has_financing_contingency ? "5" : "4")}. Closing:</strong> Target closing within <strong>{fmtDays(data.closing_days)} days</strong> of PSA execution (or end of due diligence, whichever is later).</p>
-      </div>
+      </ol>
 
-      {data.additional_terms && (
-        <div>
-          <p><strong>Additional Terms:</strong></p>
-          <p className="whitespace-pre-wrap text-sm">{data.additional_terms}</p>
-        </div>
-      )}
+      <p className="mt-4">This sets out the key parameters. Please respond by <strong>[RESPONSE DEADLINE DATE]</strong>.</p>
 
-      {data.broker_name && (
-        <p><strong>Broker:</strong> {data.broker_name}{data.broker_commission ? ` — Commission: ${data.broker_commission}` : ""}</p>
-      )}
-
-      <p className="text-xs text-gray-500 border-t pt-3 mt-4">
-        This letter is non-binding and is intended solely as a basis for negotiation. Neither party shall be legally bound until a definitive Purchase and Sale Agreement is fully executed.
+      <p className="text-xs text-gray-600 border-t pt-3 mt-4">
+        Please understand that this is not a binding commitment. This letter is not an offer, solicitation of an offer, or an acceptance, and creates no contractual, good faith, or other obligations. Such obligations can be created only by a formal Purchase and Sale Agreement, executed by all parties thereto. The undersigned reserves the right to discontinue discussion at any time, for any reason or for no reason, prior to the mutual execution of a formal Purchase and Sale Agreement. Seller will not have any obligations to Buyer, and Buyer will not acquire any rights or causes of action against Seller, unless Seller and Buyer both execute and deliver the Purchase and Sale Agreement.
       </p>
 
-      <div className="grid grid-cols-2 gap-8 mt-8 text-sm">
+      <p className="font-bold mt-6">Signatures</p>
+      <div className="grid grid-cols-2 gap-8 mt-2 text-sm">
         <div>
-          <p className="font-bold">{data.buyer_entity || "BUYER"}</p>
+          <p className="font-bold">BUYER:</p>
           <div className="border-b border-black mt-8 mb-1" />
-          <p>Signature</p>
+          <p className="text-xs">Signature</p>
           <div className="border-b border-black mt-4 mb-1" />
-          <p>Print Name / Title</p>
+          <p className="text-xs">Printed Name / Title</p>
           <div className="border-b border-black mt-4 mb-1" />
-          <p>Date</p>
+          <p className="text-xs">Date</p>
         </div>
         <div>
-          <p className="font-bold">{data.seller_name || "SELLER"}</p>
+          <p className="font-bold">SELLER (ACCEPTANCE):</p>
           <div className="border-b border-black mt-8 mb-1" />
-          <p>Signature</p>
+          <p className="text-xs">Signature</p>
           <div className="border-b border-black mt-4 mb-1" />
-          <p>Print Name / Title</p>
+          <p className="text-xs">Printed Name / Title</p>
           <div className="border-b border-black mt-4 mb-1" />
-          <p>Date</p>
+          <p className="text-xs">Date</p>
         </div>
       </div>
     </div>
@@ -548,30 +572,33 @@ function generateLOIHtml(data: LOIData, address: string, branding?: BrandingData
     : "_______________";
 
   const logoHtml = b.logo_url
-    ? `<img src="${b.logo_url}" alt="${companyName}" style="max-height: 50px; width: ${b.logo_width || 150}px; object-fit: contain;" />`
-    : "";
+    ? `<img src="${b.logo_url}" alt="${companyName}" style="max-height: 80px; width: ${b.logo_width || 160}px; object-fit: contain;" />`
+    : `<div style="width: 90px; height: 90px; border: 2px dashed #bbb; display: flex; align-items: center; justify-content: center; font-size: 9pt; color: #999;">LOGO</div>`;
 
-  const contactParts = [b.website, b.email, b.phone].filter(Boolean);
-  const contactHtml = contactParts.length > 0
-    ? `<div style="text-align: right; font-size: 9pt; color: ${accentColor};">${contactParts.join(" · ")}</div>`
-    : "";
+  const entityName = companyName || "[ENTITY NAME]";
+  const entityAddress = b.address || "[ENTITY ADDRESS LINE 1]<br/>[CITY, STATE ZIP]";
+  const contactBits = [b.phone || "[PHONE]", b.email || "[EMAIL]"].join("  |  ");
 
-  const headerHtml = (logoHtml || companyName)
-    ? `<div class="branded-header">
-        <div style="display: flex; align-items: center; gap: 12px;">
-          ${logoHtml}
-          <div>
-            ${companyName ? `<div style="font-family: ${headerFont}, sans-serif; font-weight: 700; font-size: 14pt; color: ${secondaryColor};">${companyName}</div>` : ""}
-            ${b.tagline ? `<div style="font-size: 9pt; color: ${accentColor};">${b.tagline}</div>` : ""}
-          </div>
-        </div>
-        ${contactHtml}
-      </div>`
-    : "";
+  const headerHtml = `<div class="branded-header">
+    <div style="display: flex; align-items: center; gap: 16px;">
+      ${logoHtml}
+      <div style="font-family: ${headerFont}, sans-serif; line-height: 1.4;">
+        <div style="font-weight: 700; font-size: 14pt; color: ${secondaryColor};">${entityName}</div>
+        <div style="font-size: 10pt; color: ${accentColor};">${entityAddress}</div>
+        <div style="font-size: 10pt; color: ${accentColor};">${contactBits}</div>
+      </div>
+    </div>
+  </div>`;
 
   const disclaimerHtml = b.disclaimer_text
     ? `<p class="disclaimer">${b.disclaimer_text}</p>`
     : "";
+
+  const paymentTerms = data.as_is ? "All cash to Seller" : "[PAYMENT TERMS]";
+  const financingLine = data.has_financing_contingency
+    ? `${fmtDays(data.financing_contingency_days)} day financing contingency${data.lender_name ? ` (anticipated lender: ${data.lender_name})` : ""}`
+    : "None — Buyer obtaining loan without contingency";
+  const propertyRef = address || "[PROPERTY ADDRESS], [CITY, STATE]";
 
   return `<!DOCTYPE html>
 <html>
@@ -579,61 +606,84 @@ function generateLOIHtml(data: LOIData, address: string, branding?: BrandingData
 <meta charset="utf-8"/>
 <title>Letter of Intent${companyName ? ` — ${companyName}` : ""}</title>
 <style>
-  body { font-family: ${bodyFont}, Georgia, serif; font-size: 12pt; line-height: 1.7; color: #000; max-width: 750px; margin: 40px auto; padding: 0 40px; }
-  h1 { text-align: center; font-size: 14pt; letter-spacing: 1px; margin-bottom: 4px; color: ${secondaryColor}; font-family: ${headerFont}, sans-serif; }
-  .subtitle { text-align: center; font-size: 9pt; color: ${accentColor}; letter-spacing: 2px; text-transform: uppercase; }
-  .date { text-align: center; font-size: 10pt; color: #666; margin-bottom: 24px; }
+  body { font-family: ${bodyFont}, Georgia, serif; font-size: 11pt; line-height: 1.55; color: #000; max-width: 780px; margin: 40px auto; padding: 0 40px; }
   p { margin: 8px 0; }
-  .branded-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 16px; margin-bottom: 24px; border-bottom: 3px solid ${primaryColor}; }
-  .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 48px; }
-  .sig-block { }
+  ol { margin: 8px 0; padding-left: 24px; }
+  ol li { margin: 4px 0; }
+  .branded-header { padding-bottom: 16px; margin-bottom: 20px; border-bottom: 3px solid ${primaryColor}; }
+  .section-title { font-weight: 700; margin-top: 18px; margin-bottom: 4px; color: ${secondaryColor}; }
+  .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 24px; }
   .sig-line { border-bottom: 1px solid black; margin-top: 32px; margin-bottom: 4px; }
-  .sig-label { font-size: 10pt; color: #333; }
-  .footer { font-size: 9pt; color: ${accentColor}; border-top: 1px solid ${primaryColor}40; padding-top: 12px; margin-top: 24px; display: flex; justify-content: space-between; }
-  .disclaimer { font-size: 8pt; color: #999; margin-top: 16px; line-height: 1.4; }
+  .sig-label { font-size: 9pt; color: #333; }
+  .nonbinding { font-size: 9pt; color: #555; border-top: 1px solid #ddd; padding-top: 12px; margin-top: 20px; line-height: 1.5; }
+  .footer { font-size: 9pt; color: ${accentColor}; border-top: 1px solid ${primaryColor}40; padding-top: 10px; margin-top: 20px; display: flex; justify-content: space-between; }
+  .disclaimer { font-size: 8pt; color: #999; margin-top: 12px; line-height: 1.4; }
   @media print { body { margin: 0; padding: 20px; } }
 </style>
 </head>
 <body>
 ${headerHtml}
-<p class="subtitle">Letter of Intent</p>
-<h1>NON-BINDING LETTER OF INTENT TO PURCHASE</h1>
-<p class="date">${dateStr}</p>
 
-<p><strong>${data.seller_name || "________________________"}</strong>${data.seller_address ? `, ${data.seller_address}` : ""} ("Seller")</p>
-<p><strong>RE: Letter of Intent — ${address || "________________________"}</strong></p>
+<p><strong>Date:</strong> ${dateStr}</p>
 
-<p>This letter sets forth the non-binding terms under which <strong>${data.buyer_entity || "________________________"}</strong> ("Buyer") proposes to acquire the property located at <strong>${address || "________________________"}</strong> (the "Property") from Seller.</p>
+<p><strong>TO:</strong> ${data.seller_name || "[SELLER / SELLER'S REP NAME]"}<br/>
+[Company / Brokerage Name]<br/>
+${data.seller_address || "[Address]"}<br/>
+[Email]</p>
 
-<p><strong>1. Purchase Price:</strong> ${fmt(data.purchase_price)}</p>
-<p><strong>2. Earnest Money:</strong> ${fmt(data.earnest_money)}, deposited within 3 business days of PSA execution.${data.earnest_money_hard_days ? ` Earnest money becomes non-refundable after ${fmtDays(data.earnest_money_hard_days)} days.` : ""}</p>
-${data.as_is ? `<p><strong>3. Condition:</strong> Property to be purchased "As-Is, Where-Is" with no representations or warranties from Seller.</p>` : ""}
-<p><strong>${data.as_is ? "4" : "3"}. Due Diligence:</strong> Buyer shall have <strong>${fmtDays(data.due_diligence_days)} days</strong> from PSA execution to complete all inspections.</p>
-${data.has_financing_contingency ? `<p><strong>${data.as_is ? "5" : "4"}. Financing Contingency:</strong> Subject to Buyer obtaining financing within <strong>${fmtDays(data.financing_contingency_days)} days</strong>.${data.lender_name ? ` Anticipated lender: ${data.lender_name}.` : ""}</p>` : ""}
-<p><strong>${data.as_is ? (data.has_financing_contingency ? "6" : "5") : (data.has_financing_contingency ? "5" : "4")}. Closing:</strong> Target closing within <strong>${fmtDays(data.closing_days)} days</strong> of PSA execution.</p>
-${data.additional_terms ? `<p><strong>Additional Terms:</strong><br/>${data.additional_terms.replace(/\n/g, "<br/>")}</p>` : ""}
-${data.broker_name ? `<p><strong>Broker:</strong> ${data.broker_name}${data.broker_commission ? ` — Commission: ${data.broker_commission}` : ""}</p>` : ""}
+<p><strong>Re:</strong> Letter of Intent for the purchase of <strong>${propertyRef}</strong> (the &ldquo;Property&rdquo;)</p>
+
+<p>For your consideration, please find the following Letter of Intent for the above-referenced Property at the terms outlined below.</p>
+
+<p>This letter sets forth the general terms and conditions for the proposed acquisition of the Property, but shall remain non-binding:</p>
+
+<p class="section-title">Proposed Terms</p>
+<ol>
+  <li><strong>Purchase Price:</strong> ${fmt(data.purchase_price)}</li>
+  <li><strong>Terms:</strong> ${paymentTerms}</li>
+  <li><strong>Earnest Money:</strong> ${fmt(data.earnest_money)}${data.earnest_money_hard_days ? ` (non-refundable after ${data.earnest_money_hard_days} days)` : " due upon execution of PSA"}</li>
+  <li><strong>Form of PSA:</strong> [PSA TERMS]</li>
+  <li><strong>Inspection Contingency:</strong> ${fmtDays(data.due_diligence_days)} days</li>
+  <li><strong>Financing Contingency:</strong> ${financingLine}</li>
+  <li><strong>Title &amp; Escrow:</strong> [TITLE/ESCROW TERMS]</li>
+  <li><strong>Buyer&rsquo;s Broker:</strong> ${data.broker_name || "[BROKER NAME / ENTITY]"}${data.broker_commission ? ` — ${data.broker_commission}` : ""}</li>
+  <li><strong>Closing Timeline:</strong> ${data.closing_days ? `${data.closing_days} days from removal of inspection contingencies` : "[CLOSING TERMS]"}</li>
+</ol>
+
+<p class="section-title">Additional Terms (Optional)</p>
+<ol start="10">
+  <li><strong>Seller Representations:</strong> [REPS &amp; WARRANTIES TERMS]</li>
+  <li><strong>Assignment:</strong> [ASSIGNMENT RIGHTS]</li>
+  <li><strong>Seller&rsquo;s Deliverables:</strong> [DUE DILIGENCE ITEMS]</li>
+  <li><strong>Conditions Precedent:</strong> [CONDITIONS]</li>
+  ${data.additional_terms ? `<li>${data.additional_terms.replace(/\n/g, "<br/>")}</li>` : `<li>[ADDITIONAL TERM LABEL]: [ADDITIONAL TERM DETAIL]</li>`}
+</ol>
+
+<p>This sets out the key parameters. Please respond by <strong>[RESPONSE DEADLINE DATE]</strong>.</p>
+
+<p class="nonbinding">Please understand that this is not a binding commitment. This letter is not an offer, solicitation of an offer, or an acceptance, and creates no contractual, good faith, or other obligations. Such obligations can be created only by a formal Purchase and Sale Agreement, executed by all parties thereto. The undersigned reserves the right to discontinue discussion at any time, for any reason or for no reason, prior to the mutual execution of a formal Purchase and Sale Agreement. Seller will not have any obligations to Buyer, and Buyer will not acquire any rights or causes of action against Seller, unless Seller and Buyer both execute and deliver the Purchase and Sale Agreement.</p>
+
+<p class="section-title">Signatures</p>
+<div class="sig-grid">
+  <div>
+    <strong>BUYER:</strong>
+    <div class="sig-line"></div><p class="sig-label">Signature</p>
+    <div class="sig-line"></div><p class="sig-label">Printed Name / Title</p>
+    <div class="sig-line"></div><p class="sig-label">Date</p>
+  </div>
+  <div>
+    <strong>SELLER (ACCEPTANCE):</strong>
+    <div class="sig-line"></div><p class="sig-label">Signature</p>
+    <div class="sig-line"></div><p class="sig-label">Printed Name / Title</p>
+    <div class="sig-line"></div><p class="sig-label">Date</p>
+  </div>
+</div>
 
 <div class="footer">
   <span>${footerText}</span>
   <span>${companyName}</span>
 </div>
 ${disclaimerHtml}
-
-<div class="sig-grid">
-  <div class="sig-block">
-    <strong>${data.buyer_entity || "BUYER"}</strong>
-    <div class="sig-line"></div><p class="sig-label">Signature</p>
-    <div class="sig-line"></div><p class="sig-label">Print Name / Title</p>
-    <div class="sig-line"></div><p class="sig-label">Date</p>
-  </div>
-  <div class="sig-block">
-    <strong>${data.seller_name || "SELLER"}</strong>
-    <div class="sig-line"></div><p class="sig-label">Signature</p>
-    <div class="sig-line"></div><p class="sig-label">Print Name / Title</p>
-    <div class="sig-line"></div><p class="sig-label">Date</p>
-  </div>
-</div>
 </body>
 </html>`;
 }
