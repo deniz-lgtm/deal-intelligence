@@ -79,9 +79,18 @@ interface ZoningData {
   overlays?: string[]; density_bonuses?: string[];
 }
 
+interface CustomOpexRow {
+  id: string;
+  label: string;
+  ip_annual: number;
+  pf_annual: number;
+  cam: boolean;
+}
+
 interface UWData {
   purchase_price: number; closing_costs_pct: number;
   unit_groups: UnitGroup[]; capex_items: CapexItem[];
+  custom_opex: CustomOpexRow[];
   vacancy_rate: number; in_place_vacancy_rate: number; management_fee_pct: number;
   taxes_annual: number; insurance_annual: number; repairs_annual: number;
   utilities_annual: number; other_expenses_annual: number;
@@ -132,6 +141,10 @@ interface UWData {
 const DEFAULT: UWData = {
   purchase_price: 0, closing_costs_pct: 2,
   unit_groups: [], capex_items: [],
+  custom_opex: [
+    { id: "default-contracts", label: "Contracts", ip_annual: 0, pf_annual: 0, cam: false },
+    { id: "default-staff", label: "Staff", ip_annual: 0, pf_annual: 0, cam: false },
+  ],
   vacancy_rate: 5, in_place_vacancy_rate: 5, management_fee_pct: 5,
   taxes_annual: 0, insurance_annual: 0, repairs_annual: 0,
   utilities_annual: 0, other_expenses_annual: 0,
@@ -265,10 +278,13 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const mgmtFee = egi * (d.management_fee_pct / 100);
   const proformaMgmtFee = proformaEGI * (d.management_fee_pct / 100);
   const inPlaceMgmtFee = d.ip_mgmt_annual; // Hard-coded dollar amount, not derived from %
-  const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual + (d.ga_annual || 0) + (d.marketing_annual || 0) + (d.reserves_annual || 0);
+  const customOpex = d.custom_opex || [];
+  const customPfTotal = customOpex.reduce((s, r) => s + (r.pf_annual || 0), 0);
+  const customIpTotal = customOpex.reduce((s, r) => s + ipOr(r.ip_annual || 0, r.pf_annual || 0), 0);
+  const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual + (d.ga_annual || 0) + (d.marketing_annual || 0) + (d.reserves_annual || 0) + customPfTotal;
   const totalOpEx = mgmtFee + fixedOpEx;
   const proformaTotalOpEx = proformaMgmtFee + fixedOpEx;
-  const ipFixedOpEx = ipOr(d.ip_taxes_annual, d.taxes_annual) + ipOr(d.ip_insurance_annual, d.insurance_annual) + ipOr(d.ip_repairs_annual, d.repairs_annual) + ipOr(d.ip_utilities_annual, d.utilities_annual) + ipOr(d.ip_other_annual, d.other_expenses_annual) + ipOr(d.ip_ga_annual, d.ga_annual || 0) + ipOr(d.ip_marketing_annual, d.marketing_annual || 0) + ipOr(d.ip_reserves_annual, d.reserves_annual || 0);
+  const ipFixedOpEx = ipOr(d.ip_taxes_annual, d.taxes_annual) + ipOr(d.ip_insurance_annual, d.insurance_annual) + ipOr(d.ip_repairs_annual, d.repairs_annual) + ipOr(d.ip_utilities_annual, d.utilities_annual) + ipOr(d.ip_other_annual, d.other_expenses_annual) + ipOr(d.ip_ga_annual, d.ga_annual || 0) + ipOr(d.ip_marketing_annual, d.marketing_annual || 0) + ipOr(d.ip_reserves_annual, d.reserves_annual || 0) + customIpTotal;
   const inPlaceTotalOpEx = inPlaceMgmtFee + ipFixedOpEx;
 
   // ── CAM Reimbursements (commercial only) ────────────────────────────────────
@@ -277,7 +293,8 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     + (d.cam_repairs ? d.repairs_annual : 0) + (d.cam_utilities ? d.utilities_annual : 0)
     + (d.cam_ga ? (d.ga_annual || 0) : 0) + (d.cam_marketing ? (d.marketing_annual || 0) : 0)
     + (d.cam_reserves ? (d.reserves_annual || 0) : 0) + (d.cam_other ? (d.other_expenses_annual || 0) : 0)
-    + (d.cam_management ? proformaMgmtFee : 0);
+    + (d.cam_management ? proformaMgmtFee : 0)
+    + customOpex.reduce((s, r) => s + (r.cam ? (r.pf_annual || 0) : 0), 0);
   const ipCamPool = (d.cam_taxes ? ipOr(d.ip_taxes_annual, d.taxes_annual) : 0)
     + (d.cam_insurance ? ipOr(d.ip_insurance_annual, d.insurance_annual) : 0)
     + (d.cam_repairs ? ipOr(d.ip_repairs_annual, d.repairs_annual) : 0)
@@ -285,7 +302,8 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     + (d.cam_ga ? ipOr(d.ip_ga_annual, d.ga_annual || 0) : 0) + (d.cam_marketing ? ipOr(d.ip_marketing_annual, d.marketing_annual || 0) : 0)
     + (d.cam_reserves ? ipOr(d.ip_reserves_annual, d.reserves_annual || 0) : 0)
     + (d.cam_other ? ipOr(d.ip_other_annual, d.other_expenses_annual || 0) : 0)
-    + (d.cam_management ? inPlaceMgmtFee : 0);
+    + (d.cam_management ? inPlaceMgmtFee : 0)
+    + customOpex.reduce((s, r) => s + (r.cam ? ipOr(r.ip_annual || 0, r.pf_annual || 0) : 0), 0);
   // Each unit group reimburses its pro-rata share based on lease type
   // NNN → 100% of CAM pool pro-rata; MG → 100% pro-rata; Gross → 0%
   let reimbursements = 0;
@@ -2045,12 +2063,87 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   </tr>
                 );
               })}
+              {/* Custom user-defined OpEx rows */}
+              {(d.custom_opex || []).map(row => {
+                const perUnit = m.totalUnits > 0 ? (row.pf_annual || 0) / m.totalUnits : 0;
+                const updateRow = (patch: Partial<CustomOpexRow>) => set(
+                  "custom_opex",
+                  (d.custom_opex || []).map(r => r.id === row.id ? { ...r, ...patch } : r)
+                );
+                const removeRow = () => set(
+                  "custom_opex",
+                  (d.custom_opex || []).filter(r => r.id !== row.id)
+                );
+                return (
+                  <tr key={row.id} className="border-b hover:bg-muted/20 group">
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center gap-1">
+                        <input
+                          value={row.label}
+                          onChange={e => updateRow({ label: e.target.value })}
+                          placeholder="Category"
+                          className="bg-transparent border-b border-transparent focus:border-muted-foreground/40 outline-none text-sm text-muted-foreground w-full"
+                        />
+                        <button
+                          onClick={removeRow}
+                          className="opacity-0 group-hover:opacity-100 text-xs text-muted-foreground hover:text-red-400 px-1"
+                          title="Remove row"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </td>
+                    {!isMF && !isSH && (
+                      <td className="px-2 py-1.5 text-center">
+                        <input type="checkbox" checked={row.cam} onChange={e => updateRow({ cam: e.target.checked })} className="rounded h-3.5 w-3.5 accent-blue-500" />
+                      </td>
+                    )}
+                    {!isGroundUp && (
+                      <td className="px-2 py-1.5">
+                        <CellInput value={row.ip_annual || 0} onChange={v => updateRow({ ip_annual: v })} prefix="$" placeholder={row.pf_annual > 0 ? `${Math.round(row.pf_annual).toLocaleString()}` : undefined} />
+                      </td>
+                    )}
+                    <td className="px-2 py-1.5">
+                      <CellInput value={row.pf_annual || 0} onChange={v => updateRow({ pf_annual: v })} prefix="$" />
+                    </td>
+                    <td className="px-2 py-1.5 text-right text-sm tabular-nums text-muted-foreground">{perUnit > 0 ? fc(Math.round(perUnit)) : "—"}</td>
+                  </tr>
+                );
+              })}
+              {/* Add Row button */}
+              <tr>
+                <td colSpan={3 + (!isMF && !isSH ? 1 : 0) + (!isGroundUp ? 1 : 0)} className="px-2 py-1.5">
+                  <button
+                    onClick={() => set("custom_opex", [
+                      ...(d.custom_opex || []),
+                      { id: uuidv4(), label: "", ip_annual: 0, pf_annual: 0, cam: false },
+                    ])}
+                    className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                  >
+                    <Plus className="h-3 w-3" /> Add Row
+                  </button>
+                </td>
+              </tr>
               <tr className="border-t-2 font-semibold">
                 <td className="px-2 py-2">Total Operating Expenses</td>
                 {!isMF && !isSH && <td />}
                 {!isGroundUp && <td className="px-2 py-2 text-right tabular-nums">{fc(m.inPlaceTotalOpEx)}</td>}
                 <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalOpEx)}</td>
                 <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{m.totalUnits > 0 ? fc(Math.round(m.totalOpEx / m.totalUnits)) : "—"}</td>
+              </tr>
+              {/* OpEx Ratio (% of EGI per column) */}
+              <tr className="border-b">
+                <td className="px-2 py-1.5 text-xs text-muted-foreground">OpEx Ratio</td>
+                {!isMF && !isSH && <td />}
+                {!isGroundUp && (
+                  <td className="px-2 py-1.5 text-right tabular-nums text-xs text-muted-foreground">
+                    {m.inPlaceEGI > 0 ? `${((m.inPlaceTotalOpEx / m.inPlaceEGI) * 100).toFixed(0)}% of EGI` : "—"}
+                  </td>
+                )}
+                <td className="px-2 py-1.5 text-right tabular-nums text-xs text-muted-foreground">
+                  {m.proformaEGI > 0 ? `${((m.proformaTotalOpEx / m.proformaEGI) * 100).toFixed(0)}% of EGI` : "—"}
+                </td>
+                <td />
               </tr>
               {!isMF && !isSH && m.camPool > 0 && (
                 <tr className="bg-blue-500/5">
@@ -2064,7 +2157,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </table>
           <div className="flex items-center gap-4 mt-3">
             <div className="p-3 bg-muted/50 rounded-lg flex-1"><p className="text-xs text-muted-foreground mb-1">EGI</p><p className="text-sm font-semibold">{fc(m.egi)}</p><p className="text-xs text-muted-foreground">{fc(m.vacancyLoss)} vacancy loss</p></div>
-            <div className="p-3 bg-muted/50 rounded-lg flex-1"><p className="text-xs text-muted-foreground mb-1">OpEx Ratio</p><p className="text-sm font-semibold">{m.egi > 0 ? ((m.totalOpEx / m.egi) * 100).toFixed(0) : 0}% of EGI</p></div>
             <Button variant="outline" size="sm" onClick={estimateOpex} disabled={opexEstimating} className="shrink-0">
               {opexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
               AI Estimate
