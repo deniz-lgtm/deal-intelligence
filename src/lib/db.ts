@@ -432,6 +432,8 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS owner_id TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb",
   ];
   for (const alter of criticalAlters) {
     try {
@@ -1446,9 +1448,21 @@ export interface UserRow {
   id: string;
   email: string;
   name: string | null;
+  role: "user" | "admin";
+  permissions: string[];
   created_at: string;
   updated_at: string;
 }
+
+export const ALL_PERMISSIONS = [
+  "deals.create",
+  "deals.delete",
+  "deals.share",
+  "business_plans.access",
+  "documents.upload",
+  "ai.chat",
+] as const;
+export type Permission = typeof ALL_PERMISSIONS[number];
 
 export const userQueries = {
   // Upsert a user from Clerk (called on every authenticated request for new users)
@@ -1472,6 +1486,25 @@ export const userQueries = {
     const pool = getPool();
     const res = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [email]);
     return res.rows[0] ?? null;
+  },
+
+  listAll: async (): Promise<UserRow[]> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM users ORDER BY created_at DESC");
+    return res.rows;
+  },
+
+  setRole: async (id: string, role: "user" | "admin"): Promise<void> => {
+    const pool = getPool();
+    await pool.query("UPDATE users SET role = $2, updated_at = NOW() WHERE id = $1", [id, role]);
+  },
+
+  setPermissions: async (id: string, permissions: string[]): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      "UPDATE users SET permissions = $2::jsonb, updated_at = NOW() WHERE id = $1",
+      [id, JSON.stringify(permissions)]
+    );
   },
 
   search: async (query: string, excludeUserId: string): Promise<UserRow[]> => {

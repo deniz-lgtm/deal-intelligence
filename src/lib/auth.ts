@@ -49,9 +49,14 @@ export async function requireDealAccess(
  */
 export async function syncCurrentUser(userId: string): Promise<void> {
   try {
-    // Check if we already have this user to avoid the Clerk API call on hot paths
     const existing = await userQueries.getById(userId);
-    if (existing) return;
+    if (existing) {
+      // Promote bootstrap admins if email matches but role isn't yet admin
+      if (existing.role !== "admin" && isBootstrapAdmin(existing.email)) {
+        await userQueries.setRole(existing.id, "admin");
+      }
+      return;
+    }
 
     // First time we've seen this user — fetch from Clerk and persist
     const user = await currentUser();
@@ -61,8 +66,40 @@ export async function syncCurrentUser(userId: string): Promise<void> {
     const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || null;
 
     await userQueries.upsert({ id: userId, email, name: name ?? undefined });
+    if (isBootstrapAdmin(email)) {
+      await userQueries.setRole(userId, "admin");
+    }
   } catch (err) {
-    // Non-fatal: log but don't block the request
     console.warn("syncCurrentUser failed:", (err as Error).message);
   }
+}
+
+function isBootstrapAdmin(email: string): boolean {
+  if (!email) return false;
+  const list = (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return list.includes(email.toLowerCase());
+}
+
+/**
+ * Asserts the request is authenticated AND the user has the admin role.
+ * Returns { userId } or a 401/403 NextResponse.
+ */
+export async function requireAdmin(): Promise<
+  { userId: string; errorResponse: null } |
+  { userId: null; errorResponse: NextResponse }
+> {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return { userId: null, errorResponse };
+  await syncCurrentUser(userId);
+  const user = await userQueries.getById(userId);
+  if (!user || user.role !== "admin") {
+    return {
+      userId: null,
+      errorResponse: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    };
+  }
+  return { userId, errorResponse: null };
 }
