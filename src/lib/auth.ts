@@ -93,19 +93,6 @@ function bootstrapAdminList(): string[] {
     .filter(Boolean);
 }
 
-function isBootstrapAdmin(email: string): boolean {
-  if (!email) return false;
-  return bootstrapAdminList().includes(email.toLowerCase());
-}
-
-function isBootstrapAdmin(email: string): boolean {
-  if (!email) return false;
-  const list = (process.env.ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return list.includes(email.toLowerCase());
-}
 
 /**
  * Asserts the request is authenticated AND the user has the given permission
