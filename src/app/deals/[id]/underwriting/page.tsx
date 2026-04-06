@@ -79,9 +79,18 @@ interface ZoningData {
   overlays?: string[]; density_bonuses?: string[];
 }
 
+interface CustomOpexRow {
+  id: string;
+  label: string;
+  ip_annual: number;
+  pf_annual: number;
+  cam: boolean;
+}
+
 interface UWData {
   purchase_price: number; closing_costs_pct: number;
   unit_groups: UnitGroup[]; capex_items: CapexItem[];
+  custom_opex: CustomOpexRow[];
   vacancy_rate: number; in_place_vacancy_rate: number; management_fee_pct: number;
   taxes_annual: number; insurance_annual: number; repairs_annual: number;
   utilities_annual: number; other_expenses_annual: number;
@@ -103,6 +112,7 @@ interface UWData {
   exit_cap_rate: number; hold_period_years: number; notes: string;
   scenarios: Scenario[];
   rent_comps: RentComp[];
+  rent_comp_unit_types: string[];
   selected_comp_ids: number[];
   // Ground-up development fields
   development_mode: boolean;
@@ -132,6 +142,10 @@ interface UWData {
 const DEFAULT: UWData = {
   purchase_price: 0, closing_costs_pct: 2,
   unit_groups: [], capex_items: [],
+  custom_opex: [
+    { id: "default-contracts", label: "Contracts", ip_annual: 0, pf_annual: 0, cam: false },
+    { id: "default-staff", label: "Staff", ip_annual: 0, pf_annual: 0, cam: false },
+  ],
   vacancy_rate: 5, in_place_vacancy_rate: 5, management_fee_pct: 5,
   taxes_annual: 0, insurance_annual: 0, repairs_annual: 0,
   utilities_annual: 0, other_expenses_annual: 0,
@@ -151,6 +165,7 @@ const DEFAULT: UWData = {
   exit_cap_rate: 5.5, hold_period_years: 5, notes: "",
   scenarios: [],
   rent_comps: [],
+  rent_comp_unit_types: [],
   selected_comp_ids: [],
   // Ground-up development defaults
   development_mode: false,
@@ -265,10 +280,13 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const mgmtFee = egi * (d.management_fee_pct / 100);
   const proformaMgmtFee = proformaEGI * (d.management_fee_pct / 100);
   const inPlaceMgmtFee = d.ip_mgmt_annual; // Hard-coded dollar amount, not derived from %
-  const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual + (d.ga_annual || 0) + (d.marketing_annual || 0) + (d.reserves_annual || 0);
+  const customOpex = d.custom_opex || [];
+  const customPfTotal = customOpex.reduce((s, r) => s + (r.pf_annual || 0), 0);
+  const customIpTotal = customOpex.reduce((s, r) => s + ipOr(r.ip_annual || 0, r.pf_annual || 0), 0);
+  const fixedOpEx = d.taxes_annual + d.insurance_annual + d.repairs_annual + d.utilities_annual + d.other_expenses_annual + (d.ga_annual || 0) + (d.marketing_annual || 0) + (d.reserves_annual || 0) + customPfTotal;
   const totalOpEx = mgmtFee + fixedOpEx;
   const proformaTotalOpEx = proformaMgmtFee + fixedOpEx;
-  const ipFixedOpEx = ipOr(d.ip_taxes_annual, d.taxes_annual) + ipOr(d.ip_insurance_annual, d.insurance_annual) + ipOr(d.ip_repairs_annual, d.repairs_annual) + ipOr(d.ip_utilities_annual, d.utilities_annual) + ipOr(d.ip_other_annual, d.other_expenses_annual) + ipOr(d.ip_ga_annual, d.ga_annual || 0) + ipOr(d.ip_marketing_annual, d.marketing_annual || 0) + ipOr(d.ip_reserves_annual, d.reserves_annual || 0);
+  const ipFixedOpEx = ipOr(d.ip_taxes_annual, d.taxes_annual) + ipOr(d.ip_insurance_annual, d.insurance_annual) + ipOr(d.ip_repairs_annual, d.repairs_annual) + ipOr(d.ip_utilities_annual, d.utilities_annual) + ipOr(d.ip_other_annual, d.other_expenses_annual) + ipOr(d.ip_ga_annual, d.ga_annual || 0) + ipOr(d.ip_marketing_annual, d.marketing_annual || 0) + ipOr(d.ip_reserves_annual, d.reserves_annual || 0) + customIpTotal;
   const inPlaceTotalOpEx = inPlaceMgmtFee + ipFixedOpEx;
 
   // ── CAM Reimbursements (commercial only) ────────────────────────────────────
@@ -277,7 +295,8 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     + (d.cam_repairs ? d.repairs_annual : 0) + (d.cam_utilities ? d.utilities_annual : 0)
     + (d.cam_ga ? (d.ga_annual || 0) : 0) + (d.cam_marketing ? (d.marketing_annual || 0) : 0)
     + (d.cam_reserves ? (d.reserves_annual || 0) : 0) + (d.cam_other ? (d.other_expenses_annual || 0) : 0)
-    + (d.cam_management ? proformaMgmtFee : 0);
+    + (d.cam_management ? proformaMgmtFee : 0)
+    + customOpex.reduce((s, r) => s + (r.cam ? (r.pf_annual || 0) : 0), 0);
   const ipCamPool = (d.cam_taxes ? ipOr(d.ip_taxes_annual, d.taxes_annual) : 0)
     + (d.cam_insurance ? ipOr(d.ip_insurance_annual, d.insurance_annual) : 0)
     + (d.cam_repairs ? ipOr(d.ip_repairs_annual, d.repairs_annual) : 0)
@@ -285,7 +304,8 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     + (d.cam_ga ? ipOr(d.ip_ga_annual, d.ga_annual || 0) : 0) + (d.cam_marketing ? ipOr(d.ip_marketing_annual, d.marketing_annual || 0) : 0)
     + (d.cam_reserves ? ipOr(d.ip_reserves_annual, d.reserves_annual || 0) : 0)
     + (d.cam_other ? ipOr(d.ip_other_annual, d.other_expenses_annual || 0) : 0)
-    + (d.cam_management ? inPlaceMgmtFee : 0);
+    + (d.cam_management ? inPlaceMgmtFee : 0)
+    + customOpex.reduce((s, r) => s + (r.cam ? ipOr(r.ip_annual || 0, r.pf_annual || 0) : 0), 0);
   // Each unit group reimburses its pro-rata share based on lease type
   // NNN → 100% of CAM pool pro-rata; MG → 100% pro-rata; Gross → 0%
   let reimbursements = 0;
@@ -1398,9 +1418,42 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
 
           {comps.length > 0 && (isMF || isSH) && (() => {
-            // Collect all unique unit types across all comps
-            const allTypes = Array.from(new Set(comps.flatMap(c => (c.unit_types || []).map(ut => ut.type)))).sort();
-            if (allTypes.length === 0) return null;
+            // Explicit, user-managed list of unit type columns. Backward compat:
+            // if no list has been saved yet, seed it from existing comp data and
+            // unit_groups so legacy deals show their columns immediately.
+            const derivedTypes = Array.from(new Set([
+              ...comps.flatMap(c => (c.unit_types || []).map(ut => ut.type)),
+              ...d.unit_groups.map(g => `${g.bedrooms || 1}BR/${g.bathrooms || 1}BA`),
+            ])).sort();
+            const allTypes = (d.rent_comp_unit_types && d.rent_comp_unit_types.length > 0)
+              ? d.rent_comp_unit_types
+              : derivedTypes;
+
+            const setTypes = (next: string[]) => set("rent_comp_unit_types", next);
+            const addType = () => {
+              const base = "New Type";
+              let label = base;
+              let n = 2;
+              while (allTypes.includes(label)) { label = `${base} ${n++}`; }
+              setTypes([...allTypes, label]);
+            };
+            const removeType = (t: string) => {
+              setTypes(allTypes.filter(x => x !== t));
+              setComps(prev => prev.map(c => ({
+                ...c,
+                unit_types: (c.unit_types || []).filter(ut => ut.type !== t),
+              })));
+            };
+            const renameType = (oldT: string, newT: string) => {
+              const trimmed = newT.trim();
+              if (!trimmed || trimmed === oldT) return;
+              if (allTypes.includes(trimmed)) return;
+              setTypes(allTypes.map(x => x === oldT ? trimmed : x));
+              setComps(prev => prev.map(c => ({
+                ...c,
+                unit_types: (c.unit_types || []).map(ut => ut.type === oldT ? { ...ut, type: trimmed } : ut),
+              })));
+            };
 
             const updateComp = (idx: number, updates: Partial<RentComp>) => {
               setComps(prev => prev.map((c, i) => i === idx ? { ...c, ...updates } : c));
@@ -1429,8 +1482,34 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <th className="text-right px-1 py-1 text-xs font-medium text-muted-foreground w-[40px]" rowSpan={2}>Units</th>
                       <th className="text-right px-1 py-1 text-xs font-medium text-muted-foreground w-[40px]" rowSpan={2}>Occ</th>
                       {allTypes.map(t => (
-                        <th key={t} colSpan={2} className="text-center px-1 py-1 text-xs font-semibold text-primary border-l">{t}</th>
+                        <th key={t} colSpan={2} className="text-center px-1 py-1 text-xs font-semibold text-primary border-l group/col">
+                          <div className="flex items-center justify-center gap-1">
+                            <input
+                              type="text"
+                              defaultValue={t}
+                              onBlur={e => renameType(t, e.target.value)}
+                              onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                              className="bg-transparent text-center text-xs font-semibold text-primary outline-none w-[70px] focus:border-b focus:border-primary/50"
+                            />
+                            <button
+                              onClick={() => removeType(t)}
+                              className="opacity-0 group-hover/col:opacity-100 text-muted-foreground hover:text-destructive"
+                              title="Remove column"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </th>
                       ))}
+                      <th className="px-1 py-1 border-l align-middle" rowSpan={2}>
+                        <button
+                          onClick={addType}
+                          className="text-muted-foreground hover:text-foreground flex items-center gap-0.5 text-[10px]"
+                          title="Add unit type column"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </button>
+                      </th>
                       <th className="text-left px-2 py-1 text-xs font-medium text-muted-foreground" rowSpan={2}>Notes</th>
                       <th className="w-[28px]" rowSpan={2} />
                     </tr>
@@ -1468,6 +1547,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                               </React.Fragment>
                             );
                           })}
+                          <td />
                           <td className="px-2 py-1"><input type="text" value={comp.notes || ""} onChange={e => updateComp(i, { notes: e.target.value })} className="w-full bg-transparent text-xs outline-none text-blue-300" placeholder="Notes" /></td>
                           <td className="px-1 py-1"><button onClick={() => { setComps(prev => prev.filter((_, j) => j !== i)); setSelectedCompIds(prev => { const next = new Set<number>(); prev.forEach(v => { if (v < i) next.add(v); else if (v > i) next.add(v - 1); }); return next; }); }} className="text-muted-foreground/30 hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button></td>
                         </tr>
@@ -2045,12 +2125,87 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   </tr>
                 );
               })}
+              {/* Custom user-defined OpEx rows */}
+              {(d.custom_opex || []).map(row => {
+                const perUnit = m.totalUnits > 0 ? (row.pf_annual || 0) / m.totalUnits : 0;
+                const updateRow = (patch: Partial<CustomOpexRow>) => set(
+                  "custom_opex",
+                  (d.custom_opex || []).map(r => r.id === row.id ? { ...r, ...patch } : r)
+                );
+                const removeRow = () => set(
+                  "custom_opex",
+                  (d.custom_opex || []).filter(r => r.id !== row.id)
+                );
+                return (
+                  <tr key={row.id} className="border-b hover:bg-muted/20 group">
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center gap-1">
+                        <input
+                          value={row.label}
+                          onChange={e => updateRow({ label: e.target.value })}
+                          placeholder="Category"
+                          className="bg-transparent border-b border-transparent focus:border-muted-foreground/40 outline-none text-sm text-muted-foreground w-full"
+                        />
+                        <button
+                          onClick={removeRow}
+                          className="opacity-0 group-hover:opacity-100 text-xs text-muted-foreground hover:text-red-400 px-1"
+                          title="Remove row"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </td>
+                    {!isMF && !isSH && (
+                      <td className="px-2 py-1.5 text-center">
+                        <input type="checkbox" checked={row.cam} onChange={e => updateRow({ cam: e.target.checked })} className="rounded h-3.5 w-3.5 accent-blue-500" />
+                      </td>
+                    )}
+                    {!isGroundUp && (
+                      <td className="px-2 py-1.5">
+                        <CellInput value={row.ip_annual || 0} onChange={v => updateRow({ ip_annual: v })} prefix="$" placeholder={row.pf_annual > 0 ? `${Math.round(row.pf_annual).toLocaleString()}` : undefined} />
+                      </td>
+                    )}
+                    <td className="px-2 py-1.5">
+                      <CellInput value={row.pf_annual || 0} onChange={v => updateRow({ pf_annual: v })} prefix="$" />
+                    </td>
+                    <td className="px-2 py-1.5 text-right text-sm tabular-nums text-muted-foreground">{perUnit > 0 ? fc(Math.round(perUnit)) : "—"}</td>
+                  </tr>
+                );
+              })}
+              {/* Add Row button */}
+              <tr>
+                <td colSpan={3 + (!isMF && !isSH ? 1 : 0) + (!isGroundUp ? 1 : 0)} className="px-2 py-1.5">
+                  <button
+                    onClick={() => set("custom_opex", [
+                      ...(d.custom_opex || []),
+                      { id: uuidv4(), label: "", ip_annual: 0, pf_annual: 0, cam: false },
+                    ])}
+                    className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                  >
+                    <Plus className="h-3 w-3" /> Add Row
+                  </button>
+                </td>
+              </tr>
               <tr className="border-t-2 font-semibold">
                 <td className="px-2 py-2">Total Operating Expenses</td>
                 {!isMF && !isSH && <td />}
                 {!isGroundUp && <td className="px-2 py-2 text-right tabular-nums">{fc(m.inPlaceTotalOpEx)}</td>}
                 <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalOpEx)}</td>
                 <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">{m.totalUnits > 0 ? fc(Math.round(m.totalOpEx / m.totalUnits)) : "—"}</td>
+              </tr>
+              {/* OpEx Ratio (% of EGI per column) */}
+              <tr className="border-b">
+                <td className="px-2 py-1.5 text-xs text-muted-foreground">OpEx Ratio</td>
+                {!isMF && !isSH && <td />}
+                {!isGroundUp && (
+                  <td className="px-2 py-1.5 text-right tabular-nums text-xs text-muted-foreground">
+                    {m.inPlaceEGI > 0 ? `${((m.inPlaceTotalOpEx / m.inPlaceEGI) * 100).toFixed(0)}% of EGI` : "—"}
+                  </td>
+                )}
+                <td className="px-2 py-1.5 text-right tabular-nums text-xs text-muted-foreground">
+                  {m.proformaEGI > 0 ? `${((m.proformaTotalOpEx / m.proformaEGI) * 100).toFixed(0)}% of EGI` : "—"}
+                </td>
+                <td />
               </tr>
               {!isMF && !isSH && m.camPool > 0 && (
                 <tr className="bg-blue-500/5">
@@ -2064,7 +2219,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </table>
           <div className="flex items-center gap-4 mt-3">
             <div className="p-3 bg-muted/50 rounded-lg flex-1"><p className="text-xs text-muted-foreground mb-1">EGI</p><p className="text-sm font-semibold">{fc(m.egi)}</p><p className="text-xs text-muted-foreground">{fc(m.vacancyLoss)} vacancy loss</p></div>
-            <div className="p-3 bg-muted/50 rounded-lg flex-1"><p className="text-xs text-muted-foreground mb-1">OpEx Ratio</p><p className="text-sm font-semibold">{m.egi > 0 ? ((m.totalOpEx / m.egi) * 100).toFixed(0) : 0}% of EGI</p></div>
             <Button variant="outline" size="sm" onClick={estimateOpex} disabled={opexEstimating} className="shrink-0">
               {opexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
               AI Estimate
@@ -2197,9 +2351,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <tbody>
               <DCFRow label="Gross Potential Rent" yr0={isGroundUp ? m.proformaGPR : m.inPlaceGPR} yr1to5={m.yearlyDCF.map(y => y.gpr)} />
               <DCFRow label="Less Vacancy" yr0={isGroundUp ? -m.proformaVacancyLoss : -m.inPlaceVacancyLoss} yr1to5={m.yearlyDCF.map(y => -y.vacancyLoss)} muted />
-              <DCFRow label="Effective Gross Income" yr0={isGroundUp ? m.proformaEGI : m.inPlaceEGI} yr1to5={m.yearlyDCF.map(y => y.egi)} bold />
-              {m.reimbursements > 0 && <DCFRow label="CAM Reimbursements" yr0={isGroundUp ? m.reimbursements : m.ipReimbursements} yr1to5={m.yearlyDCF.map(y => y.reimbursements)} />}
-              {m.totalOtherIncome > 0 && <DCFRow label="Other Income" yr0={0} yr1to5={m.yearlyDCF.map(y => y.otherIncome)} muted />}
+              {m.reimbursements > 0 && <DCFRow label="CAM Reimbursements" yr0={isGroundUp ? m.reimbursements : m.ipReimbursements} yr1to5={m.yearlyDCF.map(y => y.reimbursements)} muted />}
+              {m.totalOtherIncome > 0 && <DCFRow label="Other Income" yr0={isGroundUp ? m.totalOtherIncome : 0} yr1to5={m.yearlyDCF.map(y => y.otherIncome)} muted />}
+              <DCFRow label="Effective Gross Income" yr0={isGroundUp ? m.proformaEffectiveRevenue : m.inPlaceEffectiveRevenue} yr1to5={m.yearlyDCF.map(y => y.egi + y.reimbursements + y.otherIncome)} bold />
               <tr><td colSpan={7} className="px-4"><div className="border-t" /></td></tr>
               <DCFRow label="Total Operating Expenses" yr0={isGroundUp ? -m.proformaTotalOpEx : -m.inPlaceTotalOpEx} yr1to5={m.yearlyDCF.map(y => -y.totalOpEx)} />
               {m.leasingCommissions > 0 && <DCFRow label="Leasing Commissions" yr0={isGroundUp ? -m.leasingCommissions : -m.ipLeasingCommissions} yr1to5={m.yearlyDCF.map(y => -y.leasingCommissions)} muted />}
