@@ -190,7 +190,11 @@ Rules:
   // Using Anthropic's native PDF support avoids fragile pdf2pic rasterization
   // which can silently fail on serverless runtimes and leave the model with no
   // context, causing it to hallucinate a plausible-but-fake deal.
-  const msgContent: Anthropic.ContentBlockParam[] = [];
+  // Typed loosely as unknown[] because the installed Anthropic SDK version's
+  // exported ContentBlockParam union does not always include DocumentBlockParam
+  // depending on minor version. The runtime shape below is the documented
+  // native-PDF format and is accepted by the API.
+  const msgContent: unknown[] = [];
   let pdfAttached = false;
   if (hasPdf) {
     try {
@@ -216,7 +220,7 @@ Rules:
     getClient().messages.create({
       model: MODEL,
       max_tokens: 1024,
-      messages: [{ role: "user", content: msgContent }],
+      messages: [{ role: "user", content: msgContent as Anthropic.MessageCreateParams["messages"][0]["content"] }],
     })
   );
 
