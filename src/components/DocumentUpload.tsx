@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn, formatBytes } from "@/lib/utils";
+import { usePermissions } from "@/lib/usePermissions";
 
 interface UploadFile {
   file: File;
@@ -30,6 +31,7 @@ export default function DocumentUpload({
   dealId,
   onUploadComplete,
 }: DocumentUploadProps) {
+  const { can, loading: permsLoading } = usePermissions();
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [uploading, setUploading] = useState(false);
 
@@ -124,6 +126,18 @@ export default function DocumentUpload({
 
   const pendingCount = files.filter((f) => f.status === "pending").length;
   const doneCount = files.filter((f) => f.status === "done").length;
+
+  if (!permsLoading && !can("documents.upload")) {
+    return (
+      <div className="border-2 border-dashed border-border/40 rounded-xl p-8 text-center">
+        <AlertCircle className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+        <p className="text-sm font-medium">Document upload is disabled</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Ask an admin to grant you the <code>documents.upload</code> permission.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

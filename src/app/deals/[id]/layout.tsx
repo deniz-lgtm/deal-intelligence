@@ -25,6 +25,7 @@ import { DEAL_STAGE_LABELS } from "@/lib/types";
 import type { DealStatus } from "@/lib/types";
 import { useAuth } from "@clerk/nextjs";
 import ShareDealDialog from "@/components/ShareDealDialog";
+import { usePermissions } from "@/lib/usePermissions";
 
 interface Deal {
   id: string;
@@ -71,6 +72,7 @@ export default function DealLayout({
   children: React.ReactNode;
   params: { id: string };
 }) {
+  const { can } = usePermissions();
   const [deal, setDeal] = useState<Deal | null>(null);
   const pathname = usePathname();
   const { userId } = useAuth();
@@ -121,7 +123,7 @@ export default function DealLayout({
                   {DEAL_STAGE_LABELS[deal.status] || deal.status}
                 </span>
                 <div className="ml-auto flex-shrink-0">
-                  {userId && (
+                  {userId && can("deals.share") && (
                     <ShareDealDialog
                       dealId={deal.id}
                       dealName={deal.name}
