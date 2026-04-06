@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { businessPlanQueries } from "@/lib/db";
-import { requireAuth, syncCurrentUser } from "@/lib/auth";
+import { requireAuth, requirePermission, syncCurrentUser } from "@/lib/auth";
 
 export async function GET() {
-  const { userId, errorResponse } = await requireAuth();
+  const { userId, errorResponse } = await requirePermission("business_plans.access");
   if (errorResponse) return errorResponse;
-  await syncCurrentUser(userId);
 
   try {
     const plans = await businessPlanQueries.getAll(userId);
@@ -18,9 +17,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { userId, errorResponse } = await requireAuth();
+  const { userId, errorResponse } = await requirePermission("business_plans.access");
   if (errorResponse) return errorResponse;
-  await syncCurrentUser(userId);
 
   try {
     const body = await req.json();

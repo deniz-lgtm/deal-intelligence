@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries } from "@/lib/db";
-import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { requireAuth, requireDealAccess, requirePermission } from "@/lib/auth";
 
 export async function GET(
   _req: NextRequest,
@@ -44,7 +44,7 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const { userId, errorResponse } = await requireAuth();
+  const { userId, errorResponse } = await requirePermission("deals.delete");
   if (errorResponse) return errorResponse;
 
   try {

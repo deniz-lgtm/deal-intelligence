@@ -27,6 +27,7 @@ import type { Deal, DealStatus } from "@/lib/types";
 import { DEAL_PIPELINE, DEAL_STAGE_LABELS } from "@/lib/types";
 import { toast } from "sonner";
 import { cn, formatCurrency } from "@/lib/utils";
+import { usePermissions } from "@/lib/usePermissions";
 
 interface DealWithStats extends Deal {
   document_count?: number;
@@ -85,6 +86,7 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 export default function DashboardPage() {
+  const { can } = usePermissions();
   const [deals, setDeals] = useState<DealWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -266,17 +268,21 @@ export default function DashboardPage() {
                 {showAnalytics ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               </Button>
               <div className="w-px h-5 bg-border/40 mx-1 hidden sm:block" />
-              <Link href="/business-plans">
-                <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground text-xs hidden sm:inline-flex">
-                  <BookOpen className="h-3.5 w-3.5 mr-1.5" /> Plans
-                </Button>
-              </Link>
-              <Link href="/deals/new">
-                <Button size="sm" className="text-xs">
-                  <Plus className="h-3.5 w-3.5 mr-1.5" />
-                  New Deal
-                </Button>
-              </Link>
+              {can("business_plans.access") && (
+                <Link href="/business-plans">
+                  <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground text-xs hidden sm:inline-flex">
+                    <BookOpen className="h-3.5 w-3.5 mr-1.5" /> Plans
+                  </Button>
+                </Link>
+              )}
+              {can("deals.create") && (
+                <Link href="/deals/new">
+                  <Button size="sm" className="text-xs">
+                    <Plus className="h-3.5 w-3.5 mr-1.5" />
+                    New Deal
+                  </Button>
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -392,12 +398,14 @@ export default function DashboardPage() {
               <p className="text-sm text-muted-foreground mb-8 max-w-sm mx-auto">
                 Create your first deal to start building your pipeline.
               </p>
-              <Link href="/deals/new">
-                <Button>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Create your first deal
-                </Button>
-              </Link>
+              {can("deals.create") && (
+                <Link href="/deals/new">
+                  <Button>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create your first deal
+                  </Button>
+                </Link>
+              )}
             </div>
           ) : (
             <div className="flex gap-4 min-w-max animate-fade-up">

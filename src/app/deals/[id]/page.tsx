@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import DealNotes from "@/components/DealNotes";
 import { formatCurrency, formatNumber, titleCase } from "@/lib/utils";
+import { usePermissions } from "@/lib/usePermissions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import type { Deal, DealStatus, Document, ChecklistItem, BusinessPlan, InvestmentThesis, Photo, UnderwritingData } from "@/lib/types";
@@ -61,6 +62,7 @@ export default function DealOverviewPage({
   params: { id: string };
 }) {
   const router = useRouter();
+  const { can } = usePermissions();
   const [deal, setDeal] = useState<Deal | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
@@ -380,9 +382,11 @@ export default function DealOverviewPage({
           {!isOffPipeline && !isDead && (
             <Button variant="ghost" size="sm" className="text-2xs h-6 text-muted-foreground hover:text-destructive" onClick={() => changeStatus("dead")}>Mark Dead</Button>
           )}
-          <Button variant="ghost" size="sm" onClick={deleteDeal} disabled={deleting} className="text-2xs text-muted-foreground hover:text-destructive h-6 gap-1">
-            {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Delete
-          </Button>
+          {can("deals.delete") && (
+            <Button variant="ghost" size="sm" onClick={deleteDeal} disabled={deleting} className="text-2xs text-muted-foreground hover:text-destructive h-6 gap-1">
+              {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Delete
+            </Button>
+          )}
         </div>
       </div>
 

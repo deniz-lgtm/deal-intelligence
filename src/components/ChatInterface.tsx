@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { usePermissions } from "@/lib/usePermissions";
 import type { DealNote, DealNoteCategory } from "@/lib/types";
 import { DEAL_NOTE_CATEGORIES } from "@/lib/types";
 
@@ -59,6 +60,7 @@ export default function ChatInterface({
   contextNotes,
   onContextUpdated,
 }: ChatInterfaceProps) {
+  const { can, loading: permsLoading } = usePermissions();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -169,6 +171,20 @@ export default function ChatInterface({
       sendMessage();
     }
   };
+
+  if (!permsLoading && !can("ai.chat")) {
+    return (
+      <div className="flex items-center justify-center h-full p-8 text-center">
+        <div className="max-w-sm space-y-2">
+          <Bot className="h-10 w-10 text-muted-foreground/40 mx-auto" />
+          <p className="text-sm font-medium text-foreground">AI chat is disabled</p>
+          <p className="text-xs text-muted-foreground">
+            Ask an admin to grant you the <code>ai.chat</code> permission.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
