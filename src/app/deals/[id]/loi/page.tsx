@@ -274,6 +274,9 @@ export default function LOIPage({ params }: { params: { id: string } }) {
         )}
       </div>
 
+      {/* Two-column layout: inputs left, live preview right */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+        <div className="space-y-5 min-w-0">
       {/* Parties */}
       <Section title="Parties">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -409,19 +412,24 @@ export default function LOIPage({ params }: { params: { id: string } }) {
         </Field>
       </Section>
 
-      {/* Preview */}
-      <div className="border rounded-xl bg-card p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <FileSignature className="h-4 w-4 text-muted-foreground" />
-            <h3 className="font-semibold text-sm">LOI Preview</h3>
-          </div>
-          <Button variant="outline" size="sm" onClick={printLOI}>
-            <Printer className="h-3 w-3 mr-1" /> Export / Print
-          </Button>
         </div>
-        <div className="bg-white text-black rounded-lg p-6 text-sm leading-relaxed shadow-inner border font-serif" style={{ fontFamily: "Georgia, serif" }}>
-          <LOIPreview data={data} address={address} dealName={deal?.name || ""} />
+
+        {/* Preview column (sticky on xl+) */}
+        <div className="xl:sticky xl:top-4 min-w-0">
+          <div className="border rounded-xl bg-card p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <FileSignature className="h-4 w-4 text-muted-foreground" />
+                <h3 className="font-semibold text-sm">LOI Preview</h3>
+              </div>
+              <Button variant="outline" size="sm" onClick={printLOI}>
+                <Printer className="h-3 w-3 mr-1" /> Export / Print
+              </Button>
+            </div>
+            <div className="bg-white text-black rounded-lg p-6 text-sm leading-relaxed shadow-inner border font-serif max-h-[calc(100vh-10rem)] overflow-y-auto" style={{ fontFamily: "Georgia, serif" }}>
+              <LOIPreview data={data} address={address} dealName={deal?.name || ""} />
+            </div>
+          </div>
         </div>
       </div>
 
