@@ -19,27 +19,46 @@ export async function pdfToImages(
   dpi = 200
 ): Promise<string[]> {
   const { fromBuffer } = await import("pdf2pic");
+  const { randomUUID } = await import("crypto");
+  const fs = await import("fs/promises");
+  const pathMod = await import("path");
+
+  // Use a unique per-invocation saveFilename + directory so concurrent PDF
+  // conversions (e.g. simultaneous OM uploads) don't clobber each other's
+  // on-disk page files, which previously caused one upload's analysis to be
+  // run against another upload's pages.
+  const runId = randomUUID();
+  const savePath = pathMod.join("/tmp", `pdf2pic-${runId}`);
+  await fs.mkdir(savePath, { recursive: true });
+
   const converter = fromBuffer(pdfBuffer, {
     density: dpi,
     format: "png",
     width: 1600,
     height: 2200,
     saveFilename: "page",
-    savePath: "/tmp",
+    savePath,
   });
 
   const images: string[] = [];
-  for (let i = 1; i <= maxPages; i++) {
-    try {
-      const result = await converter(i, { responseType: "base64" });
-      if (result.base64) {
-        images.push(result.base64);
-      } else {
-        break; // no more pages
+  try {
+    for (let i = 1; i <= maxPages; i++) {
+      try {
+        const result = await converter(i, { responseType: "base64" });
+        if (result.base64) {
+          images.push(result.base64);
+        } else {
+          break; // no more pages
+        }
+      } catch {
+        break; // past end of document
       }
-    } catch {
-      break; // past end of document
     }
+  } finally {
+    // Best-effort cleanup of temp page files
+    try {
+      await fs.rm(savePath, { recursive: true, force: true });
+    } catch {}
   }
   return images;
 }
