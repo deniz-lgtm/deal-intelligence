@@ -190,7 +190,7 @@ Rules:
   // Using Anthropic's native PDF support avoids fragile pdf2pic rasterization
   // which can silently fail on serverless runtimes and leave the model with no
   // context, causing it to hallucinate a plausible-but-fake deal.
-  const msgContent: Anthropic.MessageCreateParams["messages"][0]["content"] = [];
+  const msgContent: Anthropic.ContentBlockParam[] = [];
   let pdfAttached = false;
   if (hasPdf) {
     try {
@@ -201,7 +201,7 @@ Rules:
           media_type: "application/pdf",
           data: pdfBuffer!.toString("base64"),
         },
-      } as unknown as Anthropic.MessageCreateParams["messages"][0]["content"][number]);
+      });
       pdfAttached = true;
     } catch (err) {
       console.error("Failed to attach PDF document block, falling back to text:", err);
