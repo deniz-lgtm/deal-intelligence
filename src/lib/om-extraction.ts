@@ -4,7 +4,6 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { pdfToImages, imageContentBlocks } from "./claude";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -133,14 +132,22 @@ async function extractMetrics(text: string, pdfBuffer?: Buffer): Promise<{
   tokensUsed: number;
 }> {
   const snippet = text.slice(0, 16000);
+  const hasText = snippet.trim().length > 0;
+  const hasPdf = !!pdfBuffer && pdfBuffer.length > 0;
+
+  if (!hasText && !hasPdf) {
+    throw new Error("No document content available: both PDF buffer and extracted text are empty. Refusing to run extraction to avoid hallucinated results.");
+  }
 
   const prompt = `You are an expert commercial real estate analyst. Extract all financial metrics and property details from this document. It may be an Offering Memorandum, a Rent Roll, or another financial document.
 
 If this is a RENT ROLL: extract the total number of units/suites, total square footage (sum of all unit SFs), and compute total annual rent (sum of monthly rents × 12). Set unit_count = total units, sf = total SF, and noi = total annual rent minus a reasonable vacancy estimate.
 
-${pdfBuffer ? "(The PDF document is attached above for reference.)" : `DOCUMENT TEXT:\n${snippet}`}
+CRITICAL: Only extract values that are explicitly present in the attached document or text below. Do NOT invent, infer from general knowledge, or fill in plausible-looking numbers. If a value is not clearly stated, return null for that field.
 
-Extract and return ONLY a JSON object with this exact structure. Use null for any value you cannot find with confidence:
+${hasPdf ? "The PDF document is attached above. Use it as your primary source." : ""}${hasText ? `\n\nDOCUMENT TEXT (for reference and fallback):\n${snippet}` : ""}
+
+Return ONLY a JSON object with this exact structure. Use null for any value you cannot find with confidence:
 
 {
   "property_details": {
@@ -179,17 +186,29 @@ Rules:
 - If value has units (M, K) convert to full number
 - Respond with ONLY the JSON object, no explanation`;
 
-  // Build message content: PDF page images first (if available), then text prompt
+  // Build message content: native PDF document block (if available), then text prompt.
+  // Using Anthropic's native PDF support avoids fragile pdf2pic rasterization
+  // which can silently fail on serverless runtimes and leave the model with no
+  // context, causing it to hallucinate a plausible-but-fake deal.
   const msgContent: Anthropic.MessageCreateParams["messages"][0]["content"] = [];
-  if (pdfBuffer) {
+  let pdfAttached = false;
+  if (hasPdf) {
     try {
-      const images = await pdfToImages(pdfBuffer, 6);
-      if (images.length > 0) {
-        msgContent.push(...imageContentBlocks(images));
-      }
+      msgContent.push({
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: pdfBuffer!.toString("base64"),
+        },
+      } as unknown as Anthropic.MessageCreateParams["messages"][0]["content"][number]);
+      pdfAttached = true;
     } catch (err) {
-      console.error("PDF to image conversion failed, using text only:", err);
+      console.error("Failed to attach PDF document block, falling back to text:", err);
     }
+  }
+  if (!pdfAttached && !hasText) {
+    throw new Error("Could not attach PDF and no extracted text is available. Aborting to avoid hallucinated extraction.");
   }
   msgContent.push({ type: "text", text: prompt });
 
