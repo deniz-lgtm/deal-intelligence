@@ -112,6 +112,7 @@ interface UWData {
   exit_cap_rate: number; hold_period_years: number; notes: string;
   scenarios: Scenario[];
   rent_comps: RentComp[];
+  rent_comp_unit_types: string[];
   selected_comp_ids: number[];
   // Ground-up development fields
   development_mode: boolean;
@@ -164,6 +165,7 @@ const DEFAULT: UWData = {
   exit_cap_rate: 5.5, hold_period_years: 5, notes: "",
   scenarios: [],
   rent_comps: [],
+  rent_comp_unit_types: [],
   selected_comp_ids: [],
   // Ground-up development defaults
   development_mode: false,
@@ -1416,9 +1418,42 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
 
           {comps.length > 0 && (isMF || isSH) && (() => {
-            // Collect all unique unit types across all comps
-            const allTypes = Array.from(new Set(comps.flatMap(c => (c.unit_types || []).map(ut => ut.type)))).sort();
-            if (allTypes.length === 0) return null;
+            // Explicit, user-managed list of unit type columns. Backward compat:
+            // if no list has been saved yet, seed it from existing comp data and
+            // unit_groups so legacy deals show their columns immediately.
+            const derivedTypes = Array.from(new Set([
+              ...comps.flatMap(c => (c.unit_types || []).map(ut => ut.type)),
+              ...d.unit_groups.map(g => `${g.bedrooms || 1}BR/${g.bathrooms || 1}BA`),
+            ])).sort();
+            const allTypes = (d.rent_comp_unit_types && d.rent_comp_unit_types.length > 0)
+              ? d.rent_comp_unit_types
+              : derivedTypes;
+
+            const setTypes = (next: string[]) => set("rent_comp_unit_types", next);
+            const addType = () => {
+              const base = "New Type";
+              let label = base;
+              let n = 2;
+              while (allTypes.includes(label)) { label = `${base} ${n++}`; }
+              setTypes([...allTypes, label]);
+            };
+            const removeType = (t: string) => {
+              setTypes(allTypes.filter(x => x !== t));
+              setComps(prev => prev.map(c => ({
+                ...c,
+                unit_types: (c.unit_types || []).filter(ut => ut.type !== t),
+              })));
+            };
+            const renameType = (oldT: string, newT: string) => {
+              const trimmed = newT.trim();
+              if (!trimmed || trimmed === oldT) return;
+              if (allTypes.includes(trimmed)) return;
+              setTypes(allTypes.map(x => x === oldT ? trimmed : x));
+              setComps(prev => prev.map(c => ({
+                ...c,
+                unit_types: (c.unit_types || []).map(ut => ut.type === oldT ? { ...ut, type: trimmed } : ut),
+              })));
+            };
 
             const updateComp = (idx: number, updates: Partial<RentComp>) => {
               setComps(prev => prev.map((c, i) => i === idx ? { ...c, ...updates } : c));
@@ -1447,8 +1482,34 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <th className="text-right px-1 py-1 text-xs font-medium text-muted-foreground w-[40px]" rowSpan={2}>Units</th>
                       <th className="text-right px-1 py-1 text-xs font-medium text-muted-foreground w-[40px]" rowSpan={2}>Occ</th>
                       {allTypes.map(t => (
-                        <th key={t} colSpan={2} className="text-center px-1 py-1 text-xs font-semibold text-primary border-l">{t}</th>
+                        <th key={t} colSpan={2} className="text-center px-1 py-1 text-xs font-semibold text-primary border-l group/col">
+                          <div className="flex items-center justify-center gap-1">
+                            <input
+                              type="text"
+                              defaultValue={t}
+                              onBlur={e => renameType(t, e.target.value)}
+                              onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                              className="bg-transparent text-center text-xs font-semibold text-primary outline-none w-[70px] focus:border-b focus:border-primary/50"
+                            />
+                            <button
+                              onClick={() => removeType(t)}
+                              className="opacity-0 group-hover/col:opacity-100 text-muted-foreground hover:text-destructive"
+                              title="Remove column"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </th>
                       ))}
+                      <th className="px-1 py-1 border-l align-middle" rowSpan={2}>
+                        <button
+                          onClick={addType}
+                          className="text-muted-foreground hover:text-foreground flex items-center gap-0.5 text-[10px]"
+                          title="Add unit type column"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </button>
+                      </th>
                       <th className="text-left px-2 py-1 text-xs font-medium text-muted-foreground" rowSpan={2}>Notes</th>
                       <th className="w-[28px]" rowSpan={2} />
                     </tr>
@@ -1486,6 +1547,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                               </React.Fragment>
                             );
                           })}
+                          <td />
                           <td className="px-2 py-1"><input type="text" value={comp.notes || ""} onChange={e => updateComp(i, { notes: e.target.value })} className="w-full bg-transparent text-xs outline-none text-blue-300" placeholder="Notes" /></td>
                           <td className="px-1 py-1"><button onClick={() => { setComps(prev => prev.filter((_, j) => j !== i)); setSelectedCompIds(prev => { const next = new Set<number>(); prev.forEach(v => { if (v < i) next.add(v); else if (v > i) next.add(v - 1); }); return next; }); }} className="text-muted-foreground/30 hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button></td>
                         </tr>
