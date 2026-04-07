@@ -1,7 +1,27 @@
 import { NextResponse } from "next/server";
-import { loiQueries, dealQueries } from "@/lib/db";
+import { loiQueries, dealQueries, dealNoteQueries } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
+
+function fc(v: unknown): string {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) && n > 0 ? `$${Math.round(n).toLocaleString()}` : "—";
+}
+
+function summarizeLoiTerms(data: Record<string, unknown> | null | undefined): string {
+  if (!data) return "";
+  const parts: string[] = [];
+  if (data.purchase_price) parts.push(`Purchase ${fc(data.purchase_price)}`);
+  if (data.earnest_money) {
+    const hardDays = data.earnest_money_hard_days;
+    parts.push(
+      `Earnest ${fc(data.earnest_money)}${hardDays ? ` (hard after ${hardDays}d)` : ""}`
+    );
+  }
+  if (data.due_diligence_days) parts.push(`DD ${data.due_diligence_days}d`);
+  if (data.closing_days) parts.push(`Close ${data.closing_days}d`);
+  return parts.join(" · ");
+}
 
 export async function GET(req: Request) {
   const { userId, errorResponse } = await requireAuth();
@@ -45,9 +65,26 @@ export async function PUT(req: Request) {
     const id = existing?.id || uuidv4();
     const result = await loiQueries.upsert(deal_id, id, JSON.stringify(data), !!executed);
 
-    // If marking as executed, update deal flag
+    // If marking as executed, update deal flag and post a note so Chat,
+    // Investment Package, and other downstream features can see the
+    // executed terms.
     if (executed) {
       await dealQueries.update(deal_id, { loi_executed: true });
+
+      const summary = summarizeLoiTerms(data);
+      if (summary) {
+        try {
+          await dealNoteQueries.create({
+            id: uuidv4(),
+            deal_id,
+            text: `[LOI Executed ${new Date().toLocaleDateString()}] ${summary}`,
+            category: "context",
+            source: "loi",
+          });
+        } catch (noteErr) {
+          console.error("Failed to log LOI execution note:", noteErr);
+        }
+      }
     }
 
     return NextResponse.json({ data: result });
