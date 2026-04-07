@@ -80,6 +80,8 @@ export default function DealOverviewPage({
   const [editingProperty, setEditingProperty] = useState(false);
   const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null }>({ year_built: null, land_acres: null, investment_strategy: null });
 
+  const [lastActivity, setLastActivity] = useState<Record<string, string>>({});
+
   useEffect(() => {
     Promise.all([
       fetch(`/api/deals/${params.id}`).then((r) => r.json()),
@@ -88,7 +90,17 @@ export default function DealOverviewPage({
       fetch("/api/business-plans").then((r) => r.json()),
       fetch(`/api/deals/${params.id}/photos`).then((r) => r.json()),
       fetch(`/api/underwriting?deal_id=${params.id}`).then((r) => r.json()),
-    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes]) => {
+      fetch(`/api/deals/${params.id}/activity`).then((r) => r.json()).catch(() => ({ events: [] })),
+    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, activityRes]) => {
+      // Collapse activity events into most-recent-per-type for the "last
+      // updated" strip below the scores.
+      const latestByType: Record<string, string> = {};
+      for (const ev of (activityRes.events || []) as Array<{ type: string; timestamp: string }>) {
+        if (!latestByType[ev.type] || new Date(ev.timestamp) > new Date(latestByType[ev.type])) {
+          latestByType[ev.type] = ev.timestamp;
+        }
+      }
+      setLastActivity(latestByType);
       const d = dealRes.data;
       setDeal(d);
       setDocuments(docsRes.data || []);
@@ -435,6 +447,36 @@ export default function DealOverviewPage({
               </Link>
             );
           })}
+        </div>
+      )}
+
+      {/* ═══ LAST UPDATED STRIP ═══ */}
+      {Object.keys(lastActivity).length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-muted-foreground px-1">
+          {[
+            { type: "om_analysis", label: "OM" },
+            { type: "underwriting", label: "UW" },
+            { type: "investment_package", label: "Inv. Pkg" },
+            { type: "dd_abstract", label: "DD Abstract" },
+            { type: "loi", label: "LOI" },
+            { type: "checklist", label: "Checklist" },
+            { type: "document", label: "Docs" },
+            { type: "photo", label: "Photos" },
+            { type: "chat", label: "Chat" },
+          ]
+            .filter(({ type }) => lastActivity[type])
+            .map(({ type, label }) => {
+              const ts = new Date(lastActivity[type]);
+              const days = Math.floor((Date.now() - ts.getTime()) / (1000 * 60 * 60 * 24));
+              const rel =
+                days === 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
+              return (
+                <span key={type} className="inline-flex items-center gap-1">
+                  <span className="text-muted-foreground/60">{label}</span>
+                  <span className="tabular-nums">{rel}</span>
+                </span>
+              );
+            })}
         </div>
       )}
 
