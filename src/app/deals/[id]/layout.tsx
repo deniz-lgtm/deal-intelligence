@@ -19,6 +19,8 @@ import {
   Presentation,
   MapPin,
   ClipboardList,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -38,20 +40,46 @@ interface Deal {
   owner_id: string | null;
 }
 
-const NAV_ITEMS = [
-  { href: "", label: "Overview", icon: LayoutDashboard },
-  { href: "/om-analysis", label: "OM Analysis", icon: FileSearch },
-  { href: "/site-zoning", label: "Site & Zoning", icon: MapPin },
-  { href: "/underwriting", label: "Underwriting", icon: Calculator },
-  { href: "/documents", label: "Documents", icon: FileText },
-  { href: "/photos", label: "Photos", icon: Camera },
-  { href: "/checklist", label: "Checklist", icon: CheckSquare },
-  { href: "/project", label: "Project", icon: ClipboardList },
-  { href: "/loi", label: "LOI", icon: FileSignature },
-  { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
-  { href: "/investment-package", label: "Inv. Package", icon: Presentation },
-  { href: "/chat", label: "Chat", icon: MessageSquare },
-  { href: "/deal-log", label: "Deal Log", icon: Activity },
+const NAV_GROUPS: {
+  label: string | null;
+  items: { href: string; label: string; icon: typeof LayoutDashboard }[];
+}[] = [
+  {
+    label: null,
+    items: [{ href: "", label: "Overview", icon: LayoutDashboard }],
+  },
+  {
+    label: "Analysis",
+    items: [
+      { href: "/om-analysis", label: "OM Analysis", icon: FileSearch },
+      { href: "/site-zoning", label: "Site & Zoning", icon: MapPin },
+      { href: "/underwriting", label: "Underwriting", icon: Calculator },
+    ],
+  },
+  {
+    label: "Files",
+    items: [
+      { href: "/documents", label: "Documents", icon: FileText },
+      { href: "/photos", label: "Photos", icon: Camera },
+    ],
+  },
+  {
+    label: "Execution",
+    items: [
+      { href: "/checklist", label: "Checklist", icon: CheckSquare },
+      { href: "/project", label: "Project", icon: ClipboardList },
+      { href: "/loi", label: "LOI", icon: FileSignature },
+      { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
+      { href: "/investment-package", label: "Inv. Package", icon: Presentation },
+    ],
+  },
+  {
+    label: "Activity",
+    items: [
+      { href: "/chat", label: "Chat", icon: MessageSquare },
+      { href: "/deal-log", label: "Deal Log", icon: Activity },
+    ],
+  },
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -74,8 +102,22 @@ export default function DealLayout({
 }) {
   const { can } = usePermissions();
   const [deal, setDeal] = useState<Deal | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const pathname = usePathname();
   const { userId } = useAuth();
+
+  useEffect(() => {
+    const stored = localStorage.getItem("dealSidebarCollapsed");
+    if (stored !== null) setSidebarCollapsed(stored === "1");
+  }, []);
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("dealSidebarCollapsed", next ? "1" : "0");
+      return next;
+    });
+  };
 
   useEffect(() => {
     fetch(`/api/deals/${params.id}`)
@@ -90,8 +132,19 @@ export default function DealLayout({
     <div className="min-h-screen bg-background noise flex flex-col">
       {/* ── Header bar ── */}
       <header className="sticky top-0 z-20 border-b border-border/40 bg-card/80 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+        <div className="px-4 sm:px-6">
           <div className="flex items-center gap-3 h-12">
+            <button
+              onClick={toggleSidebar}
+              className="flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </button>
             {/* Back link */}
             <Link href="/">
               <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
@@ -139,42 +192,63 @@ export default function DealLayout({
           </div>
         </div>
 
-        {/* ── Tab nav ── */}
-        <div className="border-t border-border/30">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6">
-            <div className="flex gap-0.5 overflow-x-auto scrollbar-none py-1">
-              {NAV_ITEMS.map((item) => {
-                const fullPath = `${basePath}${item.href}`;
-                const isActive =
-                  item.href === ""
-                    ? pathname === basePath
-                    : pathname.startsWith(fullPath);
-                const Icon = item.icon;
-
-                return (
-                  <Link key={item.href} href={fullPath}>
-                    <button
-                      className={cn(
-                        "flex items-center gap-1.5 px-3 py-1.5 text-2xs font-medium rounded-md transition-all duration-150 whitespace-nowrap",
-                        isActive
-                          ? "gradient-gold text-primary-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                      )}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                      {item.label}
-                    </button>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
-        {children}
-      </main>
+      <div className="flex-1 flex min-h-0">
+        {/* ── Sidebar nav ── */}
+        <aside
+          className={cn(
+            "sticky top-12 self-start h-[calc(100vh-3rem)] border-r border-border/40 bg-card/40 backdrop-blur-xl transition-all duration-200 flex-shrink-0 overflow-y-auto scrollbar-none",
+            sidebarCollapsed ? "w-14" : "w-56"
+          )}
+        >
+          <nav className="py-3 px-2 flex flex-col gap-4">
+            {NAV_GROUPS.map((group, gi) => (
+              <div key={gi} className="flex flex-col gap-0.5">
+                {group.label && !sidebarCollapsed && (
+                  <div className="px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 font-medium">
+                    {group.label}
+                  </div>
+                )}
+                {group.label && sidebarCollapsed && gi > 0 && (
+                  <div className="mx-2 mb-1 border-t border-border/30" />
+                )}
+                {group.items.map((item) => {
+                  const fullPath = `${basePath}${item.href}`;
+                  const isActive =
+                    item.href === ""
+                      ? pathname === basePath
+                      : pathname.startsWith(fullPath);
+                  const Icon = item.icon;
+
+                  return (
+                    <Link key={item.href} href={fullPath} title={sidebarCollapsed ? item.label : undefined}>
+                      <button
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
+                          sidebarCollapsed && "justify-center",
+                          isActive
+                            ? "gradient-gold text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                        )}
+                      >
+                        <Icon className="h-4 w-4 flex-shrink-0" />
+                        {!sidebarCollapsed && (
+                          <span className="truncate">{item.label}</span>
+                        )}
+                      </button>
+                    </Link>
+                  );
+                })}
+              </div>
+            ))}
+          </nav>
+        </aside>
+
+        <main className="flex-1 min-w-0 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
+          {children}
+        </main>
+      </div>
     </div>
   );
 }
