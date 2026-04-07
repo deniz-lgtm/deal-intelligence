@@ -7,6 +7,7 @@ import {
   Search,
   Building2,
   BookOpen,
+  Shield,
   ChevronDown,
   ChevronUp,
   DollarSign,
@@ -85,7 +86,7 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 export default function DashboardPage() {
-  const { can } = usePermissions();
+  const { can, isAdmin } = usePermissions();
   const { stages: pipelineStages, labelMap: stageLabels } = usePipeline();
   const [deals, setDeals] = useState<DealWithStats[]>([]);
   const [loading, setLoading] = useState(true);
@@ -275,6 +276,13 @@ export default function DashboardPage() {
                 <Link href="/business-plans">
                   <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground text-xs hidden sm:inline-flex">
                     <BookOpen className="h-3.5 w-3.5 mr-1.5" /> Plans
+                  </Button>
+                </Link>
+              )}
+              {isAdmin && (
+                <Link href="/admin">
+                  <Button size="sm" variant="ghost" className="text-indigo-200/80 hover:text-indigo-100 hover:bg-indigo-500/10 text-xs hidden sm:inline-flex">
+                    <Shield className="h-3.5 w-3.5 mr-1.5" /> Admin
                   </Button>
                 </Link>
               )}

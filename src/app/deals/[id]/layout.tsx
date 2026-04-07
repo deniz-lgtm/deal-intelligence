@@ -21,6 +21,7 @@ import {
   ClipboardList,
   PanelLeftClose,
   PanelLeftOpen,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -100,7 +101,7 @@ export default function DealLayout({
   children: React.ReactNode;
   params: { id: string };
 }) {
-  const { can } = usePermissions();
+  const { can, isAdmin } = usePermissions();
   const [deal, setDeal] = useState<Deal | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const pathname = usePathname();
@@ -202,7 +203,7 @@ export default function DealLayout({
             sidebarCollapsed ? "w-14" : "w-56"
           )}
         >
-          <nav className="py-3 px-2 flex flex-col gap-4">
+          <nav className="py-3 px-2 flex flex-col gap-4 min-h-full">
             {NAV_GROUPS.map((group, gi) => (
               <div key={gi} className="flex flex-col gap-0.5">
                 {group.label && !sidebarCollapsed && (
@@ -242,6 +243,25 @@ export default function DealLayout({
                 })}
               </div>
             ))}
+
+            {isAdmin && (
+              <div className="mt-auto flex flex-col gap-0.5 pt-3 border-t border-border/30">
+                <Link href="/admin" title={sidebarCollapsed ? "Admin" : undefined}>
+                  <button
+                    className={cn(
+                      "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
+                      sidebarCollapsed && "justify-center",
+                      pathname.startsWith("/admin")
+                        ? "gradient-gold text-primary-foreground shadow-sm"
+                        : "text-indigo-200/80 hover:text-indigo-100 hover:bg-indigo-500/10"
+                    )}
+                  >
+                    <Shield className="h-4 w-4 flex-shrink-0" />
+                    {!sidebarCollapsed && <span className="truncate">Admin</span>}
+                  </button>
+                </Link>
+              </div>
+            )}
           </nav>
         </aside>
 
