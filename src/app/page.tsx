@@ -33,7 +33,6 @@ interface DealWithStats extends Deal {
   document_count?: number;
   checklist_complete?: number;
   checklist_total?: number;
-  om_score?: number;
   total_project_cost?: number | null;
 }
 

@@ -10,7 +10,7 @@ import { formatCurrency, cn, titleCase } from "@/lib/utils";
 import type { Deal } from "@/lib/types";
 
 interface KanbanCardProps {
-  deal: Deal & { om_score?: number; document_count?: number; checklist_complete?: number; checklist_total?: number; total_project_cost?: number | null };
+  deal: Deal & { document_count?: number; checklist_complete?: number; checklist_total?: number; total_project_cost?: number | null };
   onStar?: (id: string, starred: boolean) => void;
   onDragStart?: (e: React.DragEvent, dealId: string) => void;
 }
