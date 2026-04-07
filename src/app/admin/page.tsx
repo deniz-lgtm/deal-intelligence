@@ -5,6 +5,7 @@ import { userQueries, ALL_PERMISSIONS } from "@/lib/db";
 import { syncCurrentUser } from "@/lib/auth";
 import AdminUsersTable from "./AdminUsersTable";
 import InvitationsPanel from "./InvitationsPanel";
+import SignupAllowlistPanel from "./SignupAllowlistPanel";
 import AiConfigPanel from "./AiConfigPanel";
 import PipelinePanel from "./PipelinePanel";
 import ChecklistTemplatePanel from "./ChecklistTemplatePanel";
@@ -67,6 +68,7 @@ export default async function AdminPage() {
           </section>
 
           <InvitationsPanel />
+          <SignupAllowlistPanel />
           <AiConfigPanel />
           <PipelinePanel />
           <ChecklistTemplatePanel />

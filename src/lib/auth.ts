@@ -1,6 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { dealQueries, userQueries } from "./db";
+import { isEmailAllowed } from "./admin-helpers";
 
 /**
  * Asserts the request is authenticated and returns the userId.
@@ -89,6 +90,28 @@ export async function syncCurrentUser(userId: string): Promise<void> {
         email: primaryEmail,
         name: name ?? undefined,
       });
+
+      // Apply role from Clerk publicMetadata (set when invited via /admin)
+      try {
+        const cu = await currentUser();
+        const metaRole = (cu?.publicMetadata as { role?: string } | undefined)?.role;
+        if (metaRole === "admin" || metaRole === "user") {
+          await userQueries.setRole(userId, metaRole);
+        }
+      } catch {
+        /* ignore */
+      }
+
+      // Enforce signup allowlist for brand-new users. Existing users are
+      // grandfathered in (we never auto-disable a row that already existed).
+      try {
+        const allowed = await Promise.all(emails.map((e) => isEmailAllowed(e)));
+        if (emails.length > 0 && !allowed.some(Boolean)) {
+          await userQueries.setDisabled(userId, true);
+        }
+      } catch {
+        /* ignore */
+      }
     }
 
     if (adminList.length > 0) {

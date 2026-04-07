@@ -24,7 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import KanbanCard from "@/components/KanbanCard";
 import type { Deal, DealStatus } from "@/lib/types";
-import { DEAL_PIPELINE, DEAL_STAGE_LABELS } from "@/lib/types";
+import { usePipeline } from "@/lib/usePipeline";
 import { toast } from "sonner";
 import { cn, formatCurrency } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
@@ -87,6 +87,7 @@ function formatRelativeTime(dateStr: string): string {
 
 export default function DashboardPage() {
   const { can } = usePermissions();
+  const { stages: pipelineStages, labelMap: stageLabels } = usePipeline();
   const [deals, setDeals] = useState<DealWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -191,7 +192,7 @@ export default function DashboardPage() {
         body: JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) throw new Error("Failed");
-      toast.success(`Moved to ${DEAL_STAGE_LABELS[newStatus]}`);
+      toast.success(`Moved to ${stageLabels[newStatus] ?? newStatus}`);
     } catch {
       // Revert on error
       setDeals((prev) =>
@@ -211,7 +212,10 @@ export default function DashboardPage() {
     );
   });
 
-  const columns = [...DEAL_PIPELINE, "dead" as DealStatus, "archived" as DealStatus];
+  // Pipeline stages come from the admin-editable DB (or fall back to defaults).
+  // We always append "dead" and "archived" as off-pipeline columns.
+  const pipelineIds = pipelineStages.map((s) => s.id) as DealStatus[];
+  const columns = [...pipelineIds, "dead" as DealStatus, "archived" as DealStatus];
   const dealsByStatus = columns.reduce<Record<string, DealWithStats[]>>((acc, status) => {
     acc[status] = filtered.filter((d) => d.status === status);
     return acc;
@@ -343,7 +347,7 @@ export default function DashboardPage() {
                       style={{ height: `${barHeight}px`, opacity: barHeight > 0 ? 1 : 0.15, minHeight: barHeight > 0 ? undefined : "4px" }}
                     />
                     <span className="text-[10px] text-muted-foreground/60 truncate">
-                      {DEAL_STAGE_LABELS[m.status as DealStatus]}
+                      {stageLabels[m.status as DealStatus] ?? m.status}
                     </span>
                   </div>
                 );
@@ -424,7 +428,7 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-2">
                         <span className={cn("w-2 h-2 rounded-full", colors.dot)} />
                         <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">
-                          {DEAL_STAGE_LABELS[status]}
+                          {stageLabels[status] ?? status}
                         </h3>
                       </div>
                       <span className={cn("text-xs font-bold tabular-nums", colors.count)}>

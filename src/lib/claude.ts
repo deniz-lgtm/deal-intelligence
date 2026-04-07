@@ -285,13 +285,22 @@ export async function chatWithDiligence(
     )
     .join("\n\n---\n\n");
 
-  const systemPrompt = `You are a real estate due diligence assistant for the deal: "${dealName}".
+  const promptTemplate = await getPrompt(
+    "diligence_chat",
+    "Diligence Chat",
+    `You are a real estate due diligence assistant for the deal: "{{deal_name}}".
 
 You have access to the following uploaded documents:
 
-${docContext || "No documents uploaded yet."}
+{{doc_context}}
 
-Answer questions accurately based on the documents. If information isn't in the documents, say so clearly. Be concise but thorough. Use bullet points for lists. Flag any risks or issues you notice.`;
+Answer questions accurately based on the documents. If information isn't in the documents, say so clearly. Be concise but thorough. Use bullet points for lists. Flag any risks or issues you notice.`,
+    "System prompt for the diligence Q&A assistant. Supports {{deal_name}} and {{doc_context}}."
+  );
+
+  const systemPrompt = promptTemplate
+    .replace(/\{\{deal_name\}\}/g, dealName)
+    .replace(/\{\{doc_context\}\}/g, docContext || "No documents uploaded yet.");
 
   const messages: Anthropic.MessageParam[] = [
     ...history.map((m) => ({
@@ -837,12 +846,21 @@ export async function streamChatWithDiligence(
     )
     .join("\n\n---\n\n");
 
-  const systemPrompt = `You are a real estate due diligence assistant for the deal: "${dealName}".
+  const promptTemplate = await getPrompt(
+    "diligence_chat_streaming",
+    "Diligence Chat (streaming)",
+    `You are a real estate due diligence assistant for the deal: "{{deal_name}}".
 
 You have access to the following uploaded documents:
-${docContext || "No documents uploaded yet."}
+{{doc_context}}
 
-Answer questions accurately based on the documents. If information isn't available, say so clearly. Flag risks or issues. Use markdown formatting for readability.`;
+Answer questions accurately based on the documents. If information isn't available, say so clearly. Flag risks or issues. Use markdown formatting for readability.`,
+    "Streaming variant of the diligence chat prompt. Supports {{deal_name}} and {{doc_context}}."
+  );
+
+  const systemPrompt = promptTemplate
+    .replace(/\{\{deal_name\}\}/g, dealName)
+    .replace(/\{\{doc_context\}\}/g, docContext || "No documents uploaded yet.");
 
   const messages: Anthropic.MessageParam[] = [
     ...history.slice(-10).map((m) => ({
