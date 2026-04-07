@@ -548,6 +548,10 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ",
+    // Backfill: ensure no row has null role/permissions (can happen if a
+    // column was added nullable in a prior schema rev, then later constrained)
+    "UPDATE users SET role = 'user' WHERE role IS NULL",
+    "UPDATE users SET permissions = '[]'::jsonb WHERE permissions IS NULL",
   ];
   for (const alter of criticalAlters) {
     try {
