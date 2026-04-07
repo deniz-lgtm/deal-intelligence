@@ -2,30 +2,6 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "sonner";
 import { ClerkProvider, UserButton } from "@clerk/nextjs";
-import { auth } from "@clerk/nextjs/server";
-import Link from "next/link";
-import { userQueries } from "@/lib/db";
-import { syncCurrentUser } from "@/lib/auth";
-
-async function AdminNavLink() {
-  try {
-    const { userId } = await auth();
-    if (!userId) return null;
-    await syncCurrentUser(userId);
-    const me = await userQueries.getById(userId);
-    if (!me || me.role !== "admin") return null;
-    return (
-      <Link
-        href="/admin"
-        className="text-xs font-medium px-2.5 py-1 rounded-md border border-indigo-500/40 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/20"
-      >
-        Admin
-      </Link>
-    );
-  } catch {
-    return null;
-  }
-}
 
 export const metadata: Metadata = {
   title: "Deal Intelligence",
@@ -49,9 +25,10 @@ export default async function RootLayout({
           />
         </head>
         <body>
-          {/* Global user button — floats top-right on pages that don't have their own nav header */}
+          {/* Global user button — floats top-right. Admin link has moved
+              into each page's own nav (sidebar on deal pages, header nav
+              on the deal list). */}
           <div className="fixed top-3 right-4 z-50 flex items-center gap-3">
-            <AdminNavLink />
             <UserButton
               appearance={{
                 elements: {
