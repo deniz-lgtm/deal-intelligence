@@ -26,13 +26,15 @@ const ALL_SECTIONS = [
   { id: "capital_structure", title: "Capital Structure", description: "Debt, equity, sources & uses, waterfall" },
   { id: "returns_analysis", title: "Returns Analysis", description: "IRR, equity multiple, CoC, DSCR, sensitivity" },
   { id: "exit_strategy", title: "Exit Strategy", description: "Hold period, exit cap rate, disposition plan" },
+  { id: "development_schedule", title: "Development Schedule", description: "Phase timeline from acquisition through stabilization" },
+  { id: "predev_budget", title: "Pre-Development Budget", description: "Itemized pre-dev costs by category with approval gates" },
   { id: "risk_factors", title: "Risk Factors & Mitigants", description: "Key risks and how they're addressed" },
   { id: "photos", title: "Property Photos", description: "Property images and captions" },
   { id: "appendix", title: "Appendix", description: "Documents, floor plans, additional data" },
 ];
 
 const FORMAT_SECTIONS: Record<string, string[]> = {
-  pitch_deck: ["cover", "exec_summary", "property_overview", "financial_summary", "unit_mix", "value_add", "capital_structure", "returns_analysis", "exit_strategy", "photos"],
+  pitch_deck: ["cover", "exec_summary", "property_overview", "financial_summary", "unit_mix", "value_add", "capital_structure", "returns_analysis", "development_schedule", "predev_budget", "exit_strategy", "photos"],
   investment_memo: ALL_SECTIONS.map(s => s.id),
   one_pager: ["exec_summary", "financial_summary", "photos"],
 };

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
@@ -47,13 +47,15 @@ export async function POST(
     const { audience, format, sections, existingNotes = {} } = body;
 
     // Fetch ALL deal data in parallel
-    const [deal, uwRow, omAnalysis, docs, checklist, photosRes] = await Promise.all([
+    const [deal, uwRow, omAnalysis, docs, checklist, photosRes, devPhases, preDevCosts] = await Promise.all([
       dealQueries.getById(params.id),
       underwritingQueries.getByDealId(params.id),
       omAnalysisQueries.getByDealId(params.id),
       documentQueries.getByDealId(params.id),
       checklistQueries.getByDealId(params.id),
       fetch(`${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/api/deals/${params.id}/photos`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({ data: [] })),
+      devPhaseQueries.getByDealId(params.id).catch(() => []),
+      preDevCostQueries.getByDealId(params.id).catch(() => []),
     ]);
 
     // Use deal notes for context instead of legacy context_notes
@@ -77,7 +79,7 @@ export async function POST(
     // Build per-section context
     const sectionContexts: Record<string, string> = {};
     for (const sectionId of sections) {
-      sectionContexts[sectionId] = buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc, businessPlan as AnyRecord | null);
+      sectionContexts[sectionId] = buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc, businessPlan as AnyRecord | null, devPhases as AnyRecord[], preDevCosts as AnyRecord[]);
     }
 
     const audienceTone = AUDIENCE_TONES[audience] || AUDIENCE_TONES.investment_committee;
@@ -181,7 +183,8 @@ function buildDealContext(deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord |
 function buildSectionContext(
   sectionId: string, deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord | null,
   docs: AnyRecord[], checklist: AnyRecord[], photos: AnyRecord[],
-  n: (v: unknown) => number, fc: (v: number) => string, bp?: AnyRecord | null
+  n: (v: unknown) => number, fc: (v: number) => string, bp?: AnyRecord | null,
+  devPhases: AnyRecord[] = [], preDevCosts: AnyRecord[] = []
 ): string {
   const isMF = deal.property_type === "multifamily" || deal.property_type === "student_housing";
   const unitGroups = uw?.unit_groups || [];
@@ -299,6 +302,74 @@ function buildSectionContext(
 
     case "exit_strategy":
       return uw ? `Exit Cap Rate: ${uw.exit_cap_rate}% | Hold Period: ${uw.hold_period_years} years` : "";
+
+    case "development_schedule": {
+      if (devPhases.length === 0) {
+        return "No development phases defined yet.";
+      }
+      const phaseLines = devPhases.map((p) => {
+        const start = p.start_date ? new Date(p.start_date).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "TBD";
+        const end = p.end_date ? new Date(p.end_date).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "TBD";
+        return `- ${p.label}: ${start} → ${end} | ${p.pct_complete || 0}% complete | Status: ${p.status}${p.notes ? ` | ${p.notes}` : ""}`;
+      });
+      // Calculate total duration
+      const allDates = devPhases.flatMap((p) => [p.start_date, p.end_date]).filter(Boolean).sort();
+      const totalDuration = allDates.length >= 2
+        ? `${Math.round((new Date(allDates[allDates.length - 1]).getTime() - new Date(allDates[0]).getTime()) / (1000 * 60 * 60 * 24 * 30))} months`
+        : "TBD";
+      return [
+        `Total Project Duration: ${totalDuration}`,
+        `Number of Phases: ${devPhases.length}`,
+        `Phases Complete: ${devPhases.filter((p) => p.status === "complete").length}`,
+        "",
+        "PHASE DETAIL:",
+        ...phaseLines,
+      ].join("\n");
+    }
+
+    case "predev_budget": {
+      if (preDevCosts.length === 0) {
+        return "No pre-development costs tracked yet.";
+      }
+      // Group by category
+      const byCategory: Record<string, AnyRecord[]> = {};
+      for (const c of preDevCosts) {
+        if (!byCategory[c.category]) byCategory[c.category] = [];
+        byCategory[c.category].push(c);
+      }
+      const totalCommitted = preDevCosts
+        .filter((c) => c.status === "committed" || c.status === "incurred" || c.status === "paid")
+        .reduce((s, c) => s + n(c.amount), 0);
+      const totalEstimated = preDevCosts.reduce((s, c) => s + n(c.amount), 0);
+      const totalPaid = preDevCosts.filter((c) => c.status === "paid").reduce((s, c) => s + n(c.amount), 0);
+
+      // Approval thresholds
+      const settings = deal.predev_settings || { thresholds: [] };
+      const thresholds: Array<{ amount: number; label: string }> = settings.thresholds || [];
+      const sortedThresholds = [...thresholds].sort((a, b) => a.amount - b.amount);
+      const passedThresholds = sortedThresholds.filter((t) => t.amount <= totalCommitted);
+      const nextThreshold = sortedThresholds.find((t) => t.amount > totalCommitted);
+
+      const categoryLines = Object.entries(byCategory).map(([cat, items]) => {
+        const catTotal = items.reduce((s, c) => s + n(c.amount), 0);
+        const itemsList = items.map((c) => `    - ${c.description}${c.vendor ? ` (${c.vendor})` : ""}: ${fc(n(c.amount))} [${c.status}]`).join("\n");
+        return `  ${cat}: ${fc(catTotal)}\n${itemsList}`;
+      });
+
+      return [
+        `Total Committed/Spent: ${fc(totalCommitted)}`,
+        `Total Estimated: ${fc(totalEstimated)}`,
+        `Total Paid: ${fc(totalPaid)}`,
+        settings.total_budget ? `Pre-Dev Budget: ${fc(settings.total_budget)}` : "",
+        "",
+        "APPROVAL STATUS:",
+        ...passedThresholds.map((t) => `  ✓ Passed: ${t.label} (${fc(t.amount)})`),
+        nextThreshold ? `  → Next gate: ${nextThreshold.label} (${fc(nextThreshold.amount)}, ${fc(nextThreshold.amount - totalCommitted)} headroom remaining)` : "  ✓ All approval gates passed",
+        "",
+        "COSTS BY CATEGORY:",
+        ...categoryLines,
+      ].filter(Boolean).join("\n");
+    }
 
     case "risk_factors": {
       const flags = om?.red_flags || [];

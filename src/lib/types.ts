@@ -653,6 +653,107 @@ export const DEFAULT_TASKS: Array<{ title: string; priority: TaskPriority; miles
   { title: "Wire closing funds", priority: "critical", milestone_title: "Deal closed" },
 ];
 
+// ─── Development Schedule ──────────────────────────────────────────────────
+
+export type DevPhaseStatus = "not_started" | "in_progress" | "complete" | "delayed";
+
+export interface DevPhase {
+  id: string;
+  deal_id: string;
+  phase_key: string;
+  label: string;
+  start_date: string | null;
+  end_date: string | null;
+  pct_complete: number;
+  budget: number | null;
+  status: DevPhaseStatus;
+  notes: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const DEV_PHASE_STATUS_CONFIG: Record<DevPhaseStatus, { label: string; color: string; bg: string }> = {
+  not_started: { label: "Not Started", color: "text-zinc-400", bg: "bg-zinc-500/30" },
+  in_progress: { label: "In Progress", color: "text-blue-400", bg: "bg-blue-500/50" },
+  complete: { label: "Complete", color: "text-emerald-400", bg: "bg-emerald-500/50" },
+  delayed: { label: "Delayed", color: "text-red-400", bg: "bg-red-500/50" },
+};
+
+// Default development phases (typical CRE development timeline)
+export const DEFAULT_DEV_PHASES: Array<{
+  phase_key: string;
+  label: string;
+  duration_months: number;
+}> = [
+  { phase_key: "acquisition", label: "Acquisition & Closing", duration_months: 2 },
+  { phase_key: "predevelopment", label: "Pre-Development", duration_months: 3 },
+  { phase_key: "entitlements", label: "Entitlements & Permits", duration_months: 6 },
+  { phase_key: "design", label: "Design & Engineering", duration_months: 4 },
+  { phase_key: "procurement", label: "Procurement & Bidding", duration_months: 2 },
+  { phase_key: "construction", label: "Construction", duration_months: 18 },
+  { phase_key: "marketing", label: "Marketing & Pre-Lease", duration_months: 6 },
+  { phase_key: "lease_up", label: "Lease-Up", duration_months: 12 },
+  { phase_key: "stabilization", label: "Stabilization", duration_months: 3 },
+];
+
+// ─── Pre-Development Budget Tracker ──────────────────────────────────────
+
+export type PreDevCostStatus = "estimated" | "committed" | "incurred" | "paid";
+
+export interface PreDevCost {
+  id: string;
+  deal_id: string;
+  category: string;
+  description: string;
+  vendor: string | null;
+  amount: number;
+  status: PreDevCostStatus;
+  incurred_date: string | null;
+  notes: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const PREDEV_COST_STATUS_CONFIG: Record<PreDevCostStatus, { label: string; color: string }> = {
+  estimated: { label: "Estimated", color: "bg-zinc-500/20 text-zinc-300" },
+  committed: { label: "Committed", color: "bg-blue-500/20 text-blue-300" },
+  incurred: { label: "Incurred", color: "bg-amber-500/20 text-amber-300" },
+  paid: { label: "Paid", color: "bg-emerald-500/20 text-emerald-300" },
+};
+
+// Standard pre-development cost categories
+export const PREDEV_CATEGORIES = [
+  "Legal & Title",
+  "Environmental",
+  "Survey & Civil",
+  "Architectural & Design",
+  "Engineering",
+  "Entitlements & Permits",
+  "Market Studies",
+  "Financial Consulting",
+  "Insurance & Bonds",
+  "Travel & Site Visits",
+  "Other",
+] as const;
+
+// Default approval thresholds — cumulative spend levels that trigger approval gates
+// Users can override per-deal but these are sensible defaults
+export const DEFAULT_PREDEV_THRESHOLDS: Array<{ amount: number; label: string }> = [
+  { amount: 25000, label: "Initial Discretionary Spend" },
+  { amount: 75000, label: "Director Approval" },
+  { amount: 150000, label: "VP Approval" },
+  { amount: 350000, label: "IC Approval" },
+  { amount: 750000, label: "Full Committee Approval" },
+];
+
+// Pre-dev settings stored per-deal as JSON
+export interface PreDevSettings {
+  total_budget: number | null;
+  thresholds: Array<{ amount: number; label: string }>;
+}
+
 // ─── Chat ───────────────────────────────────────────────────────────────────
 
 export interface ChatMessage {

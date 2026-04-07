@@ -137,6 +137,38 @@ export async function ensureColumns(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_tasks_deal_id ON deal_tasks(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_dev_phases (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      phase_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      start_date DATE,
+      end_date DATE,
+      pct_complete INTEGER NOT NULL DEFAULT 0,
+      budget NUMERIC,
+      status TEXT NOT NULL DEFAULT 'not_started',
+      notes TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_dev_phases_deal_id ON deal_dev_phases(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_predev_costs (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      category TEXT NOT NULL,
+      description TEXT NOT NULL,
+      vendor TEXT,
+      amount NUMERIC NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'estimated',
+      incurred_date DATE,
+      notes TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_predev_costs_deal_id ON deal_predev_costs(deal_id)`,
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS predev_settings JSONB",
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -456,6 +488,40 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id)`,
+    // Project management: development phases
+    `CREATE TABLE IF NOT EXISTS deal_dev_phases (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      phase_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      start_date DATE,
+      end_date DATE,
+      pct_complete INTEGER NOT NULL DEFAULT 0,
+      budget NUMERIC,
+      status TEXT NOT NULL DEFAULT 'not_started',
+      notes TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_dev_phases_deal_id ON deal_dev_phases(deal_id)`,
+    // Project management: pre-development costs
+    `CREATE TABLE IF NOT EXISTS deal_predev_costs (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      category TEXT NOT NULL,
+      description TEXT NOT NULL,
+      vendor TEXT,
+      amount NUMERIC NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'estimated',
+      incurred_date DATE,
+      notes TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_predev_costs_deal_id ON deal_predev_costs(deal_id)`,
+    `ALTER TABLE deals ADD COLUMN IF NOT EXISTS predev_settings JSONB`,
   ];
 
   for (const query of queries) {
@@ -1984,5 +2050,136 @@ export const auditLogQueries = {
       [limit]
     );
     return res.rows;
+  },
+};
+
+// ─── Development Phase queries ────────────────────────────────────────────────
+
+export const devPhaseQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM deal_dev_phases WHERE deal_id = $1 ORDER BY sort_order, start_date NULLS LAST",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (phase: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+       RETURNING *`,
+      [
+        phase.id,
+        phase.deal_id,
+        phase.phase_key,
+        phase.label,
+        phase.start_date ?? null,
+        phase.end_date ?? null,
+        phase.pct_complete ?? 0,
+        phase.budget ?? null,
+        phase.status ?? "not_started",
+        phase.notes ?? null,
+        phase.sort_order ?? 0,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (["label", "start_date", "end_date", "pct_complete", "budget", "status", "notes", "sort_order"].includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+
+    const res = await pool.query(
+      `UPDATE deal_dev_phases SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM deal_dev_phases WHERE id = $1", [id]);
+  },
+};
+
+// ─── Pre-Development Cost queries ─────────────────────────────────────────────
+
+export const preDevCostQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM deal_predev_costs WHERE deal_id = $1 ORDER BY category, sort_order, created_at",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (cost: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_predev_costs (id, deal_id, category, description, vendor, amount, status, incurred_date, notes, sort_order, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+       RETURNING *`,
+      [
+        cost.id,
+        cost.deal_id,
+        cost.category,
+        cost.description,
+        cost.vendor ?? null,
+        cost.amount ?? 0,
+        cost.status ?? "estimated",
+        cost.incurred_date ?? null,
+        cost.notes ?? null,
+        cost.sort_order ?? 0,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (["category", "description", "vendor", "amount", "status", "incurred_date", "notes", "sort_order"].includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+
+    const res = await pool.query(
+      `UPDATE deal_predev_costs SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM deal_predev_costs WHERE id = $1", [id]);
   },
 };
