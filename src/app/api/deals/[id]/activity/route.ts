@@ -28,7 +28,8 @@ export async function GET(
     // endpoint.
     const safeQuery = async <T = Record<string, unknown>>(sql: string, values: unknown[]): Promise<{ rows: T[] }> => {
       try {
-        return await pool.query(sql, values);
+        const res = await pool.query(sql, values);
+        return { rows: res.rows as T[] };
       } catch {
         return { rows: [] };
       }
