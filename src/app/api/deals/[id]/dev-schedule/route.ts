@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { devPhaseQueries, getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { computeSchedule, diffComputedDates } from "@/lib/dev-schedule-compute";
+import type { DevPhase } from "@/lib/types";
 
 async function ensureDevPhasesTable() {
   const pool = getPool();
@@ -13,6 +15,9 @@ async function ensureDevPhasesTable() {
       label TEXT NOT NULL,
       start_date DATE,
       end_date DATE,
+      duration_days INTEGER,
+      predecessor_id TEXT,
+      lag_days INTEGER NOT NULL DEFAULT 0,
       pct_complete INTEGER NOT NULL DEFAULT 0,
       budget NUMERIC,
       status TEXT NOT NULL DEFAULT 'not_started',
@@ -22,6 +27,19 @@ async function ensureDevPhasesTable() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // Idempotent column adds for existing tables
+  await pool.query("ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS duration_days INTEGER").catch(() => {});
+  await pool.query("ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS predecessor_id TEXT").catch(() => {});
+  await pool.query("ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS lag_days INTEGER NOT NULL DEFAULT 0").catch(() => {});
+}
+
+async function recomputeSchedule(dealId: string) {
+  const phases = (await devPhaseQueries.getByDealId(dealId)) as DevPhase[];
+  const computed = computeSchedule(phases);
+  const updates = diffComputedDates(phases, computed);
+  if (updates.length > 0) {
+    await devPhaseQueries.bulkUpdateDates(updates);
+  }
 }
 
 export async function GET(
@@ -59,43 +77,39 @@ export async function POST(
     if (accessError) return accessError;
 
     const body = await req.json();
-    const { phase_key, label, start_date, end_date, pct_complete, budget, status, notes, sort_order } = body;
+    const { phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, pct_complete, budget, status, notes, sort_order } = body;
 
     if (!label?.trim()) {
       return NextResponse.json({ error: "label is required" }, { status: 400 });
     }
 
+    const payload = {
+      id: uuidv4(),
+      deal_id: params.id,
+      phase_key: phase_key || label.trim().toLowerCase().replace(/\s+/g, "_"),
+      label: label.trim(),
+      start_date: start_date || null,
+      end_date: end_date || null,
+      duration_days: duration_days ?? null,
+      predecessor_id: predecessor_id || null,
+      lag_days: lag_days ?? 0,
+      pct_complete: pct_complete ?? 0,
+      budget: budget ?? null,
+      status: status || "not_started",
+      notes: notes || null,
+      sort_order: sort_order ?? 0,
+    };
+
     let phase;
     try {
-      phase = await devPhaseQueries.create({
-        id: uuidv4(),
-        deal_id: params.id,
-        phase_key: phase_key || label.trim().toLowerCase().replace(/\s+/g, "_"),
-        label: label.trim(),
-        start_date: start_date || null,
-        end_date: end_date || null,
-        pct_complete: pct_complete ?? 0,
-        budget: budget ?? null,
-        status: status || "not_started",
-        notes: notes || null,
-        sort_order: sort_order ?? 0,
-      });
+      phase = await devPhaseQueries.create(payload);
     } catch {
       await ensureDevPhasesTable();
-      phase = await devPhaseQueries.create({
-        id: uuidv4(),
-        deal_id: params.id,
-        phase_key: phase_key || label.trim().toLowerCase().replace(/\s+/g, "_"),
-        label: label.trim(),
-        start_date: start_date || null,
-        end_date: end_date || null,
-        pct_complete: pct_complete ?? 0,
-        budget: budget ?? null,
-        status: status || "not_started",
-        notes: notes || null,
-        sort_order: sort_order ?? 0,
-      });
+      phase = await devPhaseQueries.create(payload);
     }
+
+    // Recompute schedule for the whole deal so dependent phases shift
+    await recomputeSchedule(params.id);
 
     return NextResponse.json({ data: phase });
   } catch (error) {

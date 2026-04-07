@@ -169,6 +169,10 @@ export async function ensureColumns(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_predev_costs_deal_id ON deal_predev_costs(deal_id)`,
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS predev_settings JSONB",
+    // Dev phases: predecessor/successor scheduling
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS duration_days INTEGER",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS predecessor_id TEXT",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS lag_days INTEGER NOT NULL DEFAULT 0",
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -2072,8 +2076,8 @@ export const devPhaseQueries = {
   create: async (phase: Record<string, unknown>) => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
        RETURNING *`,
       [
         phase.id,
@@ -2082,6 +2086,9 @@ export const devPhaseQueries = {
         phase.label,
         phase.start_date ?? null,
         phase.end_date ?? null,
+        phase.duration_days ?? null,
+        phase.predecessor_id ?? null,
+        phase.lag_days ?? 0,
         phase.pct_complete ?? 0,
         phase.budget ?? null,
         phase.status ?? "not_started",
@@ -2099,7 +2106,7 @@ export const devPhaseQueries = {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      if (["label", "start_date", "end_date", "pct_complete", "budget", "status", "notes", "sort_order"].includes(key)) {
+      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "pct_complete", "budget", "status", "notes", "sort_order"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
         idx++;
@@ -2115,6 +2122,18 @@ export const devPhaseQueries = {
       values
     );
     return res.rows[0] ?? null;
+  },
+
+  // Bulk-update computed start/end dates after a recompute pass
+  bulkUpdateDates: async (updates: Array<{ id: string; start_date: string | null; end_date: string | null }>) => {
+    if (updates.length === 0) return;
+    const pool = getPool();
+    for (const u of updates) {
+      await pool.query(
+        "UPDATE deal_dev_phases SET start_date = $1, end_date = $2, updated_at = NOW() WHERE id = $3",
+        [u.start_date, u.end_date, u.id]
+      );
+    }
   },
 
   delete: async (id: string) => {

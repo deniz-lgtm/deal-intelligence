@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from "uuid";
 import { devPhaseQueries, getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { DEFAULT_DEV_PHASES } from "@/lib/types";
+import { computeSchedule, diffComputedDates } from "@/lib/dev-schedule-compute";
+import type { DevPhase } from "@/lib/types";
 
 async function ensureDevPhasesTable() {
   const pool = getPool();
@@ -14,6 +16,9 @@ async function ensureDevPhasesTable() {
       label TEXT NOT NULL,
       start_date DATE,
       end_date DATE,
+      duration_days INTEGER,
+      predecessor_id TEXT,
+      lag_days INTEGER NOT NULL DEFAULT 0,
       pct_complete INTEGER NOT NULL DEFAULT 0,
       budget NUMERIC,
       status TEXT NOT NULL DEFAULT 'not_started',
@@ -23,12 +28,9 @@ async function ensureDevPhasesTable() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-}
-
-function addMonths(date: Date, months: number): Date {
-  const result = new Date(date);
-  result.setMonth(result.getMonth() + months);
-  return result;
+  await pool.query("ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS duration_days INTEGER").catch(() => {});
+  await pool.query("ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS predecessor_id TEXT").catch(() => {});
+  await pool.query("ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS lag_days INTEGER NOT NULL DEFAULT 0").catch(() => {});
 }
 
 export async function POST(
@@ -48,34 +50,45 @@ export async function POST(
       return NextResponse.json({ data: { phases: existing, seeded: false } });
     }
 
-    // Optional start date from request body (defaults to today)
-    let startDate = new Date();
+    // Optional anchor start date (defaults to today)
+    let anchorDate = new Date().toISOString().split("T")[0];
     try {
       const body = await req.json();
-      if (body?.start_date) startDate = new Date(body.start_date);
+      if (body?.start_date) anchorDate = body.start_date;
     } catch {}
 
-    let cursor = startDate;
+    // Seed phases with durations + predecessor chain
+    // First phase is the anchor (gets a start_date), rest are linked sequentially
+    let prevPhaseId: string | null = null;
     for (let i = 0; i < DEFAULT_DEV_PHASES.length; i++) {
       const p = DEFAULT_DEV_PHASES[i];
-      const phaseStart = new Date(cursor);
-      const phaseEnd = addMonths(cursor, p.duration_months);
-
+      const phaseId = uuidv4();
+      const durationDays = p.duration_months * 30;
       await devPhaseQueries.create({
-        id: uuidv4(),
+        id: phaseId,
         deal_id: params.id,
         phase_key: p.phase_key,
         label: p.label,
-        start_date: phaseStart.toISOString().split("T")[0],
-        end_date: phaseEnd.toISOString().split("T")[0],
+        // Only first phase has an anchor start_date; rest are linked
+        start_date: i === 0 ? anchorDate : null,
+        duration_days: durationDays,
+        predecessor_id: prevPhaseId,
+        lag_days: 0,
         sort_order: i,
       });
-
-      cursor = phaseEnd;
+      prevPhaseId = phaseId;
     }
 
-    const phases = await devPhaseQueries.getByDealId(params.id);
-    return NextResponse.json({ data: { phases, seeded: true } });
+    // Run compute pass to fill in start/end dates from the chain
+    const phases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
+    const computed = computeSchedule(phases);
+    const updates = diffComputedDates(phases, computed);
+    if (updates.length > 0) {
+      await devPhaseQueries.bulkUpdateDates(updates);
+    }
+
+    const finalPhases = await devPhaseQueries.getByDealId(params.id);
+    return NextResponse.json({ data: { phases: finalPhases, seeded: true } });
   } catch (error) {
     console.error("POST /api/deals/[id]/dev-schedule/seed error:", error);
     return NextResponse.json({ error: "Failed to seed dev schedule" }, { status: 500 });

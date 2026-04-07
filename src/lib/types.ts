@@ -664,6 +664,9 @@ export interface DevPhase {
   label: string;
   start_date: string | null;
   end_date: string | null;
+  duration_days: number | null;
+  predecessor_id: string | null;
+  lag_days: number;
   pct_complete: number;
   budget: number | null;
   status: DevPhaseStatus;

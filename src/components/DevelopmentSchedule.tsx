@@ -66,8 +66,10 @@ export default function DevelopmentSchedule({ dealId }: Props) {
   const [editingPhase, setEditingPhase] = useState<DevPhase | null>(null);
   const [phaseForm, setPhaseForm] = useState({
     label: "",
+    duration_days: 30,
+    predecessor_id: "",
+    lag_days: 0,
     start_date: "",
-    end_date: "",
     pct_complete: 0,
     status: "not_started" as DevPhaseStatus,
     notes: "",
@@ -139,7 +141,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
 
   // ── Phase CRUD ──
   const resetPhaseForm = () => {
-    setPhaseForm({ label: "", start_date: "", end_date: "", pct_complete: 0, status: "not_started", notes: "" });
+    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "" });
   };
 
   const openCreatePhase = () => {
@@ -152,8 +154,10 @@ export default function DevelopmentSchedule({ dealId }: Props) {
     setEditingPhase(p);
     setPhaseForm({
       label: p.label,
+      duration_days: p.duration_days ?? 30,
+      predecessor_id: p.predecessor_id || "",
+      lag_days: p.lag_days ?? 0,
       start_date: p.start_date || "",
-      end_date: p.end_date || "",
       pct_complete: p.pct_complete,
       status: p.status,
       notes: p.notes || "",
@@ -163,19 +167,37 @@ export default function DevelopmentSchedule({ dealId }: Props) {
 
   const handleSavePhase = async () => {
     if (!phaseForm.label.trim()) return;
+    // If phase has a predecessor, server will compute start_date — clear the manual one
+    const hasPredecessor = !!phaseForm.predecessor_id;
+    const payload = {
+      label: phaseForm.label,
+      duration_days: phaseForm.duration_days,
+      predecessor_id: phaseForm.predecessor_id || null,
+      lag_days: phaseForm.lag_days,
+      start_date: hasPredecessor ? null : (phaseForm.start_date || null),
+      pct_complete: phaseForm.pct_complete,
+      status: phaseForm.status,
+      notes: phaseForm.notes,
+    };
     try {
+      let res;
       if (editingPhase) {
-        await fetch(`/api/deals/${dealId}/dev-schedule/${editingPhase.id}`, {
+        res = await fetch(`/api/deals/${dealId}/dev-schedule/${editingPhase.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(phaseForm),
+          body: JSON.stringify(payload),
         });
       } else {
-        await fetch(`/api/deals/${dealId}/dev-schedule`, {
+        res = await fetch(`/api/deals/${dealId}/dev-schedule`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...phaseForm, sort_order: phases.length }),
+          body: JSON.stringify({ ...payload, sort_order: phases.length }),
         });
+      }
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "Failed to save phase");
+        return;
       }
       setPhaseDialogOpen(false);
       setEditingPhase(null);
@@ -382,22 +404,31 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                   {phases.map((p) => {
                     const cfg = DEV_PHASE_STATUS_CONFIG[p.status];
                     const barStyle = getBarStyle(p.start_date, p.end_date);
+                    const predLabel = p.predecessor_id
+                      ? phases.find((x) => x.id === p.predecessor_id)?.label
+                      : null;
                     return (
                       <div key={p.id} className="group">
                         <div className="grid grid-cols-12 gap-2 items-center">
                           {/* Label */}
                           <button
                             onClick={() => openEditPhase(p)}
-                            className="col-span-3 text-left text-xs hover:text-primary truncate"
+                            className="col-span-3 text-left text-xs hover:text-primary truncate flex items-center gap-1"
                           >
-                            {p.label}
+                            {!p.predecessor_id && (
+                              <span className="text-2xs text-amber-400" title="Anchor phase">⚓</span>
+                            )}
+                            <span className="truncate">{p.label}</span>
+                            {p.duration_days && (
+                              <span className="text-2xs text-muted-foreground flex-shrink-0">{p.duration_days}d</span>
+                            )}
                           </button>
                           {/* Bar */}
                           <div className="col-span-7 relative h-5 bg-muted/30 rounded">
                             <div
                               className={cn("absolute top-0 h-full rounded", cfg.bg)}
                               style={barStyle}
-                              title={`${p.label}: ${p.start_date || "?"} → ${p.end_date || "?"} (${p.pct_complete}%)`}
+                              title={`${p.label}: ${p.start_date || "?"} → ${p.end_date || "?"} (${p.pct_complete}%)${predLabel ? ` | After: ${predLabel}` : ""}`}
                             >
                               {p.pct_complete > 0 && (
                                 <div
@@ -423,6 +454,9 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                       </div>
                     );
                   })}
+                </div>
+                <div className="text-2xs text-muted-foreground pt-1">
+                  ⚓ = anchor phase (manually set start date) · linked phases auto-shift when their predecessor moves
                 </div>
               </>
             )}
@@ -605,23 +639,58 @@ export default function DevelopmentSchedule({ dealId }: Props) {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Start Date</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Duration (days)</label>
                 <input
-                  type="date"
+                  type="number"
+                  min={1}
                   className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={phaseForm.start_date}
-                  onChange={(e) => setPhaseForm({ ...phaseForm, start_date: e.target.value })}
+                  value={phaseForm.duration_days}
+                  onChange={(e) => setPhaseForm({ ...phaseForm, duration_days: Number(e.target.value) })}
                 />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">End Date</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Lag (days after predecessor)</label>
                 <input
-                  type="date"
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={phaseForm.end_date}
-                  onChange={(e) => setPhaseForm({ ...phaseForm, end_date: e.target.value })}
+                  type="number"
+                  min={0}
+                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                  value={phaseForm.lag_days}
+                  disabled={!phaseForm.predecessor_id}
+                  onChange={(e) => setPhaseForm({ ...phaseForm, lag_days: Number(e.target.value) })}
                 />
               </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Predecessor (Finish-to-Start)</label>
+              <select
+                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                value={phaseForm.predecessor_id}
+                onChange={(e) => setPhaseForm({ ...phaseForm, predecessor_id: e.target.value })}
+              >
+                <option value="">— None (anchor phase) —</option>
+                {phases
+                  .filter((p) => !editingPhase || p.id !== editingPhase.id)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
+                  ))}
+              </select>
+              <p className="text-2xs text-muted-foreground mt-1">
+                {phaseForm.predecessor_id
+                  ? "Start date will be auto-computed from predecessor's end date + lag."
+                  : "Anchor phase — set its start date manually below."}
+              </p>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">
+                Start Date {phaseForm.predecessor_id && <span className="text-muted-foreground/70">(computed)</span>}
+              </label>
+              <input
+                type="date"
+                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                value={phaseForm.start_date}
+                disabled={!!phaseForm.predecessor_id}
+                onChange={(e) => setPhaseForm({ ...phaseForm, start_date: e.target.value })}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
