@@ -390,6 +390,54 @@ export default function DealOverviewPage({
         </div>
       </div>
 
+      {/* ═══ SCORES STRIP ═══ */}
+      {(deal.om_score != null || deal.uw_score != null || deal.final_score != null) && (
+        <div className="grid grid-cols-3 gap-px bg-border rounded-xl overflow-hidden border border-border/60">
+          {[
+            {
+              label: "OM Score",
+              value: deal.om_score,
+              reasoning: null as string | null,
+              href: `/deals/${params.id}/om-analysis`,
+            },
+            {
+              label: "UW Score",
+              value: deal.uw_score,
+              reasoning: deal.uw_score_reasoning,
+              href: `/deals/${params.id}/underwriting`,
+            },
+            {
+              label: "Final Score",
+              value: deal.final_score,
+              reasoning: deal.final_score_reasoning,
+              href: `/deals/${params.id}`,
+            },
+          ].map(({ label, value, reasoning, href }) => {
+            const color =
+              value == null
+                ? "text-muted-foreground/30"
+                : value >= 8
+                ? "text-emerald-400"
+                : value >= 6
+                ? "text-amber-400"
+                : "text-red-400";
+            return (
+              <Link
+                key={label}
+                href={href}
+                className="bg-card p-3 hover:bg-muted/30 transition-colors"
+                title={reasoning || undefined}
+              >
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
+                <p className={`text-lg font-bold tabular-nums tracking-tight ${color}`}>
+                  {value != null ? `${value}/10` : "—"}
+                </p>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+
       {/* ═══ KEY METRICS STRIP ═══ */}
       {highlights ? (
         <div className="grid grid-cols-3 md:grid-cols-6 gap-px bg-border rounded-xl overflow-hidden border border-border/60">

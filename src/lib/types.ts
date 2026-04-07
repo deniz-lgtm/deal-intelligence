@@ -78,6 +78,11 @@ export interface Deal {
   loi_executed: boolean;
   psa_executed: boolean;
   business_plan_id: string | null;
+  om_score: number | null;
+  uw_score: number | null;
+  uw_score_reasoning: string | null;
+  final_score: number | null;
+  final_score_reasoning: string | null;
   created_at: string;
   updated_at: string;
 }

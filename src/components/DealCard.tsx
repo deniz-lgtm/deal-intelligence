@@ -63,7 +63,7 @@ function scoreColor(score: number): string {
 }
 
 interface DealCardProps {
-  deal: Deal & { om_score?: number };
+  deal: Deal;
   documentCount?: number;
   checklistProgress?: { complete: number; total: number };
   onStar?: (id: string, starred: boolean) => void;
