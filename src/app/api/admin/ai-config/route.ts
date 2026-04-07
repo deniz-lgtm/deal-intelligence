@@ -6,7 +6,7 @@ import { clearAiConfigCache } from "@/lib/claude";
 
 const DEFAULT_MODEL = "claude-sonnet-4-5";
 
-export const AVAILABLE_MODELS = [
+const AVAILABLE_MODELS = [
   "claude-opus-4-6",
   "claude-sonnet-4-6",
   "claude-sonnet-4-5",
