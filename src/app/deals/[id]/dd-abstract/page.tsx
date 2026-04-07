@@ -140,11 +140,13 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
           if (lines[i].trim()) summaryLines.push(lines[i].trim());
         }
         if (summaryLines.length > 0) {
-          await fetch(`/api/deals/${params.id}`, {
-            method: "PATCH",
+          await fetch(`/api/deals/${params.id}/notes`, {
+            method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              context_notes_append: `[DD Abstract ${new Date().toLocaleDateString()}] ${summaryLines.join(" ")}`,
+              text: `[DD Abstract ${new Date().toLocaleDateString()}] ${summaryLines.join(" ")}`,
+              category: "context",
+              source: "dd_abstract",
             }),
           });
         }
