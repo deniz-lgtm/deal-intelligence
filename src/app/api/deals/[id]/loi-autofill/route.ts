@@ -8,6 +8,7 @@ import {
 } from "@/lib/db";
 import type { LOIData, UnderwritingData } from "@/lib/types";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { CONCISE_STYLE } from "@/lib/ai-style";
 
 const MODEL = "claude-sonnet-4-5";
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -102,7 +103,9 @@ export async function POST(
       : "";
 
     // ── Use Claude to generate additional_terms ──────────────────────────────
-    const prompt = `You are a commercial real estate acquisitions attorney drafting LOI terms.
+    const prompt = `${CONCISE_STYLE}
+
+You are a commercial real estate acquisitions attorney drafting LOI terms.
 
 DEAL CONTEXT:
 - Property: ${deal.name}, ${deal.address}, ${deal.city}, ${deal.state} ${deal.zip}

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { taskQueries, milestoneQueries, documentQueries, dealQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import Anthropic from "@anthropic-ai/sdk";
+import { CONCISE_STYLE } from "@/lib/ai-style";
 
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -57,7 +58,9 @@ export async function POST(
       messages: [
         {
           role: "user",
-          content: `You are a commercial real estate due diligence expert. Based on the uploaded documents for this deal, suggest additional tasks and milestones that the team should track.
+          content: `${CONCISE_STYLE}
+
+You are a commercial real estate due diligence expert. Based on the uploaded documents for this deal, suggest additional tasks and milestones that the team should track.
 
 Deal: ${deal.name}
 Property type: ${deal.property_type}

@@ -2277,7 +2277,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </div>
               </div>
               {d.acq_loan_narrative && (
-                <p className="mt-3 text-xs text-muted-foreground leading-relaxed bg-muted/30 rounded-lg px-3 py-2 border border-border/40">{d.acq_loan_narrative}</p>
+                <div className="mt-3 bg-muted/30 rounded-lg px-3 py-2 border border-border/40">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Sparkles className="h-3 w-3 text-amber-400" />
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">Guidance</span>
+                    <span className="text-[10px] text-muted-foreground/60">— AI suggestion</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">{d.acq_loan_narrative}</p>
+                </div>
               )}
             </>)}
           </div>
@@ -2301,7 +2308,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <div className="p-3 bg-muted/50 rounded-lg"><p className="text-xs text-muted-foreground mb-1">New Annual Debt</p><p className="text-sm font-semibold">{fc(m.refiDebt)}</p></div>
                 </div>
                 {d.refi_loan_narrative && (
-                  <p className="mt-3 text-xs text-muted-foreground leading-relaxed bg-muted/30 rounded-lg px-3 py-2 border border-border/40">{d.refi_loan_narrative}</p>
+                  <div className="mt-3 bg-muted/30 rounded-lg px-3 py-2 border border-border/40">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Sparkles className="h-3 w-3 text-amber-400" />
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">Guidance</span>
+                      <span className="text-[10px] text-muted-foreground/60">— AI suggestion</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">{d.refi_loan_narrative}</p>
+                  </div>
                 )}
               </>)}
             </div>
@@ -2672,8 +2686,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <div className="bg-card rounded-xl border shadow-lifted-md w-full max-w-xl mx-4 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-4 border-b">
               <div>
-                <h3 className="font-semibold text-sm">AI CapEx Estimates</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Select items to add to your underwriting</p>
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">Guidance</span>
+                </div>
+                <h3 className="font-semibold text-sm mt-0.5">AI CapEx Estimates</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">AI suggestions — review and select items to add to your underwriting</p>
               </div>
               <button onClick={() => setCapexPreview(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
             </div>

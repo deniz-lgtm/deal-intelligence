@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { DocumentCategory, DOCUMENT_CATEGORIES } from "./types";
+import { CONCISE_STYLE } from "./ai-style";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -730,7 +731,9 @@ export async function generateDDAbstract(
     ? `\nDEAL MEMORY (analyst notes & intel):\n${contextNotes}\n`
     : "";
 
-  const prompt = `You are a senior real estate investment analyst conducting critical due diligence review. Your tone should be SKEPTICAL, ANALYTICAL, and CRITICAL — identify weaknesses, flag assumptions that seem aggressive, question gaps in data, and highlight risks prominently. This memo is for internal decision-makers who need an honest, unvarnished assessment — not a sales pitch. Err on the side of caution and be direct about concerns.
+  const prompt = `${CONCISE_STYLE}
+
+You are a senior real estate investment analyst conducting critical due diligence review. Your tone should be SKEPTICAL, ANALYTICAL, and CRITICAL — identify weaknesses, flag assumptions that seem aggressive, question gaps in data, and highlight risks prominently. This memo is for internal decision-makers who need an honest, unvarnished assessment — not a sales pitch. Err on the side of caution and be direct about concerns. Within each section use bullet points (markdown "-") instead of paragraphs.
 
 Write a comprehensive due diligence abstract memo that synthesizes ALL available deal information — the OM analysis, the underwriting model, document reviews, checklist progress, and analyst notes.
 ${memorySection}
@@ -861,7 +864,9 @@ export async function analyzeZoning(
 
   const fullAddress = [address, city, state].filter(Boolean).join(", ");
 
-  const prompt = `You are a real estate zoning and entitlements expert. Analyze the zoning for this property.
+  const prompt = `${CONCISE_STYLE}
+
+You are a real estate zoning and entitlements expert. Analyze the zoning for this property.
 
 PROPERTY:
 - Deal: ${dealName}
