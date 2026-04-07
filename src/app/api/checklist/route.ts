@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checklistQueries } from "@/lib/db";
+import { v4 as uuidv4 } from "uuid";
+import { checklistQueries, dealNoteQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
@@ -52,7 +53,40 @@ export async function PATCH(req: NextRequest) {
     if (accessError) return accessError;
 
     await checklistQueries.updateStatus(id, status, notes || null);
-    return NextResponse.json({ data: { success: true } });
+
+    // If this status change pushes the deal's checklist to 100% complete,
+    // drop a one-time note so it shows up in Chat context, the Deal Log,
+    // and any downstream feature that reads deal memory.
+    let completionLogged = false;
+    if (status === "complete") {
+      try {
+        const items = await checklistQueries.getByDealId(item.deal_id) as Array<{
+          status: string;
+        }>;
+        const total = items.length;
+        const done = items.filter((i) => i.status === "complete").length;
+        if (total > 0 && done === total) {
+          const existingNotes = await dealNoteQueries.getByDealId(item.deal_id) as Array<{
+            source: string | null;
+          }>;
+          const alreadyLogged = existingNotes.some((n) => n.source === "checklist_complete");
+          if (!alreadyLogged) {
+            await dealNoteQueries.create({
+              id: uuidv4(),
+              deal_id: item.deal_id,
+              text: `[Checklist Complete ${new Date().toLocaleDateString()}] All ${total} diligence items marked complete.`,
+              category: "context",
+              source: "checklist_complete",
+            });
+            completionLogged = true;
+          }
+        }
+      } catch (err) {
+        console.error("Failed to log checklist completion:", err);
+      }
+    }
+
+    return NextResponse.json({ data: { success: true, completion_logged: completionLogged } });
   } catch (error) {
     console.error("PATCH /api/checklist error:", error);
     return NextResponse.json({ error: "Failed to update checklist item" }, { status: 500 });
