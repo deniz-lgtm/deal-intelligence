@@ -64,6 +64,26 @@ const PRIORITY_ICONS: Record<TaskPriority, string> = {
   critical: "bg-red-500/20",
 };
 
+// Postgres DATE columns come back from the server as full ISO timestamps
+// (e.g. "2026-04-15T00:00:00.000Z") because node-pg parses them into Date
+// objects which then JSON-serialize. The <input type="date"> element only
+// accepts "YYYY-MM-DD", and appending "T00:00:00" to the full ISO string
+// produces "Invalid Date". Normalize to the date-only prefix on the way in.
+const toDateOnly = (s: string | null | undefined): string => {
+  if (!s) return "";
+  return s.slice(0, 10);
+};
+
+const normalizeTask = <T extends { due_date?: string | null }>(t: T): T => ({
+  ...t,
+  due_date: t.due_date ? toDateOnly(t.due_date) : null,
+});
+
+const normalizeMilestone = <T extends { target_date?: string | null }>(m: T): T => ({
+  ...m,
+  target_date: m.target_date ? toDateOnly(m.target_date) : null,
+});
+
 export default function ProjectManagement({ dealId }: ProjectManagementProps) {
   const [tasks, setTasks] = useState<DealTask[]>([]);
   const [milestones, setMilestones] = useState<DealMilestone[]>([]);
@@ -111,8 +131,8 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
         const seedRes = await fetch(`/api/deals/${dealId}/tasks/seed`, { method: "POST" });
         const seedJson = await seedRes.json();
         if (seedJson.data) {
-          setTasks(seedJson.data.tasks || []);
-          setMilestones(seedJson.data.milestones || []);
+          setTasks((seedJson.data.tasks || []).map(normalizeTask));
+          setMilestones((seedJson.data.milestones || []).map(normalizeMilestone));
           return;
         }
       }
@@ -125,8 +145,8 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
         tasksRes.json(),
         milestonesRes.json(),
       ]);
-      setTasks(tasksJson.data || []);
-      setMilestones(milestonesJson.data || []);
+      setTasks((tasksJson.data || []).map(normalizeTask));
+      setMilestones((milestonesJson.data || []).map(normalizeMilestone));
     } catch (error) {
       console.error("Failed to load project data:", error);
     } finally {
