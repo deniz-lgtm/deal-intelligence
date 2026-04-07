@@ -23,8 +23,18 @@ export async function GET(
     if (errorResponse) return errorResponse;
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
-    // Aggregate from multiple tables in parallel
-    const [omRows, chatRows, uwRows, docRows] = await Promise.all([
+    // Aggregate from multiple tables in parallel. Queries that target
+    // optional tables are wrapped so missing tables don't fail the whole
+    // endpoint.
+    const safeQuery = async <T = Record<string, unknown>>(sql: string, values: unknown[]): Promise<{ rows: T[] }> => {
+      try {
+        return await pool.query(sql, values);
+      } catch {
+        return { rows: [] };
+      }
+    };
+
+    const [omRows, chatRows, uwRows, docRows, loiRows, photoRows, checklistRows, ddAbstractRows, ipRows] = await Promise.all([
       pool.query(
         `SELECT id, status, model_used, tokens_used, cost_estimate, created_at
          FROM om_analyses WHERE deal_id = $1 ORDER BY created_at DESC`,
@@ -41,6 +51,30 @@ export async function GET(
       ),
       pool.query(
         `SELECT id, original_name, uploaded_at FROM documents WHERE deal_id = $1 ORDER BY uploaded_at DESC`,
+        [dealId]
+      ),
+      safeQuery<{ executed: boolean; updated_at: string }>(
+        `SELECT executed, updated_at FROM loi WHERE deal_id = $1`,
+        [dealId]
+      ),
+      safeQuery<{ original_name: string; uploaded_at: string }>(
+        `SELECT original_name, uploaded_at FROM photos WHERE deal_id = $1 ORDER BY uploaded_at DESC LIMIT 50`,
+        [dealId]
+      ),
+      safeQuery<{ item: string; status: string; updated_at: string }>(
+        `SELECT item, status, updated_at FROM checklist_items
+         WHERE deal_id = $1 AND status IN ('complete', 'issue')
+         ORDER BY updated_at DESC LIMIT 25`,
+        [dealId]
+      ),
+      safeQuery<{ original_name: string; uploaded_at: string }>(
+        `SELECT original_name, uploaded_at FROM documents
+         WHERE deal_id = $1 AND category = 'dd_abstract'
+         ORDER BY uploaded_at DESC LIMIT 10`,
+        [dealId]
+      ),
+      safeQuery<{ data: Record<string, unknown> }>(
+        `SELECT data FROM underwriting WHERE deal_id = $1`,
         [dealId]
       ),
     ]);
@@ -79,13 +113,64 @@ export async function GET(
       });
     }
 
-    // Document uploads
+    // Document uploads (excluding generated DD Abstracts which we surface
+    // separately below)
     for (const row of docRows.rows) {
       events.push({
         type: "document",
         description: `Document uploaded: ${row.original_name}`,
         timestamp: row.uploaded_at,
       });
+    }
+
+    // LOI saves & execution
+    for (const row of loiRows.rows) {
+      events.push({
+        type: "loi",
+        description: row.executed ? "LOI executed" : "LOI updated",
+        timestamp: row.updated_at,
+      });
+    }
+
+    // Photo uploads
+    for (const row of photoRows.rows) {
+      events.push({
+        type: "photo",
+        description: `Photo uploaded: ${row.original_name}`,
+        timestamp: row.uploaded_at,
+      });
+    }
+
+    // Checklist completions / issues
+    for (const row of checklistRows.rows) {
+      events.push({
+        type: "checklist",
+        description: `Checklist ${row.status === "complete" ? "completed" : "flagged"}: ${row.item}`,
+        timestamp: row.updated_at,
+      });
+    }
+
+    // DD Abstract generations (saved as documents)
+    for (const row of ddAbstractRows.rows) {
+      events.push({
+        type: "dd_abstract",
+        description: `DD Abstract generated: ${row.original_name}`,
+        timestamp: row.uploaded_at,
+      });
+    }
+
+    // Investment Package generation (timestamp lives in underwriting JSONB)
+    for (const row of ipRows.rows) {
+      const data = row.data as Record<string, unknown> | null;
+      const meta = data?.investment_package_meta as Record<string, unknown> | undefined;
+      const generatedAt = meta?.generated_at as string | undefined;
+      if (generatedAt) {
+        events.push({
+          type: "investment_package",
+          description: "Investment Package generated",
+          timestamp: generatedAt,
+        });
+      }
     }
 
     // Sort by timestamp descending
