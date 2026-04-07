@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, documentQueries, checklistQueries } from "@/lib/db";
+import { v4 as uuidv4 } from "uuid";
+import { dealQueries, documentQueries, checklistQueries, dealNoteQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { analyzeZoning } from "@/lib/claude";
 
@@ -79,6 +80,34 @@ export async function POST(
         const update = zoningUpdates[existing.item];
         await checklistQueries.updateStatus(existing.id, update.status, update.notes);
       }
+    }
+
+    // Post a compact summary of zoning findings to deal notes so Chat and
+    // Investment Package generation can see the zoning constraints without
+    // digging into the underwriting JSONB.
+    try {
+      const s = result.structured;
+      const parts: string[] = [];
+      if (s.zoning_designation && s.zoning_designation !== "Unknown") {
+        parts.push(`Zoning ${s.zoning_designation}`);
+      }
+      if (s.far != null) parts.push(`FAR ${s.far}`);
+      if (s.max_height_stories != null) parts.push(`${s.max_height_stories} stories max`);
+      if (s.overlays && s.overlays.length > 0) parts.push(`Overlays: ${s.overlays.join(", ")}`);
+      if (s.permitted_uses && s.permitted_uses.length > 0) {
+        parts.push(`Permitted: ${s.permitted_uses.slice(0, 5).join(", ")}`);
+      }
+      if (parts.length > 0) {
+        await dealNoteQueries.create({
+          id: uuidv4(),
+          deal_id: params.id,
+          text: `[Zoning Report ${new Date().toLocaleDateString()}] ${parts.join(" · ")}`,
+          category: "context",
+          source: "zoning_report",
+        });
+      }
+    } catch (noteErr) {
+      console.error("Failed to log zoning summary note:", noteErr);
     }
 
     return NextResponse.json({ data: result });
