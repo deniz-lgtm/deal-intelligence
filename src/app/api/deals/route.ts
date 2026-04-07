@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { dealQueries, checklistQueries } from "@/lib/db";
+import { dealQueries, checklistQueries, checklistTemplateQueries } from "@/lib/db";
 import { DILIGENCE_CHECKLIST_TEMPLATE } from "@/lib/types";
 import { requireAuth, requirePermission, syncCurrentUser } from "@/lib/auth";
 
@@ -49,19 +49,32 @@ export async function POST(req: NextRequest) {
       owner_id: userId,
     });
 
-    // Seed the diligence checklist from template
-    const checklistItems = DILIGENCE_CHECKLIST_TEMPLATE.flatMap((section) =>
-      section.items.map((item) => ({
-        id: uuidv4(),
-        deal_id: id,
-        category: section.category,
-        item,
-        status: "pending",
-        notes: null,
-        ai_filled: false,
-        source_document_ids: null,
-      }))
-    );
+    // Seed the diligence checklist from the admin-editable template
+    // (falls back to the hardcoded one if the table is empty)
+    let templateItems: Array<{ category: string; item: string }> = [];
+    try {
+      const dbItems = await checklistTemplateQueries.listAll();
+      if (dbItems.length > 0) {
+        templateItems = dbItems.map((r) => ({ category: r.category, item: r.item }));
+      }
+    } catch {
+      /* fall through */
+    }
+    if (templateItems.length === 0) {
+      templateItems = DILIGENCE_CHECKLIST_TEMPLATE.flatMap((section) =>
+        section.items.map((item) => ({ category: section.category, item }))
+      );
+    }
+    const checklistItems = templateItems.map(({ category, item }) => ({
+      id: uuidv4(),
+      deal_id: id,
+      category,
+      item,
+      status: "pending",
+      notes: null,
+      ai_filled: false,
+      source_document_ids: null,
+    }));
     await checklistQueries.bulkUpsert(checklistItems);
 
     return NextResponse.json({ data: deal }, { status: 201 });

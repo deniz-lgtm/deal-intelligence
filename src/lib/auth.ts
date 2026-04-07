@@ -17,6 +17,22 @@ export async function requireAuth(): Promise<
       errorResponse: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
     };
   }
+  // Reject disabled users
+  try {
+    const existing = await userQueries.getById(userId);
+    if (existing?.disabled_at) {
+      return {
+        userId: null,
+        errorResponse: NextResponse.json(
+          { error: "Account disabled. Contact an administrator." },
+          { status: 403 }
+        ),
+      };
+    }
+  } catch {
+    // If the user row doesn't exist yet, let it through — syncCurrentUser
+    // will create it shortly.
+  }
   return { userId, errorResponse: null };
 }
 

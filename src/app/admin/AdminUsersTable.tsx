@@ -18,7 +18,7 @@ export default function AdminUsersTable({
   const [users, setUsers] = useState<UserRow[]>(initialUsers);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  async function patchUser(id: string, body: { role?: string; permissions?: string[] }) {
+  async function patchUser(id: string, body: { role?: string; permissions?: string[]; disabled?: boolean }) {
     setPendingId(id);
     try {
       const res = await fetch(`/api/admin/users/${id}`, {
@@ -51,6 +51,7 @@ export default function AdminUsersTable({
         <thead className="bg-neutral-900 text-neutral-400 text-xs uppercase tracking-wide">
           <tr>
             <th className="text-left px-4 py-3">User</th>
+            <th className="text-left px-4 py-3">Status</th>
             <th className="text-left px-4 py-3">Role</th>
             <th className="text-left px-4 py-3">Permissions</th>
           </tr>
@@ -69,6 +70,23 @@ export default function AdminUsersTable({
                     )}
                   </div>
                   <div className="text-xs text-neutral-500">{user.email}</div>
+                </td>
+                <td className="px-4 py-3 align-top">
+                  {isSelf ? (
+                    <span className="text-xs text-neutral-500">—</span>
+                  ) : (
+                    <button
+                      disabled={isPending}
+                      onClick={() => patchUser(user.id, { disabled: !user.disabled_at })}
+                      className={`text-xs px-2 py-1 rounded border transition ${
+                        user.disabled_at
+                          ? "border-rose-500/60 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
+                          : "border-emerald-500/60 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                      } disabled:opacity-50`}
+                    >
+                      {user.disabled_at ? "Disabled" : "Active"}
+                    </button>
+                  )}
                 </td>
                 <td className="px-4 py-3 align-top">
                   <select
@@ -111,7 +129,7 @@ export default function AdminUsersTable({
           })}
           {users.length === 0 && (
             <tr>
-              <td colSpan={3} className="px-4 py-8 text-center text-neutral-500">
+              <td colSpan={4} className="px-4 py-8 text-center text-neutral-500">
                 No users yet.
               </td>
             </tr>
