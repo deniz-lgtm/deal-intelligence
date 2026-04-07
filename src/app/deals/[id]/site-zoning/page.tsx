@@ -175,11 +175,23 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       const acres = d?.land_acres || uw?.site_info?.land_acres || 0;
       const sf = acres * 43560;
 
+      // Derive a default "current improvements" description from deal/OM data
+      // if Site & Zoning hasn't been filled in yet. Pulls from deal fields that
+      // OM Analysis writes (square_footage, units, year_built).
+      const existingImprovements = uw?.site_info?.current_improvements?.trim();
+      const improvementParts: string[] = [];
+      if (d?.units) improvementParts.push(`${d.units} units`);
+      if (d?.square_footage) improvementParts.push(`${Number(d.square_footage).toLocaleString()} SF`);
+      if (d?.year_built) improvementParts.push(`built ${d.year_built}`);
+      const derivedImprovements =
+        existingImprovements || (improvementParts.length ? improvementParts.join(", ") : "");
+
       setSiteInfo({
         ...DEFAULT_SITE_INFO,
         ...uw?.site_info,
         land_acres: acres,
         land_sf: uw?.site_info?.land_sf || sf,
+        current_improvements: derivedImprovements,
       });
 
       setZoning({
