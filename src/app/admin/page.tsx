@@ -4,6 +4,11 @@ import { auth } from "@clerk/nextjs/server";
 import { userQueries, ALL_PERMISSIONS } from "@/lib/db";
 import { syncCurrentUser } from "@/lib/auth";
 import AdminUsersTable from "./AdminUsersTable";
+import InvitationsPanel from "./InvitationsPanel";
+import AiConfigPanel from "./AiConfigPanel";
+import PipelinePanel from "./PipelinePanel";
+import ChecklistTemplatePanel from "./ChecklistTemplatePanel";
+import AuditLogPanel from "./AuditLogPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -51,11 +56,22 @@ export default async function AdminPage() {
           </Link>
         </div>
 
-        <AdminUsersTable
-          initialUsers={users}
-          allPermissions={ALL_PERMISSIONS as unknown as string[]}
-          currentUserId={userId}
-        />
+        <div className="space-y-10">
+          <section>
+            <h2 className="text-lg font-semibold mb-3">Users</h2>
+            <AdminUsersTable
+              initialUsers={users}
+              allPermissions={ALL_PERMISSIONS as unknown as string[]}
+              currentUserId={userId}
+            />
+          </section>
+
+          <InvitationsPanel />
+          <AiConfigPanel />
+          <PipelinePanel />
+          <ChecklistTemplatePanel />
+          <AuditLogPanel />
+        </div>
       </div>
     </div>
   );

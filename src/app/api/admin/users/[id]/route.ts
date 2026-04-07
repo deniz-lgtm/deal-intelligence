@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { userQueries, ALL_PERMISSIONS } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
+import { recordAudit } from "@/lib/admin-helpers";
 
 export async function PATCH(
   req: NextRequest,
@@ -10,7 +11,7 @@ export async function PATCH(
   if (errorResponse) return errorResponse;
 
   const { id } = await params;
-  let body: { role?: string; permissions?: string[] };
+  let body: { role?: string; permissions?: string[]; disabled?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -27,7 +28,6 @@ export async function PATCH(
       if (body.role !== "user" && body.role !== "admin") {
         return NextResponse.json({ error: "Invalid role" }, { status: 400 });
       }
-      // Prevent the last admin from demoting themselves and locking everyone out
       if (id === adminId && body.role !== "admin") {
         const all = await userQueries.listAll();
         const otherAdmins = all.filter((u) => u.role === "admin" && u.id !== adminId);
@@ -39,6 +39,13 @@ export async function PATCH(
         }
       }
       await userQueries.setRole(id, body.role);
+      await recordAudit({
+        userId: adminId,
+        action: "user.role_change",
+        targetType: "user",
+        targetId: id,
+        metadata: { from: target.role, to: body.role, email: target.email },
+      });
     }
 
     if (body.permissions !== undefined) {
@@ -49,6 +56,30 @@ export async function PATCH(
         typeof p === "string" && (ALL_PERMISSIONS as readonly string[]).includes(p)
       );
       await userQueries.setPermissions(id, valid);
+      await recordAudit({
+        userId: adminId,
+        action: "user.permissions_change",
+        targetType: "user",
+        targetId: id,
+        metadata: { permissions: valid, email: target.email },
+      });
+    }
+
+    if (body.disabled !== undefined) {
+      if (id === adminId && body.disabled) {
+        return NextResponse.json(
+          { error: "You cannot disable your own account" },
+          { status: 400 }
+        );
+      }
+      await userQueries.setDisabled(id, body.disabled);
+      await recordAudit({
+        userId: adminId,
+        action: body.disabled ? "user.disabled" : "user.enabled",
+        targetType: "user",
+        targetId: id,
+        metadata: { email: target.email },
+      });
     }
 
     const updated = await userQueries.getById(id);

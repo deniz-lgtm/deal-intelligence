@@ -409,6 +409,53 @@ export async function initSchema(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_tasks_deal_id ON deal_tasks(deal_id)`,
+    // Admin: generic key/value app settings
+    `CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_by TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    // Admin: editable AI system prompts
+    `CREATE TABLE IF NOT EXISTS ai_prompts (
+      key TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      description TEXT,
+      default_prompt TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      updated_by TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    // Admin: editable deal pipeline stages
+    `CREATE TABLE IF NOT EXISTS pipeline_stages (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      color TEXT,
+      is_terminal BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    // Admin: editable diligence checklist template
+    `CREATE TABLE IF NOT EXISTS checklist_template_items (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      item TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    // Admin: audit log of admin actions
+    `CREATE TABLE IF NOT EXISTS audit_log (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      user_email TEXT,
+      action TEXT NOT NULL,
+      target_type TEXT,
+      target_id TEXT,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id)`,
   ];
 
   for (const query of queries) {
@@ -434,6 +481,7 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ",
   ];
   for (const alter of criticalAlters) {
     try {
@@ -1450,6 +1498,7 @@ export interface UserRow {
   name: string | null;
   role: "user" | "admin";
   permissions: string[];
+  disabled_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1504,6 +1553,14 @@ export const userQueries = {
     await pool.query(
       "UPDATE users SET permissions = $2::jsonb, updated_at = NOW() WHERE id = $1",
       [id, JSON.stringify(permissions)]
+    );
+  },
+
+  setDisabled: async (id: string, disabled: boolean): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      `UPDATE users SET disabled_at = ${disabled ? "NOW()" : "NULL"}, updated_at = NOW() WHERE id = $1`,
+      [id]
     );
   },
 
@@ -1693,5 +1750,239 @@ export const taskQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_tasks WHERE id = $1", [id]);
+  },
+};
+
+// ─── Admin: App settings (generic key/value) ──────────────────────────────────
+
+export const settingsQueries = {
+  get: async <T = unknown>(key: string): Promise<T | null> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT value FROM app_settings WHERE key = $1", [key]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0].value as T;
+  },
+
+  set: async (key: string, value: unknown, updatedBy: string | null): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_by, updated_at)
+       VALUES ($1, $2::jsonb, $3, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_by = $3, updated_at = NOW()`,
+      [key, JSON.stringify(value), updatedBy]
+    );
+  },
+
+  getAll: async (): Promise<Array<{ key: string; value: unknown; updated_at: string; updated_by: string | null }>> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT key, value, updated_at, updated_by FROM app_settings ORDER BY key");
+    return res.rows;
+  },
+};
+
+// ─── Admin: AI prompts ────────────────────────────────────────────────────────
+
+export interface AiPromptRow {
+  key: string;
+  label: string;
+  description: string | null;
+  default_prompt: string;
+  prompt: string;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+export const aiPromptQueries = {
+  listAll: async (): Promise<AiPromptRow[]> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM ai_prompts ORDER BY key");
+    return res.rows;
+  },
+
+  get: async (key: string): Promise<AiPromptRow | null> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM ai_prompts WHERE key = $1", [key]);
+    return res.rows[0] ?? null;
+  },
+
+  upsertDefault: async (row: {
+    key: string;
+    label: string;
+    description?: string;
+    default_prompt: string;
+  }): Promise<void> => {
+    const pool = getPool();
+    // Only insert if missing; never overwrite the editable prompt
+    await pool.query(
+      `INSERT INTO ai_prompts (key, label, description, default_prompt, prompt, updated_at)
+       VALUES ($1, $2, $3, $4, $4, NOW())
+       ON CONFLICT (key) DO UPDATE SET
+         label = EXCLUDED.label,
+         description = EXCLUDED.description,
+         default_prompt = EXCLUDED.default_prompt`,
+      [row.key, row.label, row.description ?? null, row.default_prompt]
+    );
+  },
+
+  setPrompt: async (key: string, prompt: string, updatedBy: string | null): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      "UPDATE ai_prompts SET prompt = $2, updated_by = $3, updated_at = NOW() WHERE key = $1",
+      [key, prompt, updatedBy]
+    );
+  },
+
+  resetToDefault: async (key: string, updatedBy: string | null): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      "UPDATE ai_prompts SET prompt = default_prompt, updated_by = $2, updated_at = NOW() WHERE key = $1",
+      [key, updatedBy]
+    );
+  },
+};
+
+// ─── Admin: Pipeline stages ───────────────────────────────────────────────────
+
+export interface PipelineStageRow {
+  id: string;
+  label: string;
+  sort_order: number;
+  color: string | null;
+  is_terminal: boolean;
+  created_at: string;
+}
+
+export const pipelineStageQueries = {
+  listAll: async (): Promise<PipelineStageRow[]> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM pipeline_stages ORDER BY sort_order, label");
+    return res.rows;
+  },
+
+  count: async (): Promise<number> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT COUNT(*)::int AS c FROM pipeline_stages");
+    return res.rows[0].c;
+  },
+
+  upsert: async (stage: PipelineStageRow): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO pipeline_stages (id, label, sort_order, color, is_terminal)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO UPDATE SET
+         label = EXCLUDED.label,
+         sort_order = EXCLUDED.sort_order,
+         color = EXCLUDED.color,
+         is_terminal = EXCLUDED.is_terminal`,
+      [stage.id, stage.label, stage.sort_order, stage.color, stage.is_terminal]
+    );
+  },
+
+  delete: async (id: string): Promise<void> => {
+    const pool = getPool();
+    await pool.query("DELETE FROM pipeline_stages WHERE id = $1", [id]);
+  },
+};
+
+// ─── Admin: Checklist template ────────────────────────────────────────────────
+
+export interface ChecklistTemplateItemRow {
+  id: string;
+  category: string;
+  item: string;
+  sort_order: number;
+  created_at: string;
+}
+
+export const checklistTemplateQueries = {
+  listAll: async (): Promise<ChecklistTemplateItemRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM checklist_template_items ORDER BY category, sort_order, item"
+    );
+    return res.rows;
+  },
+
+  count: async (): Promise<number> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT COUNT(*)::int AS c FROM checklist_template_items");
+    return res.rows[0].c;
+  },
+
+  create: async (row: Omit<ChecklistTemplateItemRow, "created_at">): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO checklist_template_items (id, category, item, sort_order)
+       VALUES ($1, $2, $3, $4)`,
+      [row.id, row.category, row.item, row.sort_order]
+    );
+  },
+
+  update: async (id: string, patch: { category?: string; item?: string; sort_order?: number }): Promise<void> => {
+    const pool = getPool();
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    let i = 1;
+    if (patch.category !== undefined) { sets.push(`category = $${i++}`); vals.push(patch.category); }
+    if (patch.item !== undefined) { sets.push(`item = $${i++}`); vals.push(patch.item); }
+    if (patch.sort_order !== undefined) { sets.push(`sort_order = $${i++}`); vals.push(patch.sort_order); }
+    if (sets.length === 0) return;
+    vals.push(id);
+    await pool.query(`UPDATE checklist_template_items SET ${sets.join(", ")} WHERE id = $${i}`, vals);
+  },
+
+  delete: async (id: string): Promise<void> => {
+    const pool = getPool();
+    await pool.query("DELETE FROM checklist_template_items WHERE id = $1", [id]);
+  },
+};
+
+// ─── Admin: Audit log ─────────────────────────────────────────────────────────
+
+export interface AuditLogRow {
+  id: string;
+  user_id: string | null;
+  user_email: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export const auditLogQueries = {
+  record: async (entry: {
+    id: string;
+    user_id: string | null;
+    user_email: string | null;
+    action: string;
+    target_type?: string | null;
+    target_id?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO audit_log (id, user_id, user_email, action, target_type, target_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [
+        entry.id,
+        entry.user_id,
+        entry.user_email,
+        entry.action,
+        entry.target_type ?? null,
+        entry.target_id ?? null,
+        entry.metadata ? JSON.stringify(entry.metadata) : null,
+      ]
+    );
+  },
+
+  list: async (limit = 200): Promise<AuditLogRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT $1",
+      [limit]
+    );
+    return res.rows;
   },
 };

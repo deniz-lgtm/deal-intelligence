@@ -1,8 +1,52 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { DocumentCategory, DOCUMENT_CATEGORIES } from "./types";
 import { CONCISE_STYLE } from "./ai-style";
+import { getSetting } from "./admin-helpers";
+import { aiPromptQueries } from "./db";
 
-const MODEL = "claude-sonnet-4-5";
+const DEFAULT_MODEL = "claude-sonnet-4-5";
+
+/**
+ * Returns the Claude model the admin has configured (or the default).
+ * Cached briefly to avoid hammering the DB.
+ */
+let _modelCache: { value: string; expires: number } | null = null;
+export async function getActiveModel(): Promise<string> {
+  if (_modelCache && _modelCache.expires > Date.now()) return _modelCache.value;
+  const value = await getSetting<string>("ai.model", DEFAULT_MODEL);
+  _modelCache = { value, expires: Date.now() + 30_000 };
+  return value;
+}
+
+/**
+ * Returns the admin-edited system prompt for the given key, falling back to
+ * the provided default. Seeds the DB row with the default on first read.
+ */
+const _promptCache: Record<string, { value: string; expires: number }> = {};
+export async function getPrompt(
+  key: string,
+  label: string,
+  defaultPrompt: string,
+  description?: string
+): Promise<string> {
+  const cached = _promptCache[key];
+  if (cached && cached.expires > Date.now()) return cached.value;
+  try {
+    await aiPromptQueries.upsertDefault({ key, label, default_prompt: defaultPrompt, description });
+    const row = await aiPromptQueries.get(key);
+    const value = row?.prompt ?? defaultPrompt;
+    _promptCache[key] = { value, expires: Date.now() + 30_000 };
+    return value;
+  } catch {
+    return defaultPrompt;
+  }
+}
+
+/** Bust caches after admin edits. */
+export function clearAiConfigCache(): void {
+  _modelCache = null;
+  for (const k of Object.keys(_promptCache)) delete _promptCache[k];
+}
 
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -114,7 +158,7 @@ Respond with valid JSON only (no markdown):
 }`;
 
   const response = await getClient().messages.create({
-    model: MODEL,
+    model: await getActiveModel(),
     max_tokens: 500,
     messages: [{ role: "user", content: prompt }],
   });
@@ -200,7 +244,7 @@ export async function extractRentRollSummary(
     content.push({ type: "text", text: RENT_ROLL_PROMPT });
 
     const response = await getClient().messages.create({
-      model: MODEL,
+      model: await getActiveModel(),
       max_tokens: 512,
       messages: [{ role: "user", content }],
     });
@@ -258,7 +302,7 @@ Answer questions accurately based on the documents. If information isn't in the 
   ];
 
   const response = await getClient().messages.create({
-    model: MODEL,
+    model: await getActiveModel(),
     max_tokens: 2048,
     system: systemPrompt,
     messages,
@@ -381,12 +425,15 @@ export async function chatWithDealIntelligence(
     ? `## Deal Memory (saved context)\n${deal.context_notes}`
     : "## Deal Memory\nNo context saved yet.";
 
-  const systemPrompt = `You are a deal intelligence assistant for "${deal.name}".
+  const promptTemplate = await getPrompt(
+    "deal_intelligence_chat",
+    "Deal Intelligence Chat",
+    `You are a deal intelligence assistant for "{{deal_name}}".
 
-${memorySection}
+{{memory_section}}
 
 ## Uploaded Documents
-${docContext || "No documents uploaded yet."}
+{{doc_context}}
 
 ## Your capabilities
 1. Answer questions about the deal based on documents and saved memory
@@ -395,7 +442,14 @@ ${docContext || "No documents uploaded yet."}
 
 When users share new information about the deal, always use save_context to preserve it.
 When users provide structured data (price, SF, status changes), use update_deal_fields.
-Always reply with a helpful text response in addition to any tool use.`;
+Always reply with a helpful text response in addition to any tool use.`,
+    "System prompt for the per-deal chat assistant. Supports {{deal_name}}, {{memory_section}}, {{doc_context}} placeholders."
+  );
+
+  const systemPrompt = promptTemplate
+    .replace(/\{\{deal_name\}\}/g, deal.name)
+    .replace(/\{\{memory_section\}\}/g, memorySection)
+    .replace(/\{\{doc_context\}\}/g, docContext || "No documents uploaded yet.");
 
   const messages: Anthropic.MessageParam[] = [
     ...history.slice(-10).map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
@@ -403,7 +457,7 @@ Always reply with a helpful text response in addition to any tool use.`;
   ];
 
   const response = await getClient().messages.create({
-    model: MODEL,
+    model: await getActiveModel(),
     max_tokens: 2048,
     system: systemPrompt,
     tools: DEAL_CHAT_TOOLS,
@@ -574,7 +628,7 @@ Respond with valid JSON array only (no markdown, no code fences):
 ]`;
 
   const response = await getClient().messages.create({
-    model: MODEL,
+    model: await getActiveModel(),
     max_tokens: 8192,
     messages: [{ role: "user", content: prompt }],
   });
@@ -636,7 +690,7 @@ Extract only values you are confident about from the documents. Return valid JSO
 }`;
 
   const response = await getClient().messages.create({
-    model: MODEL,
+    model: await getActiveModel(),
     max_tokens: 500,
     messages: [{ role: "user", content: prompt }],
   });
@@ -755,7 +809,7 @@ IMPORTANT: Use the actual underwriting data provided. All rates (vacancy, cap ra
 Be factual, concise, and investment-focused. If information is missing, note it as outstanding.`;
 
   const response = await getClient().messages.create({
-    model: MODEL,
+    model: await getActiveModel(),
     max_tokens: 5000,
     messages: [{ role: "user", content: prompt }],
   });
@@ -801,7 +855,7 @@ Answer questions accurately based on the documents. If information isn't availab
   let fullText = "";
 
   const stream = getClient().messages.stream({
-    model: MODEL,
+    model: await getActiveModel(),
     max_tokens: 2048,
     system: systemPrompt,
     messages,
@@ -908,7 +962,7 @@ Respond with valid JSON only (no markdown):
 Be thorough in the narrative. Include specific code references where possible. If you're uncertain about specific values, note that in the narrative and provide your best estimate with caveats.`;
 
   const response = await getClient().messages.create({
-    model: MODEL,
+    model: await getActiveModel(),
     max_tokens: 8192,
     messages: [{ role: "user", content: prompt }],
   });
