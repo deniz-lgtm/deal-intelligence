@@ -300,6 +300,7 @@ export interface Photo {
   file_size: number;
   mime_type: string;
   caption: string | null;
+  is_cover: boolean;
   uploaded_at: string;
 }
 

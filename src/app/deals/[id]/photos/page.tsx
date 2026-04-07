@@ -13,6 +13,7 @@ import {
   Edit2,
   Check,
   Sparkles,
+  Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/utils";
@@ -79,6 +80,25 @@ export default function PhotosPage({ params }: { params: { id: string } }) {
       toast.error("Failed to delete");
     } finally {
       setDeleting(null);
+    }
+  };
+
+  const setCover = async (photoId: string) => {
+    try {
+      const res = await fetch(`/api/deals/${params.id}/photos`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cover_photo_id: photoId }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      setPhotos((prev) =>
+        prev
+          .map((p) => ({ ...p, is_cover: p.id === photoId }))
+          .sort((a, b) => Number(b.is_cover) - Number(a.is_cover))
+      );
+      toast.success("Cover photo updated");
+    } catch {
+      toast.error("Failed to set cover");
     }
   };
 
@@ -271,7 +291,7 @@ export default function PhotosPage({ params }: { params: { id: string } }) {
               className="group relative border rounded-xl overflow-hidden bg-card hover:shadow-md transition-all"
             >
               <div
-                className="aspect-video bg-muted cursor-pointer overflow-hidden"
+                className="aspect-video bg-muted cursor-pointer overflow-hidden relative"
                 onClick={() => setLightbox(photo)}
               >
                 <img
@@ -279,6 +299,12 @@ export default function PhotosPage({ params }: { params: { id: string } }) {
                   alt={photo.caption || photo.original_name}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
+                {photo.is_cover && (
+                  <div className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-400/90 text-black text-[10px] font-semibold">
+                    <Star className="h-2.5 w-2.5 fill-black" />
+                    Cover
+                  </div>
+                )}
               </div>
               <div className="p-2">
                 {editingCaption === photo.id ? (
@@ -304,6 +330,13 @@ export default function PhotosPage({ params }: { params: { id: string } }) {
                       {photo.caption || <span className="opacity-50">Add caption...</span>}
                     </p>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => setCover(photo.id)}
+                        className={photo.is_cover ? "text-amber-400" : "text-muted-foreground hover:text-amber-400"}
+                        title={photo.is_cover ? "Cover photo" : "Set as cover"}
+                      >
+                        <Star className={`h-3 w-3 ${photo.is_cover ? "fill-amber-400" : ""}`} />
+                      </button>
                       <button
                         onClick={() => autoCaptionPhoto(photo.id)}
                         disabled={captioning === photo.id}
