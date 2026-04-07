@@ -285,6 +285,7 @@ export interface Document {
   content_text: string | null;
   ai_summary: string | null;
   ai_tags: string | null; // JSON array string
+  is_key: boolean;
   uploaded_at: string;
 }
 

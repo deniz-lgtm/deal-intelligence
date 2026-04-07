@@ -771,7 +771,7 @@ export const documentQueries = {
   getByDealId: async (dealId: string) => {
     const pool = getPool();
     const res = await pool.query(
-      "SELECT * FROM documents WHERE deal_id = $1 ORDER BY category, uploaded_at DESC",
+      "SELECT * FROM documents WHERE deal_id = $1 ORDER BY is_key DESC, category, uploaded_at DESC",
       [dealId]
     );
     return res.rows;
