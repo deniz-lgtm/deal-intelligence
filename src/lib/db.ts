@@ -82,6 +82,8 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
     // documents table
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
+    // photos table
+    "ALTER TABLE photos ADD COLUMN IF NOT EXISTS is_cover BOOLEAN NOT NULL DEFAULT false",
     // chat_messages table
     "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB",
     // business_plans table
@@ -543,6 +545,7 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE photos ADD COLUMN IF NOT EXISTS is_cover BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",
@@ -834,7 +837,7 @@ export const photoQueries = {
   getByDealId: async (dealId: string) => {
     const pool = getPool();
     const res = await pool.query(
-      "SELECT * FROM photos WHERE deal_id = $1 ORDER BY uploaded_at ASC",
+      "SELECT * FROM photos WHERE deal_id = $1 ORDER BY is_cover DESC, uploaded_at ASC",
       [dealId]
     );
     return res.rows;
@@ -887,6 +890,16 @@ export const photoQueries = {
     const photo = await photoQueries.getById(id);
     await pool.query("DELETE FROM photos WHERE id = $1", [id]);
     return photo;
+  },
+
+  setCover: async (dealId: string, photoId: string) => {
+    const pool = getPool();
+    // Only one photo per deal can be the cover
+    await pool.query(
+      `UPDATE photos SET is_cover = (id = $2) WHERE deal_id = $1`,
+      [dealId, photoId]
+    );
+    return photoQueries.getById(photoId);
   },
 };
 
