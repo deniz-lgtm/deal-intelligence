@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { documentQueries } from "@/lib/db";
-import { isBlobUrl, readFile } from "@/lib/blob-storage";
+import { readFile } from "@/lib/blob-storage";
 import type { Document } from "@/lib/types";
 
 export async function GET(
@@ -13,12 +13,8 @@ export async function GET(
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
 
-    // If file_path is a blob URL, redirect to it (fastest, no proxy needed)
-    if (isBlobUrl(doc.file_path)) {
-      return NextResponse.redirect(doc.file_path);
-    }
-
-    // Local file fallback (dev mode or legacy)
+    // Always stream through our API. R2 buckets are private, so a redirect
+    // to the raw object URL would 403 in the browser.
     const fileBuffer = await readFile(doc.file_path);
     if (!fileBuffer) {
       return NextResponse.json({ error: "File not found on disk" }, { status: 404 });

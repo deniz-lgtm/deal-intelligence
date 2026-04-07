@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { photoQueries } from "@/lib/db";
-import { isBlobUrl, readFile, deleteBlob } from "@/lib/blob-storage";
+import { readFile, deleteBlob } from "@/lib/blob-storage";
 import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
 import type { Photo } from "@/lib/types";
 
@@ -21,12 +21,8 @@ export async function GET(
     const { errorResponse: accessError } = await requireDealAccess(photo.deal_id, userId);
     if (accessError) return accessError;
 
-    // If file_path is a blob URL, redirect to it
-    if (isBlobUrl(photo.file_path)) {
-      return NextResponse.redirect(photo.file_path);
-    }
-
-    // Local file fallback
+    // Always stream through our API. R2 buckets are private, so a redirect
+    // to the raw object URL would 403 in the browser (no auth headers).
     const buffer = await readFile(photo.file_path);
     if (!buffer) {
       return NextResponse.json({ error: "File not found" }, { status: 404 });
