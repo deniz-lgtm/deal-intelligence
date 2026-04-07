@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries, omAnalysisQueries } from "@/lib/db";
+import type { OmAnalysisRow } from "@/lib/db";
 import { generateDDAbstract } from "@/lib/claude";
 import type { Document, ChecklistItem, Deal } from "@/lib/types";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
@@ -19,10 +20,11 @@ export async function POST(
 
     const deal = await dealQueries.getById(params.id);
 
-    const [documents, checklist, uwRow] = await Promise.all([
+    const [documents, checklist, uwRow, omAnalysis] = await Promise.all([
       documentQueries.getByDealId(params.id) as Promise<Document[]>,
       checklistQueries.getByDealId(params.id) as Promise<ChecklistItem[]>,
       underwritingQueries.getByDealId(params.id),
+      omAnalysisQueries.getByDealId(params.id),
     ]);
 
     // Parse raw UW data — it's stored as JSONB, may be string or object
@@ -34,8 +36,13 @@ export async function POST(
     // Fetch deal notes from the new unified table
     const allDealNotes = await dealNoteQueries.getByDealId(params.id);
 
-    // Build a comprehensive underwriting summary from the raw data
-    const uwSummary = buildUWSummary(rawUw, deal, allDealNotes);
+    // Build a comprehensive underwriting summary from the raw data, then
+    // append the latest OM Analysis findings so the abstract reflects what
+    // was extracted from the offering memorandum.
+    const uwSummary = [
+      buildUWSummary(rawUw, deal, allDealNotes),
+      buildOMSummary(omAnalysis),
+    ].filter(Boolean).join("\n\n");
 
     // Build context from memory-included deal notes
     const memoryText = await dealNoteQueries.getMemoryText(params.id);
@@ -66,6 +73,39 @@ export async function POST(
     console.error("POST /api/deals/[id]/dd-abstract error:", error);
     return NextResponse.json({ error: "Failed to generate DD abstract" }, { status: 500 });
   }
+}
+
+/** Format OM Analysis findings as readable text for the AI */
+function buildOMSummary(om: OmAnalysisRow | null): string {
+  if (!om || om.status !== "complete") return "";
+  const lines: string[] = ["OM ANALYSIS FINDINGS:"];
+  const fc = (v: number) => `$${Math.round(v).toLocaleString()}`;
+  const pct = (v: number) => `${v.toFixed(2)}%`;
+
+  if (om.property_name) lines.push(`  Property: ${om.property_name}`);
+  if (om.address) lines.push(`  Address: ${om.address}`);
+  if (om.year_built) lines.push(`  Year Built: ${om.year_built}`);
+  if (om.sf) lines.push(`  Square Footage: ${om.sf.toLocaleString()}`);
+  if (om.unit_count) lines.push(`  Units: ${om.unit_count}`);
+  if (om.asking_price) lines.push(`  Asking Price: ${fc(om.asking_price)}`);
+  if (om.noi) lines.push(`  Reported NOI: ${fc(om.noi)}`);
+  if (om.cap_rate) lines.push(`  Reported Cap Rate: ${pct(om.cap_rate)}`);
+  if (om.vacancy_rate) lines.push(`  Reported Vacancy: ${pct(om.vacancy_rate)}`);
+  if (om.expense_ratio) lines.push(`  Expense Ratio: ${pct(om.expense_ratio)}`);
+  if (om.price_per_sf) lines.push(`  $/SF: ${fc(om.price_per_sf)}`);
+  if (om.price_per_unit) lines.push(`  $/Unit: ${fc(om.price_per_unit)}`);
+  if (om.rent_growth) lines.push(`  Rent Growth Assumption: ${om.rent_growth}`);
+  if (om.exit_cap_rate) lines.push(`  Exit Cap Assumption: ${om.exit_cap_rate}`);
+  if (om.deal_score) lines.push(`  OM Score: ${om.deal_score}/10`);
+  if (om.summary) lines.push(`\n  Summary: ${om.summary}`);
+  if (om.red_flags && om.red_flags.length > 0) {
+    lines.push(`\n  Red Flags:`);
+    for (const rf of om.red_flags) {
+      lines.push(`    [${rf.severity.toUpperCase()}] ${rf.category}: ${rf.description}`);
+    }
+  }
+
+  return lines.length > 1 ? lines.join("\n") : "";
 }
 
 /** Compute key metrics from raw UW data and format as readable text for the AI */
