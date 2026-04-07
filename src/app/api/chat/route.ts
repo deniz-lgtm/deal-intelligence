@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { chatQueries, documentQueries, dealQueries, dealNoteQueries, underwritingQueries, businessPlanQueries } from "@/lib/db";
+import { chatQueries, documentQueries, dealQueries, dealNoteQueries, underwritingQueries, businessPlanQueries, omAnalysisQueries, loiQueries } from "@/lib/db";
 import { chatWithDealIntelligence } from "@/lib/claude";
 import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
 import type { Document } from "@/lib/types";
@@ -33,6 +33,90 @@ export async function POST(req: NextRequest) {
     // Build context_notes from deal_notes table (memory-included categories)
     const memoryText = await dealNoteQueries.getMemoryText(deal_id);
     deal.context_notes = memoryText || null;
+
+    // Enrich context with a compact snapshot of Underwriting, OM Analysis,
+    // LOI, and Investment Package so Chat can answer factual questions
+    // ("what's the cap rate?", "what did the OM flag?", "is there an LOI?")
+    // without the user having to re-paste data.
+    const [uwRow, omAnalysis, loiRow] = await Promise.all([
+      underwritingQueries.getByDealId(deal_id).catch(() => null),
+      omAnalysisQueries.getByDealId(deal_id).catch(() => null),
+      loiQueries.getByDealId(deal_id).catch(() => null),
+    ]);
+
+    const extraContext: string[] = [];
+
+    if (uwRow?.data) {
+      const uw = typeof uwRow.data === "string" ? JSON.parse(uwRow.data) : uwRow.data;
+      const uwLines: string[] = [];
+      const fc = (v: unknown) => {
+        const n = typeof v === "number" ? v : Number(v);
+        return Number.isFinite(n) && n > 0 ? `$${Math.round(n).toLocaleString()}` : null;
+      };
+      const pct = (v: unknown) => {
+        const n = typeof v === "number" ? v : Number(v);
+        return Number.isFinite(n) && n > 0 ? `${n.toFixed(2)}%` : null;
+      };
+      const pushKv = (label: string, formatted: string | null) => {
+        if (formatted) uwLines.push(`  ${label}: ${formatted}`);
+      };
+      pushKv("Purchase Price", fc(uw.purchase_price));
+      pushKv("Vacancy", pct(uw.vacancy_rate));
+      pushKv("Exit Cap", pct(uw.exit_cap_rate));
+      pushKv("Hold Period", uw.hold_period_years ? `${uw.hold_period_years}yr` : null);
+      if (uw.has_financing) {
+        pushKv("Acq LTC", pct(uw.acq_ltc));
+        pushKv("Acq Rate", pct(uw.acq_interest_rate));
+      }
+      const ipMeta = uw.investment_package_meta as { generated_at?: string } | undefined;
+      if (ipMeta?.generated_at) {
+        uwLines.push(`  Investment Package last generated: ${new Date(ipMeta.generated_at).toLocaleDateString()}`);
+      }
+      if (uwLines.length > 0) {
+        extraContext.push(`UNDERWRITING:\n${uwLines.join("\n")}`);
+      }
+    }
+
+    if (omAnalysis && omAnalysis.status === "complete") {
+      const omLines: string[] = [];
+      const fc = (v: number) => `$${Math.round(v).toLocaleString()}`;
+      const pct = (v: number) => `${v.toFixed(2)}%`;
+      if (omAnalysis.asking_price) omLines.push(`  Asking Price: ${fc(omAnalysis.asking_price)}`);
+      if (omAnalysis.noi) omLines.push(`  Reported NOI: ${fc(omAnalysis.noi)}`);
+      if (omAnalysis.cap_rate) omLines.push(`  Reported Cap Rate: ${pct(omAnalysis.cap_rate)}`);
+      if (omAnalysis.vacancy_rate) omLines.push(`  Reported Vacancy: ${pct(omAnalysis.vacancy_rate)}`);
+      if (omAnalysis.deal_score) omLines.push(`  OM Score: ${omAnalysis.deal_score}/10`);
+      if (omAnalysis.summary) omLines.push(`  Summary: ${omAnalysis.summary}`);
+      if (omAnalysis.red_flags && omAnalysis.red_flags.length > 0) {
+        const flags = omAnalysis.red_flags
+          .slice(0, 5)
+          .map((rf) => `[${rf.severity}] ${rf.category}: ${rf.description}`)
+          .join("; ");
+        omLines.push(`  Red Flags: ${flags}`);
+      }
+      if (omLines.length > 0) {
+        extraContext.push(`OM ANALYSIS:\n${omLines.join("\n")}`);
+      }
+    }
+
+    if (loiRow) {
+      const loiData = (loiRow as { data?: unknown }).data;
+      const parsed = typeof loiData === "string" ? JSON.parse(loiData) : (loiData ?? {});
+      const executed = (loiRow as { executed?: boolean }).executed;
+      const loiLines: string[] = [`  Status: ${executed ? "EXECUTED" : "draft"}`];
+      if (parsed.purchase_price) loiLines.push(`  Purchase Price: $${Number(parsed.purchase_price).toLocaleString()}`);
+      if (parsed.earnest_money) loiLines.push(`  Earnest Money: $${Number(parsed.earnest_money).toLocaleString()}`);
+      if (parsed.due_diligence_days) loiLines.push(`  DD Period: ${parsed.due_diligence_days} days`);
+      if (parsed.closing_days) loiLines.push(`  Closing: ${parsed.closing_days} days`);
+      extraContext.push(`LOI:\n${loiLines.join("\n")}`);
+    }
+
+    if (extraContext.length > 0) {
+      const joined = extraContext.join("\n\n");
+      deal.context_notes = deal.context_notes
+        ? `${joined}\n\n${deal.context_notes}`
+        : joined;
+    }
 
     // Enrich context_notes with business plan if linked
     if (deal.business_plan_id) {
