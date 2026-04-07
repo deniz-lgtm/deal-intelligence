@@ -25,6 +25,7 @@ import {
   Star,
   Calculator,
   ChevronRight,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -637,6 +638,11 @@ function ScoreCard({ analysis }: { analysis: OmAnalysis }) {
       <CardContent className="pt-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Sparkles className="h-3 w-3 text-amber-400" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">Guidance</span>
+              <span className="text-[10px] text-muted-foreground/60">— AI suggestion</span>
+            </div>
             <p className="text-sm font-medium text-muted-foreground mb-1">Deal Score</p>
             <div className="flex items-baseline gap-2">
               <span className={cn("text-6xl font-bold tabular-nums", scoreColor(score))}>

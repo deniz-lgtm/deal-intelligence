@@ -379,7 +379,10 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       {/* ─── Deal Score Progression ─────────────────────────────────────── */}
       <div className="border rounded-xl bg-card overflow-hidden">
         <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
-          <h3 className="font-semibold text-sm flex items-center gap-2"><Target className="h-4 w-4" /> Deal Score Progression</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-sm flex items-center gap-2"><Target className="h-4 w-4" /> Deal Score Progression</h3>
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">Guidance</span>
+          </div>
           <Button
             size="sm" variant="outline"
             disabled={scoringFinal}

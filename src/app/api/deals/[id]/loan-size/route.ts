@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { dealQueries, underwritingQueries, omAnalysisQueries, dealNoteQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { CONCISE_STYLE } from "@/lib/ai-style";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -103,7 +104,9 @@ export async function POST(
 
     const notesContext = memoryText ? `ANALYST NOTES:\n${memoryText}` : "";
 
-    const prompt = `You are an expert CRE debt broker. Size BOTH an acquisition loan and a refinance loan for this deal. Provide separate narratives for each.
+    const prompt = `${CONCISE_STYLE}
+
+You are an expert CRE debt broker. Size BOTH an acquisition loan and a refinance loan for this deal. Provide separate narratives for each.
 
 ${dealInfo}
 ${omContext ? `\n${omContext}` : ""}
@@ -133,13 +136,13 @@ Return ONLY a JSON object:
   "acq_interest_rate": 7.5,
   "acq_amort_years": 0,
   "acq_io_years": 3,
-  "acq_narrative": "2-3 sentences about the acquisition loan: loan type (bridge/conventional), why this rate and leverage, term structure, DSCR implications. Reference specific market conditions.",
+  "acq_narrative": "Concise bullet points (use '• ' prefix, one per line, max 4 bullets) covering: loan type, rate/leverage rationale, term structure, DSCR. No long sentences. No paragraphs.",
   "has_refi": true,
   "refi_year": 3,
   "refi_ltv": 72,
   "refi_rate": 6.0,
   "refi_amort_years": 30,
-  "refi_narrative": "2-3 sentences about the refinance: permanent takeout type (agency/CMBS/conventional), why these terms, expected proceeds vs acquisition debt, how this fits the exit strategy.",
+  "refi_narrative": "Concise bullet points (use '• ' prefix, one per line, max 4 bullets) covering: takeout type, term rationale, proceeds vs acquisition debt, exit fit. No long sentences. No paragraphs.",
   "exit_cap_rate": 6.5,
   "hold_period_years": 5
 }

@@ -12,6 +12,7 @@ import {
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ChecklistItem, DealNote, BusinessPlan } from "@/lib/types";
+import { CONCISE_STYLE } from "@/lib/ai-style";
 
 const MODEL = "claude-sonnet-4-5";
 let _client: Anthropic | null = null;
@@ -320,7 +321,9 @@ ${uw.has_financing ? `- DSCR: ${dscr > 0 ? dscr.toFixed(2) + "x" : "N/A"}
       : "";
 
   if (stage === "underwriting") {
-    return `You are re-scoring a commercial real estate deal AFTER underwriting has been completed. The deal was initially scored during OM analysis. Now you have ACTUAL underwriting numbers — use them.
+    return `${CONCISE_STYLE}
+
+You are re-scoring a commercial real estate deal AFTER underwriting has been completed. The deal was initially scored during OM analysis. Now you have ACTUAL underwriting numbers — use them.
 
 IMPORTANT SCORING RULES:
 - The underwriting metrics above are COMPUTED from the actual model. Trust them.
@@ -355,7 +358,9 @@ Score guide:
   }
 
   // stage === "final"
-  return `You are providing a FINAL deal score for a commercial real estate deal that is about to go into the investment package / IC presentation stage. This is the comprehensive assessment using ALL available data — OM analysis, underwriting, deal notes, and diligence checklist.
+  return `${CONCISE_STYLE}
+
+You are providing a FINAL deal score for a commercial real estate deal that is about to go into the investment package / IC presentation stage. This is the comprehensive assessment using ALL available data — OM analysis, underwriting, deal notes, and diligence checklist.
 
 This score represents: "Should we proceed to put together the investment package and present this deal?"
 ${bpBlock}

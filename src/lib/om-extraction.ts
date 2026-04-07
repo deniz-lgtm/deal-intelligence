@@ -4,6 +4,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { CONCISE_STYLE } from "./ai-style";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -332,7 +333,9 @@ async function calculateDealScore(
     ? `\nINVESTOR'S BUSINESS PLAN:\n${dealContext.trim()}\n\nScore the deal relative to the stated strategy. A value-add play on a vacant building is a different risk profile than a stabilized core deal — score accordingly.\n`
     : "";
 
-  const prompt = `You are scoring this deal for initial pursuit prioritization inside Deal Intelligence — not for final investment approval. This is a first-look screen to decide whether to spend time underwriting it.
+  const prompt = `${CONCISE_STYLE}
+
+You are scoring this deal for initial pursuit prioritization inside Deal Intelligence — not for final investment approval. This is a first-look screen to decide whether to spend time underwriting it.
 ${contextBlock}
 PROPERTY:
 ${JSON.stringify(propertyDetails, null, 2)}
@@ -351,7 +354,7 @@ Score this deal 1–10 based on: fit with the stated strategy, quality of the op
 Return ONLY a JSON object:
 {
   "deal_score": 7,
-  "score_reasoning": "2-3 sentences — what makes this worth pursuing or not, referenced to the strategy and the actual numbers available"
+  "score_reasoning": "3-4 short bullets prefixed with '• ' (one per line, max ~12 words each) — what makes this worth pursuing or not, with specific numbers. No paragraphs."
 }
 
 Score guide (pursuit prioritization):
@@ -395,7 +398,9 @@ async function generateRecommendations(
     ? `\nINVESTOR'S BUSINESS PLAN & STRATEGY:\n${dealContext.trim()}\n\nCalibrate the summary and recommendations to this strategy. Do not suggest things that contradict or are irrelevant to it.\n`
     : "";
 
-  const prompt = `You are a deal associate writing a quick first-look memo for the acquisition team inside Deal Intelligence. This is the OM screening stage. The team's next steps in the workflow are: underwriting model → full diligence checklist → site visit → LOI submission.
+  const prompt = `${CONCISE_STYLE}
+
+You are a deal associate writing a quick first-look memo for the acquisition team inside Deal Intelligence. This is the OM screening stage. The team's next steps in the workflow are: underwriting model → full diligence checklist → site visit → LOI submission.
 
 Write a concise executive summary and structure the next steps to hand off clearly to those workflow stages. Do not recommend asking the broker for things they won't provide at OM stage (rent rolls, CapEx budgets, full financials). Do not recommend standard diligence tasks that are already built into the diligence checklist — only call out things specific to this deal.
 ${contextBlock}
@@ -410,7 +415,7 @@ ${redFlags.slice(0, 4).map((f) => `• [${f.severity}] ${f.description}`).join("
 
 Return ONLY a JSON object with this structure. The recommendations array should have 4–6 items, each prefixed with the workflow stage it belongs to:
 {
-  "summary": "3-4 sentences — deal type, strategy fit, key available metrics, and primary risk or opportunity. Written as if briefing a colleague who hasn't seen the OM.",
+  "summary": "3-5 short bullets prefixed with '• ' (one per line, max ~12 words each) — deal type, strategy fit, key metrics, primary risk, primary opportunity. No paragraphs.",
   "recommendations": [
     "BEFORE LOI: Confirm zoning allows the intended flex/industrial use",
     "UNDERWRITING: Model conservative rent comps at $X/SF based on market — broker projections appear optimistic",

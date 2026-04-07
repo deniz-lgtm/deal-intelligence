@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { dealQueries, dealNoteQueries, omAnalysisQueries, underwritingQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { CONCISE_STYLE } from "@/lib/ai-style";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -124,7 +125,9 @@ function buildGroundUpPrompt(
   recommendationsText: string,
   contextText: string,
 ): string {
-  return `You are a commercial real estate development cost estimator. Based on the deal information below, estimate construction costs. Use realistic 2024-2025 pricing for the market/region indicated.
+  return `${CONCISE_STYLE}
+
+You are a commercial real estate development cost estimator. Based on the deal information below, estimate construction costs. Use realistic 2024-2025 pricing for the market/region indicated.
 
 ${dealInfo}
 ${summaryText}
@@ -153,7 +156,9 @@ function buildValueAddPrompt(
   recommendationsText: string,
   contextText: string,
 ): string {
-  return `You are a commercial real estate CapEx estimator. Based on the deal information below, estimate capital expenditure line items for an acquisition. Use realistic 2024-2025 contractor/market pricing.
+  return `${CONCISE_STYLE}
+
+You are a commercial real estate CapEx estimator. Based on the deal information below, estimate capital expenditure line items for an acquisition. Use realistic 2024-2025 contractor/market pricing.
 
 ${dealInfo}
 ${summaryText}

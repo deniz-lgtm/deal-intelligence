@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { dealQueries, dealNoteQueries, omAnalysisQueries, underwritingQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { CONCISE_STYLE } from "@/lib/ai-style";
 
 const MODEL = "claude-sonnet-4-5";
 
@@ -105,7 +106,9 @@ export async function POST(
 
     const notesContext = memoryText ? `ANALYST NOTES:\n${memoryText}` : "";
 
-    const prompt = `You are an expert commercial real estate underwriter. Estimate pro forma operating expenses for this property using realistic 2024-2025 market data for the location and property type.
+    const prompt = `${CONCISE_STYLE}
+
+You are an expert commercial real estate underwriter. Estimate pro forma operating expenses for this property using realistic 2024-2025 market data for the location and property type.
 
 ${dealInfo}
 ${omContext ? `\n${omContext}` : ""}
