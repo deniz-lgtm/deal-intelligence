@@ -375,8 +375,10 @@ export interface LOIData {
   // Parties
   buyer_entity: string;
   buyer_contact: string;
+  buyer_contact_id?: string | null;
   buyer_address: string;
   seller_name: string;
+  seller_contact_id?: string | null;
   seller_address: string;
   // Financial terms
   purchase_price: number | null;
@@ -389,9 +391,11 @@ export interface LOIData {
   // Financing
   has_financing_contingency: boolean;
   lender_name: string;
+  lender_contact_id?: string | null;
   // Other
   as_is: boolean;
   broker_name: string;
+  broker_contact_id?: string | null;
   broker_commission: string;
   additional_terms: string;
   loi_date: string;
@@ -706,6 +710,7 @@ export interface DealCommunication {
   status: CommunicationStatus;
   occurred_at: string;
   follow_up_at: string | null;
+  contact_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -832,6 +837,45 @@ export const STAGE_QUESTION_TEMPLATES: Record<
   dead: [],
   archived: [],
 };
+
+// ─── Contacts (CRM) ────────────────────────────────────────────────────────
+
+export interface Contact {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  role: StakeholderType;
+  company: string | null;
+  title: string | null;
+  notes: string | null;
+  tags: string[];
+  owner_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContactWithDeals extends Contact {
+  deals: Array<{
+    link_id: string;
+    deal_id: string;
+    deal_name: string;
+    deal_status: DealStatus;
+    city: string;
+    state: string;
+    role_on_deal: string | null;
+    link_notes: string | null;
+    linked_at: string;
+  }>;
+}
+
+/** A contact joined with its deal_contacts link row, as returned by the per-deal contacts API */
+export interface DealContactLink extends Contact {
+  link_id: string;
+  role_on_deal: string | null;
+  link_notes: string | null;
+  linked_at: string;
+}
 
 // ─── Development Schedule ──────────────────────────────────────────────────
 

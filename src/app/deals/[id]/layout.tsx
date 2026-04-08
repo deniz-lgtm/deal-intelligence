@@ -23,6 +23,7 @@ import {
   PanelLeftOpen,
   Shield,
   Mailbox,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -80,6 +81,7 @@ const NAV_GROUPS: {
     items: [
       { href: "/chat", label: "Chat", icon: MessageSquare },
       { href: "/communication", label: "Communication", icon: Mailbox },
+      { href: "/contacts", label: "Contacts", icon: Users },
       { href: "/deal-log", label: "Deal Log", icon: Activity },
     ],
   },

@@ -27,6 +27,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import ContactPicker from "@/components/ContactPicker";
 import { cn } from "@/lib/utils";
 import {
   DEAL_PIPELINE,
@@ -37,6 +38,7 @@ import {
   QUESTION_STATUS_CONFIG,
 } from "@/lib/types";
 import type {
+  Contact,
   DealCommunication,
   DealQuestion,
   StakeholderType,
@@ -189,6 +191,7 @@ function CorrespondenceLog({
   const emptyForm = {
     stakeholder_type: "broker" as StakeholderType,
     stakeholder_name: "",
+    contact_id: null as string | null,
     channel: "email" as CommunicationChannel,
     direction: "outbound" as CommunicationDirection,
     subject: "",
@@ -210,6 +213,7 @@ function CorrespondenceLog({
     setForm({
       stakeholder_type: c.stakeholder_type,
       stakeholder_name: c.stakeholder_name,
+      contact_id: c.contact_id,
       channel: c.channel,
       direction: c.direction,
       subject: c.subject,
@@ -219,6 +223,20 @@ function CorrespondenceLog({
       follow_up_at: toLocalInputValue(c.follow_up_at),
     });
     setDialogOpen(true);
+  };
+
+  /** When user picks a contact, auto-fill name + role and store the FK */
+  const handleContactPick = (contact: Contact | null) => {
+    if (contact) {
+      setForm((f) => ({
+        ...f,
+        contact_id: contact.id,
+        stakeholder_name: contact.name,
+        stakeholder_type: contact.role,
+      }));
+    } else {
+      setForm((f) => ({ ...f, contact_id: null }));
+    }
   };
 
   const save = async () => {
@@ -293,32 +311,42 @@ function CorrespondenceLog({
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <FormField label="Stakeholder type">
-                  <select
-                    value={form.stakeholder_type}
-                    onChange={(e) =>
-                      setForm({ ...form, stakeholder_type: e.target.value as StakeholderType })
-                    }
-                    className="w-full h-9 rounded-lg border border-border bg-background px-2.5 text-sm"
-                  >
-                    {Object.entries(STAKEHOLDER_LABELS).map(([k, v]) => (
-                      <option key={k} value={k}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
-                </FormField>
-                <FormField label="Name / contact">
+              <FormField label="Contact">
+                <ContactPicker
+                  value={form.contact_id}
+                  displayLabel={
+                    form.stakeholder_name && !form.contact_id ? form.stakeholder_name : undefined
+                  }
+                  onChange={handleContactPick}
+                  defaultRole={form.stakeholder_type}
+                  placeholder="Search contacts or type a name to create..."
+                />
+                {!form.contact_id && (
                   <input
                     type="text"
                     value={form.stakeholder_name}
                     onChange={(e) => setForm({ ...form, stakeholder_name: e.target.value })}
-                    placeholder="e.g. Jane Doe @ CBRE"
-                    className="w-full h-9 rounded-lg border border-border bg-background px-2.5 text-sm"
+                    placeholder="...or just type a name"
+                    className="mt-1.5 w-full h-9 rounded-lg border border-border bg-background px-2.5 text-sm"
                   />
-                </FormField>
-              </div>
+                )}
+              </FormField>
+
+              <FormField label="Stakeholder type">
+                <select
+                  value={form.stakeholder_type}
+                  onChange={(e) =>
+                    setForm({ ...form, stakeholder_type: e.target.value as StakeholderType })
+                  }
+                  className="w-full h-9 rounded-lg border border-border bg-background px-2.5 text-sm"
+                >
+                  {Object.entries(STAKEHOLDER_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
 
               <div className="grid grid-cols-3 gap-3">
                 <FormField label="Channel">
