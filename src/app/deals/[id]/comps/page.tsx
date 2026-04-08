@@ -164,6 +164,23 @@ export default function CompsPage({ params }: { params: { id: string } }) {
     }
   }
 
+  async function handleSaveToWorkspace(comp: Comp) {
+    try {
+      const res = await fetch(
+        `/api/deals/${params.id}/comps/${comp.id}/to-workspace`,
+        { method: "POST" }
+      );
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        toast.error(json.error || "Failed to save to workspace");
+        return;
+      }
+      toast.success("Saved to Comps Library");
+    } catch {
+      toast.error("Failed to save to workspace");
+    }
+  }
+
   async function saveSubmarket() {
     setSubmarketSaving(true);
     try {
@@ -360,7 +377,7 @@ export default function CompsPage({ params }: { params: { id: string } }) {
             onAdd={() => openPaste("sale")}
           />
         ) : (
-          <CompTable comps={saleComps} type="sale" onToggle={handleToggleSelected} onDelete={handleDeleteComp} />
+          <CompTable comps={saleComps} type="sale" onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
         )}
       </Section>
 
@@ -380,7 +397,7 @@ export default function CompsPage({ params }: { params: { id: string } }) {
             onAdd={() => openPaste("rent")}
           />
         ) : (
-          <CompTable comps={rentComps} type="rent" onToggle={handleToggleSelected} onDelete={handleDeleteComp} />
+          <CompTable comps={rentComps} type="rent" onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
         )}
       </Section>
 
@@ -419,11 +436,13 @@ function CompTable({
   type,
   onToggle,
   onDelete,
+  onSaveToWorkspace,
 }: {
   comps: Comp[];
   type: "sale" | "rent";
   onToggle: (c: Comp) => void;
   onDelete: (id: string) => void;
+  onSaveToWorkspace: (c: Comp) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -510,13 +529,22 @@ function CompTable({
                 {c.distance_mi != null ? `${Number(c.distance_mi).toFixed(1)}mi` : "—"}
               </td>
               <td className="py-2 pr-2 text-right">
-                <button
-                  onClick={() => onDelete(c.id)}
-                  className="text-muted-foreground hover:text-red-400 transition-colors"
-                  title="Delete"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={() => onSaveToWorkspace(c)}
+                    className="text-muted-foreground hover:text-primary transition-colors"
+                    title="Save to Comps Library (workspace)"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => onDelete(c.id)}
+                    className="text-muted-foreground hover:text-red-400 transition-colors"
+                    title="Delete"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

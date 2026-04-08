@@ -10,21 +10,24 @@ Strategic roadmap for the Deal Intelligence platform. Tracks what's actively bei
 
 - **Comps & Market tab** (paste mode + extract-from-market-docs) with unified sale/rent comp store and submarket metrics. Legal posture: zero server-side scraping of broker sites, gated by `src/lib/web-allowlist.ts`.
 - **App shell + Today strip** on the root landing. Collapsible left rail replaces the per-page header nav. Today strip surfaces upcoming milestones (14-day window), active deal briefs, and macro market widgets (10Y/2Y Treasury, S&P 500, 30Y mortgage) from FRED.
-- **Comps Library stub** at `/comps-library` — placeholder page that documents what the full workspace library will include.
+- **Workspace Comps Library** at `/comps-library`. `comps.deal_id` is now nullable with `source_deal_id` tracking provenance. "Snapshot a Deal" creates a sale/rent comp from a deal's underwriting + OM data. "Save to Workspace" on a per-deal comp clones it into the library with its source tagged. Cross-deal search with type / property-type / text filters.
 
 ---
 
-## Up Next (Active Build)
+## Up Next (Open)
 
-### Workspace Comps Library (phase 2 of Comps feature)
-The placeholder exists; now the real work:
+### Comps Library — phase 3 polish
+- Inline comp editing in the library table (today: delete + re-add)
+- Delete endpoint for workspace-only comps (today: UI blocks deletion for rows without a deal_id)
+- "Copy into this deal" action — pull a workspace library comp into the active deal's comp set
+- Market / MSA filter backed by structured `city`/`state` fields
+- Map view
 
-- Browse all comps across visible deals in one searchable table
-- Filters: comp type, property type, market/MSA, price/rent band, date range, source deal status
-- **Save deal actuals as a comp** — one-click action on closed deals that turns their own underwriting (purchase price, NOI, cap rate, unit count) into a sale comp
-- **Save OM comps without a deal** — if you review an OM but don't pursue it, still capture the headline as a workspace comp for future reference
-- **"Copy into this deal"** — pull any workspace comp into a specific deal's comp set with provenance intact
-- Schema impact: make `comps.deal_id` nullable so workspace-only comps can exist without a deal attachment
+### RentCast (paid API) integration
+~$100-300/mo, already scoped in the research spike. Adds auto-populated sale + rent comps + zip-level market stats on top of the existing paste-mode and doc-extraction paths.
+
+### Next build-now feature
+Pick the next one from: AI Deal Sourcing (folder watcher), Underwriting Co-Pilot, Deal Room, Document Intelligence Pipeline.
 
 ---
 

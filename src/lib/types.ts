@@ -378,14 +378,20 @@ export interface Underwriting {
 export type CompType = "sale" | "rent";
 
 export type CompSource =
-  | "manual"        // user typed fields directly
-  | "paste"         // pasted listing text → Claude extracted
-  | "doc"           // pulled from a classified "market" document
-  | "api";          // future: RentCast / ATTOM / etc.
+  | "manual"         // user typed fields directly
+  | "paste"          // pasted listing text → Claude extracted
+  | "doc"            // pulled from a classified "market" document
+  | "deal_snapshot"  // snapshot of a deal's own underwriting data
+  | "api";           // future: RentCast / ATTOM / etc.
 
 export interface Comp {
   id: string;
-  deal_id: string;
+  // deal_id is nullable because comps can live at the workspace level (not
+  // attached to any particular deal). When a deal is deleted, attached comps
+  // are detached (SET NULL) rather than cascade-deleted so they survive as
+  // workspace comps with their source_deal_id preserved as a provenance tag.
+  deal_id: string | null;
+  source_deal_id: string | null;   // historical reference even after detach
   comp_type: CompType;
 
   // Core property identity
