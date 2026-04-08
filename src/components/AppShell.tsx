@@ -1,0 +1,211 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  Home,
+  Kanban,
+  Inbox,
+  BarChart3,
+  BookOpen,
+  Users,
+  Shield,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { usePermissions } from "@/lib/usePermissions";
+
+// Persistent left-rail shell for the workspace-level routes (/, /comps-library,
+// /contacts, /business-plans, /admin, etc.). Keeps the main content area
+// flexible — pages render their existing headers and bodies inside <children>.
+//
+// This replaces the previous "top-header-only" layout and unblocks adding
+// new workspace-level features without cramming them into the per-deal
+// sidebar or the root-page header button row.
+
+interface NavItem {
+  href: string;
+  label: string;
+  icon: typeof Home;
+  permission?: string;
+  adminOnly?: boolean;
+  comingSoon?: boolean;
+}
+
+const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
+  {
+    label: null,
+    items: [{ href: "/", label: "Home", icon: Home }],
+  },
+  {
+    label: "Workspace",
+    items: [
+      { href: "/inbox", label: "Inbox", icon: Inbox, comingSoon: true },
+      {
+        href: "/comps-library",
+        label: "Comps Library",
+        icon: BarChart3,
+      },
+      {
+        href: "/business-plans",
+        label: "Business Plans",
+        icon: BookOpen,
+        permission: "business_plans.access",
+      },
+      {
+        href: "/contacts",
+        label: "Contacts",
+        icon: Users,
+        permission: "contacts.access",
+      },
+    ],
+  },
+];
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const { can, isAdmin } = usePermissions();
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Persist collapse state across navigations.
+  useEffect(() => {
+    const stored = localStorage.getItem("appShellCollapsed");
+    if (stored !== null) setCollapsed(stored === "1");
+  }, []);
+
+  const toggle = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("appShellCollapsed", next ? "1" : "0");
+      return next;
+    });
+  };
+
+  const renderNavItem = (item: NavItem) => {
+    // Visibility gating
+    if (item.permission && !can(item.permission)) return null;
+    if (item.adminOnly && !isAdmin) return null;
+
+    const isActive =
+      item.href === "/"
+        ? pathname === "/"
+        : pathname.startsWith(item.href);
+    const Icon = item.icon;
+
+    const body = (
+      <button
+        className={cn(
+          "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
+          collapsed && "justify-center",
+          item.comingSoon && "opacity-40 cursor-not-allowed",
+          isActive && !item.comingSoon
+            ? "gradient-gold text-primary-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+        )}
+        disabled={item.comingSoon}
+        title={collapsed ? item.label : undefined}
+      >
+        <Icon className="h-4 w-4 flex-shrink-0" />
+        {!collapsed && (
+          <span className="truncate flex-1 text-left">{item.label}</span>
+        )}
+        {!collapsed && item.comingSoon && (
+          <span className="text-[9px] uppercase tracking-wider text-muted-foreground/50">
+            Soon
+          </span>
+        )}
+      </button>
+    );
+
+    // "Coming soon" items are not clickable
+    if (item.comingSoon) {
+      return (
+        <div key={item.href} className="flex">
+          {body}
+        </div>
+      );
+    }
+    return (
+      <Link key={item.href} href={item.href} className="flex">
+        {body}
+      </Link>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-background noise flex">
+      {/* Left rail */}
+      <aside
+        className={cn(
+          "sticky top-0 self-start h-screen border-r border-border/40 bg-card/40 backdrop-blur-xl transition-all duration-200 flex-shrink-0 z-30 overflow-y-auto scrollbar-none",
+          collapsed ? "w-14" : "w-56"
+        )}
+      >
+        <div className="flex items-center justify-between px-3 h-14 border-b border-border/30">
+          {!collapsed && (
+            <Link href="/" className="flex items-center gap-2 min-w-0">
+              <span className="w-6 h-6 rounded-md gradient-gold flex items-center justify-center flex-shrink-0">
+                <Kanban className="h-3.5 w-3.5 text-primary-foreground" />
+              </span>
+              <span className="font-display text-sm text-foreground tracking-tight truncate">
+                Deal Intel
+              </span>
+            </Link>
+          )}
+          <button
+            onClick={toggle}
+            className="flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </button>
+        </div>
+
+        <nav className="py-3 px-2 flex flex-col gap-4">
+          {NAV_GROUPS.map((group, gi) => (
+            <div key={gi} className="flex flex-col gap-0.5">
+              {group.label && !collapsed && (
+                <div className="px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 font-medium">
+                  {group.label}
+                </div>
+              )}
+              {group.label && collapsed && gi > 0 && (
+                <div className="mx-2 mb-1 border-t border-border/30" />
+              )}
+              {group.items.map(renderNavItem)}
+            </div>
+          ))}
+
+          {isAdmin && (
+            <div className="mt-auto flex flex-col gap-0.5 pt-3 border-t border-border/30">
+              <Link href="/admin" className="flex">
+                <button
+                  className={cn(
+                    "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
+                    collapsed && "justify-center",
+                    pathname.startsWith("/admin")
+                      ? "gradient-gold text-primary-foreground shadow-sm"
+                      : "text-indigo-200/80 hover:text-indigo-100 hover:bg-indigo-500/10"
+                  )}
+                  title={collapsed ? "Admin" : undefined}
+                >
+                  <Shield className="h-4 w-4 flex-shrink-0" />
+                  {!collapsed && <span className="truncate">Admin</span>}
+                </button>
+              </Link>
+            </div>
+          )}
+        </nav>
+      </aside>
+
+      {/* Main content */}
+      <div className="flex-1 min-w-0 flex flex-col">{children}</div>
+    </div>
+  );
+}

@@ -6,6 +6,28 @@ Strategic roadmap for the Deal Intelligence platform. Tracks what's actively bei
 
 ---
 
+## Shipped Recently
+
+- **Comps & Market tab** (paste mode + extract-from-market-docs) with unified sale/rent comp store and submarket metrics. Legal posture: zero server-side scraping of broker sites, gated by `src/lib/web-allowlist.ts`.
+- **App shell + Today strip** on the root landing. Collapsible left rail replaces the per-page header nav. Today strip surfaces upcoming milestones (14-day window), active deal briefs, and macro market widgets (10Y/2Y Treasury, S&P 500, 30Y mortgage) from FRED.
+- **Comps Library stub** at `/comps-library` — placeholder page that documents what the full workspace library will include.
+
+---
+
+## Up Next (Active Build)
+
+### Workspace Comps Library (phase 2 of Comps feature)
+The placeholder exists; now the real work:
+
+- Browse all comps across visible deals in one searchable table
+- Filters: comp type, property type, market/MSA, price/rent band, date range, source deal status
+- **Save deal actuals as a comp** — one-click action on closed deals that turns their own underwriting (purchase price, NOI, cap rate, unit count) into a sale comp
+- **Save OM comps without a deal** — if you review an OM but don't pursue it, still capture the headline as a workspace comp for future reference
+- **"Copy into this deal"** — pull any workspace comp into a specific deal's comp set with provenance intact
+- Schema impact: make `comps.deal_id` nullable so workspace-only comps can exist without a deal attachment
+
+---
+
 ## Building Now (Pre-Closing Focus)
 
 These extend the existing sourcing → screening → underwriting → diligence → LOI → pre-dev pipeline. All five target the same persona that already uses the platform (acquisitions/analysts at funds, syndicators, small-to-mid developers).

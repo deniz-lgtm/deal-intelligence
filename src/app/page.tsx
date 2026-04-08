@@ -6,8 +6,6 @@ import {
   Plus,
   Search,
   Building2,
-  BookOpen,
-  Shield,
   ChevronDown,
   ChevronUp,
   DollarSign,
@@ -21,10 +19,11 @@ import {
   Activity,
   ArrowRight,
   X,
-  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import KanbanCard from "@/components/KanbanCard";
+import { AppShell } from "@/components/AppShell";
+import { TodayStrip } from "@/components/today/TodayStrip";
 import type { Deal, DealStatus } from "@/lib/types";
 import { usePipeline } from "@/lib/usePipeline";
 import { toast } from "sonner";
@@ -87,7 +86,7 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 export default function DashboardPage() {
-  const { can, isAdmin } = usePermissions();
+  const { can } = usePermissions();
   const { stages: pipelineStages, labelMap: stageLabels } = usePipeline();
   const [deals, setDeals] = useState<DealWithStats[]>([]);
   const [loading, setLoading] = useState(true);
@@ -246,18 +245,19 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background noise flex flex-col" onDragEnd={handleDragEnd}>
-      {/* ── Header ── */}
+    <AppShell>
+    <div className="flex flex-col flex-1 min-h-0" onDragEnd={handleDragEnd}>
+      {/* ── Header (Pipeline-specific toolbar; workspace nav lives in the left rail) ── */}
       <header className="relative overflow-hidden border-b border-border/40 shrink-0">
         <div className="absolute inset-0 gradient-mesh" />
         <div className="relative max-w-full mx-auto px-6 sm:px-8">
           <div className="flex items-center justify-between h-14 min-w-0">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg gradient-gold flex items-center justify-center">
-                <Building2 className="h-4 w-4 text-primary-foreground" />
-              </div>
-              <span className="font-display text-lg text-foreground tracking-tight">
-                Deal Intelligence
+              <span className="font-display text-base text-foreground tracking-tight">
+                Pipeline
+              </span>
+              <span className="text-[10px] text-muted-foreground hidden sm:inline">
+                Kanban view
               </span>
             </div>
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
@@ -273,27 +273,6 @@ export default function DashboardPage() {
                 {showAnalytics ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               </Button>
               <div className="w-px h-5 bg-border/40 mx-1 hidden sm:block" />
-              {can("business_plans.access") && (
-                <Link href="/business-plans">
-                  <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground text-xs hidden sm:inline-flex">
-                    <BookOpen className="h-3.5 w-3.5 mr-1.5" /> Plans
-                  </Button>
-                </Link>
-              )}
-              {can("contacts.access") && (
-                <Link href="/contacts">
-                  <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground text-xs hidden sm:inline-flex">
-                    <Users className="h-3.5 w-3.5 mr-1.5" /> Contacts
-                  </Button>
-                </Link>
-              )}
-              {isAdmin && (
-                <Link href="/admin">
-                  <Button size="sm" variant="ghost" className="text-indigo-200/80 hover:text-indigo-100 hover:bg-indigo-500/10 text-xs hidden sm:inline-flex">
-                    <Shield className="h-3.5 w-3.5 mr-1.5" /> Admin
-                  </Button>
-                </Link>
-              )}
               {can("deals.create") && (
                 <Link href="/deals/new">
                   <Button size="sm" className="text-xs">
@@ -306,6 +285,9 @@ export default function DashboardPage() {
           </div>
         </div>
       </header>
+
+      {/* ── Today strip (AI command center summary) ── */}
+      <TodayStrip />
 
       {/* ── Analytics row (collapsible) ── */}
       {showAnalytics && (
@@ -552,5 +534,6 @@ export default function DashboardPage() {
         )}
       </div>
     </div>
+    </AppShell>
   );
 }
