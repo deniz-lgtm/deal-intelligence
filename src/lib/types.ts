@@ -369,6 +369,87 @@ export interface Underwriting {
   updated_at: string;
 }
 
+// ─── Comps & Market ────────────────────────────────────────────────────────
+// Unified sale + rent comp store. Paste-mode first: user pastes listing text
+// or a URL, Claude extracts structured fields, user reviews before saving.
+// Deliberately NOT fed by server-side scraping of broker sites — see
+// FEATURE_ROADMAP_BACKLOG.md and the domain allowlist helper in src/lib/web-allowlist.ts.
+
+export type CompType = "sale" | "rent";
+
+export type CompSource =
+  | "manual"         // user typed fields directly
+  | "paste"          // pasted listing text → Claude extracted
+  | "doc"            // pulled from a classified "market" document
+  | "deal_snapshot"  // snapshot of a deal's own underwriting data
+  | "api";           // future: RentCast / ATTOM / etc.
+
+export interface Comp {
+  id: string;
+  // deal_id is nullable because comps can live at the workspace level (not
+  // attached to any particular deal). When a deal is deleted, attached comps
+  // are detached (SET NULL) rather than cascade-deleted so they survive as
+  // workspace comps with their source_deal_id preserved as a provenance tag.
+  deal_id: string | null;
+  source_deal_id: string | null;   // historical reference even after detach
+  comp_type: CompType;
+
+  // Core property identity
+  name: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  property_type: string | null;
+  year_built: number | null;
+
+  // Size
+  units: number | null;
+  total_sf: number | null;
+
+  // Sale comp fields (nullable for rent comps)
+  sale_price: number | null;
+  sale_date: string | null;     // ISO date
+  cap_rate: number | null;       // %
+  noi: number | null;
+  price_per_unit: number | null;
+  price_per_sf: number | null;
+
+  // Rent comp fields (nullable for sale comps)
+  rent_per_unit: number | null;  // monthly $/unit
+  rent_per_sf: number | null;    // annual $/SF
+  rent_per_bed: number | null;   // monthly $/bed (student housing)
+  occupancy_pct: number | null;
+  lease_type: string | null;
+
+  // Comparability
+  distance_mi: number | null;
+  selected: boolean;             // include in investment package
+
+  // Provenance
+  source: CompSource;
+  source_url: string | null;     // reference only, never auto-fetched
+  source_note: string | null;    // free-form analyst note
+  extra: Record<string, unknown>; // overflow for amenities, unit_type breakdowns, etc.
+
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SubmarketMetrics {
+  id: string;
+  deal_id: string;
+  submarket_name: string | null;
+  msa: string | null;
+  market_cap_rate: number | null;     // %
+  market_rent_growth: number | null;  // annual %
+  market_vacancy: number | null;      // %
+  absorption_units: number | null;    // annual
+  deliveries_units: number | null;    // annual
+  narrative: string | null;           // AI-generated commentary
+  sources: Array<{ url: string; title?: string; note?: string }>;
+  updated_at: string;
+}
+
 // ─── LOI ────────────────────────────────────────────────────────────────────
 
 export interface LOIData {

@@ -24,6 +24,7 @@ import {
   Shield,
   Mailbox,
   Users,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -57,6 +58,7 @@ const NAV_GROUPS: {
       { href: "/om-analysis", label: "OM Analysis", icon: FileSearch },
       { href: "/site-zoning", label: "Site & Zoning", icon: MapPin },
       { href: "/underwriting", label: "Underwriting", icon: Calculator },
+      { href: "/comps", label: "Comps & Market", icon: BarChart3 },
     ],
   },
   {

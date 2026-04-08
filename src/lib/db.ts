@@ -238,6 +238,67 @@ export async function ensureColumns(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_deal_contacts_contact_id ON deal_contacts(contact_id)`,
     // Communications: optional FK to contacts
     `ALTER TABLE deal_communications ADD COLUMN IF NOT EXISTS contact_id TEXT`,
+    // Comps & submarket (ensure present on already-migrated DBs)
+    `CREATE TABLE IF NOT EXISTS comps (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT REFERENCES deals(id) ON DELETE SET NULL,
+      source_deal_id TEXT,
+      comp_type TEXT NOT NULL CHECK (comp_type IN ('sale', 'rent')),
+      name TEXT,
+      address TEXT,
+      city TEXT,
+      state TEXT,
+      property_type TEXT,
+      year_built INTEGER,
+      units INTEGER,
+      total_sf NUMERIC,
+      sale_price NUMERIC,
+      sale_date DATE,
+      cap_rate NUMERIC,
+      noi NUMERIC,
+      price_per_unit NUMERIC,
+      price_per_sf NUMERIC,
+      rent_per_unit NUMERIC,
+      rent_per_sf NUMERIC,
+      rent_per_bed NUMERIC,
+      occupancy_pct NUMERIC,
+      lease_type TEXT,
+      distance_mi NUMERIC,
+      selected BOOLEAN NOT NULL DEFAULT true,
+      source TEXT NOT NULL DEFAULT 'manual',
+      source_url TEXT,
+      source_note TEXT,
+      extra JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_comps_deal_id ON comps(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_comps_type ON comps(deal_id, comp_type)`,
+    `CREATE INDEX IF NOT EXISTS idx_comps_source_deal_id ON comps(source_deal_id)`,
+    // Migrate existing installs: drop the NOT NULL on deal_id and change the
+    // FK from CASCADE to SET NULL so workspace-only comps can exist. Also
+    // add the new source_deal_id column. These DO blocks are idempotent.
+    `ALTER TABLE comps ADD COLUMN IF NOT EXISTS source_deal_id TEXT`,
+    `ALTER TABLE comps ALTER COLUMN deal_id DROP NOT NULL`,
+    `DO $$ BEGIN
+       ALTER TABLE comps DROP CONSTRAINT IF EXISTS comps_deal_id_fkey;
+       ALTER TABLE comps ADD CONSTRAINT comps_deal_id_fkey
+         FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE SET NULL;
+     EXCEPTION WHEN OTHERS THEN NULL; END $$`,
+    `CREATE TABLE IF NOT EXISTS submarket_metrics (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL UNIQUE REFERENCES deals(id) ON DELETE CASCADE,
+      submarket_name TEXT,
+      msa TEXT,
+      market_cap_rate NUMERIC,
+      market_rent_growth NUMERIC,
+      market_vacancy NUMERIC,
+      absorption_units NUMERIC,
+      deliveries_units NUMERIC,
+      narrative TEXT,
+      sources JSONB NOT NULL DEFAULT '[]',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -591,6 +652,68 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_predev_costs_deal_id ON deal_predev_costs(deal_id)`,
     `ALTER TABLE deals ADD COLUMN IF NOT EXISTS predev_settings JSONB`,
+    // Comps: unified sale + rent comp store (paste-mode first)
+    `CREATE TABLE IF NOT EXISTS comps (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT REFERENCES deals(id) ON DELETE SET NULL,
+      source_deal_id TEXT,
+      comp_type TEXT NOT NULL CHECK (comp_type IN ('sale', 'rent')),
+      name TEXT,
+      address TEXT,
+      city TEXT,
+      state TEXT,
+      property_type TEXT,
+      year_built INTEGER,
+      units INTEGER,
+      total_sf NUMERIC,
+      sale_price NUMERIC,
+      sale_date DATE,
+      cap_rate NUMERIC,
+      noi NUMERIC,
+      price_per_unit NUMERIC,
+      price_per_sf NUMERIC,
+      rent_per_unit NUMERIC,
+      rent_per_sf NUMERIC,
+      rent_per_bed NUMERIC,
+      occupancy_pct NUMERIC,
+      lease_type TEXT,
+      distance_mi NUMERIC,
+      selected BOOLEAN NOT NULL DEFAULT true,
+      source TEXT NOT NULL DEFAULT 'manual',
+      source_url TEXT,
+      source_note TEXT,
+      extra JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_comps_deal_id ON comps(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_comps_type ON comps(deal_id, comp_type)`,
+    `CREATE INDEX IF NOT EXISTS idx_comps_source_deal_id ON comps(source_deal_id)`,
+    // Migrate existing installs: drop the NOT NULL on deal_id and change the
+    // FK from CASCADE to SET NULL so workspace-only comps can exist. Also
+    // add the new source_deal_id column. These DO blocks are idempotent.
+    `ALTER TABLE comps ADD COLUMN IF NOT EXISTS source_deal_id TEXT`,
+    `ALTER TABLE comps ALTER COLUMN deal_id DROP NOT NULL`,
+    `DO $$ BEGIN
+       ALTER TABLE comps DROP CONSTRAINT IF EXISTS comps_deal_id_fkey;
+       ALTER TABLE comps ADD CONSTRAINT comps_deal_id_fkey
+         FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE SET NULL;
+     EXCEPTION WHEN OTHERS THEN NULL; END $$`,
+    // Submarket metrics: one row per deal
+    `CREATE TABLE IF NOT EXISTS submarket_metrics (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL UNIQUE REFERENCES deals(id) ON DELETE CASCADE,
+      submarket_name TEXT,
+      msa TEXT,
+      market_cap_rate NUMERIC,
+      market_rent_growth NUMERIC,
+      market_vacancy NUMERIC,
+      absorption_units NUMERIC,
+      deliveries_units NUMERIC,
+      narrative TEXT,
+      sources JSONB NOT NULL DEFAULT '[]',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
   ];
 
   for (const query of queries) {
@@ -989,6 +1112,270 @@ export const underwritingQueries = {
       [id, dealId, data]
     );
     return underwritingQueries.getByDealId(dealId);
+  },
+};
+
+// ─── Comps queries ────────────────────────────────────────────────────────────
+
+const COMP_COLUMNS = [
+  "name",
+  "address",
+  "city",
+  "state",
+  "property_type",
+  "year_built",
+  "units",
+  "total_sf",
+  "sale_price",
+  "sale_date",
+  "cap_rate",
+  "noi",
+  "price_per_unit",
+  "price_per_sf",
+  "rent_per_unit",
+  "rent_per_sf",
+  "rent_per_bed",
+  "occupancy_pct",
+  "lease_type",
+  "distance_mi",
+  "selected",
+  "source",
+  "source_url",
+  "source_note",
+] as const;
+
+export const compQueries = {
+  getByDealId: async (dealId: string, compType?: "sale" | "rent") => {
+    const pool = getPool();
+    const res = compType
+      ? await pool.query(
+          "SELECT * FROM comps WHERE deal_id = $1 AND comp_type = $2 ORDER BY created_at DESC",
+          [dealId, compType]
+        )
+      : await pool.query(
+          "SELECT * FROM comps WHERE deal_id = $1 ORDER BY comp_type, created_at DESC",
+          [dealId]
+        );
+    return res.rows;
+  },
+
+  /**
+   * Workspace-wide comp query: all comps across deals the user can access,
+   * PLUS all orphan workspace-level comps (deal_id IS NULL). Joins in the
+   * source deal name for display + provenance.
+   *
+   * Filters are additive: omitting a param means "don't filter on that field".
+   */
+  getWorkspace: async (
+    userId: string,
+    filters: {
+      compType?: "sale" | "rent";
+      propertyType?: string;
+      search?: string;   // matches name / address / city / state / source_note
+      limit?: number;
+    } = {}
+  ) => {
+    const pool = getPool();
+    const conditions: string[] = [];
+    const values: unknown[] = [userId];
+    let i = 2;
+
+    // Either the comp is attached to a deal the user can see, OR it's a
+    // workspace-level comp (no deal) whose source_deal_id (if any) is also
+    // one the user can see, OR it's a pure workspace comp with no source.
+    conditions.push(`(
+      c.deal_id IS NULL
+      OR c.deal_id IN (
+        SELECT DISTINCT d.id FROM deals d
+        LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
+        WHERE d.owner_id IS NULL OR d.owner_id = $1 OR ds.deal_id IS NOT NULL
+      )
+    )`);
+
+    if (filters.compType) {
+      conditions.push(`c.comp_type = $${i++}`);
+      values.push(filters.compType);
+    }
+    if (filters.propertyType) {
+      conditions.push(`c.property_type = $${i++}`);
+      values.push(filters.propertyType);
+    }
+    if (filters.search && filters.search.trim()) {
+      const q = `%${filters.search.trim().toLowerCase()}%`;
+      conditions.push(
+        `(LOWER(c.name) LIKE $${i} OR LOWER(c.address) LIKE $${i} OR LOWER(c.city) LIKE $${i} OR LOWER(c.state) LIKE $${i} OR LOWER(c.source_note) LIKE $${i})`
+      );
+      values.push(q);
+      i++;
+    }
+    const limit = Math.max(1, Math.min(500, filters.limit ?? 200));
+
+    const sql = `
+      SELECT c.*,
+             d_attached.name  AS attached_deal_name,
+             d_source.name    AS source_deal_name,
+             d_source.status  AS source_deal_status
+      FROM comps c
+      LEFT JOIN deals d_attached ON d_attached.id = c.deal_id
+      LEFT JOIN deals d_source   ON d_source.id   = c.source_deal_id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY c.created_at DESC
+      LIMIT ${limit}
+    `;
+    const res = await pool.query(sql, values);
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM comps WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
+  create: async (comp: Record<string, unknown>) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO comps (
+         id, deal_id, source_deal_id, comp_type,
+         name, address, city, state, property_type, year_built,
+         units, total_sf,
+         sale_price, sale_date, cap_rate, noi, price_per_unit, price_per_sf,
+         rent_per_unit, rent_per_sf, rent_per_bed, occupancy_pct, lease_type,
+         distance_mi, selected, source, source_url, source_note, extra,
+         created_at, updated_at
+       ) VALUES (
+         $1, $2, $3, $4,
+         $5, $6, $7, $8, $9, $10,
+         $11, $12,
+         $13, $14, $15, $16, $17, $18,
+         $19, $20, $21, $22, $23,
+         $24, $25, $26, $27, $28, $29::jsonb,
+         NOW(), NOW()
+       )`,
+      [
+        comp.id,
+        comp.deal_id ?? null,
+        comp.source_deal_id ?? null,
+        comp.comp_type,
+        comp.name ?? null,
+        comp.address ?? null,
+        comp.city ?? null,
+        comp.state ?? null,
+        comp.property_type ?? null,
+        comp.year_built ?? null,
+        comp.units ?? null,
+        comp.total_sf ?? null,
+        comp.sale_price ?? null,
+        comp.sale_date ?? null,
+        comp.cap_rate ?? null,
+        comp.noi ?? null,
+        comp.price_per_unit ?? null,
+        comp.price_per_sf ?? null,
+        comp.rent_per_unit ?? null,
+        comp.rent_per_sf ?? null,
+        comp.rent_per_bed ?? null,
+        comp.occupancy_pct ?? null,
+        comp.lease_type ?? null,
+        comp.distance_mi ?? null,
+        comp.selected ?? true,
+        comp.source ?? "manual",
+        comp.source_url ?? null,
+        comp.source_note ?? null,
+        JSON.stringify(comp.extra ?? {}),
+      ]
+    );
+    return compQueries.getById(comp.id as string);
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const keys = Object.keys(updates).filter((k) =>
+      (COMP_COLUMNS as readonly string[]).includes(k)
+    );
+    if (keys.length === 0 && !("extra" in updates)) {
+      return compQueries.getById(id);
+    }
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let i = 1;
+    for (const k of keys) {
+      setClauses.push(`"${k}" = $${i++}`);
+      values.push(updates[k]);
+    }
+    if ("extra" in updates) {
+      setClauses.push(`extra = $${i++}::jsonb`);
+      values.push(JSON.stringify(updates.extra ?? {}));
+    }
+    setClauses.push("updated_at = NOW()");
+    values.push(id);
+    await pool.query(
+      `UPDATE comps SET ${setClauses.join(", ")} WHERE id = $${values.length}`,
+      values
+    );
+    return compQueries.getById(id);
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM comps WHERE id = $1", [id]);
+  },
+
+  setSelected: async (id: string, selected: boolean) => {
+    const pool = getPool();
+    await pool.query(
+      "UPDATE comps SET selected = $1, updated_at = NOW() WHERE id = $2",
+      [selected, id]
+    );
+  },
+};
+
+// ─── Submarket metrics queries ───────────────────────────────────────────────
+
+export const submarketMetricsQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM submarket_metrics WHERE deal_id = $1",
+      [dealId]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  upsert: async (dealId: string, id: string, data: Record<string, unknown>) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO submarket_metrics (
+         id, deal_id, submarket_name, msa,
+         market_cap_rate, market_rent_growth, market_vacancy,
+         absorption_units, deliveries_units,
+         narrative, sources, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
+       ON CONFLICT (deal_id) DO UPDATE SET
+         submarket_name = EXCLUDED.submarket_name,
+         msa = EXCLUDED.msa,
+         market_cap_rate = EXCLUDED.market_cap_rate,
+         market_rent_growth = EXCLUDED.market_rent_growth,
+         market_vacancy = EXCLUDED.market_vacancy,
+         absorption_units = EXCLUDED.absorption_units,
+         deliveries_units = EXCLUDED.deliveries_units,
+         narrative = EXCLUDED.narrative,
+         sources = EXCLUDED.sources,
+         updated_at = NOW()`,
+      [
+        id,
+        dealId,
+        data.submarket_name ?? null,
+        data.msa ?? null,
+        data.market_cap_rate ?? null,
+        data.market_rent_growth ?? null,
+        data.market_vacancy ?? null,
+        data.absorption_units ?? null,
+        data.deliveries_units ?? null,
+        data.narrative ?? null,
+        JSON.stringify(data.sources ?? []),
+      ]
+    );
+    return submarketMetricsQueries.getByDealId(dealId);
   },
 };
 
