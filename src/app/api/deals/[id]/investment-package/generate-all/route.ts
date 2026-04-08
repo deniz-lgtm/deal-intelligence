@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries, compQueries, submarketMetricsQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
@@ -47,7 +47,7 @@ export async function POST(
     const { audience, format, sections, existingNotes = {} } = body;
 
     // Fetch ALL deal data in parallel
-    const [deal, uwRow, omAnalysis, docs, checklist, photosRes, devPhases, preDevCosts] = await Promise.all([
+    const [deal, uwRow, omAnalysis, docs, checklist, photosRes, devPhases, preDevCosts, compsAll, submarketMetrics] = await Promise.all([
       dealQueries.getById(params.id),
       underwritingQueries.getByDealId(params.id),
       omAnalysisQueries.getByDealId(params.id),
@@ -56,6 +56,8 @@ export async function POST(
       fetch(`${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/api/deals/${params.id}/photos`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({ data: [] })),
       devPhaseQueries.getByDealId(params.id).catch(() => []),
       preDevCostQueries.getByDealId(params.id).catch(() => []),
+      compQueries.getByDealId(params.id).catch(() => []),
+      submarketMetricsQueries.getByDealId(params.id).catch(() => null),
     ]);
 
     // Use deal notes for context instead of legacy context_notes
@@ -79,7 +81,7 @@ export async function POST(
     // Build per-section context
     const sectionContexts: Record<string, string> = {};
     for (const sectionId of sections) {
-      sectionContexts[sectionId] = buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc, businessPlan as AnyRecord | null, devPhases as AnyRecord[], preDevCosts as AnyRecord[]);
+      sectionContexts[sectionId] = buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc, businessPlan as AnyRecord | null, devPhases as AnyRecord[], preDevCosts as AnyRecord[], compsAll as AnyRecord[], submarketMetrics as AnyRecord | null);
     }
 
     const audienceTone = AUDIENCE_TONES[audience] || AUDIENCE_TONES.investment_committee;
@@ -184,7 +186,8 @@ function buildSectionContext(
   sectionId: string, deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord | null,
   docs: AnyRecord[], checklist: AnyRecord[], photos: AnyRecord[],
   n: (v: unknown) => number, fc: (v: number) => string, bp?: AnyRecord | null,
-  devPhases: AnyRecord[] = [], preDevCosts: AnyRecord[] = []
+  devPhases: AnyRecord[] = [], preDevCosts: AnyRecord[] = [],
+  compsAll: AnyRecord[] = [], submarketMetrics: AnyRecord | null = null
 ): string {
   const isMF = deal.property_type === "multifamily" || deal.property_type === "student_housing";
   const unitGroups = uw?.unit_groups || [];
@@ -209,11 +212,50 @@ function buildSectionContext(
         ...docs.filter((d: AnyRecord) => d.ai_summary && (d.category === "om" || d.category === "marketing")).map((d: AnyRecord) => `Doc (${d.name}): ${d.ai_summary}`),
       ].filter(Boolean).join("\n");
 
-    case "location_market":
-      return [
-        deal.context_notes ? `Market Intel: ${deal.context_notes}` : "",
-        ...docs.filter((d: AnyRecord) => d.ai_summary && d.category === "market").map((d: AnyRecord) => `Market Doc: ${d.ai_summary}`),
-      ].filter(Boolean).join("\n");
+    case "location_market": {
+      const lines: string[] = [];
+      if (deal.context_notes) lines.push(`Market Intel: ${deal.context_notes}`);
+
+      // Submarket metrics (from the new Comps & Market tab)
+      if (submarketMetrics) {
+        const sm = submarketMetrics;
+        const smLines: string[] = [];
+        if (sm.submarket_name) smLines.push(`Submarket: ${sm.submarket_name}`);
+        if (sm.msa) smLines.push(`MSA: ${sm.msa}`);
+        if (sm.market_cap_rate != null) smLines.push(`Market Cap Rate: ${sm.market_cap_rate}%`);
+        if (sm.market_vacancy != null) smLines.push(`Market Vacancy: ${sm.market_vacancy}%`);
+        if (sm.market_rent_growth != null) smLines.push(`Market Rent Growth: ${sm.market_rent_growth}%/yr`);
+        if (sm.absorption_units != null) smLines.push(`Absorption: ${sm.absorption_units} units/yr`);
+        if (sm.deliveries_units != null) smLines.push(`Deliveries: ${sm.deliveries_units} units/yr`);
+        if (smLines.length) lines.push("Submarket Metrics:\n  " + smLines.join("\n  "));
+        if (sm.narrative) lines.push(`Market Narrative: ${sm.narrative}`);
+      }
+
+      // Sale comps (selected only) — summarized for market positioning
+      const saleComps = compsAll.filter((c: AnyRecord) => c.comp_type === "sale" && c.selected !== false);
+      if (saleComps.length > 0) {
+        const compLines = saleComps.slice(0, 10).map((c: AnyRecord) => {
+          const parts: string[] = [];
+          if (c.name) parts.push(c.name);
+          if (c.address) parts.push(c.address);
+          if (c.sale_price != null) parts.push(`Sale: $${Number(c.sale_price).toLocaleString()}`);
+          if (c.cap_rate != null) parts.push(`Cap: ${c.cap_rate}%`);
+          if (c.price_per_unit != null) parts.push(`$${Math.round(Number(c.price_per_unit)).toLocaleString()}/unit`);
+          if (c.price_per_sf != null) parts.push(`$${Number(c.price_per_sf).toFixed(0)}/SF`);
+          if (c.sale_date) parts.push(new Date(c.sale_date).toLocaleDateString());
+          return "  " + parts.join(" | ");
+        });
+        lines.push(`Sale Comparables (${saleComps.length}):\n${compLines.join("\n")}`);
+      }
+
+      // Market-category documents
+      const marketDocs = docs.filter((d: AnyRecord) => d.ai_summary && d.category === "market");
+      for (const d of marketDocs) {
+        lines.push(`Market Doc (${d.name}): ${d.ai_summary}`);
+      }
+
+      return lines.filter(Boolean).join("\n");
+    }
 
     case "financial_summary": {
       if (!uw) return "No underwriting data available.";
@@ -241,27 +283,73 @@ function buildSectionContext(
     }
 
     case "rent_comps": {
-      const rentComps = uw?.rent_comps || [];
-      if (!rentComps.length) return "No rent comp data available.";
-      const selectedIds = new Set(uw?.selected_comp_ids || rentComps.map((_: unknown, i: number) => i));
-      const selected = rentComps.filter((_: unknown, i: number) => selectedIds.has(i));
-      const compLines = selected.map((c: AnyRecord) => {
-        const parts = [`${c.name} — ${c.address}`];
-        if (c.distance_mi) parts.push(`${c.distance_mi}mi away`);
-        if (c.year_built) parts.push(`Built ${c.year_built}`);
-        if (c.units) parts.push(`${c.units} units`);
-        if (c.total_sf) parts.push(`${Number(c.total_sf).toLocaleString()} SF`);
-        if (c.occupancy_pct) parts.push(`${c.occupancy_pct}% occ`);
-        if (c.rent_per_sf) parts.push(`$${Number(c.rent_per_sf).toFixed(2)}/SF`);
-        if (c.lease_type) parts.push(c.lease_type);
-        if (Array.isArray(c.unit_types)) {
-          const rents = c.unit_types.map((ut: AnyRecord) => `${ut.type}: $${ut.rent}/mo (${ut.sf}SF)`).join(", ");
-          parts.push(`Rents: ${rents}`);
-        }
-        if (c.notes) parts.push(`Notes: ${c.notes}`);
-        return parts.join(" | ");
-      });
-      return `${selected.length} Comparable Properties:\n${compLines.join("\n")}`;
+      // Merge two sources:
+      // 1. Legacy: rent_comps embedded in the underwriting JSONB (populated by
+      //    the existing /api/deals/[id]/rent-comps AI generator).
+      // 2. New: rows in the `comps` table with comp_type='rent' from the
+      //    Comps & Market tab (paste-mode extraction).
+      const legacyRentComps: AnyRecord[] = uw?.rent_comps || [];
+      const selectedLegacyIds = new Set(
+        uw?.selected_comp_ids || legacyRentComps.map((_: unknown, i: number) => i)
+      );
+      const legacySelected = legacyRentComps.filter((_: unknown, i: number) =>
+        selectedLegacyIds.has(i)
+      );
+      const tableRentComps = compsAll.filter(
+        (c: AnyRecord) => c.comp_type === "rent" && c.selected !== false
+      );
+
+      if (legacySelected.length === 0 && tableRentComps.length === 0) {
+        return "No rent comp data available.";
+      }
+
+      const lines: string[] = [];
+
+      if (legacySelected.length > 0) {
+        const legacyLines = legacySelected.map((c: AnyRecord) => {
+          const parts = [`${c.name} — ${c.address}`];
+          if (c.distance_mi) parts.push(`${c.distance_mi}mi away`);
+          if (c.year_built) parts.push(`Built ${c.year_built}`);
+          if (c.units) parts.push(`${c.units} units`);
+          if (c.total_sf) parts.push(`${Number(c.total_sf).toLocaleString()} SF`);
+          if (c.occupancy_pct) parts.push(`${c.occupancy_pct}% occ`);
+          if (c.rent_per_sf) parts.push(`$${Number(c.rent_per_sf).toFixed(2)}/SF`);
+          if (c.lease_type) parts.push(c.lease_type);
+          if (Array.isArray(c.unit_types)) {
+            const rents = c.unit_types
+              .map((ut: AnyRecord) => `${ut.type}: $${ut.rent}/mo (${ut.sf}SF)`)
+              .join(", ");
+            parts.push(`Rents: ${rents}`);
+          }
+          if (c.notes) parts.push(`Notes: ${c.notes}`);
+          return "  " + parts.join(" | ");
+        });
+        lines.push(`Rent Comps (${legacySelected.length}):\n${legacyLines.join("\n")}`);
+      }
+
+      if (tableRentComps.length > 0) {
+        const tableLines = tableRentComps.map((c: AnyRecord) => {
+          const parts: string[] = [];
+          if (c.name) parts.push(c.name);
+          if (c.address) parts.push(c.address);
+          if (c.distance_mi != null) parts.push(`${Number(c.distance_mi).toFixed(1)}mi`);
+          if (c.year_built) parts.push(`Built ${c.year_built}`);
+          if (c.units) parts.push(`${c.units} units`);
+          if (c.total_sf) parts.push(`${Number(c.total_sf).toLocaleString()} SF`);
+          if (c.occupancy_pct != null) parts.push(`${c.occupancy_pct}% occ`);
+          if (c.rent_per_unit != null) parts.push(`$${Math.round(Number(c.rent_per_unit)).toLocaleString()}/unit/mo`);
+          if (c.rent_per_sf != null) parts.push(`$${Number(c.rent_per_sf).toFixed(2)}/SF`);
+          if (c.rent_per_bed != null) parts.push(`$${Math.round(Number(c.rent_per_bed)).toLocaleString()}/bed/mo`);
+          if (c.lease_type) parts.push(c.lease_type);
+          if (c.source_note) parts.push(`Notes: ${c.source_note}`);
+          return "  " + parts.join(" | ");
+        });
+        lines.push(
+          `Rent Comps from Comps & Market tab (${tableRentComps.length}):\n${tableLines.join("\n")}`
+        );
+      }
+
+      return lines.join("\n\n");
     }
 
     case "value_add": {
