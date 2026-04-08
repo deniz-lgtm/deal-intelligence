@@ -410,6 +410,16 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     refiDebt = annualPayment(refiLoan, d.refi_rate, d.refi_amort_years);
   }
 
+  // ── Stabilized Returns (post-refi if refinance is modeled) ──────────────────
+  // "Stabilized" returns reflect the deal once it's reached its proforma state.
+  // When a refinance is planned, the truly stabilized state is post-refi, so
+  // debt service reflects refinance terms rather than acquisition debt.
+  const stabilizedDebtCF = d.has_refi && d.has_financing ? refiDebt : yr1Debt;
+  const stabilizedDebtAmort = d.has_refi && d.has_financing ? refiDebt : acqDebt;
+  const stabilizedCashFlow = proformaNOI - stabilizedDebtCF;
+  const stabilizedCoC = equity > 0 ? (stabilizedCashFlow / equity) * 100 : 0;
+  const stabilizedDSCR = stabilizedDebtAmort > 0 ? proformaNOI / stabilizedDebtAmort : 0;
+
   // ── Year-by-Year DCF ─────────────────────────────────────────────────────────
   const rg = (d.rent_growth_pct || 0) / 100;
   const eg = (d.expense_growth_pct || 0) / 100;
@@ -528,6 +538,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
     acqLoan, acqDebt, acqDebtIO, yr1Debt, equity, cashFlow, coc, dscr, blendedLtc,
+    stabilizedCashFlow, stabilizedCoC, stabilizedDSCR,
     refiProceeds, refiDebt, exitValue, exitEquity, totalCashFlows, em,
     yearlyDCF, inPlaceDCF,
   };
@@ -1191,7 +1202,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       {/* Returns — Before (In-Place) vs After (Pro Forma) */}
       <div className={`border rounded-xl bg-card overflow-hidden ${activeScenario ? "ring-2 ring-amber-300/50" : ""}`}>
         <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
-          <h3 className="font-semibold text-sm">{isGroundUp ? "Returns — Stabilized" : "Returns — In-Place vs Proforma"}</h3>
+          <h3 className="font-semibold text-sm">{isGroundUp ? "Returns — Stabilized" : "Returns — In-Place vs Proforma"}{d.has_refi && d.has_financing ? " (Post-Refi)" : ""}</h3>
           {activeScenario && (
             <span className="text-2xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{activeScenario.name}</span>
           )}
@@ -1200,8 +1211,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           {([
             { label: "NOI", ip: fc(m.inPlaceNOI), pf: fc(m.proformaNOI) },
             { label: "Cap Rate", ip: m.inPlaceCapRate > 0 ? `${m.inPlaceCapRate.toFixed(2)}%` : "—", pf: m.proformaCapRate > 0 ? `${m.proformaCapRate.toFixed(2)}%` : "—" },
-            { label: "Cash-on-Cash", ip: m.inPlaceCoC !== 0 ? `${m.inPlaceCoC.toFixed(2)}%` : "—", pf: m.coc !== 0 ? `${m.coc.toFixed(2)}%` : "—" },
-            { label: "DSCR", ip: m.inPlaceDSCR > 0 ? `${m.inPlaceDSCR.toFixed(2)}x` : "—", pf: m.dscr > 0 ? `${m.dscr.toFixed(2)}x` : "—" },
+            { label: "Cash-on-Cash", ip: m.inPlaceCoC !== 0 ? `${m.inPlaceCoC.toFixed(2)}%` : "—", pf: m.stabilizedCoC !== 0 ? `${m.stabilizedCoC.toFixed(2)}%` : "—" },
+            { label: "DSCR", ip: m.inPlaceDSCR > 0 ? `${m.inPlaceDSCR.toFixed(2)}x` : "—", pf: m.stabilizedDSCR > 0 ? `${m.stabilizedDSCR.toFixed(2)}x` : "—" },
             { label: "GRM", ip: m.inPlaceGRM > 0 ? m.inPlaceGRM.toFixed(2) : "—", pf: m.proformaGRM > 0 ? m.proformaGRM.toFixed(2) : "—" },
             { label: "Yield on Cost", ip: "—", pf: m.yoc > 0 ? `${m.yoc.toFixed(2)}%` : "—" },
           ] as const).map(metric => (
