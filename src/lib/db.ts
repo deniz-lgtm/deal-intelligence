@@ -175,6 +175,38 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS duration_days INTEGER",
     "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS predecessor_id TEXT",
     "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS lag_days INTEGER NOT NULL DEFAULT 0",
+    // Communication tracking: stakeholder correspondence log
+    `CREATE TABLE IF NOT EXISTS deal_communications (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      stakeholder_type TEXT NOT NULL DEFAULT 'broker',
+      stakeholder_name TEXT NOT NULL DEFAULT '',
+      channel TEXT NOT NULL DEFAULT 'email',
+      direction TEXT NOT NULL DEFAULT 'outbound',
+      subject TEXT NOT NULL DEFAULT '',
+      summary TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'open',
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      follow_up_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_communications_deal_id ON deal_communications(deal_id)`,
+    // Communication tracking: questions for brokers / others by phase
+    `CREATE TABLE IF NOT EXISTS deal_questions (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      target_role TEXT NOT NULL DEFAULT 'broker',
+      phase TEXT NOT NULL DEFAULT 'sourcing',
+      question TEXT NOT NULL,
+      answer TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      source TEXT NOT NULL DEFAULT 'manual',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_questions_deal_id ON deal_questions(deal_id)`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -2217,5 +2249,170 @@ export const preDevCostQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_predev_costs WHERE id = $1", [id]);
+  },
+};
+
+// ─── Communication queries ────────────────────────────────────────────────────
+
+const COMMUNICATION_FIELDS = [
+  "stakeholder_type",
+  "stakeholder_name",
+  "channel",
+  "direction",
+  "subject",
+  "summary",
+  "status",
+  "occurred_at",
+  "follow_up_at",
+];
+
+export const communicationQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM deal_communications WHERE deal_id = $1 ORDER BY occurred_at DESC, created_at DESC",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (comm: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_communications
+        (id, deal_id, stakeholder_type, stakeholder_name, channel, direction,
+         subject, summary, status, occurred_at, follow_up_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+       RETURNING *`,
+      [
+        comm.id,
+        comm.deal_id,
+        comm.stakeholder_type ?? "broker",
+        comm.stakeholder_name ?? "",
+        comm.channel ?? "email",
+        comm.direction ?? "outbound",
+        comm.subject ?? "",
+        comm.summary ?? "",
+        comm.status ?? "open",
+        comm.occurred_at ?? new Date().toISOString(),
+        comm.follow_up_at ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (COMMUNICATION_FIELDS.includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+
+    const res = await pool.query(
+      `UPDATE deal_communications SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM deal_communications WHERE id = $1", [id]);
+  },
+};
+
+// ─── Question queries ─────────────────────────────────────────────────────────
+
+const QUESTION_FIELDS = [
+  "target_role",
+  "phase",
+  "question",
+  "answer",
+  "status",
+  "source",
+  "sort_order",
+];
+
+export const questionQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_questions
+       WHERE deal_id = $1
+       ORDER BY phase, sort_order, created_at`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (q: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_questions
+        (id, deal_id, target_role, phase, question, answer, status, source, sort_order, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+       RETURNING *`,
+      [
+        q.id,
+        q.deal_id,
+        q.target_role ?? "broker",
+        q.phase ?? "sourcing",
+        q.question,
+        q.answer ?? null,
+        q.status ?? "open",
+        q.source ?? "manual",
+        q.sort_order ?? 0,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  createMany: async (rows: Array<Record<string, unknown>>) => {
+    const created = [];
+    for (const row of rows) {
+      created.push(await questionQueries.create(row));
+    }
+    return created;
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (QUESTION_FIELDS.includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+
+    const res = await pool.query(
+      `UPDATE deal_questions SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM deal_questions WHERE id = $1", [id]);
   },
 };

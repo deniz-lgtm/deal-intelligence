@@ -660,6 +660,179 @@ export const DEFAULT_TASKS: Array<{ title: string; priority: TaskPriority; miles
   { title: "Wire closing funds", priority: "critical", milestone_title: "Deal closed" },
 ];
 
+// ─── Communication ─────────────────────────────────────────────────────────
+
+export type StakeholderType =
+  | "broker"
+  | "seller"
+  | "buyer"
+  | "lender"
+  | "attorney"
+  | "title"
+  | "inspector"
+  | "appraiser"
+  | "ic"
+  | "partner"
+  | "tenant"
+  | "city"
+  | "other";
+
+export type CommunicationChannel =
+  | "email"
+  | "phone"
+  | "text"
+  | "meeting"
+  | "video"
+  | "letter"
+  | "other";
+
+export type CommunicationDirection = "inbound" | "outbound";
+
+export type CommunicationStatus = "open" | "awaiting_reply" | "closed";
+
+export type QuestionStatus = "open" | "asked" | "answered" | "na";
+
+export type QuestionSource = "manual" | "template" | "ai";
+
+export interface DealCommunication {
+  id: string;
+  deal_id: string;
+  stakeholder_type: StakeholderType;
+  stakeholder_name: string;
+  channel: CommunicationChannel;
+  direction: CommunicationDirection;
+  subject: string;
+  summary: string;
+  status: CommunicationStatus;
+  occurred_at: string;
+  follow_up_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DealQuestion {
+  id: string;
+  deal_id: string;
+  target_role: StakeholderType;
+  phase: DealStatus;
+  question: string;
+  answer: string | null;
+  status: QuestionStatus;
+  source: QuestionSource;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const STAKEHOLDER_LABELS: Record<StakeholderType, string> = {
+  broker: "Broker",
+  seller: "Seller",
+  buyer: "Buyer",
+  lender: "Lender",
+  attorney: "Attorney",
+  title: "Title / Escrow",
+  inspector: "Inspector",
+  appraiser: "Appraiser",
+  ic: "Investment Committee",
+  partner: "Partner / JV",
+  tenant: "Tenant",
+  city: "City / Municipality",
+  other: "Other",
+};
+
+export const COMMUNICATION_CHANNEL_LABELS: Record<CommunicationChannel, string> = {
+  email: "Email",
+  phone: "Phone",
+  text: "Text",
+  meeting: "Meeting",
+  video: "Video Call",
+  letter: "Letter",
+  other: "Other",
+};
+
+export const COMMUNICATION_STATUS_CONFIG: Record<
+  CommunicationStatus,
+  { label: string; color: string }
+> = {
+  open: { label: "Open", color: "bg-blue-500/20 text-blue-300" },
+  awaiting_reply: { label: "Awaiting Reply", color: "bg-amber-500/20 text-amber-300" },
+  closed: { label: "Closed", color: "bg-emerald-500/20 text-emerald-300" },
+};
+
+export const QUESTION_STATUS_CONFIG: Record<
+  QuestionStatus,
+  { label: string; color: string }
+> = {
+  open: { label: "Open", color: "bg-zinc-500/20 text-zinc-300" },
+  asked: { label: "Asked", color: "bg-blue-500/20 text-blue-300" },
+  answered: { label: "Answered", color: "bg-emerald-500/20 text-emerald-300" },
+  na: { label: "N/A", color: "bg-muted text-muted-foreground" },
+};
+
+/**
+ * Suggested questions to ask brokers / sellers / others at each phase of the
+ * deal. Used by the Communication section to seed the questions list.
+ */
+export const STAGE_QUESTION_TEMPLATES: Record<
+  DealStatus,
+  Array<{ target_role: StakeholderType; question: string }>
+> = {
+  sourcing: [
+    { target_role: "broker", question: "What is the seller's motivation and timing?" },
+    { target_role: "broker", question: "Has the property been on the market before? At what price?" },
+    { target_role: "broker", question: "Are there any other offers or LOIs in hand?" },
+    { target_role: "broker", question: "What is the asking price and how was it determined?" },
+    { target_role: "broker", question: "Can you share the rent roll, T-12, and OM?" },
+    { target_role: "broker", question: "Are there any known capex needs or deferred maintenance?" },
+    { target_role: "broker", question: "Who is the current property manager?" },
+  ],
+  screening: [
+    { target_role: "broker", question: "Can you provide trailing 24 months of operating statements?" },
+    { target_role: "broker", question: "Are utilities separately metered?" },
+    { target_role: "broker", question: "What is the in-place vs. market rent gap?" },
+    { target_role: "broker", question: "Are there any below-market leases or anchor tenants in renewal?" },
+    { target_role: "seller", question: "What capital improvements have been made in the last 5 years?" },
+    { target_role: "seller", question: "Are there any pending or threatened litigation matters?" },
+    { target_role: "lender", question: "What loan terms can you offer for this asset class and market?" },
+  ],
+  loi: [
+    { target_role: "broker", question: "What deal terms are most important to the seller (price, close timing, contingencies)?" },
+    { target_role: "broker", question: "What earnest money deposit will the seller expect?" },
+    { target_role: "broker", question: "How long of a due diligence period is acceptable?" },
+    { target_role: "seller", question: "Will seller financing be considered?" },
+    { target_role: "attorney", question: "Any concerns with our standard LOI terms for this jurisdiction?" },
+  ],
+  under_contract: [
+    { target_role: "seller", question: "Can you provide all leases, amendments, and estoppels?" },
+    { target_role: "seller", question: "Please provide vendor contracts and service agreements." },
+    { target_role: "seller", question: "Are there any unrecorded agreements affecting the property?" },
+    { target_role: "title", question: "What is the timeline for title commitment and survey delivery?" },
+    { target_role: "lender", question: "What is the timeline for loan application, appraisal, and commitment?" },
+  ],
+  diligence: [
+    { target_role: "seller", question: "Have all environmental reports (Phase I/II) been provided?" },
+    { target_role: "inspector", question: "Any major roof, HVAC, or structural concerns to flag?" },
+    { target_role: "appraiser", question: "What comparable sales are you using and what is your timing?" },
+    { target_role: "title", question: "Any title exceptions that need to be cleared before closing?" },
+    { target_role: "city", question: "Are there any open code violations or pending assessments?" },
+    { target_role: "tenant", question: "Have you executed the estoppel certificate and SNDA?" },
+    { target_role: "lender", question: "What conditions remain for final loan approval and rate lock?" },
+  ],
+  closing: [
+    { target_role: "title", question: "Has the closing statement (HUD/CD) been finalized and reviewed?" },
+    { target_role: "lender", question: "Are wire instructions and final funding amounts confirmed?" },
+    { target_role: "attorney", question: "Have all closing documents been reviewed and signed?" },
+    { target_role: "seller", question: "Has the final walkthrough been scheduled?" },
+    { target_role: "broker", question: "Are commission instructions and W-9s in place?" },
+  ],
+  closed: [
+    { target_role: "partner", question: "Schedule post-close kickoff with property manager and asset manager." },
+    { target_role: "tenant", question: "Send new ownership notification and payment instructions." },
+  ],
+  dead: [],
+  archived: [],
+};
+
 // ─── Development Schedule ──────────────────────────────────────────────────
 
 export type DevPhaseStatus = "not_started" | "in_progress" | "complete" | "delayed";
