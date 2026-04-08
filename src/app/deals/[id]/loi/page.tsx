@@ -11,15 +11,18 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import ContactPicker from "@/components/ContactPicker";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
-import type { LOIData, Deal } from "@/lib/types";
+import type { LOIData, Deal, Contact, StakeholderType } from "@/lib/types";
 
 const DEFAULT_LOI: LOIData = {
   buyer_entity: "",
   buyer_contact: "",
+  buyer_contact_id: null,
   buyer_address: "",
   seller_name: "",
+  seller_contact_id: null,
   seller_address: "",
   purchase_price: null,
   earnest_money: null,
@@ -29,8 +32,10 @@ const DEFAULT_LOI: LOIData = {
   closing_days: 30,
   has_financing_contingency: true,
   lender_name: "",
+  lender_contact_id: null,
   as_is: true,
   broker_name: "",
+  broker_contact_id: null,
   broker_commission: "",
   additional_terms: "",
   loi_date: new Date().toISOString().slice(0, 10),
@@ -124,6 +129,26 @@ export default function LOIPage({ params }: { params: { id: string } }) {
 
   const set = <K extends keyof LOIData>(key: K, value: LOIData[K]) => {
     setData((prev) => ({ ...prev, [key]: value }));
+  };
+
+  /**
+   * When a contact is picked for a party (buyer/seller/lender/broker),
+   * write both the legacy display string (e.g. "Jane Doe, CBRE") and the
+   * new *_contact_id FK. When cleared, drop the FK but leave the string
+   * so existing rendering keeps working.
+   */
+  const setContactParty = (
+    nameKey: "buyer_contact" | "seller_name" | "lender_name" | "broker_name",
+    idKey: "buyer_contact_id" | "seller_contact_id" | "lender_contact_id" | "broker_contact_id",
+    contact: Contact | null
+  ) => {
+    setData((prev) => ({
+      ...prev,
+      [idKey]: contact?.id ?? null,
+      ...(contact
+        ? { [nameKey]: contact.company ? `${contact.name}, ${contact.company}` : contact.name }
+        : {}),
+    }));
   };
 
   const save = async (markExec = false) => {
@@ -284,13 +309,41 @@ export default function LOIPage({ params }: { params: { id: string } }) {
             <input className={inputCls} value={data.buyer_entity} onChange={(e) => set("buyer_entity", e.target.value)} placeholder="XYZ Capital LLC" />
           </Field>
           <Field label="Buyer Contact">
-            <input className={inputCls} value={data.buyer_contact} onChange={(e) => set("buyer_contact", e.target.value)} placeholder="John Smith" />
+            <ContactPicker
+              value={data.buyer_contact_id}
+              displayLabel={data.buyer_contact && !data.buyer_contact_id ? data.buyer_contact : undefined}
+              onChange={(c) => setContactParty("buyer_contact", "buyer_contact_id", c)}
+              defaultRole={"buyer" as StakeholderType}
+              placeholder="Search contacts..."
+            />
+            {!data.buyer_contact_id && (
+              <input
+                className={`${inputCls} mt-1.5`}
+                value={data.buyer_contact}
+                onChange={(e) => set("buyer_contact", e.target.value)}
+                placeholder="...or type a name"
+              />
+            )}
           </Field>
           <Field label="Buyer Address" className="md:col-span-2">
             <input className={inputCls} value={data.buyer_address} onChange={(e) => set("buyer_address", e.target.value)} placeholder="123 Main St, City, State 00000" />
           </Field>
           <Field label="Seller Name / Entity">
-            <input className={inputCls} value={data.seller_name} onChange={(e) => set("seller_name", e.target.value)} placeholder="ABC Properties LLC" />
+            <ContactPicker
+              value={data.seller_contact_id}
+              displayLabel={data.seller_name && !data.seller_contact_id ? data.seller_name : undefined}
+              onChange={(c) => setContactParty("seller_name", "seller_contact_id", c)}
+              defaultRole={"seller" as StakeholderType}
+              placeholder="Search contacts..."
+            />
+            {!data.seller_contact_id && (
+              <input
+                className={`${inputCls} mt-1.5`}
+                value={data.seller_name}
+                onChange={(e) => set("seller_name", e.target.value)}
+                placeholder="...or type an entity"
+              />
+            )}
           </Field>
           <Field label="Seller Address">
             <input className={inputCls} value={data.seller_address} onChange={(e) => set("seller_address", e.target.value)} placeholder="456 Oak Ave, City, State 00000" />
@@ -377,7 +430,21 @@ export default function LOIPage({ params }: { params: { id: string } }) {
         </label>
         {data.has_financing_contingency && (
           <Field label="Lender Name (if known)">
-            <input className={inputCls} value={data.lender_name} onChange={(e) => set("lender_name", e.target.value)} placeholder="First National Bank" />
+            <ContactPicker
+              value={data.lender_contact_id}
+              displayLabel={data.lender_name && !data.lender_contact_id ? data.lender_name : undefined}
+              onChange={(c) => setContactParty("lender_name", "lender_contact_id", c)}
+              defaultRole={"lender" as StakeholderType}
+              placeholder="Search contacts..."
+            />
+            {!data.lender_contact_id && (
+              <input
+                className={`${inputCls} mt-1.5`}
+                value={data.lender_name}
+                onChange={(e) => set("lender_name", e.target.value)}
+                placeholder="...or type a lender"
+              />
+            )}
           </Field>
         )}
       </Section>
@@ -386,7 +453,21 @@ export default function LOIPage({ params }: { params: { id: string } }) {
       <Section title="Broker (if applicable)">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Broker Name">
-            <input className={inputCls} value={data.broker_name} onChange={(e) => set("broker_name", e.target.value)} placeholder="Jane Doe, ABC Realty" />
+            <ContactPicker
+              value={data.broker_contact_id}
+              displayLabel={data.broker_name && !data.broker_contact_id ? data.broker_name : undefined}
+              onChange={(c) => setContactParty("broker_name", "broker_contact_id", c)}
+              defaultRole={"broker" as StakeholderType}
+              placeholder="Search contacts..."
+            />
+            {!data.broker_contact_id && (
+              <input
+                className={`${inputCls} mt-1.5`}
+                value={data.broker_name}
+                onChange={(e) => set("broker_name", e.target.value)}
+                placeholder="...or type a name"
+              />
+            )}
           </Field>
           <Field label="Commission">
             <input className={inputCls} value={data.broker_commission} onChange={(e) => set("broker_commission", e.target.value)} placeholder="3% of purchase price" />

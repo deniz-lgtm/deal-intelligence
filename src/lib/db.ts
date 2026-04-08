@@ -207,6 +207,37 @@ export async function ensureColumns(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_questions_deal_id ON deal_questions(deal_id)`,
+    // Contacts (CRM): workspace-shared people directory
+    `CREATE TABLE IF NOT EXISTS contacts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      role TEXT NOT NULL DEFAULT 'broker',
+      company TEXT,
+      title TEXT,
+      notes TEXT,
+      tags JSONB NOT NULL DEFAULT '[]',
+      owner_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_contacts_role ON contacts(role)`,
+    `CREATE INDEX IF NOT EXISTS idx_contacts_name_lower ON contacts(LOWER(name))`,
+    // Contacts (CRM): join table linking contacts to deals
+    `CREATE TABLE IF NOT EXISTS deal_contacts (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      role_on_deal TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(deal_id, contact_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_contacts_deal_id ON deal_contacts(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_contacts_contact_id ON deal_contacts(contact_id)`,
+    // Communications: optional FK to contacts
+    `ALTER TABLE deal_communications ADD COLUMN IF NOT EXISTS contact_id TEXT`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -1627,6 +1658,7 @@ export const ALL_PERMISSIONS = [
   "deals.delete",
   "deals.share",
   "business_plans.access",
+  "contacts.access",
   "documents.upload",
   "ai.chat",
 ] as const;
@@ -2264,6 +2296,7 @@ const COMMUNICATION_FIELDS = [
   "status",
   "occurred_at",
   "follow_up_at",
+  "contact_id",
 ];
 
 export const communicationQueries = {
@@ -2281,8 +2314,8 @@ export const communicationQueries = {
     const res = await pool.query(
       `INSERT INTO deal_communications
         (id, deal_id, stakeholder_type, stakeholder_name, channel, direction,
-         subject, summary, status, occurred_at, follow_up_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+         subject, summary, status, occurred_at, follow_up_at, contact_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
        RETURNING *`,
       [
         comm.id,
@@ -2296,6 +2329,7 @@ export const communicationQueries = {
         comm.status ?? "open",
         comm.occurred_at ?? new Date().toISOString(),
         comm.follow_up_at ?? null,
+        comm.contact_id ?? null,
       ]
     );
     return res.rows[0];
@@ -2414,5 +2448,191 @@ export const questionQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_questions WHERE id = $1", [id]);
+  },
+};
+
+// ─── Contact queries (CRM) ────────────────────────────────────────────────────
+
+const CONTACT_FIELDS = [
+  "name",
+  "email",
+  "phone",
+  "role",
+  "company",
+  "title",
+  "notes",
+  "tags",
+];
+
+export const contactQueries = {
+  getAll: async (opts: { q?: string; role?: string } = {}) => {
+    const pool = getPool();
+    const where: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    if (opts.q) {
+      where.push(
+        `(LOWER(name) LIKE $${idx} OR LOWER(COALESCE(email,'')) LIKE $${idx} OR LOWER(COALESCE(company,'')) LIKE $${idx})`
+      );
+      values.push(`%${opts.q.toLowerCase()}%`);
+      idx++;
+    }
+    if (opts.role) {
+      where.push(`role = $${idx}`);
+      values.push(opts.role);
+      idx++;
+    }
+
+    const sql = `
+      SELECT * FROM contacts
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY name ASC
+      LIMIT 500
+    `;
+    const res = await pool.query(sql, values);
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM contacts WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
+  /** Get a contact along with the deals it's linked to */
+  getByIdWithDeals: async (id: string) => {
+    const pool = getPool();
+    const contact = await contactQueries.getById(id);
+    if (!contact) return null;
+    const dealsRes = await pool.query(
+      `SELECT dc.id AS link_id, dc.role_on_deal, dc.notes AS link_notes, dc.created_at AS linked_at,
+              d.id AS deal_id, d.name AS deal_name, d.status AS deal_status, d.city, d.state
+       FROM deal_contacts dc
+       JOIN deals d ON d.id = dc.deal_id
+       WHERE dc.contact_id = $1
+       ORDER BY dc.created_at DESC`,
+      [id]
+    );
+    return { ...contact, deals: dealsRes.rows };
+  },
+
+  create: async (c: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO contacts (id, name, email, phone, role, company, title, notes, tags, owner_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+       RETURNING *`,
+      [
+        c.id,
+        c.name,
+        c.email ?? null,
+        c.phone ?? null,
+        c.role ?? "broker",
+        c.company ?? null,
+        c.title ?? null,
+        c.notes ?? null,
+        JSON.stringify(c.tags ?? []),
+        c.owner_id ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (CONTACT_FIELDS.includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(key === "tags" ? JSON.stringify(value ?? []) : value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+
+    const res = await pool.query(
+      `UPDATE contacts SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM contacts WHERE id = $1", [id]);
+  },
+};
+
+// ─── Deal-Contact link queries ────────────────────────────────────────────────
+
+const DEAL_CONTACT_FIELDS = ["role_on_deal", "notes"];
+
+export const dealContactQueries = {
+  /** List contacts linked to a deal, joined with the contact rows */
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT dc.id AS link_id, dc.role_on_deal, dc.notes AS link_notes, dc.created_at AS linked_at,
+              c.*
+       FROM deal_contacts dc
+       JOIN contacts c ON c.id = dc.contact_id
+       WHERE dc.deal_id = $1
+       ORDER BY dc.created_at DESC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  /** Create a deal-contact link. Returns null on duplicate (unique constraint). */
+  link: async (link: { id: string; deal_id: string; contact_id: string; role_on_deal?: string | null; notes?: string | null }) => {
+    const pool = getPool();
+    try {
+      const res = await pool.query(
+        `INSERT INTO deal_contacts (id, deal_id, contact_id, role_on_deal, notes, created_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         RETURNING *`,
+        [link.id, link.deal_id, link.contact_id, link.role_on_deal ?? null, link.notes ?? null]
+      );
+      return res.rows[0];
+    } catch (err) {
+      // 23505 = unique violation
+      if ((err as { code?: string }).code === "23505") return null;
+      throw err;
+    }
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (DEAL_CONTACT_FIELDS.includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    values.push(id);
+
+    const res = await pool.query(
+      `UPDATE deal_contacts SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  unlink: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM deal_contacts WHERE id = $1", [id]);
   },
 };

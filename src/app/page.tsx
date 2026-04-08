@@ -21,6 +21,7 @@ import {
   Activity,
   ArrowRight,
   X,
+  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import KanbanCard from "@/components/KanbanCard";
@@ -276,6 +277,13 @@ export default function DashboardPage() {
                 <Link href="/business-plans">
                   <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground text-xs hidden sm:inline-flex">
                     <BookOpen className="h-3.5 w-3.5 mr-1.5" /> Plans
+                  </Button>
+                </Link>
+              )}
+              {can("contacts.access") && (
+                <Link href="/contacts">
+                  <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground text-xs hidden sm:inline-flex">
+                    <Users className="h-3.5 w-3.5 mr-1.5" /> Contacts
                   </Button>
                 </Link>
               )}
