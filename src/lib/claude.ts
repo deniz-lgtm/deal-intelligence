@@ -391,6 +391,121 @@ export async function extractCompFromText(
   }
 }
 
+// ─── Comp Extraction from Market Document ───────────────────────────────────
+//
+// Market studies, appraisals, broker comp reports typically contain MULTIPLE
+// comparables — a rent comp grid with 8 properties, a sale comp block with
+// 5 properties, etc. This extractor returns an array, not a single comp.
+
+export interface ExtractedCompsBatch {
+  comps: ExtractedCompDraft[];
+  summary: string;
+}
+
+const COMPS_FROM_DOC_PROMPT = `You are a commercial real estate analyst extracting ALL comparable properties from a market-category document (market study, appraisal, broker comp report, rent survey, etc.).
+
+The document may contain multiple sale comps, multiple rent comps, or a mix of both. Extract EVERY comparable property you can find. Do not summarize or dedupe — return all of them as distinct objects.
+
+For each comp, decide whether it's a SALE comp or a RENT comp. Extract whatever structured fields you can find. Use null for anything not clearly stated. Do NOT fabricate values.
+
+Return ONLY a single JSON object with exactly this shape:
+
+{
+  "summary": "Brief 1-sentence summary of what was found (e.g. '5 sale comps and 8 rent comps extracted from this market study').",
+  "comps": [
+    {
+      "comp_type": "sale" | "rent",
+      "name": "Property name or null",
+      "address": "Street address or null",
+      "city": "City or null",
+      "state": "2-letter state code or null",
+      "property_type": "multifamily | office | retail | industrial | mixed_use | hospitality | land | other | null",
+      "year_built": 1995,
+      "units": 120,
+      "total_sf": 85000,
+      "sale_price": 12500000,
+      "sale_date": "2024-06-15",
+      "cap_rate": 5.5,
+      "noi": 687500,
+      "price_per_unit": 104167,
+      "price_per_sf": 147.06,
+      "rent_per_unit": 1850,
+      "rent_per_sf": 32.50,
+      "rent_per_bed": null,
+      "occupancy_pct": 95,
+      "lease_type": "NNN | MG | Gross | Modified Gross | null",
+      "distance_mi": null,
+      "confidence": 0.85,
+      "notes": "Source section / page reference, tenant info, amenities, etc."
+    }
+  ]
+}
+
+Rules:
+- Numbers as plain JSON numbers (no $, no commas, no %).
+- cap_rate, occupancy_pct, rent_per_sf are displayed values (5.5 not 0.055).
+- rent_per_unit is MONTHLY. rent_per_sf is ANNUAL.
+- sale_date must be ISO YYYY-MM-DD or null.
+- confidence is your honest 0-1 estimate per-comp.
+- If the document has NO comps at all, return { "summary": "No comparable properties found in this document", "comps": [] }.
+- Respond with ONLY the JSON object. No markdown fences, no explanation.`;
+
+export async function extractCompsFromDocument(
+  contentText: string,
+  opts: { documentName?: string } = {}
+): Promise<ExtractedCompsBatch | null> {
+  if (!contentText || contentText.trim().length < 40) return null;
+
+  try {
+    const header = opts.documentName
+      ? `Document name: ${opts.documentName}\n\n`
+      : "";
+    const userContent =
+      `${header}DOCUMENT CONTENT:\n"""\n${contentText.slice(0, 40000)}\n"""\n\n${COMPS_FROM_DOC_PROMPT}`;
+
+    const response = await getClient().messages.create({
+      model: await getActiveModel(),
+      max_tokens: 8000,
+      messages: [{ role: "user", content: userContent }],
+    });
+
+    const raw =
+      response.content[0]?.type === "text" ? response.content[0].text : "{}";
+    const cleaned = raw
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+
+    const parsed = JSON.parse(match[0]) as ExtractedCompsBatch;
+
+    if (!Array.isArray(parsed.comps)) {
+      return { summary: parsed.summary ?? "No comps found", comps: [] };
+    }
+
+    // Sanity-clean each comp
+    for (const c of parsed.comps) {
+      if (c.comp_type !== "sale" && c.comp_type !== "rent") {
+        c.comp_type = "sale";
+      }
+      if (
+        typeof c.confidence !== "number" ||
+        c.confidence < 0 ||
+        c.confidence > 1
+      ) {
+        c.confidence = 0.5;
+      }
+    }
+
+    return parsed;
+  } catch (err) {
+    console.error("extractCompsFromDocument failed:", err);
+    return null;
+  }
+}
+
 // ─── Diligence Chat ──────────────────────────────────────────────────────────
 
 export interface ChatMessage {

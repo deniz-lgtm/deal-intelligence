@@ -75,31 +75,6 @@ function buildJsonSchema(isMF: boolean): string {
 ]`;
 }
 
-function buildWebSearchPrompt(
-  context: string, isMF: boolean, unitTypeGuidance: string,
-  searchLocation: string, deal: { address?: string; city?: string; property_type?: string },
-): string {
-  return `You are a commercial real estate analyst generating a rent comparable analysis.
-
-${context}
-
-I need you to find REAL comparable properties near this location using web search. Search for actual rental listings, recent lease comps, and market data. ${unitTypeGuidance}
-
-Please search for real properties and current market rents in ${searchLocation}. Use specific search queries to find:
-${isMF ? `- Apartments for rent near ${deal.address || deal.city}
-- Multifamily communities in ${searchLocation} with current asking rents
-- Recent apartment rent surveys or market reports for the area` :
-`- Commercial spaces for lease near ${deal.address || deal.city}
-- ${deal.property_type || "commercial"} rental rates in ${searchLocation}
-- Recent lease comps and market reports`}
-
-After searching, compile 6-8 REAL comparable properties. Use actual property names, real addresses, and current asking rents from your search results. If you can't find exact data for some fields, use your best estimate based on the market data you found, but prioritize real properties over fabricated ones.
-
-${buildJsonSchema(isMF)}
-
-IMPORTANT: Return ONLY valid JSON after your research. No markdown code fences, no explanation, no text before or after the JSON array. Cite your sources in the notes field.`;
-}
-
 function buildKnowledgePrompt(
   context: string, isMF: boolean, unitTypeGuidance: string, searchLocation: string,
 ): string {
@@ -120,42 +95,16 @@ ${buildJsonSchema(isMF)}
 IMPORTANT: Return ONLY valid JSON. No markdown code fences, no explanation, no text before or after the JSON array. In the notes field, write "AI estimate based on market knowledge" for each comp.`;
 }
 
-// ── Web search strategy (with 1 retry on 429) ───────────────────────────────
-async function tryWebSearch(prompt: string): Promise<string | null> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const response = await getClient().messages.create({
-        model: MODEL,
-        max_tokens: 8000,
-        tools: [
-          {
-            type: "web_search" as const,
-            name: "web_search" as const,
-            max_uses: 5,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          } as any,
-        ],
-        messages: [{ role: "user", content: prompt }],
-      });
-
-      let text = "";
-      for (const block of response.content) {
-        if (block.type === "text") text = block.text;
-      }
-      if (text.trim()) return text;
-      return null;
-    } catch (err) {
-      if (attempt === 0 && isRateLimitError(err)) {
-        await new Promise(r => setTimeout(r, 2000));
-        continue;
-      }
-      throw err;
-    }
-  }
-  return null;
-}
-
 // ── Knowledge-based strategy (no tools) ──────────────────────────────────────
+// NOTE: This route previously had a `tryWebSearch` strategy that used the
+// Claude web_search tool to pull real comps from LoopNet / Crexi / Zillow.
+// That path was removed because those broker sites explicitly forbid
+// scraping in their ToS and recent litigation (CoStar v. Crexi, June 2025)
+// establishes copyright liability for reproducing their listing data. For
+// real comp data the analyst should paste listings into the Comps & Market
+// tab (which routes through extractCompFromText() — user-supplied content,
+// legally clean). This route is kept only as a knowledge-based fallback
+// that clearly labels its output as an AI estimate.
 async function tryKnowledge(prompt: string): Promise<string | null> {
   const response = await getClient().messages.create({
     model: MODEL,
@@ -243,23 +192,11 @@ export async function POST(
       unitTypeGuidance = "Match the unit_types in each comp to typical bedroom/bathroom configurations for this market. Include rents for each unit type.";
     }
 
-    // ── Strategy A: try web search first ──────────────────────────────────────
-    let text: string | null = null;
-    let source: "web_search" | "knowledge" = "web_search";
-
-    try {
-      const wsPrompt = buildWebSearchPrompt(context, isMF, unitTypeGuidance, searchLocation, deal);
-      text = await tryWebSearch(wsPrompt);
-    } catch (err) {
-      console.warn("Web search failed, falling back to knowledge:", err instanceof Error ? err.message : err);
-    }
-
-    // ── Strategy B: fall back to knowledge-based comps ────────────────────────
-    if (!text) {
-      source = "knowledge";
-      const kPrompt = buildKnowledgePrompt(context, isMF, unitTypeGuidance, searchLocation);
-      text = await tryKnowledge(kPrompt);
-    }
+    // Knowledge-based comps only. Web scraping broker sites is forbidden —
+    // see the comment on tryKnowledge() above. For real-world comps, route
+    // users to the Comps & Market tab and its paste-mode extractor.
+    const kPrompt = buildKnowledgePrompt(context, isMF, unitTypeGuidance, searchLocation);
+    const text: string | null = await tryKnowledge(kPrompt);
 
     if (!text) {
       return NextResponse.json({ error: "AI returned empty response" }, { status: 500 });
@@ -272,7 +209,7 @@ export async function POST(
       return NextResponse.json({ error: "Failed to parse comp data from AI response" }, { status: 500 });
     }
 
-    return NextResponse.json({ data: comps, source });
+    return NextResponse.json({ data: comps, source: "knowledge" });
   } catch (error) {
     console.error("Rent comps error:", error);
 

@@ -1355,7 +1355,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       json.data.forEach((_: unknown, i: number) => next.add(offset + i));
                       return next;
                     });
-                    toast.success(`${json.data.length} comps generated${json.source === "knowledge" ? " (AI estimates)" : ""}`);
+                    toast.success(`${json.data.length} AI-estimated comps generated — verify or replace with real pastes in the Comps & Market tab`);
                   } else { toast.error(json.error || "Failed to generate comps"); }
                 } catch { toast.error("Failed to generate comps"); }
                 finally { setCompsLoading(false); }
@@ -1363,7 +1363,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               disabled={compsLoading}
             >
               {compsLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
-              Search Comps
+              AI Estimate Comps
             </Button>
             <Button variant="outline" size="sm"
               onClick={() => {

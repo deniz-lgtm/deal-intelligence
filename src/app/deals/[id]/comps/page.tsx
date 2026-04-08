@@ -14,6 +14,7 @@ import {
   ClipboardPaste,
   Check,
   X,
+  FileSearch,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -114,6 +115,7 @@ export default function CompsPage({ params }: { params: { id: string } }) {
 
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteType, setPasteType] = useState<"sale" | "rent">("sale");
+  const [docExtractOpen, setDocExtractOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -211,18 +213,27 @@ export default function CompsPage({ params }: { params: { id: string } }) {
           <h1 className="text-xl font-display font-semibold">Comps &amp; Market</h1>
           <p className="text-xs text-muted-foreground mt-1">
             Sale and rent comparables, plus submarket context. Add comps by pasting
-            listing text — Claude extracts the fields for you to review.
+            listing text or extracting from an uploaded market document.
           </p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setDocExtractOpen(true)}
+        >
+          <FileSearch className="h-3.5 w-3.5 mr-1.5" />
+          Extract from Market Docs
+        </Button>
       </div>
 
       {/* Legal / posture note */}
       <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 text-amber-200/80 text-xs">
         <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
         <span>
-          Paste-mode only: we never auto-fetch listings from broker sites server-side.
-          Pull content from CoStar / LoopNet / Crexi / Zillow under your own session,
-          then paste it here.
+          User-sourced only: we never auto-fetch broker sites server-side. Pull
+          content from CoStar / LoopNet / Crexi / Zillow under your own session and
+          paste it here, or upload market studies and appraisals to the Documents
+          tab and click <em>Extract from Market Docs</em>.
         </span>
       </div>
 
@@ -381,6 +392,18 @@ export default function CompsPage({ params }: { params: { id: string } }) {
           onClose={() => setPasteOpen(false)}
           onSaved={() => {
             setPasteOpen(false);
+            loadData();
+          }}
+        />
+      )}
+
+      {/* Extract-from-doc modal */}
+      {docExtractOpen && (
+        <ExtractFromDocModal
+          dealId={params.id}
+          onClose={() => setDocExtractOpen(false)}
+          onSaved={() => {
+            setDocExtractOpen(false);
             loadData();
           }}
         />
@@ -839,6 +862,347 @@ function PasteCompModal({
                     <Save className="h-3.5 w-3.5 mr-1.5" />
                   )}
                   Save Comp
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Extract-from-doc modal ────────────────────────────────────────────────
+//
+// Lists the deal's documents in the "market" category, lets the user pick
+// one, runs Claude extraction, and shows a bulk-review screen. Per-draft
+// checkboxes let the user cherry-pick which extracted comps to save.
+
+interface MarketDoc {
+  id: string;
+  original_name: string | null;
+  name: string;
+  category: string;
+}
+
+interface DraftComp {
+  comp_type: "sale" | "rent";
+  name?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  year_built?: number | null;
+  units?: number | null;
+  total_sf?: number | null;
+  sale_price?: number | null;
+  sale_date?: string | null;
+  cap_rate?: number | null;
+  price_per_unit?: number | null;
+  price_per_sf?: number | null;
+  rent_per_unit?: number | null;
+  rent_per_sf?: number | null;
+  rent_per_bed?: number | null;
+  occupancy_pct?: number | null;
+  lease_type?: string | null;
+  distance_mi?: number | null;
+  confidence?: number;
+  notes?: string | null;
+}
+
+function ExtractFromDocModal({
+  dealId,
+  onClose,
+  onSaved,
+}: {
+  dealId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [docs, setDocs] = useState<MarketDoc[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(true);
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [drafts, setDrafts] = useState<DraftComp[] | null>(null);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [summary, setSummary] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/deals/${dealId}/documents`)
+      .then((r) => r.json())
+      .then((json) => {
+        const all: MarketDoc[] = json.data || [];
+        setDocs(all.filter((d) => d.category === "market"));
+      })
+      .catch(() => toast.error("Failed to load documents"))
+      .finally(() => setLoadingDocs(false));
+  }, [dealId]);
+
+  async function handleExtract() {
+    if (!selectedDocId) return;
+    setExtracting(true);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/comps/extract-from-doc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_id: selectedDocId }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Extraction failed");
+        return;
+      }
+      const batch = json.data;
+      setDrafts(batch.comps || []);
+      setSummary(batch.summary || "");
+      // default: pick all
+      setPicked(new Set(batch.comps?.map((_: unknown, i: number) => i) || []));
+    } catch {
+      toast.error("Extraction failed");
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  async function handleSaveSelected() {
+    if (!drafts) return;
+    const toSave = drafts.filter((_, i) => picked.has(i));
+    if (toSave.length === 0) {
+      toast.error("Select at least one comp to save");
+      return;
+    }
+    setSaving(true);
+    let saved = 0;
+    try {
+      const selectedDoc = docs.find((d) => d.id === selectedDocId);
+      for (const draft of toSave) {
+        const res = await fetch(`/api/deals/${dealId}/comps`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...draft,
+            source: "doc",
+            source_url: null,
+            source_note: selectedDoc
+              ? `Extracted from ${selectedDoc.original_name || selectedDoc.name}`
+              : null,
+          }),
+        });
+        if (res.ok) saved++;
+      }
+      if (saved > 0) {
+        toast.success(`Saved ${saved} comp${saved === 1 ? "" : "s"}`);
+        onSaved();
+      } else {
+        toast.error("Nothing saved");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function togglePick(i: number) {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card border border-border/60 rounded-xl shadow-2xl w-full max-w-4xl my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/40">
+          <h2 className="font-semibold text-sm">Extract Comps from Market Document</h2>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Doc picker */}
+          {!drafts && (
+            <>
+              {loadingDocs ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : docs.length === 0 ? (
+                <div className="text-center py-8 text-xs text-muted-foreground">
+                  No documents classified as &quot;market&quot; yet. Upload a market study,
+                  appraisal, or broker comp report to the Documents tab, and it will
+                  be auto-classified.
+                </div>
+              ) : (
+                <>
+                  <div className="text-xs text-muted-foreground mb-2">
+                    Select a market-category document. Claude will extract every
+                    comparable property it finds and let you review them before
+                    saving.
+                  </div>
+                  <div className="space-y-1 max-h-64 overflow-y-auto border border-border/30 rounded-lg p-1">
+                    {docs.map((d) => (
+                      <button
+                        key={d.id}
+                        onClick={() => setSelectedDocId(d.id)}
+                        className={`w-full text-left px-3 py-2 rounded-md text-xs transition-colors ${
+                          selectedDocId === d.id
+                            ? "bg-primary/20 text-foreground"
+                            : "hover:bg-muted/30 text-muted-foreground"
+                        }`}
+                      >
+                        {d.original_name || d.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="ghost" onClick={onClose}>
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleExtract}
+                      disabled={!selectedDocId || extracting}
+                    >
+                      {extracting ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                      )}
+                      Extract
+                    </Button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {/* Review screen */}
+          {drafts && (
+            <>
+              <div className="text-xs text-muted-foreground">
+                {summary || `${drafts.length} comp${drafts.length === 1 ? "" : "s"} extracted.`}
+                {drafts.length > 0 &&
+                  " Uncheck any you don't want to save — edits can be made after saving by deleting and re-adding (inline edit coming soon)."}
+              </div>
+
+              {drafts.length === 0 ? (
+                <div className="text-center py-6 text-xs text-muted-foreground">
+                  No comparable properties found in this document.
+                </div>
+              ) : (
+                <div className="max-h-96 overflow-y-auto border border-border/30 rounded-lg">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-card">
+                      <tr className="text-left text-muted-foreground border-b border-border/40">
+                        <th className="pb-2 px-2 w-10"></th>
+                        <th className="pb-2 px-2">Type</th>
+                        <th className="pb-2 px-2">Name / Address</th>
+                        <th className="pb-2 px-2 text-right">Yr</th>
+                        <th className="pb-2 px-2 text-right">Size</th>
+                        <th className="pb-2 px-2 text-right">Headline</th>
+                        <th className="pb-2 px-2 text-right">Conf</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {drafts.map((d, i) => (
+                        <tr
+                          key={i}
+                          className={`border-b border-border/20 ${
+                            picked.has(i) ? "" : "opacity-40"
+                          }`}
+                        >
+                          <td className="py-2 px-2">
+                            <button
+                              onClick={() => togglePick(i)}
+                              className={`h-4 w-4 rounded border flex items-center justify-center ${
+                                picked.has(i)
+                                  ? "bg-primary/20 border-primary/40 text-primary"
+                                  : "border-border/40"
+                              }`}
+                            >
+                              {picked.has(i) && <Check className="h-3 w-3" />}
+                            </button>
+                          </td>
+                          <td className="py-2 px-2 uppercase text-[10px] font-medium">
+                            {d.comp_type}
+                          </td>
+                          <td className="py-2 px-2">
+                            <div className="font-medium text-foreground">
+                              {d.name || "—"}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {[d.address, d.city, d.state].filter(Boolean).join(", ") ||
+                                "—"}
+                            </div>
+                          </td>
+                          <td className="py-2 px-2 text-right">{d.year_built ?? "—"}</td>
+                          <td className="py-2 px-2 text-right">
+                            {d.units ? `${d.units}u` : d.total_sf ? `${Number(d.total_sf).toLocaleString()} SF` : "—"}
+                          </td>
+                          <td className="py-2 px-2 text-right">
+                            {d.comp_type === "sale" ? (
+                              <>
+                                {d.sale_price != null && (
+                                  <div>{fc(d.sale_price)}</div>
+                                )}
+                                {d.cap_rate != null && (
+                                  <div className="text-[10px] text-muted-foreground">
+                                    {d.cap_rate}% cap
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                {d.rent_per_unit != null && (
+                                  <div>{fc(d.rent_per_unit)}/unit</div>
+                                )}
+                                {d.rent_per_sf != null && (
+                                  <div className="text-[10px] text-muted-foreground">
+                                    ${Number(d.rent_per_sf).toFixed(2)}/SF
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </td>
+                          <td className="py-2 px-2 text-right">
+                            {typeof d.confidence === "number"
+                              ? `${Math.round(d.confidence * 100)}%`
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="flex justify-between gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setDrafts(null);
+                    setPicked(new Set());
+                  }}
+                >
+                  Back
+                </Button>
+                <Button onClick={handleSaveSelected} disabled={saving || picked.size === 0}>
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  Save {picked.size} Selected
                 </Button>
               </div>
             </>
