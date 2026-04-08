@@ -18,6 +18,10 @@ import {
   CheckCircle2,
   Inbox,
   Pencil,
+  Wand2,
+  Copy,
+  ExternalLink,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -297,6 +301,7 @@ function CorrespondenceLog({
           ))}
         </select>
         <div className="flex-1" />
+        <DraftEmailButton dealId={dealId} onLogged={onChange} />
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button onClick={openNew} size="sm">
@@ -854,6 +859,263 @@ function QuestionRow({
         </button>
       </div>
     </div>
+  );
+}
+
+// ─── Draft Email (AI) ─────────────────────────────────────────────────────────
+
+function DraftEmailButton({
+  dealId,
+  onLogged,
+}: {
+  dealId: string;
+  onLogged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [contact, setContact] = useState<Contact | null>(null);
+  const [stakeholderType, setStakeholderType] = useState<StakeholderType>("broker");
+  const [includeQuestions, setIncludeQuestions] = useState(true);
+  const [tone, setTone] = useState<"formal" | "friendly" | "direct">("formal");
+  const [customInstructions, setCustomInstructions] = useState("");
+
+  const [generating, setGenerating] = useState(false);
+  const [draft, setDraft] = useState<{
+    subject: string;
+    body: string;
+    to: string | null;
+    to_name: string | null;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [logging, setLogging] = useState(false);
+
+  const reset = () => {
+    setContact(null);
+    setStakeholderType("broker");
+    setIncludeQuestions(true);
+    setTone("formal");
+    setCustomInstructions("");
+    setDraft(null);
+    setCopied(false);
+  };
+
+  const handleContactPick = (c: Contact | null) => {
+    setContact(c);
+    if (c) setStakeholderType(c.role);
+  };
+
+  const generate = async () => {
+    setGenerating(true);
+    setDraft(null);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/communications/draft-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contact_id: contact?.id ?? null,
+          stakeholder_type: stakeholderType,
+          include_questions: includeQuestions,
+          tone,
+          custom_instructions: customInstructions.trim() || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error || "Failed to draft email");
+        return;
+      }
+      setDraft(json.data);
+    } catch (err) {
+      console.error("Draft email failed:", err);
+      alert("Failed to draft email");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const copyAll = async () => {
+    if (!draft) return;
+    const text = `Subject: ${draft.subject}\n\n${draft.body}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Copy failed:", err);
+    }
+  };
+
+  const openMailto = () => {
+    if (!draft) return;
+    const to = draft.to || "";
+    const subject = encodeURIComponent(draft.subject);
+    const body = encodeURIComponent(draft.body);
+    window.open(`mailto:${to}?subject=${subject}&body=${body}`, "_blank");
+  };
+
+  const logAsSent = async () => {
+    if (!draft) return;
+    setLogging(true);
+    try {
+      await fetch(`/api/deals/${dealId}/communications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contact_id: contact?.id ?? null,
+          stakeholder_type: stakeholderType,
+          stakeholder_name: contact?.name || draft.to_name || "",
+          channel: "email",
+          direction: "outbound",
+          subject: draft.subject,
+          summary: draft.body,
+          status: "awaiting_reply",
+          occurred_at: new Date().toISOString(),
+        }),
+      });
+      setOpen(false);
+      reset();
+      onLogged();
+    } catch (err) {
+      console.error("Failed to log sent email:", err);
+    } finally {
+      setLogging(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) reset();
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline">
+          <Wand2 className="h-4 w-4 mr-1.5" />
+          Draft Email
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Draft email with AI</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <FormField label="Recipient (optional — pick a contact to personalize)">
+            <ContactPicker
+              value={contact?.id}
+              onChange={handleContactPick}
+              defaultRole={stakeholderType}
+              placeholder="Search contacts..."
+            />
+          </FormField>
+
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Role">
+              <select
+                value={stakeholderType}
+                onChange={(e) => setStakeholderType(e.target.value as StakeholderType)}
+                disabled={!!contact}
+                className="w-full h-9 rounded-lg border border-border bg-background px-2.5 text-sm disabled:opacity-60"
+              >
+                {Object.entries(STAKEHOLDER_LABELS).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Tone">
+              <select
+                value={tone}
+                onChange={(e) => setTone(e.target.value as typeof tone)}
+                className="w-full h-9 rounded-lg border border-border bg-background px-2.5 text-sm"
+              >
+                <option value="formal">Formal</option>
+                <option value="friendly">Friendly</option>
+                <option value="direct">Direct</option>
+              </select>
+            </FormField>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={includeQuestions}
+              onChange={(e) => setIncludeQuestions(e.target.checked)}
+              className="rounded"
+            />
+            <span>Include open questions queued for this phase &amp; role</span>
+          </label>
+
+          <FormField label="Additional instructions (optional)">
+            <textarea
+              value={customInstructions}
+              onChange={(e) => setCustomInstructions(e.target.value)}
+              rows={2}
+              placeholder='e.g. "Also ask about parking count" or "Mention we can close in 30 days"'
+              className="w-full rounded-lg border border-border bg-background px-2.5 py-2 text-sm"
+            />
+          </FormField>
+
+          <div className="flex justify-end">
+            <Button size="sm" onClick={generate} disabled={generating}>
+              {generating ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  Drafting...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4 mr-1.5" />
+                  {draft ? "Regenerate" : "Generate draft"}
+                </>
+              )}
+            </Button>
+          </div>
+
+          {draft && (
+            <div className="border border-border/60 rounded-lg p-3 space-y-3 bg-muted/10">
+              <FormField label="Subject">
+                <input
+                  type="text"
+                  value={draft.subject}
+                  onChange={(e) => setDraft({ ...draft, subject: e.target.value })}
+                  className="w-full h-9 rounded-lg border border-border bg-background px-2.5 text-sm"
+                />
+              </FormField>
+              <FormField label={draft.to ? `Body (will send to ${draft.to})` : "Body"}>
+                <textarea
+                  value={draft.body}
+                  onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+                  rows={12}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-2 text-sm font-mono whitespace-pre-wrap"
+                />
+              </FormField>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button size="sm" variant="outline" onClick={copyAll}>
+                  <Copy className="h-3.5 w-3.5 mr-1.5" />
+                  {copied ? "Copied!" : "Copy"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={openMailto}>
+                  <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                  Open in email app
+                </Button>
+                <div className="flex-1" />
+                <Button size="sm" onClick={logAsSent} disabled={logging}>
+                  {logging ? (
+                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  Log as sent
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
