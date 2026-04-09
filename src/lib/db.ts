@@ -92,6 +92,10 @@ export async function ensureColumns(): Promise<void> {
     "CREATE INDEX IF NOT EXISTS idx_deals_ingested_from_path ON deals(ingested_from_path) WHERE ingested_from_path IS NOT NULL",
     // documents table
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
+    // Document Intelligence Pipeline: version chains
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS parent_document_id TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
+    "CREATE INDEX IF NOT EXISTS idx_documents_parent ON documents(parent_document_id) WHERE parent_document_id IS NOT NULL",
     // photos table
     "ALTER TABLE photos ADD COLUMN IF NOT EXISTS is_cover BOOLEAN NOT NULL DEFAULT false",
     // chat_messages table
@@ -1154,8 +1158,9 @@ export const documentQueries = {
     await pool.query(
       `INSERT INTO documents
         (id, deal_id, name, original_name, category, file_path,
-         file_size, mime_type, content_text, ai_summary, ai_tags)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+         file_size, mime_type, content_text, ai_summary, ai_tags,
+         parent_document_id, version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         doc.id,
         doc.deal_id,
@@ -1168,9 +1173,99 @@ export const documentQueries = {
         doc.content_text ?? null,
         doc.ai_summary ?? null,
         doc.ai_tags ? JSON.stringify(doc.ai_tags) : null,
+        doc.parent_document_id ?? null,
+        (doc.version as number | undefined) ?? 1,
       ]
     );
     return documentQueries.getById(doc.id as string);
+  },
+
+  /**
+   * Return the full version chain for a document, ordered oldest → newest.
+   * Starts from any node in the chain and walks both directions.
+   */
+  getVersionChain: async (docId: string): Promise<Record<string, unknown>[]> => {
+    const pool = getPool();
+    // Recursive CTE walks down to descendants; a second query walks up to
+    // ancestors. Simpler to just find the root then query all with that root.
+    const start = await pool.query(
+      "SELECT id, deal_id, category FROM documents WHERE id = $1",
+      [docId]
+    );
+    if (start.rows.length === 0) return [];
+    const seed = start.rows[0];
+
+    // Find root by walking ancestors via a recursive CTE
+    const rootRes = await pool.query(
+      `WITH RECURSIVE ancestors AS (
+         SELECT id, parent_document_id FROM documents WHERE id = $1
+         UNION ALL
+         SELECT d.id, d.parent_document_id
+         FROM documents d
+         JOIN ancestors a ON d.id = a.parent_document_id
+       )
+       SELECT id FROM ancestors WHERE parent_document_id IS NULL LIMIT 1`,
+      [docId]
+    );
+    const rootId = rootRes.rows[0]?.id ?? seed.id;
+
+    // All descendants of the root
+    const chainRes = await pool.query(
+      `WITH RECURSIVE chain AS (
+         SELECT * FROM documents WHERE id = $1
+         UNION ALL
+         SELECT d.* FROM documents d
+         JOIN chain c ON d.parent_document_id = c.id
+       )
+       SELECT * FROM chain ORDER BY version ASC, uploaded_at ASC`,
+      [rootId]
+    );
+    return chainRes.rows;
+  },
+
+  /**
+   * Given a new document's category + original filename, find the most
+   * recent document in the same deal that looks like a prior version of
+   * the same file. Used by the upload pipeline to auto-chain versions.
+   * Returns null if nothing plausible matches.
+   */
+  findLikelyPrevVersion: async (
+    dealId: string,
+    category: string,
+    originalName: string
+  ): Promise<Record<string, unknown> | null> => {
+    const pool = getPool();
+    // Normalize the filename for comparison: lowercase, strip extension,
+    // strip common version suffixes and dates.
+    const normalize = (s: string): string =>
+      s
+        .toLowerCase()
+        .replace(/\.[a-z0-9]+$/, "") // strip extension
+        .replace(/[_\-\s](v|version|rev)\s*\d+/gi, "") // v2, _rev3
+        .replace(/\b(final|latest|updated|new|draft)\b/gi, "")
+        .replace(/\b\d{4}[-._]\d{1,2}[-._]\d{1,2}\b/g, "") // 2024-04-01
+        .replace(/\b\d{1,2}[-._]\d{1,2}[-._]\d{2,4}\b/g, "") // 4-1-24
+        .replace(/[^a-z0-9]/g, "")
+        .trim();
+
+    const target = normalize(originalName);
+    if (!target || target.length < 3) return null;
+
+    // Pull recent docs of the same category, filter client-side for
+    // similarity. Cheap — typical deal has < 100 docs per category.
+    const res = await pool.query(
+      `SELECT * FROM documents
+       WHERE deal_id = $1 AND category = $2
+       ORDER BY uploaded_at DESC
+       LIMIT 50`,
+      [dealId, category]
+    );
+
+    for (const row of res.rows) {
+      const candidate = normalize(row.original_name);
+      if (candidate === target && candidate.length >= 3) return row;
+    }
+    return null;
   },
 
   update: async (id: string, updates: Record<string, unknown>) => {

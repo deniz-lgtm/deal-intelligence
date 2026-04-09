@@ -16,6 +16,8 @@ import {
   GripVertical,
   CloudDownload,
   Star,
+  History,
+  GitCompareArrows,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +49,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
   const [recategorizing, setRecategorizing] = useState<string | null>(null);
   const [showDropbox, setShowDropbox] = useState(false);
+  const [versionsForDoc, setVersionsForDoc] = useState<Document | null>(null);
 
   useEffect(() => {
     loadDocuments();
@@ -277,6 +280,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           onView={(doc) => canPreview(doc) ? setViewingDoc(doc) : window.open(`/api/documents/${doc.id}/view`, "_blank")}
           onRecategorize={recategorize}
           onToggleKey={toggleKeyDocument}
+          onShowVersions={(doc) => setVersionsForDoc(doc)}
           recategorizing={recategorizing}
           deleting={deleting}
         />
@@ -290,6 +294,15 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           onRecategorize={recategorize}
           recategorizing={recategorizing}
           deleting={deleting}
+        />
+      )}
+
+      {/* Version history modal */}
+      {versionsForDoc && (
+        <VersionHistoryModal
+          dealId={params.id}
+          doc={versionsForDoc}
+          onClose={() => setVersionsForDoc(null)}
         />
       )}
     </div>
@@ -334,6 +347,7 @@ function FolderView({
   onView,
   onRecategorize,
   onToggleKey,
+  onShowVersions,
   recategorizing,
   deleting,
 }: {
@@ -344,6 +358,7 @@ function FolderView({
   onView: (doc: Document) => void;
   onRecategorize: (docId: string, cat: DocumentCategory) => void;
   onToggleKey: (docId: string, isKey: boolean) => void;
+  onShowVersions: (doc: Document) => void;
   recategorizing: string | null;
   deleting: string | null;
 }) {
@@ -398,6 +413,7 @@ function FolderView({
                     onView={onView}
                     onRecategorize={onRecategorize}
                     onToggleKey={onToggleKey}
+                    onShowVersions={onShowVersions}
                     recategorizing={recategorizing}
                     deleting={deleting}
                   />
@@ -468,6 +484,7 @@ function DocRow({
   onView,
   onRecategorize,
   onToggleKey,
+  onShowVersions,
   recategorizing,
   deleting,
 }: {
@@ -476,6 +493,7 @@ function DocRow({
   onView: (doc: Document) => void;
   onRecategorize: (docId: string, cat: DocumentCategory) => void;
   onToggleKey: (docId: string, isKey: boolean) => void;
+  onShowVersions: (doc: Document) => void;
   recategorizing: string | null;
   deleting: string | null;
 }) {
@@ -512,12 +530,23 @@ function DocRow({
         <Star className={`h-3.5 w-3.5 ${doc.is_key ? "fill-amber-400" : ""}`} />
       </button>
       <div className="flex-1 min-w-0">
-        <button
-          onClick={() => onView(doc)}
-          className="text-sm font-medium truncate text-left hover:text-primary transition-colors block"
-        >
-          {doc.original_name}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onView(doc)}
+            className="text-sm font-medium truncate text-left hover:text-primary transition-colors"
+          >
+            {doc.original_name}
+          </button>
+          {doc.version > 1 && (
+            <button
+              onClick={() => onShowVersions(doc)}
+              className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary font-semibold uppercase tracking-wide hover:bg-primary/25 transition-colors flex-shrink-0"
+              title="View version history"
+            >
+              v{doc.version}
+            </button>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground">{formatBytes(doc.file_size)}</p>
         {bullets.length > 0 && (
           <ul className="mt-1.5 space-y-0.5">
@@ -538,6 +567,15 @@ function DocRow({
         >
           <Eye className="h-3.5 w-3.5" />
         </button>
+        {doc.version > 1 && (
+          <button
+            onClick={() => onShowVersions(doc)}
+            className="text-muted-foreground hover:text-primary transition-colors"
+            title="Version history + changes"
+          >
+            <History className="h-3.5 w-3.5" />
+          </button>
+        )}
         {/* Recategorize button */}
         <div className="relative" ref={menuRef}>
           <button
@@ -712,4 +750,225 @@ function DocFileIcon({ mimeType }: { mimeType: string }) {
     return <File className="h-5 w-5 text-green-500 shrink-0" />;
   }
   return <File className="h-5 w-5 text-blue-500 shrink-0" />;
+}
+
+// ── Version History Modal ────────────────────────────────────────────────
+//
+// Opens when the user clicks a vN chip or History icon on a document row.
+// Fetches the full version chain (oldest → newest) and lets the analyst
+// run a Claude-powered diff between any version and its parent.
+
+interface VersionRow {
+  id: string;
+  version: number;
+  original_name: string;
+  category: string;
+  uploaded_at: string;
+  parent_document_id: string | null;
+  file_size: number;
+}
+
+interface DiffResult {
+  summary: string;
+  no_material_changes: boolean;
+  changes: Array<{
+    severity: "material" | "minor" | "informational";
+    change: string;
+  }>;
+  previous: { id: string; name: string; version: number };
+  current: { id: string; name: string; version: number };
+}
+
+function VersionHistoryModal({
+  dealId,
+  doc,
+  onClose,
+}: {
+  dealId: string;
+  doc: Document;
+  onClose: () => void;
+}) {
+  const [versions, setVersions] = useState<VersionRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [diffing, setDiffing] = useState<string | null>(null);
+  const [diff, setDiff] = useState<DiffResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/deals/${dealId}/documents/${doc.id}/versions`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled) return;
+        const rows: VersionRow[] = json.data || [];
+        setVersions(rows);
+      })
+      .catch(() => setError("Failed to load version chain"))
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dealId, doc.id]);
+
+  async function runDiff(versionId: string) {
+    setDiffing(versionId);
+    setDiff(null);
+    try {
+      const res = await fetch(
+        `/api/deals/${dealId}/documents/${versionId}/diff`,
+        { method: "POST" }
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Diff failed");
+        return;
+      }
+      setDiff(json.data);
+    } finally {
+      setDiffing(null);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card border rounded-xl shadow-2xl w-full max-w-2xl my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-primary" />
+            <h3 className="font-semibold text-sm">Version History</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="text-xs text-muted-foreground">
+            Versions auto-chained from filename + category. Click{" "}
+            <em>See Changes</em> to compare any version against its parent
+            with Claude.
+          </div>
+
+          {loading && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {error && (
+            <div className="text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded p-2">
+              {error}
+            </div>
+          )}
+          {versions && versions.length > 0 && (
+            <div className="space-y-1.5">
+              {versions.map((v) => {
+                const isCurrent = v.id === doc.id;
+                return (
+                  <div
+                    key={v.id}
+                    className={`flex items-center justify-between gap-2 p-2.5 rounded-md border ${
+                      isCurrent
+                        ? "border-primary/40 bg-primary/5"
+                        : "border-border/40 bg-muted/10"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary font-semibold uppercase tracking-wide">
+                          v{v.version}
+                        </span>
+                        <span className="text-xs text-foreground truncate">
+                          {v.original_name}
+                        </span>
+                        {isCurrent && (
+                          <span className="text-[9px] text-muted-foreground uppercase tracking-wide">
+                            selected
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">
+                        {new Date(v.uploaded_at).toLocaleString()} ·{" "}
+                        {formatBytes(v.file_size)}
+                      </div>
+                    </div>
+                    {v.parent_document_id && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => runDiff(v.id)}
+                        disabled={diffing === v.id}
+                      >
+                        {diffing === v.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        ) : (
+                          <GitCompareArrows className="h-3 w-3 mr-1" />
+                        )}
+                        See Changes
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {diff && <DiffResultCard diff={diff} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DiffResultCard({ diff }: { diff: DiffResult }) {
+  const severityColors: Record<
+    "material" | "minor" | "informational",
+    string
+  > = {
+    material: "bg-red-500/10 text-red-300 border-red-500/30",
+    minor: "bg-amber-500/10 text-amber-300 border-amber-500/30",
+    informational: "bg-blue-500/10 text-blue-300 border-blue-500/30",
+  };
+  return (
+    <div className="border border-primary/40 rounded-lg p-4 bg-primary/5 space-y-3 animate-fade-up">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+        <Sparkles className="h-3 w-3 text-primary" />
+        Claude diff — v{diff.previous.version} → v{diff.current.version}
+      </div>
+      <div className="text-sm text-foreground font-medium">
+        {diff.summary}
+      </div>
+      {diff.no_material_changes ? (
+        <div className="text-xs text-muted-foreground">
+          No material changes detected.
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {diff.changes.map((c, i) => (
+            <div
+              key={i}
+              className={`flex items-start gap-2 p-2 rounded border text-xs ${
+                severityColors[c.severity] || severityColors.informational
+              }`}
+            >
+              <span className="text-[9px] uppercase tracking-wide font-semibold flex-shrink-0 mt-0.5">
+                {c.severity}
+              </span>
+              <span className="flex-1 text-foreground/90">{c.change}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

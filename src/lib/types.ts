@@ -292,6 +292,9 @@ export interface Document {
   ai_summary: string | null;
   ai_tags: string | null; // JSON array string
   is_key: boolean;
+  // Document Intelligence Pipeline: version chain within the same deal
+  parent_document_id: string | null;
+  version: number;
   uploaded_at: string;
 }
 

@@ -1425,6 +1425,107 @@ Rules:
 - Keep analysis under 4 sentences — the UI displays it inline.
 - 3-5 key_impacts max, showing the metrics that change most materially.`;
 
+// ─── Document Version Diff ───────────────────────────────────────────────
+//
+// Used by the Document Intelligence Pipeline to summarize what changed
+// between two versions of the same document (rent roll v2 → v3, PSA
+// redline, loan term sheet update, etc.). Works against the extracted
+// content_text of each version.
+
+export interface DocDiffResult {
+  summary: string;          // 1-2 sentence headline
+  changes: Array<{
+    severity: "material" | "minor" | "informational";
+    change: string;         // one-sentence description
+  }>;
+  no_material_changes: boolean;
+}
+
+const DOC_DIFF_PROMPT = `You are a CRE analyst comparing two versions of a document that's part of an active deal. Summarize what changed — focus on material changes (money, dates, parties, contingencies, unit counts, rent levels), not formatting tweaks or paragraph reordering.
+
+Return ONLY a JSON object with exactly this shape:
+
+{
+  "summary": "<one-sentence headline change>",
+  "no_material_changes": false,
+  "changes": [
+    {
+      "severity": "material" | "minor" | "informational",
+      "change": "<one-sentence description>"
+    }
+  ]
+}
+
+Severity guide:
+- material: a change the analyst must bring to IC (price/rent/units/cap rate, removed contingency, new tenant, etc.)
+- minor: a change worth noting but not material to the deal thesis
+- informational: cosmetic / typo / formatting only
+
+If the two versions are substantively identical, set no_material_changes: true, changes: [], summary: "No material changes detected."
+
+Rules:
+- JSON only, no markdown fences, no preamble.
+- 3-10 entries max in the changes array.
+- Be specific — reference actual numbers / names / dates from the documents when you can.`;
+
+export async function diffDocumentVersions(
+  previousText: string,
+  currentText: string,
+  context: {
+    category?: string;
+    previous_name?: string;
+    current_name?: string;
+    previous_version?: number;
+    current_version?: number;
+  } = {}
+): Promise<DocDiffResult | null> {
+  if (!previousText.trim() && !currentText.trim()) return null;
+
+  const MAX = 14000;
+  const prev = previousText.slice(0, MAX);
+  const curr = currentText.slice(0, MAX);
+
+  const header = `Document category: ${context.category || "unknown"}\n${context.previous_name ? `Previous: ${context.previous_name} (v${context.previous_version ?? "?"})` : ""}\n${context.current_name ? `Current: ${context.current_name} (v${context.current_version ?? "?"})` : ""}\n`;
+
+  const prompt = `${header}
+
+===== PREVIOUS VERSION =====
+${prev || "(empty document — no extracted text)"}
+
+===== CURRENT VERSION =====
+${curr || "(empty document — no extracted text)"}
+
+${DOC_DIFF_PROMPT}`;
+
+  try {
+    const response = await getClient().messages.create({
+      model: await getActiveModel(),
+      max_tokens: 2000,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const raw =
+      response.content[0]?.type === "text" ? response.content[0].text : "{}";
+    const cleaned = raw
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+
+    const parsed = JSON.parse(match[0]) as DocDiffResult;
+    if (!Array.isArray(parsed.changes)) parsed.changes = [];
+    if (typeof parsed.summary !== "string") parsed.summary = "";
+    if (typeof parsed.no_material_changes !== "boolean")
+      parsed.no_material_changes = parsed.changes.length === 0;
+    return parsed;
+  } catch (err) {
+    console.error("diffDocumentVersions failed:", err);
+    return null;
+  }
+}
+
 export async function analyzeWhatIf(
   uwData: Record<string, unknown>,
   question: string,

@@ -77,6 +77,24 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Auto-detect whether this is a new version of an existing document
+      // in the same deal+category. If so, chain it as vN+1 of the prior.
+      let parentDocumentId: string | null = null;
+      let version = 1;
+      try {
+        const prev = await documentQueries.findLikelyPrevVersion(
+          dealId,
+          category,
+          file.name
+        );
+        if (prev) {
+          parentDocumentId = prev.id as string;
+          version = ((prev.version as number) || 1) + 1;
+        }
+      } catch (err) {
+        console.warn("Version detection failed:", err);
+      }
+
       const doc = await documentQueries.create({
         id,
         deal_id: dealId,
@@ -89,6 +107,8 @@ export async function POST(req: NextRequest) {
         content_text: contentText || null,
         ai_summary: summary || null,
         ai_tags: tags.length > 0 ? tags : null,
+        parent_document_id: parentDocumentId,
+        version,
       });
 
       // If this looks like a rent roll, extract units/SF/rents and update the deal
