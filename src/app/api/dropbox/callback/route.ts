@@ -23,8 +23,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${appOrigin}/?dropbox=error`);
   }
 
-  // Extract deal_id from state so we can redirect back to the right deal
+  // Extract deal_id OR return:xxx from state so we can redirect back
+  // to the right page after the OAuth round-trip.
   const dealId = state.startsWith("deal_id:") ? state.slice(8) : "";
+  const returnTo = state.startsWith("return:") ? state.slice(7) : "";
 
   try {
     const tokens = await exchangeCodeForTokens(code, redirectUri);
@@ -54,9 +56,15 @@ export async function GET(req: NextRequest) {
       email,
     });
 
-    const redirect = dealId
-      ? `${appOrigin}/deals/${dealId}/documents?dropbox=connected`
-      : `${appOrigin}/?dropbox=connected`;
+    // Route the user back to wherever they initiated the connect from.
+    let redirect: string;
+    if (returnTo === "inbox") {
+      redirect = `${appOrigin}/inbox?dropbox=connected`;
+    } else if (dealId) {
+      redirect = `${appOrigin}/deals/${dealId}/documents?dropbox=connected`;
+    } else {
+      redirect = `${appOrigin}/?dropbox=connected`;
+    }
 
     return NextResponse.redirect(redirect);
   } catch (err) {

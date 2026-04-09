@@ -85,6 +85,10 @@ export interface Deal {
   uw_score_reasoning: string | null;
   final_score: number | null;
   final_score_reasoning: string | null;
+  // Inbox / AI Deal Sourcing
+  auto_ingested: boolean;
+  inbox_reviewed_at: string | null;
+  ingested_from_path: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -82,6 +82,14 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lat NUMERIC",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lng NUMERIC",
+    // Inbox / AI Deal Sourcing columns
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS auto_ingested BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS inbox_reviewed_at TIMESTAMPTZ",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS ingested_from_path TEXT",
+    "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS watched_folder_path TEXT",
+    "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS last_polled_at TIMESTAMPTZ",
+    "CREATE INDEX IF NOT EXISTS idx_deals_auto_ingested ON deals(auto_ingested) WHERE auto_ingested = true",
+    "CREATE INDEX IF NOT EXISTS idx_deals_ingested_from_path ON deals(ingested_from_path) WHERE ingested_from_path IS NOT NULL",
     // documents table
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
     // photos table
@@ -752,6 +760,11 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lat NUMERIC",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lng NUMERIC",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS auto_ingested BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS inbox_reviewed_at TIMESTAMPTZ",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS ingested_from_path TEXT",
+    "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS watched_folder_path TEXT",
+    "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS last_polled_at TIMESTAMPTZ",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ",
@@ -881,6 +894,54 @@ export const dealQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deals WHERE id = $1", [id]);
+  },
+
+  // ── Inbox / AI Deal Sourcing helpers ─────────────────────────────────────
+
+  /** Returns true if any deal was already ingested from the given Dropbox path. */
+  ingestedPathExists: async (path: string): Promise<boolean> => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT 1 FROM deals WHERE ingested_from_path = $1 LIMIT 1",
+      [path]
+    );
+    return res.rowCount != null && res.rowCount > 0;
+  },
+
+  /**
+   * Returns auto-ingested deals that haven't been marked reviewed yet,
+   * newest first. Used by the /inbox page.
+   */
+  getPendingInboxItems: async (limit = 50) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT d.*, u.data AS underwriting_data
+       FROM deals d
+       LEFT JOIN underwriting u ON u.deal_id = d.id
+       WHERE d.auto_ingested = true
+         AND d.inbox_reviewed_at IS NULL
+       ORDER BY d.created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return res.rows;
+  },
+
+  /** Count of unreviewed inbox items (for the left-rail badge). */
+  countPendingInbox: async (): Promise<number> => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT COUNT(*)::int AS c FROM deals WHERE auto_ingested = true AND inbox_reviewed_at IS NULL"
+    );
+    return Number(res.rows[0]?.c ?? 0);
+  },
+
+  markInboxReviewed: async (id: string): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      "UPDATE deals SET inbox_reviewed_at = NOW(), updated_at = NOW() WHERE id = $1",
+      [id]
+    );
   },
 
   appendContextNote: async (id: string, note: string) => {
@@ -1990,6 +2051,8 @@ export interface DropboxAccount {
   account_id: string | null;
   display_name: string | null;
   email: string | null;
+  watched_folder_path: string | null;
+  last_polled_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2040,6 +2103,22 @@ export const dropboxQueries = {
   disconnect: async (): Promise<void> => {
     const pool = getPool();
     await pool.query("DELETE FROM dropbox_accounts WHERE id = 'default'");
+  },
+
+  // Inbox-specific helpers
+  setWatchedFolder: async (folderPath: string | null): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      "UPDATE dropbox_accounts SET watched_folder_path = $1, updated_at = NOW() WHERE id = 'default'",
+      [folderPath]
+    );
+  },
+
+  touchLastPolledAt: async (): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      "UPDATE dropbox_accounts SET last_polled_at = NOW(), updated_at = NOW() WHERE id = 'default'"
+    );
   },
 };
 

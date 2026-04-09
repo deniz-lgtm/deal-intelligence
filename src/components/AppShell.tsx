@@ -17,6 +17,8 @@ import {
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
 
+const INBOX_POLL_INTERVAL_MS = 60_000; // refresh inbox badge every minute
+
 // Persistent left-rail shell for the workspace-level routes (/, /comps-library,
 // /contacts, /business-plans, /admin, etc.). Keeps the main content area
 // flexible — pages render their existing headers and bodies inside <children>.
@@ -32,6 +34,7 @@ interface NavItem {
   permission?: string;
   adminOnly?: boolean;
   comingSoon?: boolean;
+  badgeKey?: "inbox";
 }
 
 const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
@@ -42,7 +45,12 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
     label: "Workspace",
     items: [
-      { href: "/inbox", label: "Inbox", icon: Inbox, comingSoon: true },
+      {
+        href: "/inbox",
+        label: "Inbox",
+        icon: Inbox,
+        badgeKey: "inbox",
+      },
       {
         href: "/comps-library",
         label: "Comps Library",
@@ -68,11 +76,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { can, isAdmin } = usePermissions();
   const [collapsed, setCollapsed] = useState(false);
+  const [inboxBadge, setInboxBadge] = useState<number>(0);
 
   // Persist collapse state across navigations.
   useEffect(() => {
     const stored = localStorage.getItem("appShellCollapsed");
     if (stored !== null) setCollapsed(stored === "1");
+  }, []);
+
+  // Poll the inbox badge count. Updates immediately on mount and then on
+  // a timer so navigating around the app keeps the count fresh.
+  useEffect(() => {
+    let cancelled = false;
+    const fetchBadge = async () => {
+      try {
+        const res = await fetch("/api/inbox/settings");
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled) {
+          setInboxBadge(Number(json.data?.pending_count ?? 0));
+        }
+      } catch {
+        // silent — badge is best-effort
+      }
+    };
+    fetchBadge();
+    const timer = setInterval(fetchBadge, INBOX_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, []);
 
   const toggle = () => {
@@ -94,10 +127,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         : pathname.startsWith(item.href);
     const Icon = item.icon;
 
+    // Resolve badge count for items that have a badgeKey
+    const badgeCount =
+      item.badgeKey === "inbox" && inboxBadge > 0 ? inboxBadge : 0;
+
     const body = (
       <button
         className={cn(
-          "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
+          "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150 relative",
           collapsed && "justify-center",
           item.comingSoon && "opacity-40 cursor-not-allowed",
           isActive && !item.comingSoon
@@ -108,8 +145,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         title={collapsed ? item.label : undefined}
       >
         <Icon className="h-4 w-4 flex-shrink-0" />
+        {/* Collapsed-rail indicator dot for unread inbox */}
+        {collapsed && badgeCount > 0 && (
+          <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />
+        )}
         {!collapsed && (
           <span className="truncate flex-1 text-left">{item.label}</span>
+        )}
+        {!collapsed && badgeCount > 0 && (
+          <span
+            className={cn(
+              "text-[9px] font-semibold px-1.5 py-0.5 rounded-full min-w-[18px] text-center",
+              isActive
+                ? "bg-primary-foreground/20 text-primary-foreground"
+                : "bg-primary/20 text-primary"
+            )}
+          >
+            {badgeCount > 99 ? "99+" : badgeCount}
+          </span>
         )}
         {!collapsed && item.comingSoon && (
           <span className="text-[9px] uppercase tracking-wider text-muted-foreground/50">
