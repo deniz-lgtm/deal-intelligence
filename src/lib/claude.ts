@@ -1256,3 +1256,242 @@ Be thorough in the narrative. Include specific code references where possible. I
     };
   }
 }
+
+// ─── Underwriting Co-Pilot ───────────────────────────────────────────────────
+//
+// The UW Co-Pilot sidebar has three modes:
+//
+//   1. Challenge    — reads current UW assumptions + market context and
+//                     asks Claude to flag questionable values with concerns
+//                     and a suggested value where applicable.
+//
+//   2. What-If      — accepts a free-text scenario ("what if rents drop 5%
+//                     year 1") and returns an analysis + a field-patch
+//                     proposal the user can apply with one click.
+//
+//   3. Benchmarks   — pure data lookup (not Claude), so no function here.
+
+export interface UWChallenge {
+  /** UWData field name the concern relates to (e.g. "vacancy_rate"). */
+  field: string;
+  /** Current value as a human-readable string for the UI. */
+  current_value: string;
+  /** Severity so the UI can color the row. */
+  severity: "low" | "medium" | "high";
+  /** What's questionable — shown prominently. */
+  concern: string;
+  /** What the analyst should do about it. */
+  suggestion: string;
+  /** Optional numeric proposal the user can one-click apply. */
+  suggested_value: number | null;
+}
+
+const CHALLENGE_PROMPT = `You are a senior real estate investment committee member reviewing a junior analyst's underwriting model. Your job is to challenge assumptions that look aggressive, conservative, or inconsistent with the market context.
+
+Focus on the top 3-8 most important concerns. Ignore minor stuff. Do NOT compliment the analyst — this is a stress test, not a review.
+
+Return ONLY a JSON array of objects with exactly these fields:
+
+[
+  {
+    "field": "<UWData field name — must match one of the fields in the model>",
+    "current_value": "<human-readable current value, e.g. '4.0%' or '$2,400,000'>",
+    "severity": "low" | "medium" | "high",
+    "concern": "<one-sentence description of what's questionable>",
+    "suggestion": "<one-sentence recommendation — what the analyst should do>",
+    "suggested_value": <optional numeric value the analyst could switch to, or null>
+  }
+]
+
+Concentrate on:
+- Vacancy rate, rent growth, expense growth vs market norms
+- Cap rate spread (in-place vs exit) — flat or inverted spreads are red flags
+- Expense ratio vs property type benchmark (multifamily ~40-50%, industrial NNN <15%)
+- OpEx line items: property taxes that look too low for state, insurance missing
+- LTC / LTV levels for the business plan (value-add should be 70-80%, core 60-65%)
+- Management fee (multifamily typically 3-5% of EGR, commercial 2-4%)
+- Per-unit figures that look off (taxes/unit, insurance/unit)
+- Unit-mix rents vs market rents — aggressive assumed bumps
+
+Rules:
+- JSON array only. No markdown fences. No preamble. No trailing text.
+- Every concern must reference an actual field from the UWData object.
+- If the model looks solid with no real concerns, return [].
+- suggested_value must be a NUMBER (not a string). Use null if no precise value can be suggested.`;
+
+export async function challengeUnderwriting(
+  uwData: Record<string, unknown>,
+  context: {
+    deal?: Record<string, unknown> | null;
+    market?: Record<string, unknown> | null;
+    metrics?: Record<string, unknown> | null;
+  }
+): Promise<UWChallenge[]> {
+  try {
+    const ctxLines: string[] = [];
+    if (context.deal) {
+      const d = context.deal;
+      ctxLines.push(`DEAL: ${d.name ?? ""} — ${d.property_type ?? ""} in ${d.city ?? ""}, ${d.state ?? ""}`);
+      if (d.asking_price) ctxLines.push(`Asking price: $${Number(d.asking_price).toLocaleString()}`);
+      if (d.units) ctxLines.push(`Units: ${d.units}`);
+      if (d.square_footage) ctxLines.push(`SF: ${Number(d.square_footage).toLocaleString()}`);
+      if (d.year_built) ctxLines.push(`Year built: ${d.year_built}`);
+    }
+    if (context.market) {
+      const m = context.market;
+      ctxLines.push(`\nMARKET CONTEXT:`);
+      if (m.submarket_name) ctxLines.push(`Submarket: ${m.submarket_name}`);
+      if (m.market_cap_rate != null) ctxLines.push(`Market cap rate: ${m.market_cap_rate}%`);
+      if (m.market_vacancy != null) ctxLines.push(`Market vacancy: ${m.market_vacancy}%`);
+      if (m.market_rent_growth != null) ctxLines.push(`Rent growth: ${m.market_rent_growth}%/yr`);
+    }
+    if (context.metrics) {
+      const m = context.metrics;
+      ctxLines.push(`\nCOMPUTED METRICS:`);
+      for (const [k, v] of Object.entries(m)) {
+        if (v == null || typeof v === "object") continue;
+        ctxLines.push(`${k}: ${v}`);
+      }
+    }
+
+    const prompt = `${ctxLines.join("\n")}
+
+CURRENT UNDERWRITING MODEL:
+${JSON.stringify(uwData, null, 2)}
+
+${CHALLENGE_PROMPT}`;
+
+    const response = await getClient().messages.create({
+      model: await getActiveModel(),
+      max_tokens: 2500,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const raw =
+      response.content[0]?.type === "text" ? response.content[0].text : "[]";
+    const cleaned = raw
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
+    const match = cleaned.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+
+    const parsed = JSON.parse(match[0]) as UWChallenge[];
+    if (!Array.isArray(parsed)) return [];
+
+    // Sanity-clean each concern
+    return parsed.filter(
+      (c) =>
+        c &&
+        typeof c.field === "string" &&
+        typeof c.concern === "string" &&
+        (c.severity === "low" || c.severity === "medium" || c.severity === "high")
+    );
+  } catch (err) {
+    console.error("challengeUnderwriting failed:", err);
+    return [];
+  }
+}
+
+export interface WhatIfResult {
+  analysis: string;
+  field_changes: Record<string, number>;
+  key_impacts: Array<{ metric: string; before: string; after: string }>;
+}
+
+const WHATIF_PROMPT = `You are a CRE underwriting assistant helping an analyst explore a scenario. The analyst's question is at the end.
+
+Your job: propose a concrete field-level patch to the underwriting model that answers the scenario, and explain what changes + the key impacts.
+
+Return ONLY a JSON object with exactly this shape:
+
+{
+  "analysis": "<2-4 sentence explanation of the scenario and what you're changing>",
+  "field_changes": {
+    "<UWData field>": <number>,
+    "<UWData field>": <number>
+  },
+  "key_impacts": [
+    { "metric": "<metric name>", "before": "<value string>", "after": "<value string>" }
+  ]
+}
+
+Rules:
+- JSON object only. No markdown fences. No preamble.
+- field_changes must only use actual UWData fields.
+- field_changes values must be NUMBERS (not strings).
+- If the scenario doesn't map to any field changes (e.g. "what's my DSCR?" which is purely computed), return field_changes: {} and put the explanation in analysis.
+- Keep analysis under 4 sentences — the UI displays it inline.
+- 3-5 key_impacts max, showing the metrics that change most materially.`;
+
+export async function analyzeWhatIf(
+  uwData: Record<string, unknown>,
+  question: string,
+  context: {
+    deal?: Record<string, unknown> | null;
+    metrics?: Record<string, unknown> | null;
+  }
+): Promise<WhatIfResult | null> {
+  if (!question || question.trim().length < 3) return null;
+  try {
+    const ctxLines: string[] = [];
+    if (context.deal) {
+      const d = context.deal;
+      ctxLines.push(`DEAL: ${d.name ?? ""} (${d.property_type ?? "other"})`);
+    }
+    if (context.metrics) {
+      ctxLines.push(`\nCURRENT COMPUTED METRICS:`);
+      for (const [k, v] of Object.entries(context.metrics)) {
+        if (v == null || typeof v === "object") continue;
+        ctxLines.push(`${k}: ${v}`);
+      }
+    }
+
+    const prompt = `${ctxLines.join("\n")}
+
+CURRENT UNDERWRITING MODEL:
+${JSON.stringify(uwData, null, 2)}
+
+ANALYST'S SCENARIO:
+${question.trim()}
+
+${WHATIF_PROMPT}`;
+
+    const response = await getClient().messages.create({
+      model: await getActiveModel(),
+      max_tokens: 1500,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const raw =
+      response.content[0]?.type === "text" ? response.content[0].text : "{}";
+    const cleaned = raw
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+
+    const parsed = JSON.parse(match[0]) as WhatIfResult;
+    if (
+      typeof parsed.analysis !== "string" ||
+      typeof parsed.field_changes !== "object"
+    ) {
+      return null;
+    }
+    if (!Array.isArray(parsed.key_impacts)) parsed.key_impacts = [];
+    // Sanity-clean field_changes: drop non-numeric
+    const cleanChanges: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed.field_changes || {})) {
+      if (typeof v === "number" && Number.isFinite(v)) cleanChanges[k] = v;
+    }
+    parsed.field_changes = cleanChanges;
+
+    return parsed;
+  } catch (err) {
+    console.error("analyzeWhatIf failed:", err);
+    return null;
+  }
+}

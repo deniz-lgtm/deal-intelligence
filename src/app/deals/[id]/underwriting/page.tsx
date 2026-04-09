@@ -12,6 +12,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import DealNotes from "@/components/DealNotes";
+import { UnderwritingCoPilot } from "@/components/UnderwritingCoPilot";
 
 type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 
@@ -2832,6 +2833,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         </div>
       )}
+
+      {/* ── Underwriting Co-Pilot (floating sidebar) ── */}
+      <UnderwritingCoPilot
+        dealId={params.id}
+        uwData={d as unknown as Record<string, unknown>}
+        metrics={m as unknown as Record<string, unknown>}
+        onApplyPatch={(patch) => {
+          // Merge the patch into the underwriting state. Numeric fields are
+          // assigned directly; unknown fields are ignored by React/TS.
+          setData((prev) => ({ ...prev, ...(patch as Partial<UWData>) }));
+          toast.success("Applied to model — remember to Save");
+        }}
+      />
     </div>
   );
 }
