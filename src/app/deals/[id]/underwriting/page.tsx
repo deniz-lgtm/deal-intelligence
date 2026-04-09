@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
-  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3, Target,
+  Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3, Target, Pencil, GitCompare,
 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -693,6 +693,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [wizardTarget, setWizardTarget] = useState<number>(0);
   const [wizardResult, setWizardResult] = useState<{ value: number; label: string; scenarioOverrides: Partial<UWData> } | null>(null);
   const [wizardSolving, setWizardSolving] = useState(false);
+  const [renamingScenarioId, setRenamingScenarioId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState<string>("");
+  const [showCompareModal, setShowCompareModal] = useState(false);
+  const [compareSelection, setCompareSelection] = useState<Set<string>>(new Set());
   const [compsLoading, setCompsLoading] = useState(false);
   const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null });
   const [scoringUW, setScoringUW] = useState(false);
@@ -1109,6 +1113,41 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     if (activeScenarioId === id) setActiveScenarioId(null);
   };
 
+  const renameScenario = (id: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setData(prev => ({
+      ...prev,
+      scenarios: (prev.scenarios || []).map(s => s.id === id ? { ...s, name: trimmed } : s),
+    }));
+  };
+
+  const startRename = (id: string, currentName: string) => {
+    setRenamingScenarioId(id);
+    setRenameValue(currentName);
+  };
+
+  const commitRename = () => {
+    if (renamingScenarioId) renameScenario(renamingScenarioId, renameValue);
+    setRenamingScenarioId(null);
+    setRenameValue("");
+  };
+
+  const openCompareModal = () => {
+    // Pre-select baseline and all scenarios
+    const initial = new Set<string>(["baseline", ...(data.scenarios || []).map(s => s.id)]);
+    setCompareSelection(initial);
+    setShowCompareModal(true);
+  };
+
+  const toggleCompareSelection = (key: string) => {
+    setCompareSelection(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
   const m = calc(effectiveData, calcMode);
@@ -1155,31 +1194,58 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <BarChart3 className="h-3 w-3" />
             Baseline
           </button>
-          {(data.scenarios || []).map(s => (
-            <div key={s.id} className="flex items-center group">
-              <button
-                onClick={() => setActiveScenarioId(s.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-l-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                  activeScenarioId === s.id
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`}
-              >
-                {s.name}
-              </button>
-              <button
-                onClick={() => deleteScenario(s.id)}
-                className={`px-1.5 py-1.5 rounded-r-lg text-xs transition-colors ${
-                  activeScenarioId === s.id
-                    ? "bg-primary/80 text-primary-foreground hover:bg-destructive"
-                    : "text-muted-foreground/30 hover:text-destructive hover:bg-muted"
-                }`}
-                title="Delete scenario"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
+          {(data.scenarios || []).map(s => {
+            const isActive = activeScenarioId === s.id;
+            const isRenaming = renamingScenarioId === s.id;
+            return (
+              <div key={s.id} className="flex items-center group">
+                {isRenaming ? (
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") { e.preventDefault(); commitRename(); }
+                      else if (e.key === "Escape") { e.preventDefault(); setRenamingScenarioId(null); setRenameValue(""); }
+                    }}
+                    className={`px-3 py-1.5 rounded-l-lg text-xs font-medium whitespace-nowrap outline-none border ${
+                      isActive ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border"
+                    }`}
+                    style={{ width: `${Math.max(renameValue.length + 2, 10)}ch` }}
+                  />
+                ) : (
+                  <button
+                    onClick={() => {
+                      if (isActive) startRename(s.id, s.name);
+                      else setActiveScenarioId(s.id);
+                    }}
+                    onDoubleClick={() => startRename(s.id, s.name)}
+                    title={isActive ? "Click to rename" : "Click to view"}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-l-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                      isActive
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
+                  >
+                    {s.name}
+                    {isActive && <Pencil className="h-3 w-3 opacity-70" />}
+                  </button>
+                )}
+                <button
+                  onClick={() => deleteScenario(s.id)}
+                  className={`px-1.5 py-1.5 rounded-r-lg text-xs transition-colors ${
+                    isActive
+                      ? "bg-primary/80 text-primary-foreground hover:bg-destructive"
+                      : "text-muted-foreground/30 hover:text-destructive hover:bg-muted"
+                  }`}
+                  title="Delete scenario"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            );
+          })}
           <button
             onClick={() => { setShowScenarioWizard(true); setWizardStep(0); setWizardType("custom"); setWizardResult(null); setWizardTarget(businessPlan?.target_equity_multiple_min || 2); }}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors whitespace-nowrap border border-dashed border-border"
@@ -1187,13 +1253,30 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <Plus className="h-3 w-3" />
             Scenario
           </button>
+          {(data.scenarios || []).length > 0 && (
+            <button
+              onClick={openCompareModal}
+              className="ml-auto flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-primary/10 transition-colors whitespace-nowrap border border-primary/40"
+              title="Compare scenarios"
+            >
+              <GitCompare className="h-3 w-3" />
+              Compare
+            </button>
+          )}
         </div>
         {activeScenario && (
-          <div className="px-4 py-2 border-t bg-amber-50/50 border-amber-200/50 flex items-center gap-2">
-            <span className="text-xs font-medium text-amber-700">Scenario:</span>
-            <span className="text-xs text-amber-600">{activeScenario.description || activeScenario.name}</span>
+          <div className="px-4 py-2 border-t bg-amber-500/10 border-amber-500/30 flex items-center gap-2">
+            <span className="text-xs font-semibold text-amber-300">Scenario:</span>
+            <span className="text-xs text-amber-200">{activeScenario.description || activeScenario.name}</span>
+            <button
+              onClick={() => startRename(activeScenario.id, activeScenario.name)}
+              className="text-amber-300/70 hover:text-amber-200 transition-colors"
+              title="Rename scenario"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
             {activeScenario.type !== "custom" && (
-              <span className="ml-auto text-2xs text-muted-foreground">Changes from baseline highlighted</span>
+              <span className="ml-auto text-2xs text-amber-300/80">Changes from baseline highlighted</span>
             )}
           </div>
         )}
@@ -2690,6 +2773,129 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         </div>
       )}
+
+      {/* ── Scenario Compare Modal ── */}
+      {showCompareModal && (() => {
+        const columns: Array<{ key: string; label: string; data: UWData; isBaseline: boolean }> = [];
+        if (compareSelection.has("baseline")) {
+          columns.push({ key: "baseline", label: "Baseline", data, isBaseline: true });
+        }
+        (data.scenarios || []).forEach(s => {
+          if (compareSelection.has(s.id)) {
+            columns.push({
+              key: s.id,
+              label: s.name,
+              data: { ...data, ...s.overrides, scenarios: data.scenarios },
+              isBaseline: false,
+            });
+          }
+        });
+        const computed = columns.map(c => ({ ...c, m: calc(c.data, calcMode) }));
+        const irrProxy = (em: number, years: number) => em > 0 && years > 0 ? (Math.pow(em, 1 / years) - 1) * 100 : 0;
+        const rows: Array<{ label: string; values: string[]; highlight?: boolean }> = [
+          { label: "Purchase Price", values: computed.map(c => fc(c.data.purchase_price)) },
+          { label: "Total Investment", values: computed.map(c => fc(c.m.totalCost)) },
+          { label: "Equity Required", values: computed.map(c => fc(c.m.equity)) },
+          { label: "Debt", values: computed.map(c => fc(c.m.acqLoan)) },
+          { label: "NOI (Proforma)", values: computed.map(c => fc(c.m.proformaNOI)) },
+          { label: "Cap Rate (Proforma)", values: computed.map(c => c.m.proformaCapRate > 0 ? `${c.m.proformaCapRate.toFixed(2)}%` : "—") },
+          { label: "Cash-on-Cash", values: computed.map(c => c.m.coc !== 0 ? `${c.m.coc.toFixed(2)}%` : "—") },
+          { label: "DSCR", values: computed.map(c => c.m.dscr > 0 ? `${c.m.dscr.toFixed(2)}x` : "—") },
+          { label: "Equity Multiple", values: computed.map(c => c.m.em > 0 ? `${c.m.em.toFixed(2)}x` : "—"), highlight: true },
+          { label: "IRR (approx)", values: computed.map(c => { const v = irrProxy(c.m.em, c.data.hold_period_years); return v > 0 ? `${v.toFixed(2)}%` : "—"; }), highlight: true },
+          { label: "Exit Value", values: computed.map(c => fc(c.m.exitValue)) },
+          { label: "Exit Cap Rate", values: computed.map(c => c.data.exit_cap_rate > 0 ? `${c.data.exit_cap_rate.toFixed(2)}%` : "—") },
+          { label: "Hold Period", values: computed.map(c => `${c.data.hold_period_years}yr`) },
+        ];
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowCompareModal(false)}>
+            <div className="bg-card rounded-xl border shadow-lifted-md w-full max-w-5xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between p-4 border-b">
+                <div>
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <GitCompare className="h-4 w-4 text-primary" />
+                    Compare Scenarios
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">Side-by-side returns across baseline and scenarios</p>
+                </div>
+                <button onClick={() => setShowCompareModal(false)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="px-4 py-3 border-b bg-muted/20">
+                <p className="text-xs font-medium text-muted-foreground mb-2">Select scenarios to compare</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => toggleCompareSelection("baseline")}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      compareSelection.has("baseline")
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-muted/70"
+                    }`}
+                  >
+                    {compareSelection.has("baseline") && <Check className="h-3 w-3" />}
+                    <BarChart3 className="h-3 w-3" />
+                    Baseline
+                  </button>
+                  {(data.scenarios || []).map(s => (
+                    <button
+                      key={s.id}
+                      onClick={() => toggleCompareSelection(s.id)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        compareSelection.has(s.id)
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground hover:bg-muted/70"
+                      }`}
+                    >
+                      {compareSelection.has(s.id) && <Check className="h-3 w-3" />}
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto">
+                {columns.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-muted-foreground">
+                    Select at least one scenario to compare.
+                  </div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-card border-b z-10">
+                      <tr>
+                        <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Metric</th>
+                        {computed.map(c => (
+                          <th key={c.key} className={`text-right px-4 py-3 text-xs font-semibold ${c.isBaseline ? "text-muted-foreground" : "text-primary"}`}>
+                            <div className="flex items-center justify-end gap-1.5">
+                              {c.isBaseline ? <BarChart3 className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
+                              <span className="truncate max-w-[140px]" title={c.label}>{c.label}</span>
+                            </div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, i) => (
+                        <tr key={row.label} className={`border-b border-border/50 ${row.highlight ? "bg-primary/5" : i % 2 === 0 ? "" : "bg-muted/10"}`}>
+                          <td className={`px-4 py-2.5 text-xs ${row.highlight ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{row.label}</td>
+                          {row.values.map((val, j) => (
+                            <td key={j} className={`px-4 py-2.5 text-right tabular-nums text-xs ${row.highlight ? "font-bold text-primary" : "text-foreground"}`}>
+                              {val}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div className="flex items-center justify-between p-4 border-t bg-muted/20">
+                <p className="text-xs text-muted-foreground">
+                  Comparing {columns.length} {columns.length === 1 ? "scenario" : "scenarios"}
+                </p>
+                <Button variant="outline" size="sm" onClick={() => setShowCompareModal(false)}>Close</Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── CapEx AI Preview Modal ── */}
       {capexPreview && (
