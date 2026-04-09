@@ -264,6 +264,8 @@ export async function ensureColumns(): Promise<void> {
       occupancy_pct NUMERIC,
       lease_type TEXT,
       distance_mi NUMERIC,
+      lat NUMERIC,
+      lng NUMERIC,
       selected BOOLEAN NOT NULL DEFAULT true,
       source TEXT NOT NULL DEFAULT 'manual',
       source_url TEXT,
@@ -277,8 +279,11 @@ export async function ensureColumns(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_comps_source_deal_id ON comps(source_deal_id)`,
     // Migrate existing installs: drop the NOT NULL on deal_id and change the
     // FK from CASCADE to SET NULL so workspace-only comps can exist. Also
-    // add the new source_deal_id column. These DO blocks are idempotent.
+    // add the new source_deal_id and lat/lng columns. These DO blocks are
+    // idempotent.
     `ALTER TABLE comps ADD COLUMN IF NOT EXISTS source_deal_id TEXT`,
+    `ALTER TABLE comps ADD COLUMN IF NOT EXISTS lat NUMERIC`,
+    `ALTER TABLE comps ADD COLUMN IF NOT EXISTS lng NUMERIC`,
     `ALTER TABLE comps ALTER COLUMN deal_id DROP NOT NULL`,
     `DO $$ BEGIN
        ALTER TABLE comps DROP CONSTRAINT IF EXISTS comps_deal_id_fkey;
@@ -678,6 +683,8 @@ export async function initSchema(): Promise<void> {
       occupancy_pct NUMERIC,
       lease_type TEXT,
       distance_mi NUMERIC,
+      lat NUMERIC,
+      lng NUMERIC,
       selected BOOLEAN NOT NULL DEFAULT true,
       source TEXT NOT NULL DEFAULT 'manual',
       source_url TEXT,
@@ -691,8 +698,11 @@ export async function initSchema(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_comps_source_deal_id ON comps(source_deal_id)`,
     // Migrate existing installs: drop the NOT NULL on deal_id and change the
     // FK from CASCADE to SET NULL so workspace-only comps can exist. Also
-    // add the new source_deal_id column. These DO blocks are idempotent.
+    // add the new source_deal_id and lat/lng columns. These DO blocks are
+    // idempotent.
     `ALTER TABLE comps ADD COLUMN IF NOT EXISTS source_deal_id TEXT`,
+    `ALTER TABLE comps ADD COLUMN IF NOT EXISTS lat NUMERIC`,
+    `ALTER TABLE comps ADD COLUMN IF NOT EXISTS lng NUMERIC`,
     `ALTER TABLE comps ALTER COLUMN deal_id DROP NOT NULL`,
     `DO $$ BEGIN
        ALTER TABLE comps DROP CONSTRAINT IF EXISTS comps_deal_id_fkey;
@@ -1138,6 +1148,8 @@ const COMP_COLUMNS = [
   "occupancy_pct",
   "lease_type",
   "distance_mi",
+  "lat",
+  "lng",
   "selected",
   "source",
   "source_url",

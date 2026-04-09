@@ -423,6 +423,8 @@ export interface Comp {
 
   // Comparability
   distance_mi: number | null;
+  lat: number | null;            // WGS84 latitude (populated by geocoder)
+  lng: number | null;            // WGS84 longitude
   selected: boolean;             // include in investment package
 
   // Provenance

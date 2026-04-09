@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
   BarChart3,
@@ -15,10 +16,26 @@ import {
   Pencil,
   Copy,
   Save,
+  Map as MapIcon,
+  List,
+  Download,
+  MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/AppShell";
 import { toast } from "sonner";
+
+// Leaflet expects window so it has to be client-only. Dynamic import with
+// ssr:false also keeps the map code out of the initial bundle — it's only
+// loaded when the user switches to the map view.
+const CompsMapView = dynamic(() => import("@/components/CompsMapView"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center py-20 border border-border/40 rounded-xl bg-card">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    </div>
+  ),
+});
 
 interface LibraryComp {
   id: string;
@@ -41,6 +58,8 @@ interface LibraryComp {
   rent_per_unit: number | null;
   rent_per_sf: number | null;
   occupancy_pct: number | null;
+  lat: number | null;
+  lng: number | null;
   source: string;
   source_note: string | null;
   created_at: string;
@@ -88,6 +107,8 @@ export default function CompsLibraryPage() {
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [editing, setEditing] = useState<LibraryComp | null>(null);
   const [copyingToDeal, setCopyingToDeal] = useState<LibraryComp | null>(null);
+  const [view, setView] = useState<"table" | "map">("table");
+  const [geocoding, setGeocoding] = useState(false);
 
   const loadComps = useCallback(async () => {
     setLoading(true);
@@ -130,6 +151,122 @@ export default function CompsLibraryPage() {
     }
   }
 
+  async function handleGeocodeMissing() {
+    setGeocoding(true);
+    try {
+      // Loop until no more remaining (cap at 5 batches = up to 250 rows to
+      // keep total wait reasonable)
+      let totalGeocoded = 0;
+      let totalFailed = 0;
+      let batches = 0;
+      for (batches = 0; batches < 5; batches++) {
+        const res = await fetch("/api/workspace/comps/geocode-missing", {
+          method: "POST",
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          toast.error(json.error || "Geocoding failed");
+          break;
+        }
+        totalGeocoded += json.data.geocoded;
+        totalFailed += json.data.failed;
+        if (!json.data.more || json.data.processed === 0) break;
+      }
+      if (totalGeocoded > 0) {
+        toast.success(
+          `Geocoded ${totalGeocoded} comp${totalGeocoded === 1 ? "" : "s"}` +
+            (totalFailed > 0 ? ` (${totalFailed} failed)` : "")
+        );
+        loadComps();
+      } else if (totalFailed > 0) {
+        toast.error(`${totalFailed} comps couldn't be geocoded`);
+      } else {
+        toast("Nothing to geocode");
+      }
+    } finally {
+      setGeocoding(false);
+    }
+  }
+
+  function handleExportCsv() {
+    if (filteredComps.length === 0) {
+      toast.error("No comps to export");
+      return;
+    }
+    const header = [
+      "type",
+      "name",
+      "address",
+      "city",
+      "state",
+      "property_type",
+      "year_built",
+      "units",
+      "total_sf",
+      "sale_price",
+      "sale_date",
+      "cap_rate",
+      "price_per_unit",
+      "price_per_sf",
+      "rent_per_unit",
+      "rent_per_sf",
+      "occupancy_pct",
+      "source",
+      "source_deal_name",
+      "attached_deal_name",
+      "notes",
+      "created_at",
+    ];
+    const escape = (v: unknown): string => {
+      if (v == null) return "";
+      const s = String(v);
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    };
+    const rows = filteredComps.map((c) =>
+      [
+        c.comp_type,
+        c.name,
+        c.address,
+        c.city,
+        c.state,
+        c.property_type,
+        c.year_built,
+        c.units,
+        c.total_sf,
+        c.sale_price,
+        c.sale_date,
+        c.cap_rate,
+        c.price_per_unit,
+        c.price_per_sf,
+        c.rent_per_unit,
+        c.rent_per_sf,
+        c.occupancy_pct,
+        c.source,
+        c.source_deal_name,
+        c.attached_deal_name,
+        c.source_note,
+        c.created_at,
+      ]
+        .map(escape)
+        .join(",")
+    );
+    const csv = [header.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const today = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `comps-library-${today}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${filteredComps.length} comps`);
+  }
+
   // Client-side state filter (the text filters are server-side via loadComps)
   const filteredComps = stateFilter
     ? comps.filter((c) => c.state === stateFilter)
@@ -159,6 +296,41 @@ export default function CompsLibraryPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
+                <div className="flex items-center bg-muted/20 border border-border/40 rounded-md p-0.5">
+                  <button
+                    onClick={() => setView("table")}
+                    className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded transition-colors ${
+                      view === "table"
+                        ? "bg-primary/20 text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    title="Table view"
+                  >
+                    <List className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Table</span>
+                  </button>
+                  <button
+                    onClick={() => setView("map")}
+                    className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded transition-colors ${
+                      view === "map"
+                        ? "bg-primary/20 text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    title="Map view"
+                  >
+                    <MapIcon className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Map</span>
+                  </button>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExportCsv}
+                  disabled={filteredComps.length === 0}
+                >
+                  <Download className="h-3.5 w-3.5 mr-1.5" />
+                  Export CSV
+                </Button>
                 <Button
                   size="sm"
                   variant="outline"
@@ -228,14 +400,76 @@ export default function CompsLibraryPage() {
           </div>
         </div>
 
-        {/* Table */}
-        <main className="flex-1 min-w-0 max-w-full mx-auto w-full px-6 sm:px-8 py-4">
+        {/* Table / Map */}
+        <main className="flex-1 min-w-0 max-w-full mx-auto w-full px-6 sm:px-8 py-4 space-y-3">
+          {/* Geocode banner — shown on map view when any comp is missing coords */}
+          {view === "map" && !loading && (() => {
+            const missingCoords = filteredComps.filter(
+              (c) => c.lat == null || c.lng == null
+            ).length;
+            if (missingCoords === 0) return null;
+            return (
+              <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs">
+                <div className="flex items-center gap-2 text-amber-200/80">
+                  <MapPin className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span>
+                    {missingCoords} comp{missingCoords === 1 ? "" : "s"} not yet
+                    geocoded. Map only shows comps with lat/lng.
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleGeocodeMissing}
+                  disabled={geocoding}
+                >
+                  {geocoding ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  ) : (
+                    <MapPin className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  Geocode Missing
+                </Button>
+              </div>
+            );
+          })()}
+
           {loading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : filteredComps.length === 0 ? (
             <EmptyState onSnapshot={() => setSnapshotOpen(true)} />
+          ) : view === "map" ? (
+            (() => {
+              const mapComps = filteredComps
+                .filter((c) => c.lat != null && c.lng != null)
+                .map((c) => ({
+                  id: c.id,
+                  deal_id: c.deal_id,
+                  source_deal_id: c.source_deal_id,
+                  comp_type: c.comp_type,
+                  name: c.name,
+                  address: c.address,
+                  city: c.city,
+                  state: c.state,
+                  sale_price: c.sale_price,
+                  cap_rate: c.cap_rate,
+                  rent_per_unit: c.rent_per_unit,
+                  rent_per_sf: c.rent_per_sf,
+                  lat: c.lat as number,
+                  lng: c.lng as number,
+                }));
+              if (mapComps.length === 0) {
+                return (
+                  <div className="text-center py-16 text-xs text-muted-foreground">
+                    No comps with coordinates yet. Click <em>Geocode Missing</em>{" "}
+                    above to resolve addresses via the Census.gov geocoder.
+                  </div>
+                );
+              }
+              return <CompsMapView comps={mapComps} height={540} />;
+            })()
           ) : (
             <div className="border border-border/40 rounded-xl bg-card overflow-hidden">
               <div className="overflow-x-auto">
