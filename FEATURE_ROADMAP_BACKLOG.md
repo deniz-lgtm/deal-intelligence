@@ -17,6 +17,8 @@ Strategic roadmap for the Deal Intelligence platform. Tracks what's actively bei
 
 **Comps Library is feature-complete** for the current scope. Follow-ups are either optional polish (auto-cluster ring rings, map-to-PDF) or cross-cutting features that belong in other threads (RentCast API, global workspace sharing model).
 
+- **AI Deal Sourcing — Inbox (phase 1)**: new `/inbox` route + left-rail entry with pending-count badge. Polls a designated Dropbox folder, auto-creates draft deals in the `sourcing` stage with stage-1 OM extraction (property details + financial metrics). Dedupes by Dropbox path. Review/Dismiss actions. Settings panel with Dropbox connect flow (OAuth round-trip reroutes back to /inbox) and watched-folder path editor.
+
 ---
 
 ## Up Next (Open)

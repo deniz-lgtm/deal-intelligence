@@ -126,7 +126,7 @@ function parseJson<T>(raw: string, fallback: T): T {
 
 // ─── Stage 1 — Metrics Extraction ────────────────────────────────────────────
 
-async function extractMetrics(text: string, pdfBuffer?: Buffer): Promise<{
+export async function extractMetrics(text: string, pdfBuffer?: Buffer): Promise<{
   property_details: PropertyDetails;
   financial_metrics: FinancialMetrics;
   assumptions: Assumptions;
