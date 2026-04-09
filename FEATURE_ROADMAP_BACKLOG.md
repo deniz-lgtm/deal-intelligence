@@ -11,17 +11,17 @@ Strategic roadmap for the Deal Intelligence platform. Tracks what's actively bei
 - **Comps & Market tab** (paste mode + extract-from-market-docs) with unified sale/rent comp store and submarket metrics. Legal posture: zero server-side scraping of broker sites, gated by `src/lib/web-allowlist.ts`.
 - **App shell + Today strip** on the root landing. Collapsible left rail replaces the per-page header nav. Today strip surfaces upcoming milestones (14-day window), active deal briefs, and macro market widgets (10Y/2Y Treasury, S&P 500, 30Y mortgage) from FRED.
 - **Workspace Comps Library** at `/comps-library`. `comps.deal_id` is now nullable with `source_deal_id` tracking provenance. "Snapshot a Deal" creates a sale/rent comp from a deal's underwriting + OM data. "Save to Workspace" on a per-deal comp clones it into the library with its source tagged. Cross-deal search with type / property-type / text filters.
+- **Comps Library phase 3**: inline edit modal for any comp, unified workspace delete (works for orphan and attached comps), "Copy to Deal" action to clone a library comp into a target deal, state-filter dropdown.
 
 ---
 
 ## Up Next (Open)
 
-### Comps Library — phase 3 polish
-- Inline comp editing in the library table (today: delete + re-add)
-- Delete endpoint for workspace-only comps (today: UI blocks deletion for rows without a deal_id)
-- "Copy into this deal" action — pull a workspace library comp into the active deal's comp set
-- Market / MSA filter backed by structured `city`/`state` fields
-- Map view
+### Comps Library — phase 4 (future)
+- Map view with geocoded comp markers (needs map library + geocoding pipeline)
+- Distance-from-subject filter on a per-deal basis
+- Export to CSV / PDF
+- Shared workspace library visibility (today: scoped to user's accessible deals)
 
 ### RentCast (paid API) integration
 ~$100-300/mo, already scoped in the research spike. Adds auto-populated sale + rent comps + zip-level market stats on top of the existing paste-mode and doc-extraction paths.

@@ -12,6 +12,9 @@ import {
   Sparkles,
   X,
   FileSearch,
+  Pencil,
+  Copy,
+  Save,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/AppShell";
@@ -80,8 +83,11 @@ export default function CompsLibraryPage() {
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<"" | "sale" | "rent">("");
   const [propertyTypeFilter, setPropertyTypeFilter] = useState("");
+  const [stateFilter, setStateFilter] = useState("");
   const [search, setSearch] = useState("");
   const [snapshotOpen, setSnapshotOpen] = useState(false);
+  const [editing, setEditing] = useState<LibraryComp | null>(null);
+  const [copyingToDeal, setCopyingToDeal] = useState<LibraryComp | null>(null);
 
   const loadComps = useCallback(async () => {
     setLoading(true);
@@ -108,26 +114,15 @@ export default function CompsLibraryPage() {
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this comp from the library?")) return;
-    // Reuse the existing per-deal delete endpoint if attached; else the
-    // workspace endpoint won't be needed — the row is deleted either way
-    // via the comps table. We call the unified per-comp endpoint with a
-    // deal_id of "_workspace" fallback. For simplicity, just issue the
-    // delete via the per-deal-route pattern with the stored deal_id.
-    const comp = comps.find((c) => c.id === id);
-    if (!comp) return;
-    // If deal_id is null we need a workspace-safe delete. Use the deal
-    // route only when a deal is attached. For pure workspace comps,
-    // fallback to nothing (future: add DELETE /api/workspace/comps/[id]).
-    if (!comp.deal_id) {
-      toast.error(
-        "Workspace-only comps can't be deleted yet — coming in the next pass"
-      );
-      return;
-    }
     try {
-      await fetch(`/api/deals/${comp.deal_id}/comps/${id}`, {
+      const res = await fetch(`/api/workspace/comps/${id}`, {
         method: "DELETE",
       });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        toast.error(json.error || "Delete failed");
+        return;
+      }
       toast.success("Deleted");
       loadComps();
     } catch {
@@ -135,9 +130,17 @@ export default function CompsLibraryPage() {
     }
   }
 
+  // Client-side state filter (the text filters are server-side via loadComps)
+  const filteredComps = stateFilter
+    ? comps.filter((c) => c.state === stateFilter)
+    : comps;
+
   const propertyTypes = Array.from(
     new Set(comps.map((c) => c.property_type).filter(Boolean))
   ) as string[];
+  const states = Array.from(
+    new Set(comps.map((c) => c.state).filter(Boolean))
+  ).sort() as string[];
 
   return (
     <AppShell>
@@ -203,9 +206,24 @@ export default function CompsLibraryPage() {
                 </option>
               ))}
             </select>
+            <select
+              value={stateFilter}
+              onChange={(e) => setStateFilter(e.target.value)}
+              className="px-3 py-1.5 text-xs bg-muted/20 border border-border/40 rounded-md outline-none focus:border-primary/40"
+            >
+              <option value="">All states</option>
+              {states.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
             <div className="flex-1" />
             <div className="text-[10px] text-muted-foreground">
-              {comps.length} comp{comps.length === 1 ? "" : "s"}
+              {filteredComps.length} comp{filteredComps.length === 1 ? "" : "s"}
+              {stateFilter && comps.length !== filteredComps.length
+                ? ` (${comps.length} total)`
+                : ""}
             </div>
           </div>
         </div>
@@ -216,7 +234,7 @@ export default function CompsLibraryPage() {
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : comps.length === 0 ? (
+          ) : filteredComps.length === 0 ? (
             <EmptyState onSnapshot={() => setSnapshotOpen(true)} />
           ) : (
             <div className="border border-border/40 rounded-xl bg-card overflow-hidden">
@@ -236,7 +254,7 @@ export default function CompsLibraryPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {comps.map((c) => (
+                    {filteredComps.map((c) => (
                       <tr
                         key={c.id}
                         className="border-b border-border/20 hover:bg-muted/10"
@@ -328,13 +346,29 @@ export default function CompsLibraryPage() {
                             : new Date(c.created_at).toLocaleDateString()}
                         </td>
                         <td className="py-2 px-3 text-right">
-                          <button
-                            onClick={() => handleDelete(c.id)}
-                            className="text-muted-foreground hover:text-red-400 transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => setEditing(c)}
+                              className="text-muted-foreground hover:text-primary transition-colors"
+                              title="Edit"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setCopyingToDeal(c)}
+                              className="text-muted-foreground hover:text-primary transition-colors"
+                              title="Copy to a deal"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(c.id)}
+                              className="text-muted-foreground hover:text-red-400 transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -351,6 +385,30 @@ export default function CompsLibraryPage() {
             onClose={() => setSnapshotOpen(false)}
             onSaved={() => {
               setSnapshotOpen(false);
+              loadComps();
+            }}
+          />
+        )}
+
+        {/* Edit modal */}
+        {editing && (
+          <EditCompModal
+            comp={editing}
+            onClose={() => setEditing(null)}
+            onSaved={() => {
+              setEditing(null);
+              loadComps();
+            }}
+          />
+        )}
+
+        {/* Copy-to-deal modal */}
+        {copyingToDeal && (
+          <CopyToDealModal
+            comp={copyingToDeal}
+            onClose={() => setCopyingToDeal(null)}
+            onSaved={() => {
+              setCopyingToDeal(null);
               loadComps();
             }}
           />
@@ -559,6 +617,373 @@ function SnapshotDealModal({
                 <Sparkles className="h-3.5 w-3.5 mr-1.5" />
               )}
               Snapshot
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Edit Comp modal ───────────────────────────────────────────────────────
+//
+// Inline editor for any field on a comp row. Works for both deal-attached
+// and workspace-only comps via the unified PATCH /api/workspace/comps/[id]
+// endpoint. The form adapts to the comp's type — sale comps show sale/cap
+// fields, rent comps show rent/occupancy fields.
+
+function EditCompModal({
+  comp,
+  onClose,
+  onSaved,
+}: {
+  comp: LibraryComp;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [draft, setDraft] = useState<Record<string, unknown>>({
+    name: comp.name,
+    address: comp.address,
+    city: comp.city,
+    state: comp.state,
+    property_type: comp.property_type,
+    year_built: comp.year_built,
+    units: comp.units,
+    total_sf: comp.total_sf,
+    sale_price: comp.sale_price,
+    sale_date: comp.sale_date,
+    cap_rate: comp.cap_rate,
+    price_per_unit: comp.price_per_unit,
+    price_per_sf: comp.price_per_sf,
+    rent_per_unit: comp.rent_per_unit,
+    rent_per_sf: comp.rent_per_sf,
+    occupancy_pct: comp.occupancy_pct,
+    source_note: comp.source_note,
+  });
+  const [saving, setSaving] = useState(false);
+
+  const set = (key: string, value: unknown) =>
+    setDraft((d) => ({ ...d, [key]: value }));
+  const numOrNull = (v: string) => (v === "" ? null : Number(v));
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/workspace/comps/${comp.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        toast.error(json.error || "Save failed");
+        return;
+      }
+      toast.success("Comp updated");
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card border border-border/60 rounded-xl shadow-2xl w-full max-w-3xl my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/40">
+          <h2 className="font-semibold text-sm">
+            Edit {comp.comp_type === "sale" ? "Sale" : "Rent"} Comp
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <EditField label="Name" value={draft.name as string} onChange={(v) => set("name", v)} />
+            <EditField label="Address" value={draft.address as string} onChange={(v) => set("address", v)} />
+            <EditField label="City" value={draft.city as string} onChange={(v) => set("city", v)} />
+            <EditField label="State" value={draft.state as string} onChange={(v) => set("state", v)} />
+            <EditField label="Property Type" value={draft.property_type as string} onChange={(v) => set("property_type", v)} />
+            <EditField
+              label="Year Built"
+              type="number"
+              value={(draft.year_built as number | null) ?? ""}
+              onChange={(v) => set("year_built", numOrNull(v))}
+            />
+            <EditField
+              label="Units"
+              type="number"
+              value={(draft.units as number | null) ?? ""}
+              onChange={(v) => set("units", numOrNull(v))}
+            />
+            <EditField
+              label="Total SF"
+              type="number"
+              value={(draft.total_sf as number | null) ?? ""}
+              onChange={(v) => set("total_sf", numOrNull(v))}
+            />
+            {comp.comp_type === "sale" ? (
+              <>
+                <EditField
+                  label="Sale Price"
+                  type="number"
+                  suffix="$"
+                  value={(draft.sale_price as number | null) ?? ""}
+                  onChange={(v) => set("sale_price", numOrNull(v))}
+                />
+                <EditField
+                  label="Sale Date"
+                  type="date"
+                  value={(draft.sale_date as string | null) ?? ""}
+                  onChange={(v) => set("sale_date", v || null)}
+                />
+                <EditField
+                  label="Cap Rate"
+                  type="number"
+                  suffix="%"
+                  value={(draft.cap_rate as number | null) ?? ""}
+                  onChange={(v) => set("cap_rate", numOrNull(v))}
+                />
+                <EditField
+                  label="$ / Unit"
+                  type="number"
+                  suffix="$"
+                  value={(draft.price_per_unit as number | null) ?? ""}
+                  onChange={(v) => set("price_per_unit", numOrNull(v))}
+                />
+                <EditField
+                  label="$ / SF"
+                  type="number"
+                  suffix="$"
+                  value={(draft.price_per_sf as number | null) ?? ""}
+                  onChange={(v) => set("price_per_sf", numOrNull(v))}
+                />
+              </>
+            ) : (
+              <>
+                <EditField
+                  label="Rent / Unit (mo)"
+                  type="number"
+                  suffix="$"
+                  value={(draft.rent_per_unit as number | null) ?? ""}
+                  onChange={(v) => set("rent_per_unit", numOrNull(v))}
+                />
+                <EditField
+                  label="Rent / SF (yr)"
+                  type="number"
+                  suffix="$"
+                  value={(draft.rent_per_sf as number | null) ?? ""}
+                  onChange={(v) => set("rent_per_sf", numOrNull(v))}
+                />
+                <EditField
+                  label="Occupancy"
+                  type="number"
+                  suffix="%"
+                  value={(draft.occupancy_pct as number | null) ?? ""}
+                  onChange={(v) => set("occupancy_pct", numOrNull(v))}
+                />
+              </>
+            )}
+          </div>
+          <div>
+            <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+              Notes
+            </label>
+            <textarea
+              value={(draft.source_note as string) ?? ""}
+              onChange={(e) => set("source_note", e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 text-xs bg-muted/20 border border-border/40 rounded-lg outline-none resize-none focus:border-primary/40"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              ) : (
+                <Save className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Save
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditField({
+  label,
+  value,
+  onChange,
+  suffix,
+  type = "text",
+}: {
+  label: string;
+  value: string | number | null;
+  onChange: (v: string) => void;
+  suffix?: string;
+  type?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+        {label}
+      </label>
+      <div className="flex items-center border border-border/40 rounded-lg bg-muted/20 overflow-hidden">
+        <input
+          type={type}
+          value={value ?? ""}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="—"
+          className="flex-1 px-3 py-1.5 text-sm bg-transparent outline-none"
+        />
+        {suffix && (
+          <span className="px-2 text-xs text-muted-foreground bg-muted/30 border-l border-border/40 py-1.5">
+            {suffix}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Copy-to-Deal modal ────────────────────────────────────────────────────
+//
+// Clones a library comp into a target deal's comp set via
+// POST /api/workspace/comps/[id]/copy-to-deal. Useful for pulling an
+// institutional-memory comp into a new underwriting cycle.
+
+function CopyToDealModal({
+  comp,
+  onClose,
+  onSaved,
+}: {
+  comp: LibraryComp;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [deals, setDeals] = useState<DealPicker[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [targetId, setTargetId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/deals")
+      .then((r) => r.json())
+      .then((j) => {
+        const all = (j.data || []) as DealPicker[];
+        setDeals(all.filter((d) => d.status !== "archived"));
+      })
+      .catch(() => toast.error("Failed to load deals"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleCopy() {
+    if (!targetId) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/workspace/comps/${comp.id}/copy-to-deal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_id: targetId }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Copy failed");
+        return;
+      }
+      toast.success("Copied to deal");
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card border border-border/60 rounded-xl shadow-2xl w-full max-w-lg my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/40">
+          <h2 className="font-semibold text-sm">Copy Comp to Deal</h2>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Clones <span className="text-foreground">{comp.name || "this comp"}</span>{" "}
+            into the target deal's comp set. The original stays in your workspace
+            library.
+          </p>
+
+          <div>
+            <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+              Target Deal
+            </label>
+            {loading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              </div>
+            ) : deals.length === 0 ? (
+              <div className="text-xs text-muted-foreground py-4 text-center">
+                No deals found.
+              </div>
+            ) : (
+              <div className="max-h-56 overflow-y-auto border border-border/30 rounded-lg p-1">
+                {deals.map((d) => (
+                  <button
+                    key={d.id}
+                    onClick={() => setTargetId(d.id)}
+                    className={`w-full text-left px-3 py-2 rounded-md text-xs transition-colors ${
+                      targetId === d.id
+                        ? "bg-primary/20 text-foreground"
+                        : "hover:bg-muted/30 text-muted-foreground"
+                    }`}
+                  >
+                    <div className="font-medium">{d.name}</div>
+                    <div className="text-[10px] text-muted-foreground/80">
+                      {d.status}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={handleCopy} disabled={!targetId || saving}>
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              ) : (
+                <Copy className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Copy
             </Button>
           </div>
         </div>
