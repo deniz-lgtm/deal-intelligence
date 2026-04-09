@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { compQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { enrichCompWithGeocode } from "@/lib/geocode";
 
 export async function GET(
   req: NextRequest,
@@ -43,11 +44,16 @@ export async function POST(
       );
     }
 
-    const row = await compQueries.create({
+    // Auto-geocode the comp before saving (if address + no existing coords).
+    // Failures are swallowed — the comp just saves without lat/lng and the
+    // user can run "Geocode Missing" later.
+    const payload = await enrichCompWithGeocode({
       ...body,
       id: uuidv4(),
       deal_id: params.id,
     });
+
+    const row = await compQueries.create(payload);
     return NextResponse.json({ data: row });
   } catch (error) {
     console.error("POST /api/deals/[id]/comps error:", error);

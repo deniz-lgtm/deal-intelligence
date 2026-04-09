@@ -19,6 +19,7 @@ import {
   Map as MapIcon,
   List,
   Download,
+  Printer,
   MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -188,6 +189,193 @@ export default function CompsLibraryPage() {
     }
   }
 
+  function handleExportPdf() {
+    if (filteredComps.length === 0) {
+      toast.error("No comps to export");
+      return;
+    }
+    const today = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const typeLabel =
+      typeFilter === "sale"
+        ? "Sale Comps"
+        : typeFilter === "rent"
+        ? "Rent Comps"
+        : "All Comps";
+    const filterLine = [
+      propertyTypeFilter,
+      stateFilter,
+      search.trim() ? `"${search.trim()}"` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    const escapeHtml = (s: unknown): string => {
+      if (s == null) return "";
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    };
+
+    const rows = filteredComps
+      .map((c) => {
+        const loc = [c.city, c.state].filter(Boolean).join(", ");
+        const headline =
+          c.comp_type === "sale"
+            ? [
+                c.sale_price != null ? fc(c.sale_price) : "",
+                c.cap_rate != null ? `${c.cap_rate}% cap` : "",
+                c.price_per_unit != null
+                  ? `${fc(c.price_per_unit)}/unit`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            : [
+                c.rent_per_unit != null
+                  ? `${fc(c.rent_per_unit)}/unit/mo`
+                  : "",
+                c.rent_per_sf != null
+                  ? `$${Number(c.rent_per_sf).toFixed(2)}/SF`
+                  : "",
+                c.occupancy_pct != null ? `${c.occupancy_pct}% occ` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ");
+        return `
+          <tr>
+            <td class="type ${c.comp_type}">${c.comp_type.toUpperCase()}</td>
+            <td>
+              <div class="name">${escapeHtml(c.name) || "—"}</div>
+              <div class="addr">${escapeHtml(c.address) || ""}${c.address && loc ? ", " : ""}${escapeHtml(loc)}</div>
+            </td>
+            <td class="num">${c.year_built ?? "—"}</td>
+            <td class="num">${c.units ? fn(c.units) + "u" : c.total_sf ? fn(c.total_sf) + " SF" : "—"}</td>
+            <td class="num">${escapeHtml(headline) || "—"}</td>
+            <td class="date">${
+              c.sale_date
+                ? new Date(c.sale_date).toLocaleDateString()
+                : new Date(c.created_at).toLocaleDateString()
+            }</td>
+            <td class="source">${escapeHtml(c.source_deal_name || c.attached_deal_name || "")}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Comps Library — ${today}</title>
+  <style>
+    @page { size: letter landscape; margin: 0.5in; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #111;
+      font-size: 10pt;
+      margin: 0;
+      padding: 0;
+    }
+    h1 {
+      font-size: 16pt;
+      margin: 0 0 4px 0;
+      color: #000;
+    }
+    .meta {
+      color: #666;
+      font-size: 9pt;
+      margin-bottom: 14px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9pt;
+    }
+    th {
+      text-align: left;
+      padding: 6px 8px;
+      background: #f5f5f5;
+      border-bottom: 1.5px solid #333;
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 7.5pt;
+      color: #555;
+    }
+    td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #e5e5e5;
+      vertical-align: top;
+    }
+    td.num, td.date {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    td.type {
+      font-weight: 600;
+      font-size: 7.5pt;
+      letter-spacing: 0.5px;
+    }
+    td.type.sale { color: #b45309; }
+    td.type.rent { color: #1d4ed8; }
+    td .name { font-weight: 600; }
+    td .addr { color: #666; font-size: 8pt; }
+    td.source { color: #666; font-size: 8pt; }
+    tr { break-inside: avoid; }
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+  <h1>${typeLabel}</h1>
+  <div class="meta">
+    <span>${today}</span>
+    <span>${filteredComps.length} comp${filteredComps.length === 1 ? "" : "s"}</span>
+    ${filterLine ? `<span>Filters: ${escapeHtml(filterLine)}</span>` : ""}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Name / Address</th>
+        <th style="text-align:right">Yr</th>
+        <th style="text-align:right">Size</th>
+        <th style="text-align:right">Headline</th>
+        <th style="text-align:right">Date</th>
+        <th>Source Deal</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <script>
+    window.addEventListener('load', function() {
+      setTimeout(function() { window.print(); }, 200);
+    });
+  </script>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank", "width=1100,height=800");
+    if (!win) {
+      toast.error("Popup blocked — allow popups to export PDFs");
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    toast.success(`Preparing ${filteredComps.length} comps for print…`);
+  }
+
   function handleExportCsv() {
     if (filteredComps.length === 0) {
       toast.error("No comps to export");
@@ -329,7 +517,16 @@ export default function CompsLibraryPage() {
                   disabled={filteredComps.length === 0}
                 >
                   <Download className="h-3.5 w-3.5 mr-1.5" />
-                  Export CSV
+                  CSV
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExportPdf}
+                  disabled={filteredComps.length === 0}
+                >
+                  <Printer className="h-3.5 w-3.5 mr-1.5" />
+                  PDF
                 </Button>
                 <Button
                   size="sm"

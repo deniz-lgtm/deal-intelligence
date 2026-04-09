@@ -75,6 +75,8 @@ export interface Deal {
   year_built: number | null;
   notes: string | null;
   land_acres: number | null;
+  lat: number | null;
+  lng: number | null;
   loi_executed: boolean;
   psa_executed: boolean;
   business_plan_id: string | null;

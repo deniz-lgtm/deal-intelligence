@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
+import MarkerClusterGroup from "react-leaflet-cluster";
 import Link from "next/link";
 import "leaflet/dist/leaflet.css";
 
@@ -150,7 +151,13 @@ export default function CompsMapView({ comps, height = 540 }: Props) {
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           subdomains={["a", "b", "c", "d"]}
         />
-        {markers}
+        <MarkerClusterGroup
+          chunkedLoading
+          maxClusterRadius={50}
+          showCoverageOnHover={false}
+        >
+          {markers}
+        </MarkerClusterGroup>
         <FitBounds comps={comps} />
       </MapContainer>
     </div>

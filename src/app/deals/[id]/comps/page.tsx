@@ -8,6 +8,7 @@ import {
   Sparkles,
   Save,
   MapPin,
+  MapPinned,
   ChevronDown,
   ChevronRight,
   AlertCircle,
@@ -105,6 +106,33 @@ function FieldInput({
 
 // ── Main Page ────────────────────────────────────────────────────────────────
 
+interface SubjectDeal {
+  id: string;
+  name: string;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  lat: number | null;
+  lng: number | null;
+}
+
+// Haversine distance in miles between two WGS84 coordinates.
+function haversineMiles(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const R = 3958.8; // Earth radius in miles
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 export default function CompsPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true);
   const [saleComps, setSaleComps] = useState<Comp[]>([]);
@@ -112,6 +140,9 @@ export default function CompsPage({ params }: { params: { id: string } }) {
   const [submarket, setSubmarket] = useState<Partial<SubmarketMetrics>>({});
   const [submarketDirty, setSubmarketDirty] = useState(false);
   const [submarketSaving, setSubmarketSaving] = useState(false);
+  const [subject, setSubject] = useState<SubjectDeal | null>(null);
+  const [radiusMiles, setRadiusMiles] = useState<number | null>(null);
+  const [geocodingSubject, setGeocodingSubject] = useState(false);
 
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteType, setPasteType] = useState<"sale" | "rent">("sale");
@@ -120,14 +151,16 @@ export default function CompsPage({ params }: { params: { id: string } }) {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [compsRes, metricsRes] = await Promise.all([
+      const [compsRes, metricsRes, dealRes] = await Promise.all([
         fetch(`/api/deals/${params.id}/comps`).then((r) => r.json()),
         fetch(`/api/deals/${params.id}/submarket-metrics`).then((r) => r.json()),
+        fetch(`/api/deals/${params.id}`).then((r) => r.json()),
       ]);
       const all: Comp[] = compsRes.data || [];
       setSaleComps(all.filter((c) => c.comp_type === "sale"));
       setRentComps(all.filter((c) => c.comp_type === "rent"));
       setSubmarket(metricsRes.data || {});
+      setSubject(dealRes.data || null);
     } catch (err) {
       console.error(err);
       toast.error("Failed to load comps");
@@ -135,6 +168,65 @@ export default function CompsPage({ params }: { params: { id: string } }) {
       setLoading(false);
     }
   }, [params.id]);
+
+  async function handleGeocodeSubject() {
+    setGeocodingSubject(true);
+    try {
+      const res = await fetch(`/api/deals/${params.id}/geocode`, {
+        method: "POST",
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Failed to geocode subject deal");
+        return;
+      }
+      toast.success("Subject deal geocoded");
+      loadData();
+    } finally {
+      setGeocodingSubject(false);
+    }
+  }
+
+  // Compute distance for each comp from the subject (or null if either side
+  // doesn't have coordinates). We store the derived distance alongside the
+  // comp so CompTable can render a column without reaching back up.
+  const annotate = useCallback(
+    (comps: Comp[]): Array<Comp & { _subjectDistance: number | null }> => {
+      if (!subject?.lat || !subject?.lng) {
+        return comps.map((c) => ({ ...c, _subjectDistance: null }));
+      }
+      return comps.map((c) => {
+        if (c.lat == null || c.lng == null) {
+          return { ...c, _subjectDistance: null };
+        }
+        return {
+          ...c,
+          _subjectDistance: haversineMiles(
+            Number(subject.lat),
+            Number(subject.lng),
+            Number(c.lat),
+            Number(c.lng)
+          ),
+        };
+      });
+    },
+    [subject]
+  );
+
+  const annotatedSale = annotate(saleComps);
+  const annotatedRent = annotate(rentComps);
+
+  // Apply radius filter if set
+  const inRadius = (
+    list: Array<Comp & { _subjectDistance: number | null }>
+  ) => {
+    if (radiusMiles == null) return list;
+    return list.filter(
+      (c) => c._subjectDistance != null && c._subjectDistance <= radiusMiles
+    );
+  };
+  const filteredSale = inRadius(annotatedSale);
+  const filteredRent = inRadius(annotatedRent);
 
   useEffect(() => {
     loadData();
@@ -361,9 +453,73 @@ export default function CompsPage({ params }: { params: { id: string } }) {
         </div>
       </Section>
 
+      {/* Distance filter (only when subject has coords) */}
+      {!subject?.lat || !subject?.lng ? (
+        <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/10 border border-border/30 text-xs">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <MapPinned className="h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              Geocode this deal to show distance-from-subject for comps and
+              unlock the radius filter.
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleGeocodeSubject}
+            disabled={geocodingSubject || !subject?.address}
+          >
+            {geocodingSubject ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+            ) : (
+              <MapPinned className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            Geocode Subject
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs">
+          <MapPinned className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+          <span className="text-muted-foreground">
+            Subject:{" "}
+            <span className="text-foreground font-medium">
+              {[subject.address, subject.city, subject.state]
+                .filter(Boolean)
+                .join(", ")}
+            </span>
+          </span>
+          <div className="flex-1" />
+          <label className="flex items-center gap-2 text-muted-foreground">
+            <span>Within</span>
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              value={radiusMiles ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                setRadiusMiles(v === "" ? null : Math.max(0, Number(v)));
+              }}
+              placeholder="—"
+              className="w-16 px-2 py-1 text-xs bg-muted/20 border border-border/40 rounded outline-none focus:border-primary/40 text-right"
+            />
+            <span>mi</span>
+            {radiusMiles != null && (
+              <button
+                onClick={() => setRadiusMiles(null)}
+                className="text-muted-foreground hover:text-foreground"
+                title="Clear radius filter"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </label>
+        </div>
+      )}
+
       {/* Sale comps */}
       <Section
-        title={`Sale Comps (${saleComps.length})`}
+        title={`Sale Comps (${filteredSale.length}${radiusMiles != null && filteredSale.length !== saleComps.length ? ` / ${saleComps.length}` : ""})`}
         action={
           <Button size="sm" variant="outline" onClick={() => openPaste("sale")}>
             <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
@@ -371,19 +527,22 @@ export default function CompsPage({ params }: { params: { id: string } }) {
           </Button>
         }
       >
-        {saleComps.length === 0 ? (
-          <EmptyState
-            type="sale"
-            onAdd={() => openPaste("sale")}
-          />
+        {filteredSale.length === 0 ? (
+          saleComps.length === 0 ? (
+            <EmptyState type="sale" onAdd={() => openPaste("sale")} />
+          ) : (
+            <div className="text-center py-8 text-xs text-muted-foreground">
+              No sale comps within {radiusMiles} miles of the subject.
+            </div>
+          )
         ) : (
-          <CompTable comps={saleComps} type="sale" onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
+          <CompTable comps={filteredSale} type="sale" showDistance={!!(subject?.lat && subject?.lng)} onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
         )}
       </Section>
 
       {/* Rent comps */}
       <Section
-        title={`Rent Comps (${rentComps.length})`}
+        title={`Rent Comps (${filteredRent.length}${radiusMiles != null && filteredRent.length !== rentComps.length ? ` / ${rentComps.length}` : ""})`}
         action={
           <Button size="sm" variant="outline" onClick={() => openPaste("rent")}>
             <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
@@ -391,13 +550,16 @@ export default function CompsPage({ params }: { params: { id: string } }) {
           </Button>
         }
       >
-        {rentComps.length === 0 ? (
-          <EmptyState
-            type="rent"
-            onAdd={() => openPaste("rent")}
-          />
+        {filteredRent.length === 0 ? (
+          rentComps.length === 0 ? (
+            <EmptyState type="rent" onAdd={() => openPaste("rent")} />
+          ) : (
+            <div className="text-center py-8 text-xs text-muted-foreground">
+              No rent comps within {radiusMiles} miles of the subject.
+            </div>
+          )
         ) : (
-          <CompTable comps={rentComps} type="rent" onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
+          <CompTable comps={filteredRent} type="rent" showDistance={!!(subject?.lat && subject?.lng)} onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
         )}
       </Section>
 
@@ -434,12 +596,14 @@ export default function CompsPage({ params }: { params: { id: string } }) {
 function CompTable({
   comps,
   type,
+  showDistance,
   onToggle,
   onDelete,
   onSaveToWorkspace,
 }: {
-  comps: Comp[];
+  comps: Array<Comp & { _subjectDistance?: number | null }>;
   type: "sale" | "rent";
+  showDistance?: boolean;
   onToggle: (c: Comp) => void;
   onDelete: (id: string) => void;
   onSaveToWorkspace: (c: Comp) => void;
@@ -526,7 +690,11 @@ function CompTable({
                 </>
               )}
               <td className="py-2 pr-2 text-right">
-                {c.distance_mi != null ? `${Number(c.distance_mi).toFixed(1)}mi` : "—"}
+                {showDistance && c._subjectDistance != null
+                  ? `${c._subjectDistance.toFixed(1)}mi`
+                  : c.distance_mi != null
+                  ? `${Number(c.distance_mi).toFixed(1)}mi`
+                  : "—"}
               </td>
               <td className="py-2 pr-2 text-right">
                 <div className="flex items-center justify-end gap-2">

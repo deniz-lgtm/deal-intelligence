@@ -7,6 +7,7 @@ import {
   omAnalysisQueries,
 } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { enrichCompWithGeocode } from "@/lib/geocode";
 
 /**
  * POST /api/workspace/comps/from-deal
@@ -147,7 +148,11 @@ export async function POST(req: NextRequest) {
       source_note: `Snapshot of ${deal.name} (${deal.status}) on ${new Date().toLocaleDateString()}`,
     };
 
-    const row = await compQueries.create(draft);
+    // Auto-geocode from the deal's address if we don't already have coords.
+    // (Deals have their own lat/lng on the deals table now, but this route
+    // runs before that field is always populated, so we geocode here too.)
+    const enriched = await enrichCompWithGeocode(draft);
+    const row = await compQueries.create(enriched);
     return NextResponse.json({ data: row });
   } catch (error) {
     console.error("POST /api/workspace/comps/from-deal error:", error);

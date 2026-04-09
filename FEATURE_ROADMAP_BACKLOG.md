@@ -13,17 +13,13 @@ Strategic roadmap for the Deal Intelligence platform. Tracks what's actively bei
 - **Workspace Comps Library** at `/comps-library`. `comps.deal_id` is now nullable with `source_deal_id` tracking provenance. "Snapshot a Deal" creates a sale/rent comp from a deal's underwriting + OM data. "Save to Workspace" on a per-deal comp clones it into the library with its source tagged. Cross-deal search with type / property-type / text filters.
 - **Comps Library phase 3**: inline edit modal for any comp, unified workspace delete (works for orphan and attached comps), "Copy to Deal" action to clone a library comp into a target deal, state-filter dropdown.
 - **Comps Library phase 4**: map view (leaflet + CartoDB dark tiles, colored markers by comp type, click-popup with headline + open-deal link), Census.gov geocoder for addresses → lat/lng (free, US-only, on the web allowlist), batch "Geocode Missing" button, Table ↔ Map view toggle, CSV export of filtered comps.
+- **Comps Library phase 5**: auto-geocode new comps on create (hooked into POST /comps and POST /workspace/comps/from-deal), subject-deal geocoding via `POST /api/deals/[id]/geocode`, distance-from-subject column + "Within N miles" radius filter on per-deal Comps tab, PDF export (browser print-to-PDF with styled landscape view), marker clustering on the map via `react-leaflet-cluster`.
+
+**Comps Library is feature-complete** for the current scope. Follow-ups are either optional polish (auto-cluster ring rings, map-to-PDF) or cross-cutting features that belong in other threads (RentCast API, global workspace sharing model).
 
 ---
 
 ## Up Next (Open)
-
-### Comps Library — phase 5 (future)
-- Distance-from-subject filter on a per-deal basis (subject deal's lat/lng becomes the origin, filter comps by radius)
-- Auto-geocode new comps on create (today: manual trigger only)
-- PDF export
-- Shared workspace library visibility (today: scoped to user's accessible deals)
-- Cluster markers on the map when zoomed out
 
 ### RentCast (paid API) integration
 ~$100-300/mo, already scoped in the research spike. Adds auto-populated sale + rent comps + zip-level market stats on top of the existing paste-mode and doc-extraction paths.

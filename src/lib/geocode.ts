@@ -131,3 +131,31 @@ export function buildCompAddress(parts: {
   // city/state, Census still returns the centroid, which is fine for the map.
   return pieces.join(", ");
 }
+
+/**
+ * Enrich a comp creation payload with lat/lng from the geocoder, in place.
+ * No-op if the payload already has coords or if the address doesn't resolve.
+ * Safe to call from any route handler before compQueries.create().
+ *
+ * Fails closed — geocoding errors or timeouts just leave the row without
+ * coords. The user can always run "Geocode Missing" manually later.
+ */
+export async function enrichCompWithGeocode<
+  T extends {
+    lat?: number | null;
+    lng?: number | null;
+    address?: string | null;
+    city?: string | null;
+    state?: string | null;
+  }
+>(payload: T): Promise<T> {
+  if (payload.lat != null && payload.lng != null) return payload;
+  const addr = buildCompAddress(payload);
+  if (!addr) return payload;
+  const result = await geocodeAddress(addr);
+  if (result) {
+    payload.lat = result.lat;
+    payload.lng = result.lng;
+  }
+  return payload;
+}

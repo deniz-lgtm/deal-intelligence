@@ -80,6 +80,8 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lat NUMERIC",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lng NUMERIC",
     // documents table
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
     // photos table
@@ -748,6 +750,8 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS owner_id TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lat NUMERIC",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lng NUMERIC",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ",
