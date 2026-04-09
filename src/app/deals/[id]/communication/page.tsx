@@ -552,12 +552,51 @@ function QuestionsPanel({
   const [suggesting, setSuggesting] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // AI generation panel state
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPhase, setAiPhase] = useState<DealStatus>("screening");
+  const [aiRole, setAiRole] = useState<StakeholderType>("property_manager");
+  const [aiContext, setAiContext] = useState("");
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiResult, setAiResult] = useState<string | null>(null);
+
   const emptyForm = {
     target_role: "broker" as StakeholderType,
     phase: "sourcing" as DealStatus,
     question: "",
   };
   const [form, setForm] = useState(emptyForm);
+
+  const generateAiQuestions = async () => {
+    if (!aiContext.trim()) return;
+    setAiGenerating(true);
+    setAiResult(null);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/questions/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phase: aiPhase,
+          target_role: aiRole,
+          context: aiContext.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setAiResult(`Error: ${json.error || "Failed to generate"}`);
+        return;
+      }
+      const n = json.data?.count ?? 0;
+      setAiResult(`Added ${n} question${n === 1 ? "" : "s"} for ${STAKEHOLDER_LABELS[aiRole]} in ${DEAL_STAGE_LABELS[aiPhase]}.`);
+      setAiContext("");
+      onChange();
+    } catch (err) {
+      console.error("AI generate failed:", err);
+      setAiResult("Error: generation failed");
+    } finally {
+      setAiGenerating(false);
+    }
+  };
 
   const addQuestion = async () => {
     if (!form.question.trim()) return;
@@ -651,6 +690,15 @@ function QuestionsPanel({
             )}
           </Button>
         </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 text-xs"
+          onClick={() => setAiOpen((v) => !v)}
+        >
+          <Wand2 className="h-3.5 w-3.5 mr-1.5" />
+          AI Generate from situation
+        </Button>
         <div className="flex-1" />
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
@@ -716,6 +764,99 @@ function QuestionsPanel({
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* AI generation panel */}
+      {aiOpen && (
+        <div className="border border-primary/30 rounded-xl bg-primary/5 p-4 space-y-3 animate-fade-up">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Wand2 className="h-4 w-4 text-primary" />
+              <h3 className="font-display text-sm">Generate questions from a situation</h3>
+            </div>
+            <button
+              onClick={() => setAiOpen(false)}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Close
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Describe what you&apos;re doing and who you&apos;re meeting. The AI reads the deal&apos;s OM data, red flags, and documents to tailor questions to your situation.
+          </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Phase">
+              <select
+                value={aiPhase}
+                onChange={(e) => setAiPhase(e.target.value as DealStatus)}
+                className="w-full h-9 rounded-lg border border-border bg-background px-2.5 text-sm"
+              >
+                {DEAL_PIPELINE.map((p) => (
+                  <option key={p} value={p}>
+                    {DEAL_STAGE_LABELS[p]}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Who will you ask?">
+              <select
+                value={aiRole}
+                onChange={(e) => setAiRole(e.target.value as StakeholderType)}
+                className="w-full h-9 rounded-lg border border-border bg-background px-2.5 text-sm"
+              >
+                {Object.entries(STAKEHOLDER_LABELS).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          </div>
+
+          <FormField label="Situation / context">
+            <textarea
+              value={aiContext}
+              onChange={(e) => setAiContext(e.target.value)}
+              rows={4}
+              placeholder="e.g. Touring the building with the on-site property manager tomorrow. Want to dig into deferred maintenance, staffing levels, tenant turnover, and anything the OM flagged as a red flag."
+              className="w-full rounded-lg border border-border bg-background px-2.5 py-2 text-sm"
+            />
+          </FormField>
+
+          {aiResult && (
+            <div
+              className={cn(
+                "text-xs rounded-md px-2.5 py-1.5",
+                aiResult.startsWith("Error")
+                  ? "bg-red-500/10 text-red-400"
+                  : "bg-emerald-500/10 text-emerald-400"
+              )}
+            >
+              {aiResult}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button
+              size="sm"
+              onClick={generateAiQuestions}
+              disabled={aiGenerating || !aiContext.trim()}
+            >
+              {aiGenerating ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4 mr-1.5" />
+                  Generate questions
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Grouped questions */}
       {questions.length === 0 ? (
