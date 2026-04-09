@@ -760,6 +760,7 @@ export type StakeholderType =
   | "title"
   | "inspector"
   | "appraiser"
+  | "property_manager"
   | "ic"
   | "partner"
   | "tenant"
@@ -823,6 +824,7 @@ export const STAKEHOLDER_LABELS: Record<StakeholderType, string> = {
   title: "Title / Escrow",
   inspector: "Inspector",
   appraiser: "Appraiser",
+  property_manager: "Property Manager",
   ic: "Investment Committee",
   partner: "Partner / JV",
   tenant: "Tenant",
@@ -884,6 +886,11 @@ export const STAGE_QUESTION_TEMPLATES: Record<
     { target_role: "seller", question: "What capital improvements have been made in the last 5 years?" },
     { target_role: "seller", question: "Are there any pending or threatened litigation matters?" },
     { target_role: "lender", question: "What loan terms can you offer for this asset class and market?" },
+    { target_role: "property_manager", question: "What is the current occupancy and trailing 12-month average?" },
+    { target_role: "property_manager", question: "Walk me through the biggest deferred maintenance items." },
+    { target_role: "property_manager", question: "What is the current staffing model and any open positions?" },
+    { target_role: "property_manager", question: "What is the average tenant tenure and turnover rate?" },
+    { target_role: "property_manager", question: "Are there any recurring complaints or maintenance issues from tenants?" },
   ],
   loi: [
     { target_role: "broker", question: "What deal terms are most important to the seller (price, close timing, contingencies)?" },
@@ -907,6 +914,9 @@ export const STAGE_QUESTION_TEMPLATES: Record<
     { target_role: "city", question: "Are there any open code violations or pending assessments?" },
     { target_role: "tenant", question: "Have you executed the estoppel certificate and SNDA?" },
     { target_role: "lender", question: "What conditions remain for final loan approval and rate lock?" },
+    { target_role: "property_manager", question: "Can you provide the full vendor list with contracts and renewal dates?" },
+    { target_role: "property_manager", question: "What is the historical annual capex spend, itemized?" },
+    { target_role: "property_manager", question: "Are there any labor / union agreements in place?" },
   ],
   closing: [
     { target_role: "title", question: "Has the closing statement (HUD/CD) been finalized and reviewed?" },
