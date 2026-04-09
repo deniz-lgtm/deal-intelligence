@@ -1,10 +1,14 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-// Public routes that don't require authentication
+// Public routes that don't require authentication.
+// /room/[token] and /api/room/[token]/* are the Deal Room guest viewer —
+// access is gated by the per-invite token hash, not Clerk auth.
 const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/health",
+  "/room/(.*)",
+  "/api/room/(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

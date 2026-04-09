@@ -25,6 +25,7 @@ import {
   Mailbox,
   Users,
   BarChart3,
+  Share2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -76,6 +77,7 @@ const NAV_GROUPS: {
       { href: "/loi", label: "LOI", icon: FileSignature },
       { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
       { href: "/investment-package", label: "Inv. Package", icon: Presentation },
+      { href: "/room", label: "Deal Room", icon: Share2 },
     ],
   },
   {

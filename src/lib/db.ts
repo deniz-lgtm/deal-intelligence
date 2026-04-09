@@ -314,6 +314,58 @@ export async function ensureColumns(): Promise<void> {
       sources JSONB NOT NULL DEFAULT '[]',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
+    // ── Deal Room (guest-accessible document sharing) ──────────────────────
+    `CREATE TABLE IF NOT EXISTS deal_rooms (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      nda_required BOOLEAN NOT NULL DEFAULT true,
+      nda_text TEXT,
+      expires_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_rooms_deal_id ON deal_rooms(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_room_documents (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES deal_rooms(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(room_id, document_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_documents_room ON deal_room_documents(room_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_room_invites (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES deal_rooms(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      name TEXT,
+      token_hash TEXT NOT NULL UNIQUE,
+      nda_accepted_at TIMESTAMPTZ,
+      nda_accepted_name TEXT,
+      revoked_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_invites_room ON deal_room_invites(room_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_invites_token_hash ON deal_room_invites(token_hash)`,
+    // Activity log survives invite deletion (no FK on invite_id) so we
+    // keep the audit trail even after revocation + clean-up.
+    `CREATE TABLE IF NOT EXISTS deal_room_activity (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES deal_rooms(id) ON DELETE CASCADE,
+      invite_id TEXT,
+      email TEXT,
+      event TEXT NOT NULL,
+      document_id TEXT,
+      ip TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_activity_room ON deal_room_activity(room_id, created_at DESC)`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -734,6 +786,56 @@ export async function initSchema(): Promise<void> {
       sources JSONB NOT NULL DEFAULT '[]',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
+    // ── Deal Room (guest-accessible document sharing) ──────────────────────
+    `CREATE TABLE IF NOT EXISTS deal_rooms (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      nda_required BOOLEAN NOT NULL DEFAULT true,
+      nda_text TEXT,
+      expires_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_rooms_deal_id ON deal_rooms(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_room_documents (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES deal_rooms(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(room_id, document_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_documents_room ON deal_room_documents(room_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_room_invites (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES deal_rooms(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      name TEXT,
+      token_hash TEXT NOT NULL UNIQUE,
+      nda_accepted_at TIMESTAMPTZ,
+      nda_accepted_name TEXT,
+      revoked_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_invites_room ON deal_room_invites(room_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_invites_token_hash ON deal_room_invites(token_hash)`,
+    `CREATE TABLE IF NOT EXISTS deal_room_activity (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES deal_rooms(id) ON DELETE CASCADE,
+      invite_id TEXT,
+      email TEXT,
+      event TEXT NOT NULL,
+      document_id TEXT,
+      ip TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_activity_room ON deal_room_activity(room_id, created_at DESC)`,
   ];
 
   for (const query of queries) {
