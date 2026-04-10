@@ -76,10 +76,14 @@ export async function getFredSeries(
 
   try {
     const res = await fetch(url, {
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(10000),
+      headers: {
+        Accept: "application/json",
+      },
     });
     if (!res.ok) {
-      console.error(`FRED fetch failed (${seriesId}):`, res.status, res.statusText);
+      const body = await res.text().catch(() => "");
+      console.error(`FRED fetch failed (${seriesId}): HTTP ${res.status} — ${body.slice(0, 200)}`);
       return null;
     }
     const json = (await res.json()) as {
