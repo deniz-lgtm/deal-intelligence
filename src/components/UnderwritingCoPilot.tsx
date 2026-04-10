@@ -3,21 +3,21 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Sparkles,
-  X,
+  PanelRightClose,
+  PanelRightOpen,
   Loader2,
   AlertTriangle,
   MessageCircleQuestion,
   BarChart3,
   Check,
+  CheckCircle2,
   ChevronRight,
   Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
-// Slide-out Underwriting Co-Pilot panel. Lives on the right side of the
-// underwriting page as a fixed overlay — zero impact on the existing page
-// layout. Three modes:
+// Collapsible Underwriting Co-Pilot sidebar. Three modes:
 //
 //   1. Challenge  — Claude reviews the current UW model and returns a list
 //                   of concerns the analyst should address.
@@ -27,8 +27,12 @@ import { toast } from "sonner";
 //   3. Benchmarks — pure data view: shows current values next to market
 //                   defaults, submarket metrics, and workspace comp medians.
 //
-// The parent page is responsible for passing the live `data`, `metrics`,
-// and an `onApplyPatch` callback that performs `setData({ ...data, ...patch })`.
+// UX fixes (v2):
+// - Close: backdrop click-to-close + prominent collapse toggle in header
+// - State: all three panes render always (hidden via CSS, not unmounted)
+//   so switching tabs preserves their state
+// - Applied: challenge + what-if panes track which items have been applied
+//   and show a green "Applied" badge on those rows
 
 type Mode = "challenge" | "whatif" | "benchmarks";
 
@@ -81,11 +85,8 @@ interface Benchmarks {
 
 export interface UWCoPilotProps {
   dealId: string;
-  /** Current UW data (for challenge + what-if requests). */
   uwData: Record<string, unknown>;
-  /** Client-computed metrics snapshot (cap rate, CoC, DSCR, etc.). */
   metrics: Record<string, unknown>;
-  /** Merge a field patch into the parent's UW state. */
   onApplyPatch: (patch: Record<string, number>) => void;
 }
 
@@ -97,9 +98,10 @@ export function UnderwritingCoPilot({
 }: UWCoPilotProps) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("challenge");
+
   return (
     <>
-      {/* Floating launcher button (fixed, bottom-right) */}
+      {/* Floating launcher button */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
@@ -110,10 +112,19 @@ export function UnderwritingCoPilot({
         </button>
       )}
 
-      {/* Slide-out panel */}
+      {/* Backdrop (click to close) */}
       {open && (
-        <aside className="fixed top-0 right-0 z-40 h-screen w-full sm:w-[420px] bg-card border-l border-border/60 shadow-2xl flex flex-col animate-fade-up">
-          <header className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+        <div
+          className="fixed inset-0 z-30 bg-black/20"
+          onClick={() => setOpen(false)}
+        />
+      )}
+
+      {/* Sidebar panel */}
+      {open && (
+        <aside className="fixed top-0 right-0 z-40 h-screen w-full sm:w-[420px] bg-card border-l border-border/60 shadow-2xl flex flex-col">
+          {/* Header with collapse toggle */}
+          <header className="flex items-center justify-between px-4 py-3 border-b border-border/40 shrink-0">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg gradient-gold flex items-center justify-center">
                 <Sparkles className="h-3.5 w-3.5 text-primary-foreground" />
@@ -127,9 +138,10 @@ export function UnderwritingCoPilot({
             </div>
             <button
               onClick={() => setOpen(false)}
-              className="text-muted-foreground hover:text-foreground"
+              className="flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              title="Close Co-Pilot"
             >
-              <X className="h-4 w-4" />
+              <PanelRightClose className="h-4 w-4" />
             </button>
           </header>
 
@@ -155,28 +167,27 @@ export function UnderwritingCoPilot({
             />
           </div>
 
-          {/* Tab content — each pane is self-contained so state doesn't bleed */}
+          {/* Tab content — ALL panes render always, inactive ones are hidden
+              so their state (challenges, what-if history, benchmarks data)
+              persists across tab switches. */}
           <div className="flex-1 overflow-y-auto">
-            {mode === "challenge" && (
+            <div className={mode === "challenge" ? "" : "hidden"}>
               <ChallengePane
                 dealId={dealId}
                 metrics={metrics}
                 onApplyPatch={onApplyPatch}
-                // Re-run when the UW data materially changes (cheap guard:
-                // hash by length of JSON)
-                uwHash={JSON.stringify(uwData).length}
               />
-            )}
-            {mode === "whatif" && (
+            </div>
+            <div className={mode === "whatif" ? "" : "hidden"}>
               <WhatIfPane
                 dealId={dealId}
                 metrics={metrics}
                 onApplyPatch={onApplyPatch}
               />
-            )}
-            {mode === "benchmarks" && (
+            </div>
+            <div className={mode === "benchmarks" ? "" : "hidden"}>
               <BenchmarksPane dealId={dealId} uwData={uwData} />
-            )}
+            </div>
           </div>
         </aside>
       )}
@@ -225,20 +236,21 @@ function ChallengePane({
   dealId,
   metrics,
   onApplyPatch,
-  uwHash,
 }: {
   dealId: string;
   metrics: Record<string, unknown>;
   onApplyPatch: (patch: Record<string, number>) => void;
-  uwHash: number;
 }) {
   const [loading, setLoading] = useState(false);
   const [challenges, setChallenges] = useState<UWChallenge[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Track which challenges have been applied so we can show a visual badge
+  const [appliedFields, setAppliedFields] = useState<Set<string>>(new Set());
 
   const loadChallenges = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setAppliedFields(new Set()); // reset applied state on re-run
     try {
       const res = await fetch(`/api/deals/${dealId}/copilot/challenge`, {
         method: "POST",
@@ -258,16 +270,13 @@ function ChallengePane({
     }
   }, [dealId, metrics]);
 
-  // Don't auto-run — each call costs tokens. User clicks "Run Review".
-  // But if they flip away and come back, the last result persists.
-  void uwHash; // kept so parent can bump to force re-enable the button later
-
   function applyOne(c: UWChallenge) {
     if (c.suggested_value == null) {
       toast("No numeric value suggested for this concern");
       return;
     }
     onApplyPatch({ [c.field]: c.suggested_value });
+    setAppliedFields((prev) => new Set(prev).add(c.field));
     toast.success(`Applied ${c.field} = ${c.suggested_value}`);
   }
 
@@ -315,13 +324,22 @@ function ChallengePane({
         challenges.length > 0 &&
         challenges.map((c, i) => {
           const colors = SEVERITY_COLORS[c.severity];
+          const isApplied = appliedFields.has(c.field);
           return (
             <div
               key={i}
-              className={`border border-border/40 rounded-lg p-3 ${colors.bg}`}
+              className={`border rounded-lg p-3 transition-all ${
+                isApplied
+                  ? "border-emerald-500/40 bg-emerald-500/5"
+                  : `border-border/40 ${colors.bg}`
+              }`}
             >
               <div className="flex items-start gap-2">
-                <span className={`mt-1 w-1.5 h-1.5 rounded-full ${colors.dot}`} />
+                {isApplied ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 text-emerald-400 flex-shrink-0" />
+                ) : (
+                  <span className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${colors.dot}`} />
+                )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <div className="text-[11px] font-semibold text-foreground">
@@ -330,6 +348,11 @@ function ChallengePane({
                     <div className="text-[10px] text-muted-foreground font-mono">
                       {c.current_value}
                     </div>
+                    {isApplied && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold uppercase tracking-wide">
+                        Applied
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] text-foreground/90 mb-1">
                     {c.concern}
@@ -337,7 +360,7 @@ function ChallengePane({
                   <div className="text-[10px] text-muted-foreground">
                     {c.suggestion}
                   </div>
-                  {c.suggested_value != null && (
+                  {c.suggested_value != null && !isApplied && (
                     <button
                       onClick={() => applyOne(c)}
                       className="mt-2 flex items-center gap-1 text-[10px] text-primary hover:underline"
@@ -370,9 +393,10 @@ function WhatIfPane({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<WhatIfResult | null>(null);
   const [history, setHistory] = useState<
-    Array<{ q: string; r: WhatIfResult }>
+    Array<{ q: string; r: WhatIfResult; applied: boolean }>
   >([]);
   const [error, setError] = useState<string | null>(null);
+  const [currentApplied, setCurrentApplied] = useState(false);
 
   async function handleSubmit() {
     if (!question.trim()) return;
@@ -390,7 +414,10 @@ function WhatIfPane({
         return;
       }
       setResult(json.data);
-      setHistory((h) => [{ q: question, r: json.data }, ...h].slice(0, 5));
+      setCurrentApplied(false);
+      setHistory((h) =>
+        [{ q: question, r: json.data, applied: false }, ...h].slice(0, 5)
+      );
       setQuestion("");
     } catch {
       setError("Failed to analyze");
@@ -405,6 +432,13 @@ function WhatIfPane({
       return;
     }
     onApplyPatch(r.field_changes);
+    setCurrentApplied(true);
+    // Also mark in history
+    setHistory((h) =>
+      h.map((item) =>
+        item.r === r ? { ...item, applied: true } : item
+      )
+    );
     toast.success(
       `Applied ${Object.keys(r.field_changes).length} field change${
         Object.keys(r.field_changes).length === 1 ? "" : "s"
@@ -472,7 +506,13 @@ function WhatIfPane({
         </div>
       )}
 
-      {result && <WhatIfResultCard result={result} onApply={() => applyPatch(result)} />}
+      {result && (
+        <WhatIfResultCard
+          result={result}
+          applied={currentApplied}
+          onApply={() => applyPatch(result)}
+        />
+      )}
 
       {history.length > 1 && (
         <div className="pt-3 border-t border-border/30">
@@ -483,12 +523,25 @@ function WhatIfPane({
             {history.slice(1).map((h, i) => (
               <div
                 key={i}
-                className="text-[11px] text-muted-foreground p-2 rounded-md bg-muted/10"
+                className={`text-[11px] p-2 rounded-md ${
+                  h.applied
+                    ? "bg-emerald-500/5 border border-emerald-500/30"
+                    : "text-muted-foreground bg-muted/10"
+                }`}
               >
-                <div className="font-medium text-foreground/90 mb-0.5">
-                  {h.q}
+                <div className="flex items-center gap-2 mb-0.5">
+                  <div className="font-medium text-foreground/90 flex-1">
+                    {h.q}
+                  </div>
+                  {h.applied && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold uppercase tracking-wide flex-shrink-0">
+                      Applied
+                    </span>
+                  )}
                 </div>
-                <div className="line-clamp-2">{h.r.analysis}</div>
+                <div className="line-clamp-2 text-muted-foreground">
+                  {h.r.analysis}
+                </div>
               </div>
             ))}
           </div>
@@ -500,14 +553,22 @@ function WhatIfPane({
 
 function WhatIfResultCard({
   result,
+  applied,
   onApply,
 }: {
   result: WhatIfResult;
+  applied: boolean;
   onApply: () => void;
 }) {
   const changes = Object.entries(result.field_changes);
   return (
-    <div className="border border-border/40 rounded-lg p-3 bg-primary/5 space-y-3">
+    <div
+      className={`border rounded-lg p-3 space-y-3 transition-all ${
+        applied
+          ? "border-emerald-500/40 bg-emerald-500/5"
+          : "border-border/40 bg-primary/5"
+      }`}
+    >
       <div className="text-[11px] text-foreground/90 leading-relaxed">
         {result.analysis}
       </div>
@@ -515,16 +576,20 @@ function WhatIfResultCard({
       {changes.length > 0 && (
         <div>
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
-            Proposed field changes
+            {applied ? "Applied field changes" : "Proposed field changes"}
           </div>
           <div className="space-y-1">
             {changes.map(([k, v]) => (
               <div
                 key={k}
-                className="flex items-center justify-between text-[11px] p-1.5 rounded bg-muted/20"
+                className={`flex items-center justify-between text-[11px] p-1.5 rounded ${
+                  applied ? "bg-emerald-500/10" : "bg-muted/20"
+                }`}
               >
                 <span className="text-foreground font-mono">{k}</span>
-                <span className="text-primary font-medium">{v}</span>
+                <span className={applied ? "text-emerald-300 font-medium" : "text-primary font-medium"}>
+                  {v}
+                </span>
               </div>
             ))}
           </div>
@@ -545,7 +610,7 @@ function WhatIfResultCard({
                 <span className="text-muted-foreground">{k.metric}</span>
                 <span className="text-foreground">
                   <span className="text-muted-foreground/60">{k.before}</span>
-                  {" → "}
+                  {" \u2192 "}
                   <span className="font-medium">{k.after}</span>
                 </span>
               </div>
@@ -554,11 +619,17 @@ function WhatIfResultCard({
         </div>
       )}
 
-      {changes.length > 0 && (
+      {changes.length > 0 && !applied && (
         <Button size="sm" onClick={onApply} className="w-full">
           <Check className="h-3.5 w-3.5 mr-1.5" />
           Apply to Model
         </Button>
+      )}
+      {applied && (
+        <div className="flex items-center justify-center gap-1.5 text-[11px] text-emerald-300 font-medium">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Applied to model — remember to Save
+        </div>
       )}
     </div>
   );
@@ -622,14 +693,14 @@ function BenchmarksPane({
   const currentVacancy = num(uwData.vacancy_rate);
   rows.push({
     label: "Vacancy Rate",
-    current: currentVacancy != null ? `${currentVacancy}%` : "—",
+    current: currentVacancy != null ? `${currentVacancy}%` : "\u2014",
     market: `${data.defaults.vacancy_rate}%`,
     note: `${data.property_type || "multifamily"} default`,
   });
 
   if (data.submarket?.market_vacancy != null) {
     rows.push({
-      label: "  ↳ Submarket",
+      label: "  \u21b3 Submarket",
       current: "",
       market: `${data.submarket.market_vacancy}%`,
       note: data.submarket.submarket_name || "",
@@ -639,14 +710,14 @@ function BenchmarksPane({
   const currentRentGrowth = num(uwData.rent_growth_pct);
   rows.push({
     label: "Rent Growth",
-    current: currentRentGrowth != null ? `${currentRentGrowth}%/yr` : "—",
+    current: currentRentGrowth != null ? `${currentRentGrowth}%/yr` : "\u2014",
     market: `${data.defaults.rent_growth}%/yr`,
     note: `${data.property_type || "multifamily"} default`,
   });
 
   if (data.submarket?.market_rent_growth != null) {
     rows.push({
-      label: "  ↳ Submarket",
+      label: "  \u21b3 Submarket",
       current: "",
       market: `${data.submarket.market_rent_growth}%/yr`,
       note: data.submarket.submarket_name || "",
@@ -656,14 +727,14 @@ function BenchmarksPane({
   const currentExitCap = num(uwData.exit_cap_rate);
   rows.push({
     label: "Exit Cap Rate",
-    current: currentExitCap != null ? `${currentExitCap}%` : "—",
+    current: currentExitCap != null ? `${currentExitCap}%` : "\u2014",
     market: `${data.defaults.cap_rate}%`,
     note: `${data.property_type || "multifamily"} default`,
   });
 
   if (data.submarket?.market_cap_rate != null) {
     rows.push({
-      label: "  ↳ Submarket",
+      label: "  \u21b3 Submarket",
       current: "",
       market: `${data.submarket.market_cap_rate}%`,
       note: data.submarket.submarket_name || "",
@@ -672,7 +743,7 @@ function BenchmarksPane({
 
   if (data.comps.sale?.median_cap_rate != null) {
     rows.push({
-      label: "  ↳ Comps median",
+      label: "  \u21b3 Comps median",
       current: "",
       market: `${data.comps.sale.median_cap_rate.toFixed(2)}%`,
       note: `${data.comps.sale.count} sale comps`,
@@ -682,7 +753,7 @@ function BenchmarksPane({
   const currentMgmt = num(uwData.management_fee_pct);
   rows.push({
     label: "Management Fee",
-    current: currentMgmt != null ? `${currentMgmt}%` : "—",
+    current: currentMgmt != null ? `${currentMgmt}%` : "\u2014",
     market: `${data.defaults.management_fee_pct}%`,
     note: "of EGR",
   });
@@ -709,12 +780,12 @@ function BenchmarksPane({
                 <td className="py-1.5 px-3">
                   <div
                     className={
-                      r.label.startsWith("  ↳")
+                      r.label.startsWith("  \u21b3")
                         ? "text-muted-foreground"
                         : "text-foreground font-medium"
                     }
                   >
-                    {r.label.replace("  ↳", "↳")}
+                    {r.label.replace("  \u21b3", "\u21b3")}
                   </div>
                 </td>
                 <td className="py-1.5 px-3 text-right font-mono text-foreground">
