@@ -254,10 +254,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between h-14 min-w-0">
             <div className="flex items-center gap-3">
               <span className="font-display text-base text-foreground tracking-tight">
-                Pipeline
-              </span>
-              <span className="text-[10px] text-muted-foreground hidden sm:inline">
-                Kanban view
+                Dashboard
               </span>
             </div>
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
