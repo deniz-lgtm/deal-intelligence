@@ -58,6 +58,11 @@ export function MarketWidgetsCard() {
             Free key: fred.stlouisfed.org/docs/api/api_key.html
           </div>
         </div>
+      ) : !data.treasury_10y && !data.treasury_2y && !data.sp500 && !data.mortgage_30y ? (
+        <div className="text-[11px] text-muted-foreground py-4 text-center">
+          FRED API key is configured but data failed to load. This
+          may be a temporary outage or network issue — try reloading.
+        </div>
       ) : (
         <div className="grid grid-cols-2 gap-2">
           <Metric series={data.treasury_10y} suffix="%" />
