@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import { documentQueries, dealQueries } from "@/lib/db";
-import { classifyDocument, extractRentRollSummary } from "@/lib/claude";
+import { classifyDocument, extractRentRollSummary, diffDocumentVersions } from "@/lib/claude";
 import { uploadBlob } from "@/lib/blob-storage";
 import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
 
@@ -124,6 +124,36 @@ export async function POST(req: NextRequest) {
             await dealQueries.update(dealId, updates);
           }
         }).catch(err => console.error("Rent roll extraction failed:", err));
+      }
+
+      // Auto-diff: if this is a version > 1, fire-and-forget a diff against
+      // the parent version. The result is stored in auto_diff_result so the
+      // Documents page can show a "changes" callout immediately on next load.
+      if (parentDocumentId && contentText) {
+        (async () => {
+          try {
+            const prev = await documentQueries.getById(parentDocumentId);
+            if (!prev?.content_text) return;
+            const diffResult = await diffDocumentVersions(
+              prev.content_text as string,
+              contentText,
+              {
+                category,
+                previous_name: prev.original_name as string,
+                current_name: file.name,
+                previous_version: (prev.version as number) || 1,
+                current_version: version,
+              }
+            );
+            if (diffResult) {
+              await documentQueries.update(id, {
+                auto_diff_result: JSON.stringify(diffResult),
+              });
+            }
+          } catch (err) {
+            console.error("Auto-diff failed for", file.name, ":", err);
+          }
+        })();
       }
 
       uploaded.push(doc);

@@ -548,6 +548,26 @@ function DocRow({
           )}
         </div>
         <p className="text-xs text-muted-foreground">{formatBytes(doc.file_size)}</p>
+        {doc.auto_diff_result && (() => {
+          const diff = typeof doc.auto_diff_result === "string"
+            ? JSON.parse(doc.auto_diff_result)
+            : doc.auto_diff_result;
+          if (!diff?.summary) return null;
+          const hasMaterial = Array.isArray(diff.changes) && diff.changes.some((c: Record<string, unknown>) => c.severity === "material");
+          return (
+            <button
+              onClick={() => onShowVersions(doc)}
+              className={`mt-1 flex items-start gap-1.5 text-[10px] p-1.5 rounded-md border transition-colors hover:brightness-110 ${
+                hasMaterial
+                  ? "bg-amber-500/5 border-amber-500/20 text-amber-200/90"
+                  : "bg-blue-500/5 border-blue-500/20 text-blue-200/90"
+              }`}
+            >
+              <GitCompareArrows className="h-3 w-3 flex-shrink-0 mt-0.5" />
+              <span className="text-left">{diff.summary}</span>
+            </button>
+          );
+        })()}
         {bullets.length > 0 && (
           <ul className="mt-1.5 space-y-0.5">
             {bullets.slice(0, 3).map((b, i) => (

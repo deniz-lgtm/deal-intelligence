@@ -260,6 +260,231 @@ export async function extractRentRollSummary(
   }
 }
 
+// ─── Detailed Rent Roll Extraction (Unit-Level) ──────────────────────────────
+//
+// Returns per-unit rows for structured diffing between rent roll versions.
+// Heavier than extractRentRollSummary (which only returns totals); used by
+// the Doc Intelligence Pipeline when comparing two rent roll versions.
+
+export interface RentRollUnit {
+  unit: string;
+  tenant: string | null;
+  sf: number | null;
+  monthly_rent: number | null;
+  lease_start: string | null;
+  lease_end: string | null;
+  status: "occupied" | "vacant" | "unknown";
+}
+
+export interface DetailedRentRoll {
+  units: RentRollUnit[];
+  summary: RentRollSummary;
+}
+
+const DETAILED_RENT_ROLL_PROMPT = `You are a CRE analyst extracting unit-level data from a rent roll.
+
+Extract EVERY leasable unit/suite/bay as a row. Also compute the summary totals.
+
+Return ONLY a JSON object:
+
+{
+  "units": [
+    {
+      "unit": "101",
+      "tenant": "John Smith" or null,
+      "sf": 850,
+      "monthly_rent": 1200,
+      "lease_start": "2024-01-01" or null,
+      "lease_end": "2025-01-01" or null,
+      "status": "occupied" | "vacant" | "unknown"
+    }
+  ],
+  "summary": {
+    "total_units": 34,
+    "total_sf": 32375,
+    "total_monthly_rent": 40425,
+    "avg_rent_per_sf_annual": 15.00,
+    "occupancy_pct": 95.0
+  }
+}
+
+Rules:
+- Numbers as plain JSON numbers (no $, no commas)
+- Dates as YYYY-MM-DD or null
+- status: "occupied" if tenant/rent present, "vacant" if $0 rent or no tenant, "unknown" otherwise
+- Skip header/subtotal/total rows — only include actual leasable units
+- Cap at 200 units (for very large properties, include the first 200)
+- JSON only, no markdown fences`;
+
+export async function extractDetailedRentRoll(
+  contentText: string,
+  pdfBuffer?: Buffer
+): Promise<DetailedRentRoll | null> {
+  if (!contentText && !pdfBuffer) return null;
+
+  try {
+    const content: Anthropic.MessageCreateParams["messages"][0]["content"] = [];
+
+    if (pdfBuffer) {
+      try {
+        const images = await pdfToImages(pdfBuffer, 8);
+        if (images.length > 0) {
+          content.push(...imageContentBlocks(images));
+        }
+      } catch {
+        // fallback to text
+      }
+    }
+
+    if (content.length === 0 && contentText) {
+      content.push({
+        type: "text",
+        text: `RENT ROLL TEXT:\n${contentText.slice(0, 20000)}`,
+      });
+    }
+
+    if (content.length === 0) return null;
+    content.push({ type: "text", text: DETAILED_RENT_ROLL_PROMPT });
+
+    const response = await getClient().messages.create({
+      model: await getActiveModel(),
+      max_tokens: 8000,
+      messages: [{ role: "user", content }],
+    });
+
+    const raw =
+      response.content[0]?.type === "text" ? response.content[0].text : "{}";
+    const cleaned = raw
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+
+    const parsed = JSON.parse(match[0]) as DetailedRentRoll;
+    if (!Array.isArray(parsed.units)) parsed.units = [];
+    return parsed;
+  } catch (err) {
+    console.error("extractDetailedRentRoll failed:", err);
+    return null;
+  }
+}
+
+// ─── Structured Diff for Rent Rolls ──────────────────────────────────────
+//
+// Compares two DetailedRentRoll objects and returns a structured diff
+// showing new units, removed units, and changed fields per unit. Pure JS —
+// no Claude call needed for the structured comparison.
+
+export interface RentRollDiffResult {
+  summary: string;
+  new_units: RentRollUnit[];
+  removed_units: RentRollUnit[];
+  changed_units: Array<{
+    unit: string;
+    changes: Array<{
+      field: string;
+      before: string | number | null;
+      after: string | number | null;
+    }>;
+  }>;
+  summary_delta: {
+    total_units: { before: number | null; after: number | null };
+    total_monthly_rent: { before: number | null; after: number | null };
+    occupancy_pct: { before: number | null; after: number | null };
+  };
+}
+
+export function diffRentRolls(
+  prev: DetailedRentRoll,
+  curr: DetailedRentRoll
+): RentRollDiffResult {
+  const prevMap = new Map(prev.units.map((u) => [u.unit, u]));
+  const currMap = new Map(curr.units.map((u) => [u.unit, u]));
+
+  const newUnits = curr.units.filter((u) => !prevMap.has(u.unit));
+  const removedUnits = prev.units.filter((u) => !currMap.has(u.unit));
+
+  const changedUnits: RentRollDiffResult["changed_units"] = [];
+  for (const [id, currUnit] of Array.from(currMap.entries())) {
+    const prevUnit = prevMap.get(id);
+    if (!prevUnit) continue;
+    const changes: Array<{
+      field: string;
+      before: string | number | null;
+      after: string | number | null;
+    }> = [];
+    const fields: (keyof RentRollUnit)[] = [
+      "tenant",
+      "sf",
+      "monthly_rent",
+      "lease_start",
+      "lease_end",
+      "status",
+    ];
+    for (const f of fields) {
+      if (String(prevUnit[f] ?? "") !== String(currUnit[f] ?? "")) {
+        changes.push({
+          field: f,
+          before: prevUnit[f] as string | number | null,
+          after: currUnit[f] as string | number | null,
+        });
+      }
+    }
+    if (changes.length > 0) {
+      changedUnits.push({ unit: id, changes });
+    }
+  }
+
+  const rentDelta =
+    (curr.summary.total_monthly_rent ?? 0) -
+    (prev.summary.total_monthly_rent ?? 0);
+  const unitDelta =
+    (curr.summary.total_units ?? 0) - (prev.summary.total_units ?? 0);
+  const occDelta =
+    (curr.summary.occupancy_pct ?? 0) - (prev.summary.occupancy_pct ?? 0);
+
+  const parts: string[] = [];
+  if (newUnits.length) parts.push(`${newUnits.length} new unit(s)`);
+  if (removedUnits.length) parts.push(`${removedUnits.length} removed`);
+  if (changedUnits.length) parts.push(`${changedUnits.length} changed`);
+  if (rentDelta !== 0)
+    parts.push(
+      `rent ${rentDelta > 0 ? "+" : ""}$${Math.round(rentDelta).toLocaleString()}/mo`
+    );
+  if (occDelta !== 0)
+    parts.push(
+      `occupancy ${occDelta > 0 ? "+" : ""}${occDelta.toFixed(1)}%`
+    );
+
+  const summary =
+    parts.length > 0
+      ? parts.join(", ")
+      : "No changes detected between rent roll versions.";
+
+  return {
+    summary,
+    new_units: newUnits,
+    removed_units: removedUnits,
+    changed_units: changedUnits,
+    summary_delta: {
+      total_units: {
+        before: prev.summary.total_units,
+        after: curr.summary.total_units,
+      },
+      total_monthly_rent: {
+        before: prev.summary.total_monthly_rent,
+        after: curr.summary.total_monthly_rent,
+      },
+      occupancy_pct: {
+        before: prev.summary.occupancy_pct,
+        after: curr.summary.occupancy_pct,
+      },
+    },
+  };
+}
+
 // ─── Comp Extraction (Paste Mode) ────────────────────────────────────────────
 //
 // Extract a single structured comp record from pasted listing text. The user

@@ -95,6 +95,7 @@ export async function ensureColumns(): Promise<void> {
     // Document Intelligence Pipeline: version chains
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS parent_document_id TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS auto_diff_result JSONB",
     "CREATE INDEX IF NOT EXISTS idx_documents_parent ON documents(parent_document_id) WHERE parent_document_id IS NOT NULL",
     // photos table
     "ALTER TABLE photos ADD COLUMN IF NOT EXISTS is_cover BOOLEAN NOT NULL DEFAULT false",

@@ -295,6 +295,7 @@ export interface Document {
   // Document Intelligence Pipeline: version chain within the same deal
   parent_document_id: string | null;
   version: number;
+  auto_diff_result: Record<string, unknown> | null;
   uploaded_at: string;
 }
 
