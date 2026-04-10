@@ -90,9 +90,9 @@ export default function KanbanCard({ deal, onStar, onDragStart }: KanbanCardProp
           {deal.loi_executed && (
             <span className="text-emerald-400 font-medium text-[10px]">LOI</span>
           )}
-          {deal.om_score != null && (
-            <span className={cn("text-[10px] font-bold px-1.5 py-0 rounded border tabular-nums", scoreColor(deal.om_score))}>
-              {deal.om_score}
+          {(deal.final_score ?? deal.uw_score ?? deal.om_score) != null && (
+            <span className={cn("text-[10px] font-bold px-1.5 py-0 rounded border tabular-nums", scoreColor((deal.final_score ?? deal.uw_score ?? deal.om_score)!))}>
+              {deal.final_score ?? deal.uw_score ?? deal.om_score}
             </span>
           )}
         </div>
