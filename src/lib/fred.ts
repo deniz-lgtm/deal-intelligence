@@ -141,10 +141,10 @@ export async function getFredSeries(
 
 /** Commonly-used FRED series for CRE underwriters. */
 export const FRED_SERIES = {
-  TREASURY_10Y: { id: "DGS10", label: "10Y Treasury Yield" },
-  TREASURY_2Y: { id: "DGS2", label: "2Y Treasury Yield" },
+  TREASURY_10Y: { id: "DGS10", label: "10Y Treasury" },
+  TREASURY_5Y: { id: "DGS5", label: "5Y Treasury" },
   SOFR: { id: "SOFR", label: "SOFR" },
-  MORTGAGE_30Y: { id: "MORTGAGE30US", label: "30Y Mortgage Rate" },
+  MORTGAGE_30Y: { id: "MORTGAGE30US", label: "30Y Mortgage" },
   SP500: { id: "SP500", label: "S&P 500" },
   FED_FUNDS: { id: "FEDFUNDS", label: "Fed Funds Rate" },
 } as const;
