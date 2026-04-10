@@ -86,9 +86,28 @@ export async function getFredSeries(
       console.error(`FRED fetch failed (${seriesId}): HTTP ${res.status} — ${body.slice(0, 200)}`);
       return null;
     }
-    const json = (await res.json()) as {
-      observations?: Array<{ date: string; value: string }>;
-    };
+
+    const text = await res.text();
+
+    // FRED sometimes returns XML error pages even with file_type=json
+    if (text.trimStart().startsWith("<")) {
+      console.error(`FRED returned XML/HTML instead of JSON (${seriesId}): ${text.slice(0, 200)}`);
+      return null;
+    }
+
+    let json: { observations?: Array<{ date: string; value: string }>; error_message?: string };
+    try {
+      json = JSON.parse(text);
+    } catch {
+      console.error(`FRED returned invalid JSON (${seriesId}): ${text.slice(0, 200)}`);
+      return null;
+    }
+
+    // FRED returns 200 + error_message for bad API keys
+    if (json.error_message) {
+      console.error(`FRED API error (${seriesId}): ${json.error_message}`);
+      return null;
+    }
 
     const observations: FredObservation[] = (json.observations || [])
       .filter((o) => o.value !== "." && o.value !== "")
