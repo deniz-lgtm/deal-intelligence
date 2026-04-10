@@ -371,4 +371,139 @@ export const dealRoomQueries = {
     );
     return res.rows;
   },
+
+  // ── Q&A threads ─────────────────────────────────────────────────────────
+
+  createThread: async (input: {
+    room_id: string;
+    invite_id?: string | null;
+    author_email: string;
+    subject: string;
+    document_id?: string | null;
+    initial_message: string;
+  }) => {
+    const pool = getPool();
+    const threadId = uuidv4();
+    const msgId = uuidv4();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO deal_room_threads (id, room_id, invite_id, author_email, subject, document_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [threadId, input.room_id, input.invite_id ?? null, input.author_email, input.subject, input.document_id ?? null]
+      );
+      await client.query(
+        `INSERT INTO deal_room_messages (id, thread_id, author_email, author_role, content)
+         VALUES ($1, $2, $3, 'guest', $4)`,
+        [msgId, threadId, input.author_email, input.initial_message]
+      );
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+    return dealRoomQueries.getThread(threadId);
+  },
+
+  getThread: async (threadId: string) => {
+    const pool = getPool();
+    const threadRes = await pool.query("SELECT * FROM deal_room_threads WHERE id = $1", [threadId]);
+    if (threadRes.rows.length === 0) return null;
+    const msgRes = await pool.query(
+      "SELECT * FROM deal_room_messages WHERE thread_id = $1 ORDER BY created_at ASC",
+      [threadId]
+    );
+    return { thread: threadRes.rows[0], messages: msgRes.rows };
+  },
+
+  listThreads: async (roomId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT t.*,
+              (SELECT COUNT(*)::int FROM deal_room_messages m WHERE m.thread_id = t.id) AS message_count,
+              (SELECT m.created_at FROM deal_room_messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_at
+       FROM deal_room_threads t
+       WHERE t.room_id = $1
+       ORDER BY t.created_at DESC`,
+      [roomId]
+    );
+    return res.rows;
+  },
+
+  addMessage: async (input: {
+    thread_id: string;
+    author_email: string;
+    author_role: "guest" | "owner";
+    content: string;
+  }) => {
+    const pool = getPool();
+    const id = uuidv4();
+    await pool.query(
+      `INSERT INTO deal_room_messages (id, thread_id, author_email, author_role, content)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, input.thread_id, input.author_email, input.author_role, input.content]
+    );
+    return dealRoomQueries.getThread(input.thread_id);
+  },
+
+  resolveThread: async (threadId: string) => {
+    const pool = getPool();
+    await pool.query(
+      "UPDATE deal_room_threads SET resolved = true WHERE id = $1",
+      [threadId]
+    );
+  },
 };
+
+// ── PDF Watermarking ──────────────────────────────────────────────────────
+//
+// Uses pdf-lib to add a semi-transparent diagonal watermark with the
+// viewer's email on every page of a PDF. Called by the document streaming
+// endpoint when serving files to guests.
+
+export async function watermarkPdf(
+  pdfBuffer: Buffer,
+  email: string
+): Promise<Buffer> {
+  const { PDFDocument, rgb, degrees, StandardFonts } = await import("pdf-lib");
+
+  const pdfDoc = await PDFDocument.load(pdfBuffer, {
+    ignoreEncryption: true,
+  });
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const pages = pdfDoc.getPages();
+
+  for (const page of pages) {
+    const { width, height } = page.getSize();
+    const text = `CONFIDENTIAL — ${email}`;
+    const fontSize = Math.min(width, height) * 0.035;
+    const textWidth = font.widthOfTextAtSize(text, fontSize);
+
+    // Diagonal watermark — centered, rotated 45 degrees, semi-transparent
+    page.drawText(text, {
+      x: width / 2 - textWidth / 2,
+      y: height / 2,
+      size: fontSize,
+      font,
+      color: rgb(0.5, 0.5, 0.5),
+      opacity: 0.15,
+      rotate: degrees(45),
+    });
+
+    // Bottom-right corner — small, persistent
+    page.drawText(`${email} — ${new Date().toISOString().slice(0, 10)}`, {
+      x: width - 250,
+      y: 15,
+      size: 7,
+      font,
+      color: rgb(0.6, 0.6, 0.6),
+      opacity: 0.3,
+    });
+  }
+
+  const bytes = await pdfDoc.save();
+  return Buffer.from(bytes);
+}

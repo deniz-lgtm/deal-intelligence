@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealRoomQueries } from "@/lib/deal-room";
+import { dealRoomQueries, watermarkPdf } from "@/lib/deal-room";
 import { getPool } from "@/lib/db";
 import { readFile } from "@/lib/blob-storage";
 
@@ -57,13 +57,28 @@ export async function GET(
   });
 
   // Stream the file from blob storage
-  const buffer = await readFile(doc.file_path);
+  let buffer = await readFile(doc.file_path);
   if (!buffer) {
     return new NextResponse("File not found in storage", { status: 404 });
   }
 
-  // Construct an ArrayBuffer slice so Response sees a plain ArrayBuffer
-  // (Buffer.buffer is a SharedArrayBuffer under Node 20+ in some envs).
+  // Watermark PDFs with the viewer's email (server-side, tamper-resistant)
+  const isPdf =
+    (doc.mime_type as string) === "application/pdf" ||
+    (doc.original_name as string)?.toLowerCase().endsWith(".pdf");
+  if (isPdf) {
+    try {
+      buffer = await watermarkPdf(buffer, invite.email);
+    } catch (err) {
+      console.warn("PDF watermarking failed, serving original:", err);
+      // Fall through — serve the un-watermarked version rather than 500
+    }
+  }
+
+  // ?download=1 → Content-Disposition: attachment (download button)
+  const isDownload = req.nextUrl.searchParams.get("download") === "1";
+  const disposition = isDownload ? "attachment" : "inline";
+
   const ab = buffer.buffer.slice(
     buffer.byteOffset,
     buffer.byteOffset + buffer.byteLength
@@ -72,7 +87,7 @@ export async function GET(
     status: 200,
     headers: {
       "Content-Type": doc.mime_type || "application/octet-stream",
-      "Content-Disposition": `inline; filename="${encodeURIComponent(
+      "Content-Disposition": `${disposition}; filename="${encodeURIComponent(
         doc.original_name || doc.name || "document"
       )}"`,
       "Cache-Control": "private, no-store",

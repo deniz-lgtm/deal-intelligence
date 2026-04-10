@@ -370,6 +370,27 @@ export async function ensureColumns(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_room_activity_room ON deal_room_activity(room_id, created_at DESC)`,
+    // Deal Room Q&A threads
+    `CREATE TABLE IF NOT EXISTS deal_room_threads (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES deal_rooms(id) ON DELETE CASCADE,
+      invite_id TEXT,
+      author_email TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      document_id TEXT,
+      resolved BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_threads_room ON deal_room_threads(room_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_room_messages (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES deal_room_threads(id) ON DELETE CASCADE,
+      author_email TEXT NOT NULL,
+      author_role TEXT NOT NULL DEFAULT 'guest',
+      content TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_messages_thread ON deal_room_messages(thread_id)`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -840,6 +861,27 @@ export async function initSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_room_activity_room ON deal_room_activity(room_id, created_at DESC)`,
+    // Deal Room Q&A threads
+    `CREATE TABLE IF NOT EXISTS deal_room_threads (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL REFERENCES deal_rooms(id) ON DELETE CASCADE,
+      invite_id TEXT,
+      author_email TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      document_id TEXT,
+      resolved BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_threads_room ON deal_room_threads(room_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_room_messages (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES deal_room_threads(id) ON DELETE CASCADE,
+      author_email TEXT NOT NULL,
+      author_role TEXT NOT NULL DEFAULT 'guest',
+      content TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_room_messages_thread ON deal_room_messages(thread_id)`,
   ];
 
   for (const query of queries) {
