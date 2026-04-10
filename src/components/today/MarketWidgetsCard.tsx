@@ -3,10 +3,15 @@
 import { useState, useEffect } from "react";
 import { TrendingUp, TrendingDown, Minus, Loader2 } from "lucide-react";
 
+interface Observation {
+  date: string;
+  value: number;
+}
+
 interface Series {
   series_id: string;
   label: string;
-  observations: Array<{ date: string; value: number }>;
+  observations: Observation[];
   latest: { date: string; value: number } | null;
   change_1d: number | null;
   change_30d: number | null;
@@ -14,11 +19,23 @@ interface Series {
 
 interface MarketData {
   treasury_10y: Series | null;
-  treasury_2y: Series | null;
+  treasury_5y: Series | null;
   sp500: Series | null;
   mortgage_30y: Series | null;
   fred_configured: boolean;
 }
+
+type Range = "1D" | "1W" | "1M" | "3M" | "1Y";
+
+const RANGES: Range[] = ["1D", "1W", "1M", "3M", "1Y"];
+
+const RANGE_DAYS: Record<Range, number> = {
+  "1D": 1,
+  "1W": 7,
+  "1M": 30,
+  "3M": 90,
+  "1Y": 365,
+};
 
 export function MarketWidgetsCard() {
   const [data, setData] = useState<MarketData | null>(null);
@@ -33,7 +50,7 @@ export function MarketWidgetsCard() {
   }, []);
 
   return (
-    <div className="border border-border/40 rounded-lg bg-card/60 backdrop-blur-sm p-3 min-h-[180px]">
+    <div className="border border-border/40 rounded-lg bg-card/60 backdrop-blur-sm p-3">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5">
           <TrendingUp className="h-3.5 w-3.5 text-primary" />
@@ -58,7 +75,7 @@ export function MarketWidgetsCard() {
             Free key: fred.stlouisfed.org/docs/api/api_key.html
           </div>
         </div>
-      ) : !data.treasury_10y && !data.treasury_2y && !data.sp500 && !data.mortgage_30y ? (
+      ) : !data.treasury_10y && !data.treasury_5y && !data.sp500 && !data.mortgage_30y ? (
         <div className="text-[11px] text-muted-foreground py-4 text-center">
           FRED API key is configured but data failed to load. This
           may be a temporary outage or network issue — try reloading.
@@ -66,13 +83,60 @@ export function MarketWidgetsCard() {
       ) : (
         <div className="grid grid-cols-2 gap-2">
           <Metric series={data.treasury_10y} suffix="%" />
-          <Metric series={data.treasury_2y} suffix="%" />
+          <Metric series={data.treasury_5y} suffix="%" />
           <Metric series={data.sp500} />
           <Metric series={data.mortgage_30y} suffix="%" />
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * Find the observation at or before `daysAgo` days from the latest observation.
+ * Returns null if we don't have enough history.
+ */
+function findPastObservation(
+  observations: Observation[],
+  daysAgo: number
+): Observation | null {
+  if (observations.length < 2) return null;
+
+  // 1D special case — just the previous observation, whatever the calendar gap
+  if (daysAgo <= 1) {
+    return observations[observations.length - 2];
+  }
+
+  const latest = observations[observations.length - 1];
+  const latestMs = new Date(latest.date).getTime();
+  const targetMs = latestMs - daysAgo * 24 * 60 * 60 * 1000;
+
+  // Walk backwards to find the last observation on or before the target
+  for (let i = observations.length - 1; i >= 0; i--) {
+    const obsMs = new Date(observations[i].date).getTime();
+    if (obsMs <= targetMs) return observations[i];
+  }
+  return null;
+}
+
+/** Slice observations to roughly the last N days for the sparkline. */
+function sliceForRange(observations: Observation[], range: Range): Observation[] {
+  if (observations.length < 2) return observations;
+
+  if (range === "1D") {
+    // Just the last 2 points — not enough to show a meaningful line, but we
+    // render it anyway so the sparkline doesn't disappear.
+    return observations.slice(-2);
+  }
+
+  const days = RANGE_DAYS[range];
+  const latestMs = new Date(observations[observations.length - 1].date).getTime();
+  const cutoffMs = latestMs - days * 24 * 60 * 60 * 1000;
+
+  const startIdx = observations.findIndex(
+    (o) => new Date(o.date).getTime() >= cutoffMs
+  );
+  return startIdx === -1 ? observations : observations.slice(startIdx);
 }
 
 function Metric({
@@ -82,9 +146,11 @@ function Metric({
   series: Series | null;
   suffix?: string;
 }) {
+  const [range, setRange] = useState<Range>("1M");
+
   if (!series || !series.latest) {
     return (
-      <div className="bg-muted/20 rounded-md p-2">
+      <div className="bg-muted/20 rounded-md p-2 min-h-[92px]">
         <div className="text-[9px] text-muted-foreground uppercase tracking-wide">
           —
         </div>
@@ -92,15 +158,18 @@ function Metric({
     );
   }
 
-  const change = series.change_30d ?? 0;
-  const up = change > 0;
-  const flat = change === 0;
+  const past = findPastObservation(series.observations, RANGE_DAYS[range]);
+  const change = past ? series.latest.value - past.value : null;
+  const sparkPoints = sliceForRange(series.observations, range).map((o) => o.value);
+
+  const up = (change ?? 0) > 0;
+  const flat = change === 0 || change === null;
 
   return (
-    <div className="bg-muted/20 rounded-md p-2 relative overflow-hidden">
+    <div className="bg-muted/20 rounded-md p-2 relative overflow-hidden min-h-[92px] flex flex-col">
       {/* Sparkline background */}
-      <Sparkline points={series.observations.slice(-30).map((o) => o.value)} />
-      <div className="relative">
+      <Sparkline points={sparkPoints} />
+      <div className="relative flex-1">
         <div className="text-[9px] text-muted-foreground uppercase tracking-wide truncate">
           {series.label}
         </div>
@@ -116,16 +185,40 @@ function Metric({
               : "text-red-400"
           }`}
         >
-          {flat ? (
+          {flat || change === null ? (
             <Minus className="h-2.5 w-2.5" />
           ) : up ? (
             <TrendingUp className="h-2.5 w-2.5" />
           ) : (
             <TrendingDown className="h-2.5 w-2.5" />
           )}
-          {change > 0 ? "+" : ""}
-          {formatValue(change, suffix)} 30d
+          {change === null ? (
+            <span>no {range} data</span>
+          ) : (
+            <>
+              {change > 0 ? "+" : ""}
+              {formatValue(change, suffix)} {range}
+            </>
+          )}
         </div>
+      </div>
+
+      {/* Range selector */}
+      <div className="relative mt-1.5 flex items-center gap-0.5">
+        {RANGES.map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={() => setRange(r)}
+            className={`text-[8px] font-medium px-1 py-0.5 rounded transition-colors ${
+              range === r
+                ? "bg-primary/20 text-primary"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+            }`}
+          >
+            {r}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -168,7 +261,7 @@ function Sparkline({ points }: { points: number[] }) {
       <path
         d={path}
         fill="none"
-        stroke={up ? "currentColor" : "currentColor"}
+        stroke="currentColor"
         strokeWidth="1.5"
         className={up ? "text-emerald-400" : "text-red-400"}
       />
