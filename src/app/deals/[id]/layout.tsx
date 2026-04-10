@@ -26,6 +26,7 @@ import {
   Users,
   BarChart3,
   Share2,
+  Footprints,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
@@ -74,6 +75,7 @@ const NAV_GROUPS: {
     items: [
       { href: "/checklist", label: "Checklist", icon: CheckSquare },
       { href: "/project", label: "Project", icon: ClipboardList },
+      { href: "/site-walk", label: "Site Walk", icon: Footprints },
       { href: "/loi", label: "LOI", icon: FileSignature },
       { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
       { href: "/investment-package", label: "Inv. Package", icon: Presentation },
