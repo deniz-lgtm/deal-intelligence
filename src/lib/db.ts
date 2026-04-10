@@ -392,6 +392,77 @@ export async function ensureColumns(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_room_messages_thread ON deal_room_messages(thread_id)`,
+    // Site walks (migration-safe create for older deployments)
+    `CREATE TABLE IF NOT EXISTS site_walks (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      title TEXT NOT NULL DEFAULT '',
+      walk_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      status TEXT NOT NULL DEFAULT 'draft',
+      attendees JSONB NOT NULL DEFAULT '[]',
+      property_contact TEXT,
+      weather TEXT,
+      summary TEXT,
+      ai_report TEXT,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walks_deal_id ON site_walks(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS site_walk_recordings (
+      id TEXT PRIMARY KEY,
+      site_walk_id TEXT NOT NULL REFERENCES site_walks(id) ON DELETE CASCADE,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      file_path TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      mime_type TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      duration_seconds INTEGER,
+      transcript_raw TEXT,
+      transcript_cleaned TEXT,
+      processing_status TEXT NOT NULL DEFAULT 'pending',
+      error_message TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_recordings_walk_id ON site_walk_recordings(site_walk_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_recordings_deal_id ON site_walk_recordings(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS site_walk_photos (
+      id TEXT PRIMARY KEY,
+      site_walk_id TEXT NOT NULL REFERENCES site_walks(id) ON DELETE CASCADE,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      area_tag TEXT NOT NULL DEFAULT 'general',
+      unit_label TEXT,
+      name TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+      caption TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_photos_walk_id ON site_walk_photos(site_walk_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_photos_deal_id ON site_walk_photos(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS site_walk_deficiencies (
+      id TEXT PRIMARY KEY,
+      site_walk_id TEXT NOT NULL REFERENCES site_walks(id) ON DELETE CASCADE,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      area_tag TEXT NOT NULL DEFAULT 'general',
+      description TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'minor',
+      category TEXT NOT NULL DEFAULT 'other',
+      estimated_cost NUMERIC,
+      photo_id TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      notes TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_deficiencies_walk_id ON site_walk_deficiencies(site_walk_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_deficiencies_deal_id ON site_walk_deficiencies(deal_id)`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -883,6 +954,80 @@ export async function initSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_room_messages_thread ON deal_room_messages(thread_id)`,
+    // ── Site Walks ─────────────────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS site_walks (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      title TEXT NOT NULL DEFAULT '',
+      walk_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','in_progress','completed')),
+      attendees JSONB NOT NULL DEFAULT '[]',
+      property_contact TEXT,
+      weather TEXT,
+      summary TEXT,
+      ai_report TEXT,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walks_deal_id ON site_walks(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS site_walk_recordings (
+      id TEXT PRIMARY KEY,
+      site_walk_id TEXT NOT NULL REFERENCES site_walks(id) ON DELETE CASCADE,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      file_path TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      mime_type TEXT NOT NULL,
+      media_type TEXT NOT NULL CHECK (media_type IN ('audio','video')),
+      duration_seconds INTEGER,
+      transcript_raw TEXT,
+      transcript_cleaned TEXT,
+      processing_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (processing_status IN ('pending','uploading','transcribing','processing','completed','error')),
+      error_message TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_recordings_walk_id ON site_walk_recordings(site_walk_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_recordings_deal_id ON site_walk_recordings(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS site_walk_photos (
+      id TEXT PRIMARY KEY,
+      site_walk_id TEXT NOT NULL REFERENCES site_walks(id) ON DELETE CASCADE,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      area_tag TEXT NOT NULL DEFAULT 'general',
+      unit_label TEXT,
+      name TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+      caption TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_photos_walk_id ON site_walk_photos(site_walk_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_photos_deal_id ON site_walk_photos(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS site_walk_deficiencies (
+      id TEXT PRIMARY KEY,
+      site_walk_id TEXT NOT NULL REFERENCES site_walks(id) ON DELETE CASCADE,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      area_tag TEXT NOT NULL DEFAULT 'general',
+      description TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'minor'
+        CHECK (severity IN ('minor','moderate','major','critical')),
+      category TEXT NOT NULL DEFAULT 'other',
+      estimated_cost NUMERIC,
+      photo_id TEXT,
+      status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open','in_progress','resolved','deferred')),
+      notes TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_deficiencies_walk_id ON site_walk_deficiencies(site_walk_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_site_walk_deficiencies_deal_id ON site_walk_deficiencies(deal_id)`,
   ];
 
   for (const query of queries) {
@@ -1112,7 +1257,7 @@ export const dealQueries = {
 // ─── Deal Notes queries ──────────────────────────────────────────────────────
 
 // Categories where notes are included in AI memory
-const MEMORY_CATEGORIES = ["context", "thesis", "risk"];
+const MEMORY_CATEGORIES = ["context", "thesis", "risk", "site_walk"];
 
 export const dealNoteQueries = {
   getByDealId: async (dealId: string) => {
@@ -1175,6 +1320,353 @@ export const dealNoteQueries = {
       `UPDATE deals SET context_notes = $1, updated_at = NOW() WHERE id = $2`,
       [memoryText || null, dealId]
     );
+  },
+};
+
+// ─── Site Walk queries ───────────────────────────────────────────────────────
+
+function parseSiteWalkRow(row: Record<string, unknown> | undefined | null): Record<string, unknown> | null {
+  if (!row) return null;
+  const attendees = row.attendees;
+  let parsed: unknown[] = [];
+  if (Array.isArray(attendees)) {
+    parsed = attendees;
+  } else if (typeof attendees === "string") {
+    try {
+      const p = JSON.parse(attendees);
+      if (Array.isArray(p)) parsed = p;
+    } catch {
+      parsed = [];
+    }
+  }
+  return { ...row, attendees: parsed };
+}
+
+export const siteWalkQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM site_walks WHERE deal_id = $1 ORDER BY walk_date DESC, created_at DESC",
+      [dealId]
+    );
+    return res.rows.map(parseSiteWalkRow);
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM site_walks WHERE id = $1", [id]);
+    return parseSiteWalkRow(res.rows[0]);
+  },
+
+  create: async (walk: {
+    id: string;
+    deal_id: string;
+    title?: string;
+    walk_date?: string;
+    status?: string;
+    attendees?: string[];
+    property_contact?: string | null;
+    weather?: string | null;
+    summary?: string | null;
+    created_by?: string | null;
+  }) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO site_walks
+        (id, deal_id, title, walk_date, status, attendees, property_contact, weather, summary, created_by)
+       VALUES ($1, $2, $3, COALESCE($4, CURRENT_DATE), $5, $6::jsonb, $7, $8, $9, $10)`,
+      [
+        walk.id,
+        walk.deal_id,
+        walk.title ?? "",
+        walk.walk_date ?? null,
+        walk.status ?? "draft",
+        JSON.stringify(walk.attendees ?? []),
+        walk.property_contact ?? null,
+        walk.weather ?? null,
+        walk.summary ?? null,
+        walk.created_by ?? null,
+      ]
+    );
+    return siteWalkQueries.getById(walk.id);
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const keys = Object.keys(updates).filter((k) =>
+      ["title", "walk_date", "status", "attendees", "property_contact", "weather", "summary", "ai_report"].includes(k)
+    );
+    if (keys.length === 0) return siteWalkQueries.getById(id);
+    const setClauses = keys.map((k, i) => {
+      if (k === "attendees") return `"${k}" = $${i + 1}::jsonb`;
+      return `"${k}" = $${i + 1}`;
+    }).join(", ");
+    const values = keys.map((k) => {
+      const v = updates[k];
+      if (k === "attendees") return JSON.stringify(v ?? []);
+      return v;
+    });
+    await pool.query(
+      `UPDATE site_walks SET ${setClauses}, updated_at = NOW() WHERE id = $${values.length + 1}`,
+      [...values, id]
+    );
+    return siteWalkQueries.getById(id);
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    const existing = await siteWalkQueries.getById(id);
+    await pool.query("DELETE FROM site_walks WHERE id = $1", [id]);
+    return existing;
+  },
+};
+
+export const siteWalkRecordingQueries = {
+  getByWalkId: async (walkId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM site_walk_recordings WHERE site_walk_id = $1 ORDER BY created_at ASC",
+      [walkId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM site_walk_recordings WHERE id = $1",
+      [id]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  create: async (rec: {
+    id: string;
+    site_walk_id: string;
+    deal_id: string;
+    file_path: string;
+    original_name: string;
+    file_size: number;
+    mime_type: string;
+    media_type: string;
+    processing_status?: string;
+  }) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO site_walk_recordings
+        (id, site_walk_id, deal_id, file_path, original_name, file_size, mime_type, media_type, processing_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        rec.id,
+        rec.site_walk_id,
+        rec.deal_id,
+        rec.file_path,
+        rec.original_name,
+        rec.file_size,
+        rec.mime_type,
+        rec.media_type,
+        rec.processing_status ?? "pending",
+      ]
+    );
+    return siteWalkRecordingQueries.getById(rec.id);
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "processing_status",
+      "error_message",
+      "transcript_raw",
+      "transcript_cleaned",
+      "duration_seconds",
+    ];
+    const keys = Object.keys(updates).filter((k) => allowed.includes(k));
+    if (keys.length === 0) return siteWalkRecordingQueries.getById(id);
+    const setClauses = keys.map((k, i) => `"${k}" = $${i + 1}`).join(", ");
+    const values = keys.map((k) => updates[k]);
+    await pool.query(
+      `UPDATE site_walk_recordings SET ${setClauses}, updated_at = NOW() WHERE id = $${values.length + 1}`,
+      [...values, id]
+    );
+    return siteWalkRecordingQueries.getById(id);
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    const existing = await siteWalkRecordingQueries.getById(id);
+    await pool.query("DELETE FROM site_walk_recordings WHERE id = $1", [id]);
+    return existing;
+  },
+};
+
+export const siteWalkPhotoQueries = {
+  getByWalkId: async (walkId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM site_walk_photos WHERE site_walk_id = $1 ORDER BY area_tag ASC, sort_order ASC, created_at ASC",
+      [walkId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM site_walk_photos WHERE id = $1",
+      [id]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  create: async (photo: {
+    id: string;
+    site_walk_id: string;
+    deal_id: string;
+    area_tag: string;
+    unit_label?: string | null;
+    name: string;
+    original_name: string;
+    file_path: string;
+    file_size: number;
+    mime_type: string;
+    caption?: string | null;
+  }) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO site_walk_photos
+        (id, site_walk_id, deal_id, area_tag, unit_label, name, original_name, file_path, file_size, mime_type, caption)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        photo.id,
+        photo.site_walk_id,
+        photo.deal_id,
+        photo.area_tag,
+        photo.unit_label ?? null,
+        photo.name,
+        photo.original_name,
+        photo.file_path,
+        photo.file_size,
+        photo.mime_type,
+        photo.caption ?? null,
+      ]
+    );
+    return siteWalkPhotoQueries.getById(photo.id);
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = ["area_tag", "unit_label", "caption", "sort_order"];
+    const keys = Object.keys(updates).filter((k) => allowed.includes(k));
+    if (keys.length === 0) return siteWalkPhotoQueries.getById(id);
+    const setClauses = keys.map((k, i) => `"${k}" = $${i + 1}`).join(", ");
+    const values = keys.map((k) => updates[k]);
+    await pool.query(
+      `UPDATE site_walk_photos SET ${setClauses} WHERE id = $${values.length + 1}`,
+      [...values, id]
+    );
+    return siteWalkPhotoQueries.getById(id);
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    const existing = await siteWalkPhotoQueries.getById(id);
+    await pool.query("DELETE FROM site_walk_photos WHERE id = $1", [id]);
+    return existing;
+  },
+};
+
+export const siteWalkDeficiencyQueries = {
+  getByWalkId: async (walkId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM site_walk_deficiencies WHERE site_walk_id = $1 ORDER BY severity DESC, created_at ASC",
+      [walkId]
+    );
+    return res.rows;
+  },
+
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM site_walk_deficiencies WHERE deal_id = $1 ORDER BY created_at DESC",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM site_walk_deficiencies WHERE id = $1",
+      [id]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  create: async (def: {
+    id: string;
+    site_walk_id: string;
+    deal_id: string;
+    area_tag?: string;
+    description: string;
+    severity?: string;
+    category?: string;
+    estimated_cost?: number | null;
+    photo_id?: string | null;
+    status?: string;
+    notes?: string | null;
+  }) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO site_walk_deficiencies
+        (id, site_walk_id, deal_id, area_tag, description, severity, category, estimated_cost, photo_id, status, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        def.id,
+        def.site_walk_id,
+        def.deal_id,
+        def.area_tag ?? "general",
+        def.description,
+        def.severity ?? "minor",
+        def.category ?? "other",
+        def.estimated_cost ?? null,
+        def.photo_id ?? null,
+        def.status ?? "open",
+        def.notes ?? null,
+      ]
+    );
+    return siteWalkDeficiencyQueries.getById(def.id);
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "area_tag",
+      "description",
+      "severity",
+      "category",
+      "estimated_cost",
+      "photo_id",
+      "status",
+      "notes",
+      "sort_order",
+    ];
+    const keys = Object.keys(updates).filter((k) => allowed.includes(k));
+    if (keys.length === 0) return siteWalkDeficiencyQueries.getById(id);
+    const setClauses = keys.map((k, i) => `"${k}" = $${i + 1}`).join(", ");
+    const values = keys.map((k) => updates[k]);
+    await pool.query(
+      `UPDATE site_walk_deficiencies SET ${setClauses}, updated_at = NOW() WHERE id = $${values.length + 1}`,
+      [...values, id]
+    );
+    return siteWalkDeficiencyQueries.getById(id);
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    const existing = await siteWalkDeficiencyQueries.getById(id);
+    await pool.query("DELETE FROM site_walk_deficiencies WHERE id = $1", [id]);
+    return existing;
   },
 };
 

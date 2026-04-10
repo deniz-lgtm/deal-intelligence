@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Loader2, Brain, Users, Lightbulb, AlertTriangle, StickyNote } from "lucide-react";
+import { Plus, Trash2, Loader2, Brain, Users, Lightbulb, AlertTriangle, StickyNote, Footprints } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { DealNote, DealNoteCategory } from "@/lib/types";
 import { DEAL_NOTE_CATEGORIES } from "@/lib/types";
@@ -11,6 +11,7 @@ const CATEGORY_STYLES: Record<DealNoteCategory, { icon: typeof Brain; color: str
   thesis: { icon: Lightbulb, color: "text-emerald-500", bg: "bg-emerald-500/10" },
   risk: { icon: AlertTriangle, color: "text-red-400", bg: "bg-red-400/10" },
   review: { icon: Users, color: "text-amber-400", bg: "bg-amber-500/10" },
+  site_walk: { icon: Footprints, color: "text-teal-400", bg: "bg-teal-400/10" },
 };
 
 interface DealNotesProps {

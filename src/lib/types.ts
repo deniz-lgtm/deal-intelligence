@@ -97,13 +97,14 @@ export type NewDeal = Omit<Deal, "id" | "created_at" | "updated_at">;
 
 // ─── Deal Notes ───────────────────────────────────────────────────────────
 
-export type DealNoteCategory = "context" | "thesis" | "risk" | "review";
+export type DealNoteCategory = "context" | "thesis" | "risk" | "review" | "site_walk";
 
 export const DEAL_NOTE_CATEGORIES: Record<DealNoteCategory, { label: string; description: string; inMemory: boolean }> = {
   context: { label: "Deal Context", description: "Broker intel, seller motivation, market conditions", inMemory: true },
   thesis: { label: "Investment Thesis", description: "Investment rationale, strategy notes", inMemory: true },
   risk: { label: "Key Risk", description: "Red flags, concerns, issues to watch", inMemory: true },
   review: { label: "Team Review", description: "Notes for IC/team discussion", inMemory: false },
+  site_walk: { label: "Site Walk", description: "Observations from property site walks", inMemory: true },
 };
 
 export interface DealNote {
@@ -312,6 +313,142 @@ export interface Photo {
   caption: string | null;
   is_cover: boolean;
   uploaded_at: string;
+}
+
+// ─── Site Walk ──────────────────────────────────────────────────────────────
+
+export type SiteWalkStatus = "draft" | "in_progress" | "completed";
+
+export type SiteWalkAreaTag =
+  | "exterior"
+  | "lobby"
+  | "hallways"
+  | "studio"
+  | "1br"
+  | "2br"
+  | "3br"
+  | "amenities"
+  | "parking"
+  | "roof"
+  | "mechanical"
+  | "laundry"
+  | "office"
+  | "storage"
+  | "landscaping"
+  | "pool"
+  | "general";
+
+export const SITE_WALK_AREA_LABELS: Record<SiteWalkAreaTag, string> = {
+  exterior: "Exterior",
+  lobby: "Lobby",
+  hallways: "Hallways",
+  studio: "Studio Unit",
+  "1br": "1BR Unit",
+  "2br": "2BR Unit",
+  "3br": "3BR Unit",
+  amenities: "Amenities",
+  parking: "Parking",
+  roof: "Roof",
+  mechanical: "Mechanical",
+  laundry: "Laundry",
+  office: "Office",
+  storage: "Storage",
+  landscaping: "Landscaping",
+  pool: "Pool",
+  general: "General",
+};
+
+export type DeficiencySeverity = "minor" | "moderate" | "major" | "critical";
+export type DeficiencyStatus = "open" | "in_progress" | "resolved" | "deferred";
+
+export const DEFICIENCY_SEVERITY_LABELS: Record<DeficiencySeverity, string> = {
+  minor: "Minor",
+  moderate: "Moderate",
+  major: "Major",
+  critical: "Critical",
+};
+
+export const DEFICIENCY_STATUS_LABELS: Record<DeficiencyStatus, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  resolved: "Resolved",
+  deferred: "Deferred",
+};
+
+export type RecordingMediaType = "audio" | "video";
+export type RecordingProcessingStatus =
+  | "pending"
+  | "uploading"
+  | "transcribing"
+  | "processing"
+  | "completed"
+  | "error";
+
+export interface SiteWalk {
+  id: string;
+  deal_id: string;
+  title: string;
+  walk_date: string;
+  status: SiteWalkStatus;
+  attendees: string[];
+  property_contact: string | null;
+  weather: string | null;
+  summary: string | null;
+  ai_report: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SiteWalkRecording {
+  id: string;
+  site_walk_id: string;
+  deal_id: string;
+  file_path: string;
+  original_name: string;
+  file_size: number;
+  mime_type: string;
+  media_type: RecordingMediaType;
+  duration_seconds: number | null;
+  transcript_raw: string | null;
+  transcript_cleaned: string | null;
+  processing_status: RecordingProcessingStatus;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SiteWalkPhoto {
+  id: string;
+  site_walk_id: string;
+  deal_id: string;
+  area_tag: SiteWalkAreaTag;
+  unit_label: string | null;
+  name: string;
+  original_name: string;
+  file_path: string;
+  file_size: number;
+  mime_type: string;
+  caption: string | null;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface SiteWalkDeficiency {
+  id: string;
+  site_walk_id: string;
+  deal_id: string;
+  area_tag: SiteWalkAreaTag;
+  description: string;
+  severity: DeficiencySeverity;
+  category: string;
+  estimated_cost: number | null;
+  photo_id: string | null;
+  status: DeficiencyStatus;
+  notes: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
 }
 
 // ─── Underwriting ────────────────────────────────────────────────────────────
