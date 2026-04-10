@@ -1183,12 +1183,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       {/* ── Scenario Tabs ── */}
       <div className="border rounded-xl bg-card overflow-hidden">
-        <div className="flex items-center gap-1 px-3 py-2 overflow-x-auto bg-muted/20">
+        <div className="flex items-center gap-1.5 px-3 py-2 overflow-x-auto bg-muted/20">
           <button
             onClick={() => setActiveScenarioId(null)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
               !activeScenarioId
-                ? "bg-primary text-primary-foreground shadow-sm"
+                ? "bg-foreground/10 text-foreground border border-foreground/20 shadow-sm"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
@@ -1199,7 +1199,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             const isActive = activeScenarioId === s.id;
             const isRenaming = renamingScenarioId === s.id;
             return (
-              <div key={s.id} className="flex items-center group">
+              <div key={s.id} className="flex items-center">
                 {isRenaming ? (
                   <input
                     autoFocus
@@ -1210,9 +1210,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       if (e.key === "Enter") { e.preventDefault(); commitRename(); }
                       else if (e.key === "Escape") { e.preventDefault(); setRenamingScenarioId(null); setRenameValue(""); }
                     }}
-                    className={`px-3 py-1.5 rounded-l-lg text-xs font-medium whitespace-nowrap outline-none border ${
-                      isActive ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border"
-                    }`}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap outline-none border border-primary bg-background text-foreground"
                     style={{ width: `${Math.max(renameValue.length + 2, 10)}ch` }}
                   />
                 ) : (
@@ -1223,27 +1221,27 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     }}
                     onDoubleClick={() => startRename(s.id, s.name)}
                     title={isActive ? "Click to rename" : "Click to view"}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-l-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                    className={`flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
                       isActive
-                        ? "bg-primary text-primary-foreground shadow-sm"
+                        ? "bg-primary/15 text-primary border border-primary/40 shadow-sm"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     }`}
                   >
-                    {s.name}
-                    {isActive && <Pencil className="h-3 w-3 opacity-70" />}
+                    <span>{s.name}</span>
+                    {isActive && <Pencil className="h-2.5 w-2.5 opacity-50" />}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteScenario(s.id); }}
+                      className={`ml-0.5 rounded p-0.5 transition-colors ${
+                        isActive
+                          ? "text-primary/50 hover:text-red-400 hover:bg-red-500/10"
+                          : "text-muted-foreground/30 hover:text-red-400 hover:bg-red-500/10"
+                      }`}
+                      title="Delete scenario"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
                   </button>
                 )}
-                <button
-                  onClick={() => deleteScenario(s.id)}
-                  className={`px-1.5 py-1.5 rounded-r-lg text-xs transition-colors ${
-                    isActive
-                      ? "bg-primary/80 text-primary-foreground hover:bg-destructive"
-                      : "text-muted-foreground/30 hover:text-destructive hover:bg-muted"
-                  }`}
-                  title="Delete scenario"
-                >
-                  <X className="h-3 w-3" />
-                </button>
               </div>
             );
           })}
