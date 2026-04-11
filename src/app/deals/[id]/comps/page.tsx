@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import dynamic from "next/dynamic";
 import {
   Loader2,
   Plus,
@@ -16,10 +17,24 @@ import {
   Check,
   X,
   FileSearch,
+  Map as MapIcon,
+  Table as TableIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { Comp, SubmarketMetrics } from "@/lib/types";
+
+// Leaflet is heavy and SSR-incompatible — load it only when the user opens
+// the map view.
+const CompsMapView = dynamic(() => import("@/components/CompsMapView"), {
+  ssr: false,
+  loading: () => (
+    <div className="border border-border/40 rounded-xl bg-card/40 h-[540px] flex items-center justify-center text-xs text-muted-foreground">
+      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+      Loading map…
+    </div>
+  ),
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,6 +158,8 @@ export default function CompsPage({ params }: { params: { id: string } }) {
   const [subject, setSubject] = useState<SubjectDeal | null>(null);
   const [radiusMiles, setRadiusMiles] = useState<number | null>(null);
   const [geocodingSubject, setGeocodingSubject] = useState(false);
+  const [geocodingMissing, setGeocodingMissing] = useState(false);
+  const [viewMode, setViewMode] = useState<"table" | "map">("table");
 
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteType, setPasteType] = useState<"sale" | "rent">("sale");
@@ -187,6 +204,29 @@ export default function CompsPage({ params }: { params: { id: string } }) {
     }
   }
 
+  async function handleGeocodeMissing() {
+    setGeocodingMissing(true);
+    try {
+      const res = await fetch("/api/workspace/comps/geocode-missing", {
+        method: "POST",
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Failed to geocode comps");
+        return;
+      }
+      const { geocoded, failed, more } = json.data;
+      toast.success(
+        `Geocoded ${geocoded} comp${geocoded === 1 ? "" : "s"}` +
+          (failed ? ` (${failed} failed)` : "") +
+          (more ? " — more remaining, run again" : "")
+      );
+      loadData();
+    } finally {
+      setGeocodingMissing(false);
+    }
+  }
+
   // Compute distance for each comp from the subject (or null if either side
   // doesn't have coordinates). We store the derived distance alongside the
   // comp so CompTable can render a column without reaching back up.
@@ -227,6 +267,46 @@ export default function CompsPage({ params }: { params: { id: string } }) {
   };
   const filteredSale = inRadius(annotatedSale);
   const filteredRent = inRadius(annotatedRent);
+
+  // Geocoded comps for the map view. We pull from the *unfiltered* annotated
+  // lists so the user can see comps that fall outside the radius too — the
+  // radius circle on the map already visualizes the active filter.
+  const mapComps = useMemo(() => {
+    const all = [...annotatedSale, ...annotatedRent];
+    return all
+      .filter((c) => c.lat != null && c.lng != null)
+      .map((c) => ({
+        id: c.id,
+        deal_id: c.deal_id,
+        source_deal_id: c.source_deal_id ?? null,
+        comp_type: c.comp_type,
+        name: c.name,
+        address: c.address,
+        city: c.city,
+        state: c.state,
+        sale_price: c.sale_price,
+        cap_rate: c.cap_rate,
+        rent_per_unit: c.rent_per_unit,
+        rent_per_sf: c.rent_per_sf,
+        lat: Number(c.lat),
+        lng: Number(c.lng),
+      }));
+  }, [annotatedSale, annotatedRent]);
+
+  const mapSubject = useMemo(() => {
+    if (!subject?.lat || !subject?.lng) return null;
+    return {
+      lat: Number(subject.lat),
+      lng: Number(subject.lng),
+      name: subject.name,
+      address: [subject.address, subject.city, subject.state]
+        .filter(Boolean)
+        .join(", ") || null,
+    };
+  }, [subject]);
+
+  // Show map controls only when there's something useful to show on the map
+  const mapHasContent = mapComps.length > 0 || mapSubject != null;
 
   useEffect(() => {
     loadData();
@@ -517,51 +597,151 @@ export default function CompsPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {/* Sale comps */}
-      <Section
-        title={`Sale Comps (${filteredSale.length}${radiusMiles != null && filteredSale.length !== saleComps.length ? ` / ${saleComps.length}` : ""})`}
-        action={
-          <Button size="sm" variant="outline" onClick={() => openPaste("sale")}>
-            <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
-            Paste Listing
-          </Button>
-        }
-      >
-        {filteredSale.length === 0 ? (
-          saleComps.length === 0 ? (
-            <EmptyState type="sale" onAdd={() => openPaste("sale")} />
-          ) : (
-            <div className="text-center py-8 text-xs text-muted-foreground">
-              No sale comps within {radiusMiles} miles of the subject.
-            </div>
-          )
-        ) : (
-          <CompTable comps={filteredSale} type="sale" showDistance={!!(subject?.lat && subject?.lng)} onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
-        )}
-      </Section>
+      {/* View toggle (Table | Map). The map view is only useful once at least
+          one comp or the subject has coordinates. */}
+      {(saleComps.length > 0 || rentComps.length > 0 || subject?.lat) && (
+        <div className="flex items-center justify-between gap-3">
+          <div className="inline-flex items-center rounded-lg border border-border/40 bg-muted/20 p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition-colors ${
+                viewMode === "table"
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <TableIcon className="h-3.5 w-3.5" />
+              Table
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("map")}
+              className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition-colors ${
+                viewMode === "map"
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <MapIcon className="h-3.5 w-3.5" />
+              Map
+            </button>
+          </div>
 
-      {/* Rent comps */}
-      <Section
-        title={`Rent Comps (${filteredRent.length}${radiusMiles != null && filteredRent.length !== rentComps.length ? ` / ${rentComps.length}` : ""})`}
-        action={
-          <Button size="sm" variant="outline" onClick={() => openPaste("rent")}>
-            <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
-            Paste Listing
-          </Button>
-        }
-      >
-        {filteredRent.length === 0 ? (
-          rentComps.length === 0 ? (
-            <EmptyState type="rent" onAdd={() => openPaste("rent")} />
-          ) : (
-            <div className="text-center py-8 text-xs text-muted-foreground">
-              No rent comps within {radiusMiles} miles of the subject.
+          {viewMode === "map" && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleGeocodeMissing}
+              disabled={geocodingMissing}
+            >
+              {geocodingMissing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              ) : (
+                <MapPinned className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Geocode Missing
+            </Button>
+          )}
+        </div>
+      )}
+
+      {viewMode === "map" ? (
+        mapHasContent ? (
+          <div className="space-y-2">
+            <CompsMapView
+              comps={mapComps}
+              subject={mapSubject}
+              radiusMiles={radiusMiles}
+              height={560}
+            />
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
+              <div className="flex items-center gap-3">
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  Subject
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  Sale ({mapComps.filter((c) => c.comp_type === "sale").length})
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  Rent ({mapComps.filter((c) => c.comp_type === "rent").length})
+                </span>
+              </div>
+              {saleComps.length + rentComps.length - mapComps.length > 0 && (
+                <span>
+                  {saleComps.length + rentComps.length - mapComps.length} comp
+                  {saleComps.length + rentComps.length - mapComps.length === 1
+                    ? ""
+                    : "s"}{" "}
+                  not yet geocoded
+                </span>
+              )}
             </div>
-          )
+          </div>
         ) : (
-          <CompTable comps={filteredRent} type="rent" showDistance={!!(subject?.lat && subject?.lng)} onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
-        )}
-      </Section>
+          <div className="border border-dashed border-border/40 rounded-xl bg-card/40 py-16 text-center">
+            <MapIcon className="h-8 w-8 mx-auto mb-3 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">
+              No comps with coordinates yet.
+            </p>
+            <p className="text-xs text-muted-foreground/70 mt-1">
+              Click <em>Geocode Missing</em> above, or paste comps that include
+              an address.
+            </p>
+          </div>
+        )
+      ) : (
+        <>
+          {/* Sale comps */}
+          <Section
+            title={`Sale Comps (${filteredSale.length}${radiusMiles != null && filteredSale.length !== saleComps.length ? ` / ${saleComps.length}` : ""})`}
+            action={
+              <Button size="sm" variant="outline" onClick={() => openPaste("sale")}>
+                <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
+                Paste Listing
+              </Button>
+            }
+          >
+            {filteredSale.length === 0 ? (
+              saleComps.length === 0 ? (
+                <EmptyState type="sale" onAdd={() => openPaste("sale")} />
+              ) : (
+                <div className="text-center py-8 text-xs text-muted-foreground">
+                  No sale comps within {radiusMiles} miles of the subject.
+                </div>
+              )
+            ) : (
+              <CompTable comps={filteredSale} type="sale" showDistance={!!(subject?.lat && subject?.lng)} onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
+            )}
+          </Section>
+
+          {/* Rent comps */}
+          <Section
+            title={`Rent Comps (${filteredRent.length}${radiusMiles != null && filteredRent.length !== rentComps.length ? ` / ${rentComps.length}` : ""})`}
+            action={
+              <Button size="sm" variant="outline" onClick={() => openPaste("rent")}>
+                <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
+                Paste Listing
+              </Button>
+            }
+          >
+            {filteredRent.length === 0 ? (
+              rentComps.length === 0 ? (
+                <EmptyState type="rent" onAdd={() => openPaste("rent")} />
+              ) : (
+                <div className="text-center py-8 text-xs text-muted-foreground">
+                  No rent comps within {radiusMiles} miles of the subject.
+                </div>
+              )
+            ) : (
+              <CompTable comps={filteredRent} type="rent" showDistance={!!(subject?.lat && subject?.lng)} onToggle={handleToggleSelected} onDelete={handleDeleteComp} onSaveToWorkspace={handleSaveToWorkspace} />
+            )}
+          </Section>
+        </>
+      )}
 
       {/* Paste modal */}
       {pasteOpen && (
