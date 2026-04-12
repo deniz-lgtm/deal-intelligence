@@ -1291,6 +1291,10 @@ export const dealQueries = {
       cols.push("investment_strategy");
       vals.push(deal.investment_strategy);
     }
+    if (deal.land_acres != null) {
+      cols.push("land_acres");
+      vals.push(deal.land_acres);
+    }
     if (deal.business_plan_id) {
       cols.push("business_plan_id");
       vals.push(deal.business_plan_id);

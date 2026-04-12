@@ -1,8 +1,8 @@
 import { v4 as uuidv4 } from "uuid";
 import type {
-  FloorUseType, BuildingFloor, MassingScenario, MassingSummary, BuildingProgram,
+  FloorUseType, BuildingFloor, MassingScenario, MassingSummary, BuildingProgram, UnitMixEntry,
 } from "@/lib/types";
-import { FLOOR_HEIGHT_DEFAULTS, PARKING_ABOVE_GRADE_HEIGHT } from "@/lib/types";
+import { FLOOR_HEIGHT_DEFAULTS, PARKING_ABOVE_GRADE_HEIGHT, FLOOR_USE_TYPE_LABELS, DEFAULT_UNIT_MIX } from "@/lib/types";
 
 // ── Floor factory ────────────────────────────────────────────────────────────
 
@@ -28,16 +28,23 @@ export function newFloor(
     units_on_floor,
     efficiency_pct: efficiency_pct ?? EFFICIENCY_BY_USE[use_type],
     sort_order: 0,
+    secondary_use: null,
+    secondary_sf: 0,
   };
 }
 
 // ── Scenario factory ─────────────────────────────────────────────────────────
+
+export function seedUnitMix(): UnitMixEntry[] {
+  return DEFAULT_UNIT_MIX.map(m => ({ id: uuidv4(), ...m }));
+}
 
 export function newScenario(name: string, floors: BuildingFloor[] = []): MassingScenario {
   return {
     id: uuidv4(), name, floors, footprint_sf: 0,
     density_bonus_applied: null, density_bonus_far_increase: 0, density_bonus_height_increase_ft: 0,
     notes: "", created_at: new Date().toISOString(), is_baseline: false, linked_uw_scenario_id: null,
+    unit_mix: seedUnitMix(),
   };
 }
 
@@ -53,18 +60,16 @@ export function autoLabelFloors(floors: BuildingFloor[]): BuildingFloor[] {
   const below = floors.filter(f => f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
   const above = floors.filter(f => !f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
 
-  let parkingCounter = below.length;
-  below.forEach(f => {
-    if (f.use_type === "parking") { f.label = `P${parkingCounter}`; parkingCounter--; }
-    else f.label = f.use_type.charAt(0).toUpperCase() + f.use_type.slice(1);
+  // Below grade: P1 (deepest), P2, etc.
+  below.forEach((f, i) => {
+    f.label = f.use_type === "parking" ? `P${below.length - i}` : `B${below.length - i}`;
   });
 
-  let levelCounter = 1;
-  above.forEach(f => {
-    if (f.use_type === "residential") { f.label = `Level ${levelCounter}`; }
-    else if (f.use_type === "mechanical") { f.label = "Roof Mech"; }
-    else { f.label = f.use_type === "lobby_amenity" ? "Lobby" : f.use_type.charAt(0).toUpperCase() + f.use_type.slice(1); }
-    levelCounter++;
+  // Above grade: Floor 1 (ground), Floor 2, etc.
+  above.forEach((f, i) => {
+    const floorNum = i + 1;
+    const useLabel = FLOOR_USE_TYPE_LABELS[f.use_type] || f.use_type;
+    f.label = `${floorNum}F — ${useLabel}`;
   });
   return [...below, ...above];
 }

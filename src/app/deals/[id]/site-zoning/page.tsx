@@ -763,6 +763,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 program={buildingProgram}
                 onChange={(p) => { setBuildingProgram(p); setDirty(true); }}
                 zoning={zoningInputs}
+                densityBonuses={zoning.density_bonuses || []}
                 onPushBaseline={handlePushBaseline}
                 onPushScenario={handlePushScenario}
               />

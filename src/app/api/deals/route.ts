@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
       bedrooms: body.bedrooms ?? null,
       year_built: body.year_built ?? null,
       notes: body.notes ?? null,
+      land_acres: body.land_acres ?? null,
       investment_strategy: body.investment_strategy ?? null,
       loi_executed: false,
       psa_executed: false,

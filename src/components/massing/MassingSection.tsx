@@ -9,9 +9,9 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import type { BuildingFloor, BuildingProgram, MassingScenario, FloorUseType } from "@/lib/types";
+import type { BuildingFloor, BuildingProgram, MassingScenario, FloorUseType, UnitMixEntry } from "@/lib/types";
 import {
-  newFloor, newScenario, newBuildingProgram, computeMassingSummary, autoLabelFloors,
+  newFloor, newScenario, newBuildingProgram, computeMassingSummary, autoLabelFloors, seedUnitMix,
   quickStackPodium5over1, quickStackMidRise3over2, quickStackHighRise, quickStackGardenStyle, quickStackAutoFromZoning,
 } from "./massing-utils";
 import type { ZoningInputs } from "./massing-utils";
@@ -21,15 +21,22 @@ import MassingSectionCut from "./MassingSectionCut";
 const fc = (n: number) => n || n === 0 ? "$" + Math.round(n).toLocaleString("en-US") : "—";
 const fn = (n: number) => n || n === 0 ? Math.round(n).toLocaleString("en-US") : "—";
 
+interface DensityBonusOption {
+  source: string;
+  description: string;
+  additional_density: string;
+}
+
 interface Props {
   program: BuildingProgram;
   onChange: (program: BuildingProgram) => void;
   zoning: ZoningInputs;
+  densityBonuses?: DensityBonusOption[];
   onPushBaseline: (scenario: MassingScenario) => void;
   onPushScenario: (scenario: MassingScenario) => void;
 }
 
-export default function MassingSection({ program, onChange, zoning, onPushBaseline, onPushScenario }: Props) {
+export default function MassingSection({ program, onChange, zoning, densityBonuses = [], onPushBaseline, onPushScenario }: Props) {
   const [quickStackOpen, setQuickStackOpen] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
@@ -122,7 +129,8 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
     setMenuOpenId(null);
   }, [program, onChange, onPushBaseline]);
 
-  const aboveFloors = activeScenario.floors.filter(f => !f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
+  // Display above-grade floors top-down (highest floor first in list, ground floor last = closest to grade)
+  const aboveFloors = activeScenario.floors.filter(f => !f.is_below_grade).sort((a, b) => b.sort_order - a.sort_order);
   const belowFloors = activeScenario.floors.filter(f => f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
 
   return (
@@ -231,17 +239,40 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
             </div>
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Density Bonus</label>
-              <div className="flex gap-2">
-                <input type="text" value={activeScenario.density_bonus_applied || ""}
-                  onChange={e => updateScenario(activeScenario.id, s => ({ ...s, density_bonus_applied: e.target.value || null }))}
-                  className="flex-1 border rounded-md px-2 py-1.5 text-sm bg-background outline-none"
-                  placeholder="e.g. SB 35, AB 2011" />
-                <input type="text" inputMode="decimal"
-                  value={activeScenario.density_bonus_far_increase || ""}
-                  onChange={e => updateScenario(activeScenario.id, s => ({ ...s, density_bonus_far_increase: parseFloat(e.target.value) || 0 }))}
-                  className="w-[60px] border rounded-md px-2 py-1.5 text-sm bg-background outline-none"
-                  placeholder="+FAR" title="FAR increase as decimal (e.g. 0.35 = +35%)" />
-              </div>
+              <select
+                value={activeScenario.density_bonus_applied || ""}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (!val) {
+                    updateScenario(activeScenario.id, s => ({ ...s, density_bonus_applied: null, density_bonus_far_increase: 0, density_bonus_height_increase_ft: 0 }));
+                  } else {
+                    const bonus = densityBonuses.find(b => b.source === val);
+                    // Try to parse FAR increase from additional_density (e.g. "+35%" or "+0.5 FAR")
+                    const pctMatch = bonus?.additional_density?.match(/\+?(\d+(?:\.\d+)?)\s*%/);
+                    const farIncrease = pctMatch ? parseFloat(pctMatch[1]) / 100 : 0;
+                    updateScenario(activeScenario.id, s => ({ ...s, density_bonus_applied: val, density_bonus_far_increase: farIncrease }));
+                  }
+                }}
+                className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none"
+              >
+                <option value="">None</option>
+                {densityBonuses.map((b, i) => (
+                  <option key={i} value={b.source}>{b.source} — {b.description} ({b.additional_density})</option>
+                ))}
+                <option value="__custom">Custom...</option>
+              </select>
+              {activeScenario.density_bonus_applied === "__custom" && (
+                <div className="flex gap-2 mt-1">
+                  <input type="text" value="" onChange={e => updateScenario(activeScenario.id, s => ({ ...s, density_bonus_applied: e.target.value || null }))}
+                    className="flex-1 border rounded-md px-2 py-1.5 text-sm bg-background outline-none" placeholder="Bonus name" />
+                  <input type="text" inputMode="decimal" value={activeScenario.density_bonus_far_increase || ""}
+                    onChange={e => updateScenario(activeScenario.id, s => ({ ...s, density_bonus_far_increase: parseFloat(e.target.value) || 0 }))}
+                    className="w-[70px] border rounded-md px-2 py-1.5 text-sm bg-background outline-none" placeholder="+FAR" />
+                </div>
+              )}
+              {activeScenario.density_bonus_applied && activeScenario.density_bonus_applied !== "__custom" && activeScenario.density_bonus_far_increase > 0 && (
+                <p className="text-[10px] text-emerald-400 mt-1">+{(activeScenario.density_bonus_far_increase * 100).toFixed(0)}% FAR increase applied</p>
+              )}
             </div>
           </div>
 
@@ -252,12 +283,13 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
             <thead>
               <tr className="bg-muted/30 border-b">
                 <th className="w-[24px]" />
+                <th className="text-center px-1 py-1 text-xs font-medium text-muted-foreground w-[32px]">#</th>
                 <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground">Use</th>
-                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[90px]">Plate SF</th>
-                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[70px]">F-t-F</th>
-                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[55px]">Units</th>
-                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[55px]">Eff%</th>
-                <th className="text-right px-1 py-1 text-xs font-medium text-muted-foreground w-[70px]">NRSF</th>
+                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[85px]">Plate SF</th>
+                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[65px]">F-t-F</th>
+                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[50px]">Units</th>
+                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[50px]">Eff%</th>
+                <th className="text-right px-1 py-1 text-xs font-medium text-muted-foreground w-[65px]">NRSF</th>
                 <th className="w-[24px]" />
               </tr>
             </thead>
@@ -290,12 +322,13 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
             <thead>
               <tr className="bg-muted/30 border-b">
                 <th className="w-[24px]" />
+                <th className="text-center px-1 py-1 text-xs font-medium text-muted-foreground w-[32px]">#</th>
                 <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground">Use</th>
-                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[90px]">Plate SF</th>
-                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[70px]">F-t-F</th>
-                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[55px]">Units</th>
-                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[55px]">Eff%</th>
-                <th className="text-right px-1 py-1 text-xs font-medium text-muted-foreground w-[70px]">NRSF</th>
+                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[85px]">Plate SF</th>
+                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[65px]">F-t-F</th>
+                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[50px]">Units</th>
+                <th className="text-left px-1 py-1 text-xs font-medium text-muted-foreground w-[50px]">Eff%</th>
+                <th className="text-right px-1 py-1 text-xs font-medium text-muted-foreground w-[65px]">NRSF</th>
                 <th className="w-[24px]" />
               </tr>
             </thead>
@@ -333,6 +366,111 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
           </div>
         </div>
       </div>
+
+      {/* ── Unit Mix Allocation ── */}
+      {summary.total_units > 0 || (summary.nrsf_by_use.residential || 0) > 0 ? (() => {
+        const mix = activeScenario.unit_mix || [];
+        const resNRSF = summary.nrsf_by_use.residential || 0;
+        const totalAllocPct = mix.reduce((s, m) => s + m.allocation_pct, 0);
+        const weightedAvgSF = mix.length > 0
+          ? mix.reduce((s, m) => s + m.avg_sf * (m.allocation_pct / 100), 0)
+          : 0;
+        const totalUnitsFromMix = weightedAvgSF > 0 ? Math.floor(resNRSF / weightedAvgSF) : 0;
+
+        const updMix = (id: string, upd: Partial<UnitMixEntry>) => {
+          updateScenario(activeScenario.id, s => ({
+            ...s,
+            unit_mix: (s.unit_mix || []).map(m => m.id === id ? { ...m, ...upd } : m),
+          }));
+        };
+        const addMixType = () => {
+          updateScenario(activeScenario.id, s => ({
+            ...s,
+            unit_mix: [...(s.unit_mix || []), { id: uuidv4(), type_label: "New Type", allocation_pct: 0, avg_sf: 600 }],
+          }));
+        };
+        const delMixType = (id: string) => {
+          updateScenario(activeScenario.id, s => ({
+            ...s,
+            unit_mix: (s.unit_mix || []).filter(m => m.id !== id),
+          }));
+        };
+
+        return (
+          <div className="mt-4">
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Unit Mix Allocation</h4>
+            <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse mb-2 min-w-[480px]">
+              <thead>
+                <tr className="bg-muted/30 border-b">
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Unit Type</th>
+                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Allocation</th>
+                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Avg SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">Units</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Total SF</th>
+                  <th className="w-[24px]" />
+                </tr>
+              </thead>
+              <tbody>
+                {mix.map(m => {
+                  const unitCount = totalUnitsFromMix > 0 ? Math.round(totalUnitsFromMix * (m.allocation_pct / 100)) : 0;
+                  const totalSF = unitCount * m.avg_sf;
+                  return (
+                    <tr key={m.id} className="border-b hover:bg-muted/10 group">
+                      <td className="px-2 py-1.5">
+                        <input type="text" value={m.type_label} onChange={e => updMix(m.id, { type_label: e.target.value })} className="bg-transparent text-xs outline-none w-full font-medium" />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center justify-center border rounded bg-background overflow-hidden w-[70px] mx-auto">
+                          <input type="text" inputMode="decimal" value={m.allocation_pct || ""}
+                            onChange={e => updMix(m.id, { allocation_pct: parseFloat(e.target.value) || 0 })}
+                            className="w-full px-1.5 py-1 text-xs outline-none bg-transparent text-blue-300 tabular-nums text-center" placeholder="0" />
+                          <span className="px-1 text-xs text-muted-foreground bg-muted border-l">%</span>
+                        </div>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center justify-center border rounded bg-background overflow-hidden w-[70px] mx-auto">
+                          <input type="text" inputMode="decimal" value={m.avg_sf || ""}
+                            onChange={e => updMix(m.id, { avg_sf: parseFloat(e.target.value) || 0 })}
+                            className="w-full px-1.5 py-1 text-xs outline-none bg-transparent text-blue-300 tabular-nums text-center" placeholder="0" />
+                        </div>
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">{unitCount}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{totalSF.toLocaleString()}</td>
+                      <td className="px-1 py-1.5">
+                        <button onClick={() => delMixType(m.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t bg-muted/20 font-semibold text-xs">
+                  <td className="px-2 py-1.5">Total</td>
+                  <td className={`px-2 py-1.5 text-center tabular-nums ${Math.abs(totalAllocPct - 100) > 0.1 ? "text-red-400" : "text-emerald-400"}`}>{totalAllocPct.toFixed(0)}%</td>
+                  <td className="px-2 py-1.5 text-center tabular-nums text-muted-foreground">{weightedAvgSF > 0 ? Math.round(weightedAvgSF) : "—"}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{totalUnitsFromMix}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fn(resNRSF)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+            </div>
+            {Math.abs(totalAllocPct - 100) > 0.1 && <p className="text-xs text-red-400 mb-1">Allocation must equal 100% (currently {totalAllocPct.toFixed(0)}%)</p>}
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" className="text-xs" onClick={addMixType}>
+                <Plus className="h-3 w-3 mr-1" /> Add Unit Type
+              </Button>
+              {mix.length === 0 && (
+                <Button variant="ghost" size="sm" className="text-xs" onClick={() => updateScenario(activeScenario.id, s => ({ ...s, unit_mix: seedUnitMix() }))}>
+                  Seed Default Mix
+                </Button>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Units computed from residential NRSF ({fn(resNRSF)} SF) ÷ weighted avg unit size ({Math.round(weightedAvgSF)} SF)</p>
+          </div>
+        );
+      })() : null}
 
       {/* ── Action Buttons ── */}
       <div className="flex gap-2 pt-2">

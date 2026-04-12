@@ -1959,7 +1959,26 @@ export interface BuildingFloor {
   units_on_floor: number;
   efficiency_pct: number;
   sort_order: number;
+  // Multi-use floor support: split a floor between two uses
+  secondary_use: FloorUseType | null;
+  secondary_sf: number;  // SF allocated to secondary use (remainder goes to primary)
 }
+
+export interface UnitMixEntry {
+  id: string;
+  type_label: string;        // e.g. "Studio", "1-Br", "2-Br", "3-Br"
+  allocation_pct: number;    // % of total units (should sum to 100)
+  avg_sf: number;            // average SF per unit of this type
+  // Computed (not stored, derived at render):
+  // unit_count, total_sf
+}
+
+export const DEFAULT_UNIT_MIX: Array<{ type_label: string; allocation_pct: number; avg_sf: number }> = [
+  { type_label: "Studio", allocation_pct: 15, avg_sf: 420 },
+  { type_label: "1-Br", allocation_pct: 50, avg_sf: 562 },
+  { type_label: "2-Br", allocation_pct: 28, avg_sf: 716 },
+  { type_label: "3-Br", allocation_pct: 7, avg_sf: 900 },
+];
 
 export interface MassingScenario {
   id: string;
@@ -1973,6 +1992,7 @@ export interface MassingScenario {
   created_at: string;
   is_baseline: boolean;
   linked_uw_scenario_id: string | null;
+  unit_mix: UnitMixEntry[];
 }
 
 export interface BuildingProgram {
