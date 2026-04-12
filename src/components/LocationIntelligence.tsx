@@ -243,7 +243,12 @@ export default function LocationIntelligence({
   const [meta, setMeta] = useState<{
     source?: string;
     year?: number;
+    prior_year?: number;
     geography?: string;
+    tracts_found?: number;
+    tracts_with_data?: number;
+    counties?: number;
+    radius_miles?: number;
     note?: string;
   } | null>(null);
 
@@ -503,6 +508,17 @@ export default function LocationIntelligence({
               <span> ({currentData.source_year})</span>
             )}
             {meta?.geography && <span> · {meta.geography}</span>}
+            {meta?.tracts_with_data != null && (
+              <span>
+                {" "}· {meta.tracts_with_data} tract{meta.tracts_with_data === 1 ? "" : "s"}
+                {meta?.counties != null && meta.counties > 1 && (
+                  <> across {meta.counties} counties</>
+                )}
+              </span>
+            )}
+            {meta?.prior_year && (
+              <span> · Growth rates: {meta.prior_year}–{meta.year}</span>
+            )}
             {meta?.note && (
               <span className="block mt-0.5 text-muted-foreground/70">
                 {meta.note}
