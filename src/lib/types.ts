@@ -1231,6 +1231,343 @@ export interface ChatMessage {
   created_at: string;
 }
 
+// ─── Development Budget (Ground-Up) ───────────────────────────────────────
+
+export interface DevBudgetLineItem {
+  id: string;
+  label: string;
+  category: "hard" | "soft";
+  subcategory: string;
+  amount: number;
+  quantity: number;
+  unit_cost: number;
+  unit_label: string;  // "SF", "space", "unit", "lump sum", "% of hard"
+  is_pct: boolean;
+  pct_basis: "hard_costs" | "total_project" | "none";
+  pct_value: number;
+  notes: string;
+}
+
+export const DEFAULT_DEV_BUDGET_HARD: Array<{ label: string; subcategory: string; unit_label: string }> = [
+  { label: "Site Work", subcategory: "site_work", unit_label: "SF" },
+  { label: "Vertical Construction (Shell & Core)", subcategory: "vertical", unit_label: "SF" },
+  { label: "Parking Structure", subcategory: "parking_structure", unit_label: "space" },
+  { label: "FF&E / Amenities", subcategory: "ffe_amenities", unit_label: "unit" },
+  { label: "General Conditions", subcategory: "general_conditions", unit_label: "lump sum" },
+  { label: "Contingency", subcategory: "contingency", unit_label: "% of hard" },
+];
+
+export const DEFAULT_DEV_BUDGET_SOFT: Array<{ label: string; subcategory: string; unit_label: string }> = [
+  { label: "Architecture & Engineering", subcategory: "a_and_e", unit_label: "lump sum" },
+  { label: "Permits & Fees", subcategory: "permits", unit_label: "lump sum" },
+  { label: "Legal", subcategory: "legal", unit_label: "lump sum" },
+  { label: "Development Fee", subcategory: "dev_fee", unit_label: "% of hard" },
+  { label: "Construction Interest Carry", subcategory: "interest_carry", unit_label: "lump sum" },
+  { label: "Marketing / Lease-Up", subcategory: "marketing_leaseup", unit_label: "lump sum" },
+  { label: "Insurance", subcategory: "insurance", unit_label: "lump sum" },
+  { label: "Accounting / Consulting", subcategory: "accounting", unit_label: "lump sum" },
+];
+
+// ─── Parking Configuration ────────────────────────────────────────────────
+
+export type ParkingType = "surface" | "structured" | "underground" | "tuck_under";
+
+export const PARKING_TYPE_LABELS: Record<ParkingType, string> = {
+  surface: "Surface",
+  structured: "Structured / Podium",
+  underground: "Underground",
+  tuck_under: "Tuck-Under",
+};
+
+export const PARKING_COST_DEFAULTS: Record<ParkingType, number> = {
+  surface: 10000,
+  structured: 35000,
+  underground: 55000,
+  tuck_under: 25000,
+};
+
+export interface ParkingEntry {
+  id: string;
+  type: ParkingType;
+  spaces: number;
+  cost_per_space: number;
+  // Revenue
+  reserved_residential_spaces: number;
+  reserved_monthly_rate: number;
+  unreserved_spaces: number;
+  unreserved_monthly_rate: number;
+  guest_visitor_spaces: number;
+  retail_shared_spaces: number;
+  retail_shared_monthly_rate: number;
+}
+
+export interface ParkingConfig {
+  entries: ParkingEntry[];
+  zoning_required_ratio_residential: number;  // spaces per unit
+  zoning_required_ratio_commercial: number;   // spaces per 1,000 SF
+}
+
+// ─── Absorption / Lease-Up ────────────────────────────────────────────────
+
+export interface LeaseUpConfig {
+  construction_months: number;
+  absorption_units_per_month: number;
+  concession_free_months: number;
+  concession_per_unit: number;
+  stabilization_occupancy_pct: number;  // target, e.g. 93
+}
+
+// ─── Construction Loan ────────────────────────────────────────────────────
+
+export interface ConstructionDrawPeriod {
+  month: number;
+  cumulative_pct: number;  // cumulative % of budget drawn at this month
+}
+
+export interface ConstructionLoanConfig {
+  ltc_pct: number;
+  rate: number;
+  term_months: number;
+  draw_schedule: ConstructionDrawPeriod[];
+}
+
+// ─── Mixed-Use Components ─────────────────────────────────────────────────
+
+export type MixedUseComponentType = "residential" | "retail" | "office" | "parking" | "other";
+
+export const MIXED_USE_COMPONENT_LABELS: Record<MixedUseComponentType, string> = {
+  residential: "Residential",
+  retail: "Retail",
+  office: "Office",
+  parking: "Parking",
+  other: "Other",
+};
+
+export interface MixedUseComponent {
+  id: string;
+  component_type: MixedUseComponentType;
+  label: string;
+  sf_allocation: number;
+  unit_groups: UnitGroup[];
+  // OpEx allocation
+  opex_mode: "own" | "shared";
+  opex_allocation_pct: number;
+  // Component-level valuation
+  cap_rate: number;
+  // Retail-specific
+  ti_allowance_per_sf: number;
+  leasing_commission_pct: number;
+  free_rent_months: number;
+  rent_escalation_pct: number;
+}
+
+export interface MixedUseConfig {
+  enabled: boolean;
+  total_gfa: number;
+  components: MixedUseComponent[];
+  common_area_sf: number;
+}
+
+// ─── Redevelopment Overlay ────────────────────────────────────────────────
+
+export interface RedevelopmentConfig {
+  enabled: boolean;
+  existing_use: string;
+  existing_sf: number;
+  existing_noi: number;
+  existing_occupancy_pct: number;
+  // Transition timeline
+  vacancy_period_months: number;
+  demolition_period_months: number;
+  construction_period_months: number;
+  // Costs
+  demolition_items: DevBudgetLineItem[];
+  // Phased redevelopment
+  is_phased: boolean;
+  phase_1_label: string;
+  phase_1_sf: number;
+  phase_1_timeline_months: number;
+  phase_2_label: string;
+  phase_2_sf: number;
+  phase_2_timeline_months: number;
+  // Parking conversion
+  existing_parking_spaces: number;
+  parking_spaces_converted: number;
+  new_parking_spaces_built: number;
+}
+
+// ─── CEQA Process Tracker ─────────────────────────────────────────────────
+
+export type CEQAPathway =
+  | "exempt_categorical"
+  | "exempt_statutory"
+  | "exempt_common_sense"
+  | "exempt_class_32_infill"
+  | "negative_declaration"
+  | "mitigated_neg_dec"
+  | "eir"
+  | "streamlined_sb35"
+  | "streamlined_sb423"
+  | "not_applicable";
+
+export const CEQA_PATHWAY_LABELS: Record<CEQAPathway, string> = {
+  exempt_categorical: "Categorical Exemption",
+  exempt_statutory: "Statutory Exemption",
+  exempt_common_sense: "Common Sense Exemption",
+  exempt_class_32_infill: "Class 32 — Infill Development",
+  negative_declaration: "Negative Declaration (ND)",
+  mitigated_neg_dec: "Mitigated Negative Declaration (MND)",
+  eir: "Environmental Impact Report (EIR)",
+  streamlined_sb35: "SB 35 Streamlining",
+  streamlined_sb423: "SB 423 (Builder's Remedy)",
+  not_applicable: "Not Applicable (Non-CA)",
+};
+
+export type CEQAStepStatus = "not_started" | "in_progress" | "complete" | "blocked" | "na";
+
+export const CEQA_STEP_STATUS_CONFIG: Record<CEQAStepStatus, { label: string; color: string }> = {
+  not_started: { label: "Not Started", color: "bg-zinc-500/20 text-zinc-300" },
+  in_progress: { label: "In Progress", color: "bg-blue-500/20 text-blue-300" },
+  complete: { label: "Complete", color: "bg-emerald-500/20 text-emerald-300" },
+  blocked: { label: "Blocked", color: "bg-red-500/20 text-red-300" },
+  na: { label: "N/A", color: "bg-muted text-muted-foreground" },
+};
+
+export interface CEQAStep {
+  id: string;
+  label: string;
+  status: CEQAStepStatus;
+  due_date: string | null;
+  completed_date: string | null;
+  notes: string | null;
+  sort_order: number;
+}
+
+export interface CEQAMitigation {
+  id: string;
+  category: string;       // e.g., "Traffic", "Noise", "Air Quality", "Biological"
+  measure: string;        // description of the mitigation
+  estimated_cost: number;
+  status: CEQAStepStatus;
+  responsible_party: string;
+  notes: string | null;
+  sort_order: number;
+}
+
+export interface CEQAHearing {
+  id: string;
+  hearing_type: string;  // e.g., "Planning Commission", "City Council", "Public Comment"
+  date: string | null;
+  location: string;
+  status: CEQAStepStatus;
+  outcome: string | null;
+  notes: string | null;
+}
+
+export interface CEQAData {
+  pathway: CEQAPathway;
+  steps: CEQAStep[];
+  mitigations: CEQAMitigation[];
+  hearings: CEQAHearing[];
+  consultant_name: string;
+  consultant_contact: string;
+  estimated_total_cost: number;
+  estimated_duration_months: number;
+  notes: string;
+}
+
+// Default CEQA steps by pathway — auto-populated when pathway is selected
+export const CEQA_PATHWAY_STEPS: Record<CEQAPathway, string[]> = {
+  exempt_categorical: [
+    "Identify applicable exemption category",
+    "Prepare Notice of Exemption (NOE)",
+    "File NOE with County Clerk",
+    "Post NOE (35-day statute of limitations begins)",
+  ],
+  exempt_statutory: [
+    "Identify statutory exemption basis",
+    "Prepare Notice of Exemption (NOE)",
+    "File NOE with County Clerk",
+  ],
+  exempt_common_sense: [
+    "Document no significant environmental impact",
+    "Prepare Common Sense Exemption memo",
+    "Agency approval of exemption finding",
+    "File Notice of Exemption",
+  ],
+  exempt_class_32_infill: [
+    "Confirm site is in urbanized area",
+    "Confirm project is consistent with General Plan & zoning",
+    "Confirm no significant traffic, noise, air quality, or water quality impacts",
+    "Confirm site has no value as habitat for endangered species",
+    "Confirm adequate utilities and public services available",
+    "Prepare Class 32 Exemption analysis",
+    "File Notice of Exemption (NOE)",
+  ],
+  negative_declaration: [
+    "Prepare Initial Study (IS)",
+    "Circulate IS/ND for 30-day public review",
+    "Respond to public comments",
+    "Adopt Negative Declaration",
+    "File Notice of Determination (NOD)",
+  ],
+  mitigated_neg_dec: [
+    "Prepare Initial Study (IS)",
+    "Identify potentially significant impacts",
+    "Develop mitigation measures",
+    "Prepare IS/MND document",
+    "Circulate IS/MND for 30-day public review",
+    "Respond to public comments",
+    "Adopt Mitigation Monitoring & Reporting Program (MMRP)",
+    "Adopt Mitigated Negative Declaration",
+    "File Notice of Determination (NOD)",
+  ],
+  eir: [
+    "Prepare & circulate Notice of Preparation (NOP)",
+    "Conduct scoping meeting",
+    "Prepare Draft EIR",
+    "Circulate Draft EIR for 45-day public review",
+    "Prepare responses to comments",
+    "Prepare Final EIR",
+    "Certify Final EIR",
+    "Adopt Findings of Fact & Statement of Overriding Considerations",
+    "Adopt Mitigation Monitoring & Reporting Program (MMRP)",
+    "File Notice of Determination (NOD)",
+  ],
+  streamlined_sb35: [
+    "Confirm site eligibility (zoning, location, labor standards)",
+    "Confirm project meets objective planning standards",
+    "Submit SB 35 application to jurisdiction",
+    "Jurisdiction 60/90-day review period",
+    "Receive ministerial approval (no CEQA required)",
+  ],
+  streamlined_sb423: [
+    "Confirm jurisdiction is non-compliant with RHNA housing element",
+    "Confirm project meets objective zoning standards",
+    "Submit Builder's Remedy application",
+    "Jurisdiction review period",
+    "Receive project approval",
+  ],
+  not_applicable: [],
+};
+
+export const CEQA_MITIGATION_CATEGORIES = [
+  "Traffic & Transportation",
+  "Noise & Vibration",
+  "Air Quality",
+  "Greenhouse Gas Emissions",
+  "Biological Resources",
+  "Cultural & Tribal Resources",
+  "Hazards & Hazardous Materials",
+  "Hydrology & Water Quality",
+  "Land Use & Planning",
+  "Aesthetics & Visual",
+  "Public Services",
+  "Utilities & Service Systems",
+  "Recreation",
+  "Other",
+] as const;
+
 // ─── API Response ───────────────────────────────────────────────────────────
 
 export interface ApiResponse<T> {

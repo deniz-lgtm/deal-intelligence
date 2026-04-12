@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
   Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3, Target, Pencil, GitCompare,
+  Car, Building2, Layers, Construction, ArrowDownUp,
 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -13,6 +14,17 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import DealNotes from "@/components/DealNotes";
 import { UnderwritingCoPilot } from "@/components/UnderwritingCoPilot";
+import type {
+  DevBudgetLineItem, ParkingConfig, ParkingEntry, ParkingType,
+  LeaseUpConfig, ConstructionLoanConfig, ConstructionDrawPeriod,
+  MixedUseConfig, MixedUseComponent, MixedUseComponentType,
+  RedevelopmentConfig,
+} from "@/lib/types";
+import {
+  DEFAULT_DEV_BUDGET_HARD, DEFAULT_DEV_BUDGET_SOFT,
+  PARKING_TYPE_LABELS, PARKING_COST_DEFAULTS,
+  MIXED_USE_COMPONENT_LABELS,
+} from "@/lib/types";
 
 type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 
@@ -138,6 +150,18 @@ interface UWData {
   // Zoning
   zoning_designation: string;
   zoning_data: ZoningData | null;
+  // ── Ground-Up Development Budget (itemized) ──
+  dev_budget_items: DevBudgetLineItem[];
+  // ── Parking Configuration ──
+  parking: ParkingConfig | null;
+  // ── Absorption / Lease-Up ──
+  lease_up: LeaseUpConfig | null;
+  // ── Construction Loan ──
+  construction_loan: ConstructionLoanConfig | null;
+  // ── Mixed-Use Components ──
+  mixed_use: MixedUseConfig | null;
+  // ── Redevelopment Overlay ──
+  redevelopment: RedevelopmentConfig | null;
 }
 
 const DEFAULT: UWData = {
@@ -187,6 +211,18 @@ const DEFAULT: UWData = {
   lc_new_pct: 6, lc_renewal_pct: 3, lc_renewal_prob: 60,
   zoning_designation: "",
   zoning_data: null,
+  // Ground-up development budget (itemized)
+  dev_budget_items: [],
+  // Parking
+  parking: null,
+  // Lease-up
+  lease_up: null,
+  // Construction loan
+  construction_loan: null,
+  // Mixed-use
+  mixed_use: null,
+  // Redevelopment
+  redevelopment: null,
 };
 
 const EFFICIENCY_DEFAULTS: Record<string, number> = {
@@ -209,6 +245,46 @@ const newGroup = (): UnitGroup => ({
 });
 
 const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity: 1, cost_per_unit: 0 });
+
+// ── Factory helpers for new feature types ────────────────────────────────
+function newDevBudgetItem(label: string, category: "hard" | "soft", subcategory: string, unit_label: string): DevBudgetLineItem {
+  return { id: uuidv4(), label, category, subcategory, amount: 0, quantity: 0, unit_cost: 0, unit_label, is_pct: unit_label === "% of hard", pct_basis: unit_label === "% of hard" ? "hard_costs" : "none", pct_value: 0, notes: "" };
+}
+
+function seedDevBudget(): DevBudgetLineItem[] {
+  return [
+    ...DEFAULT_DEV_BUDGET_HARD.map(h => newDevBudgetItem(h.label, "hard", h.subcategory, h.unit_label)),
+    ...DEFAULT_DEV_BUDGET_SOFT.map(s => newDevBudgetItem(s.label, "soft", s.subcategory, s.unit_label)),
+  ];
+}
+
+function newParkingEntry(type: ParkingType = "surface"): ParkingEntry {
+  return { id: uuidv4(), type, spaces: 0, cost_per_space: PARKING_COST_DEFAULTS[type], reserved_residential_spaces: 0, reserved_monthly_rate: 0, unreserved_spaces: 0, unreserved_monthly_rate: 0, guest_visitor_spaces: 0, retail_shared_spaces: 0, retail_shared_monthly_rate: 0 };
+}
+
+function defaultParkingConfig(): ParkingConfig {
+  return { entries: [], zoning_required_ratio_residential: 1.5, zoning_required_ratio_commercial: 4.0 };
+}
+
+function defaultLeaseUp(): LeaseUpConfig {
+  return { construction_months: 18, absorption_units_per_month: 15, concession_free_months: 1, concession_per_unit: 0, stabilization_occupancy_pct: 93 };
+}
+
+function defaultConstructionLoan(): ConstructionLoanConfig {
+  return { ltc_pct: 65, rate: 7.5, term_months: 24, draw_schedule: [] };
+}
+
+function newMixedUseComponent(type: MixedUseComponentType): MixedUseComponent {
+  return { id: uuidv4(), component_type: type, label: MIXED_USE_COMPONENT_LABELS[type], sf_allocation: 0, unit_groups: type === "residential" ? [newGroup()] : [], opex_mode: "shared", opex_allocation_pct: type === "residential" ? 70 : 30, cap_rate: type === "residential" ? 5.0 : 6.5, ti_allowance_per_sf: 0, leasing_commission_pct: type === "retail" ? 6 : 0, free_rent_months: 0, rent_escalation_pct: 3 };
+}
+
+function defaultMixedUseConfig(): MixedUseConfig {
+  return { enabled: false, total_gfa: 0, components: [], common_area_sf: 0 };
+}
+
+function defaultRedevelopment(): RedevelopmentConfig {
+  return { enabled: false, existing_use: "", existing_sf: 0, existing_noi: 0, existing_occupancy_pct: 0, vacancy_period_months: 3, demolition_period_months: 3, construction_period_months: 18, demolition_items: [], is_phased: false, phase_1_label: "Phase 1 — Parking Lot", phase_1_sf: 0, phase_1_timeline_months: 18, phase_2_label: "Phase 2 — Main Building", phase_2_sf: 0, phase_2_timeline_months: 24, existing_parking_spaces: 0, parking_spaces_converted: 0, new_parking_spaces_built: 0 };
+}
 
 /** Use in-place value if it has been entered (> 0), otherwise fall back to pro forma. */
 /** Return the in-place value as-is (0 means not entered → stays 0). */
@@ -265,7 +341,14 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   // ── Other Income (RUBS, Parking, Laundry) ──────────────────────────────────
   const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
-  const otherIncomeParking = (d.parking_monthly || 0) * 12;
+  // Parking revenue: use itemized parking config if available, else legacy flat monthly
+  const parkingEntries = d.parking?.entries || [];
+  const otherIncomeParking = parkingEntries.length > 0
+    ? parkingEntries.reduce((s, e) => s
+        + (e.reserved_residential_spaces * e.reserved_monthly_rate)
+        + (e.unreserved_spaces * e.unreserved_monthly_rate)
+        + (e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12
+    : (d.parking_monthly || 0) * 12;
   const otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
   const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry;
 
@@ -341,15 +424,69 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   // ── Cost Basis ──────────────────────────────────────────────────────────────
   const capexTotal = d.capex_items.reduce((s, c) => s + c.quantity * c.cost_per_unit, 0);
-  const totalHardCosts = d.development_mode ? d.hard_cost_per_sf * (d.max_gsf || 0) : 0;
-  const softCostsTotal = d.development_mode ? totalHardCosts * (d.soft_cost_pct / 100) : 0;
+
+  // Development budget: use itemized line items if populated, else fall back to legacy
+  const devBudgetItems = d.dev_budget_items || [];
+  const hasItemizedBudget = d.development_mode && devBudgetItems.length > 0 && devBudgetItems.some(i => i.amount > 0);
+
+  // Compute itemized hard/soft costs with % items resolving against non-% hard total
+  let itemizedHardBase = 0, itemizedSoftBase = 0;
+  if (hasItemizedBudget) {
+    // First pass: sum non-percentage items
+    for (const item of devBudgetItems) {
+      if (!item.is_pct && item.category === "hard") itemizedHardBase += item.amount;
+      if (!item.is_pct && item.category === "soft") itemizedSoftBase += item.amount;
+    }
+    // Second pass: resolve percentage items against the base
+    for (const item of devBudgetItems) {
+      if (item.is_pct && item.pct_basis === "hard_costs") {
+        const resolved = itemizedHardBase * (item.pct_value / 100);
+        if (item.category === "hard") itemizedHardBase += resolved;
+        else itemizedSoftBase += resolved;
+      }
+    }
+  }
+
+  // Parking total cost from parking config
+  const totalParkingCost = parkingEntries.reduce((s, e) => s + e.spaces * e.cost_per_space, 0);
+
+  const totalHardCosts = d.development_mode
+    ? (hasItemizedBudget ? itemizedHardBase : d.hard_cost_per_sf * (d.max_gsf || 0))
+    : 0;
+  const softCostsTotal = d.development_mode
+    ? (hasItemizedBudget ? itemizedSoftBase : totalHardCosts * (d.soft_cost_pct / 100))
+    : 0;
+
+  // Construction interest carry
+  let capitalizedInterest = 0;
+  const cl = d.construction_loan;
+  if (d.development_mode && cl && cl.rate > 0 && cl.term_months > 0) {
+    const totalBudget = totalHardCosts + softCostsTotal + (d.development_mode ? totalParkingCost : 0);
+    const loanAmount = totalBudget * (cl.ltc_pct / 100);
+    const monthlyRate = cl.rate / 100 / 12;
+    if (cl.draw_schedule.length > 0) {
+      // Use explicit draw schedule
+      for (let m = 1; m <= cl.term_months; m++) {
+        const draw = cl.draw_schedule.find(dp => dp.month === m);
+        const cumPct = draw ? draw.cumulative_pct / 100 : (cl.draw_schedule.filter(dp => dp.month <= m).pop()?.cumulative_pct || 0) / 100;
+        capitalizedInterest += loanAmount * cumPct * monthlyRate;
+      }
+    } else {
+      // Linear draw: average 50% outstanding
+      capitalizedInterest = loanAmount * 0.5 * monthlyRate * cl.term_months;
+    }
+  }
+
+  // Redevelopment costs
+  const redev = d.redevelopment;
+  const demolitionCosts = redev?.enabled ? (redev.demolition_items || []).reduce((s, i) => s + i.amount, 0) : 0;
+  const lostIncome = redev?.enabled ? redev.existing_noi * (redev.vacancy_period_months + redev.demolition_period_months) / 12 : 0;
+
   let closingCosts: number, totalCost: number;
   if (d.development_mode) {
-    // Ground-up: land + hard costs (per GSF) + soft costs (% of hard) + closing on land
     closingCosts = d.land_cost * (d.closing_costs_pct / 100);
-    totalCost = d.land_cost + totalHardCosts + softCostsTotal + closingCosts;
+    totalCost = d.land_cost + totalHardCosts + softCostsTotal + totalParkingCost + capitalizedInterest + closingCosts + demolitionCosts;
   } else {
-    // Value-add / acquisition: purchase + closing + capex
     closingCosts = d.purchase_price * (d.closing_costs_pct / 100);
     totalCost = d.purchase_price + closingCosts + capexTotal;
   }
@@ -535,7 +672,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     grm, proformaGRM, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
     proformaCapRate,
     exitPricePerUnit, exitPricePerBed, exitPricePerSF,
-    capexTotal, capexPerSF, capexPerUnit, capexPerBed, closingCosts, totalCost, totalHardCosts, softCostsTotal,
+    capexTotal, capexPerSF, capexPerUnit, capexPerBed, closingCosts, totalCost, totalHardCosts, softCostsTotal, totalParkingCost, capitalizedInterest, demolitionCosts, lostIncome,
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
     acqLoan, acqDebt, acqDebtIO, yr1Debt, equity, cashFlow, coc, dscr, blendedLtc,
