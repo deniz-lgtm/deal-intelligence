@@ -898,14 +898,58 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 const hasBelowGrade = scenario.floors.some((f: { is_below_grade: boolean; use_type: string }) => f.is_below_grade && f.use_type === "parking");
                 const hasAboveGrade = scenario.floors.some((f: { is_below_grade: boolean; use_type: string }) => !f.is_below_grade && f.use_type === "parking");
 
+                // Determine if mixed-use (has multiple use types in massing)
+                const useTypes = Array.from(new Set(scenario.floors.filter((f: { use_type: string }) => f.use_type !== "mechanical" && f.use_type !== "parking").map((f: { use_type: string }) => f.use_type)));
+                const isMixedUse = useTypes.length > 1;
+
+                // Build mixed-use config if multiple use types
+                const mixedUseConfig = isMixedUse ? {
+                  enabled: true,
+                  total_gfa: summary.total_gsf,
+                  common_area_sf: 0,
+                  components: useTypes.map((t: string) => ({
+                    id: crypto.randomUUID(),
+                    component_type: t === "lobby_amenity" ? "other" : t,
+                    label: t === "residential" ? "Residential" : t === "retail" ? "Retail" : t === "office" ? "Office" : t,
+                    sf_allocation: summary.gsf_by_use[t as keyof typeof summary.gsf_by_use] || 0,
+                    unit_groups: [],
+                    opex_mode: "shared",
+                    opex_allocation_pct: t === "residential" ? 70 : 30,
+                    cap_rate: t === "residential" ? 5.0 : 6.5,
+                    ti_allowance_per_sf: 0,
+                    leasing_commission_pct: t === "retail" ? 6 : 0,
+                    free_rent_months: 0,
+                    rent_escalation_pct: 3,
+                  })),
+                } : current.mixed_use || null;
+
                 const merged = {
                   ...current,
+                  // Core building metrics
                   max_gsf: summary.total_gsf,
                   max_nrsf: summary.total_nrsf,
                   efficiency_pct: summary.total_gsf > 0 ? Math.round((summary.total_nrsf / summary.total_gsf) * 100) : devParams.efficiency_pct,
+                  // Development mode + zoning fields
+                  development_mode: true,
+                  far: devParams.far || current.far || 0,
+                  lot_coverage_pct: devParams.lot_coverage_pct || current.lot_coverage_pct || 0,
+                  height_limit_stories: devParams.height_limit_stories || current.height_limit_stories || 0,
+                  // Site info
+                  site_info: siteInfo,
+                  zoning_info: zoning,
+                  dev_params: devParams,
+                  // Unit groups from mix
                   unit_groups: unitGroups,
+                  // Mixed-use config
+                  mixed_use: mixedUseConfig,
+                  // Parking per-space from massing
+                  parking_reserved_spaces: parkingSpaces,
+                  parking_reserved_rate: 0,
+                  parking_unreserved_spaces: 0,
+                  parking_unreserved_rate: 0,
+                  // Building program
                   building_program: buildingProgram,
-                  // Push parking if massing has parking floors
+                  // Push parking config if massing has parking floors
                   ...(parkingSpaces > 0 ? {
                     parking: {
                       ...(current.parking || {}),
@@ -913,8 +957,8 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                         ...(hasBelowGrade ? [{ id: crypto.randomUUID(), type: "underground", spaces: Math.round(parkingSpaces * (hasAboveGrade ? 0.5 : 1)), cost_per_space: current.parking?.entries?.[0]?.cost_per_space || 55000, reserved_residential_spaces: 0, reserved_monthly_rate: 0, unreserved_spaces: 0, unreserved_monthly_rate: 0, guest_visitor_spaces: 0, retail_shared_spaces: 0, retail_shared_monthly_rate: 0 }] : []),
                         ...(hasAboveGrade ? [{ id: crypto.randomUUID(), type: "structured", spaces: Math.round(parkingSpaces * (hasBelowGrade ? 0.5 : 1)), cost_per_space: current.parking?.entries?.[0]?.cost_per_space || 35000, reserved_residential_spaces: 0, reserved_monthly_rate: 0, unreserved_spaces: 0, unreserved_monthly_rate: 0, guest_visitor_spaces: 0, retail_shared_spaces: 0, retail_shared_monthly_rate: 0 }] : []),
                       ],
-                      zoning_required_ratio_residential: current.parking?.zoning_required_ratio_residential || 1.5,
-                      zoning_required_ratio_commercial: current.parking?.zoning_required_ratio_commercial || 4.0,
+                      zoning_required_ratio_residential: current.parking?.zoning_required_ratio_residential || zoning.parking_ratio_residential || 1.5,
+                      zoning_required_ratio_commercial: current.parking?.zoning_required_ratio_commercial || zoning.parking_ratio_commercial || 4.0,
                     },
                   } : {}),
                 };
