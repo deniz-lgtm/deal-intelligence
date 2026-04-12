@@ -1333,6 +1333,29 @@ export interface ParkingConfig {
   entries: ParkingEntry[];
   zoning_required_ratio_residential: number;  // spaces per unit
   zoning_required_ratio_commercial: number;   // spaces per 1,000 SF
+  // ── Shared Parking / Peak Offset Analysis ──
+  shared_parking_enabled: boolean;
+  shared_parking_study_completed: boolean;
+  shared_parking_study_date: string | null;
+  shared_parking_study_firm: string;
+  // Peak demand by use (% of total spaces needed at peak hour)
+  // Office peaks weekdays ~10am-2pm; Residential peaks evenings/weekends
+  // Retail peaks evenings/Saturdays. The offset allows fewer total spaces.
+  peak_demand_residential_weekday_pct: number;   // e.g. 60% — many residents at work
+  peak_demand_residential_evening_pct: number;   // e.g. 95%
+  peak_demand_residential_weekend_pct: number;   // e.g. 85%
+  peak_demand_office_weekday_pct: number;        // e.g. 90%
+  peak_demand_office_evening_pct: number;        // e.g. 10%
+  peak_demand_office_weekend_pct: number;        // e.g. 5%
+  peak_demand_retail_weekday_pct: number;        // e.g. 60%
+  peak_demand_retail_evening_pct: number;        // e.g. 80%
+  peak_demand_retail_weekend_pct: number;        // e.g. 100%
+  // Spaces by use (before shared parking reduction)
+  spaces_needed_residential: number;
+  spaces_needed_office: number;
+  spaces_needed_retail: number;
+  // Shared reduction — computed or manual override
+  shared_parking_reduction_pct: number;  // % reduction from non-shared total
 }
 
 // ─── Absorption / Lease-Up ────────────────────────────────────────────────

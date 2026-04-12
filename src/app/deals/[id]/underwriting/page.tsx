@@ -263,7 +263,16 @@ function newParkingEntry(type: ParkingType = "surface"): ParkingEntry {
 }
 
 function defaultParkingConfig(): ParkingConfig {
-  return { entries: [], zoning_required_ratio_residential: 1.5, zoning_required_ratio_commercial: 4.0 };
+  return {
+    entries: [], zoning_required_ratio_residential: 1.5, zoning_required_ratio_commercial: 4.0,
+    shared_parking_enabled: false, shared_parking_study_completed: false,
+    shared_parking_study_date: null, shared_parking_study_firm: "",
+    peak_demand_residential_weekday_pct: 60, peak_demand_residential_evening_pct: 95, peak_demand_residential_weekend_pct: 85,
+    peak_demand_office_weekday_pct: 90, peak_demand_office_evening_pct: 10, peak_demand_office_weekend_pct: 5,
+    peak_demand_retail_weekday_pct: 60, peak_demand_retail_evening_pct: 80, peak_demand_retail_weekend_pct: 100,
+    spaces_needed_residential: 0, spaces_needed_office: 0, spaces_needed_retail: 0,
+    shared_parking_reduction_pct: 0,
+  };
 }
 
 function defaultLeaseUp(): LeaseUpConfig {
@@ -2797,6 +2806,141 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     </table>
                   </>
                 )}
+
+                {/* ── Shared Parking / Peak Offset Analysis ── */}
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 mt-4">Shared Parking Strategy</h4>
+                <label className="flex items-center gap-2 text-sm mb-3">
+                  <input type="checkbox" checked={pk.shared_parking_enabled} onChange={e => setPk(p => ({ ...p, shared_parking_enabled: e.target.checked }))} className="accent-primary" />
+                  Enable Shared Parking / Peak Offset Analysis
+                </label>
+                {pk.shared_parking_enabled && (() => {
+                  // Compute peak demand across time periods — the minimum total across all periods = shared parking target
+                  const resDemand = pk.spaces_needed_residential || (pk.zoning_required_ratio_residential * m.totalUnits);
+                  const offDemand = pk.spaces_needed_office;
+                  const retDemand = pk.spaces_needed_retail;
+                  const nonSharedTotal = resDemand + offDemand + retDemand;
+
+                  const weekdayPeak = (resDemand * pk.peak_demand_residential_weekday_pct / 100)
+                    + (offDemand * pk.peak_demand_office_weekday_pct / 100)
+                    + (retDemand * pk.peak_demand_retail_weekday_pct / 100);
+                  const eveningPeak = (resDemand * pk.peak_demand_residential_evening_pct / 100)
+                    + (offDemand * pk.peak_demand_office_evening_pct / 100)
+                    + (retDemand * pk.peak_demand_retail_evening_pct / 100);
+                  const weekendPeak = (resDemand * pk.peak_demand_residential_weekend_pct / 100)
+                    + (offDemand * pk.peak_demand_office_weekend_pct / 100)
+                    + (retDemand * pk.peak_demand_retail_weekend_pct / 100);
+                  const maxPeak = Math.max(weekdayPeak, eveningPeak, weekendPeak);
+                  const computedReduction = nonSharedTotal > 0 ? ((nonSharedTotal - maxPeak) / nonSharedTotal) * 100 : 0;
+                  const effectiveReduction = pk.shared_parking_reduction_pct > 0 ? pk.shared_parking_reduction_pct : computedReduction;
+                  const sharedTotal = Math.ceil(nonSharedTotal * (1 - effectiveReduction / 100));
+                  const spacesSaved = Math.floor(nonSharedTotal - sharedTotal);
+                  const costSaved = spacesSaved * (pk.entries.length > 0 ? pk.entries.reduce((s, e) => s + e.cost_per_space * e.spaces, 0) / Math.max(totalSpaces, 1) : 35000);
+
+                  return (
+                    <>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        Shared parking leverages peak-hour offsets between uses — office peaks weekday daytime, residential peaks evenings/weekends.
+                        A parking study can justify 20-40% fewer total spaces vs. separate ratios per use.
+                      </p>
+
+                      {/* Parking study info */}
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <label className="block text-xs font-medium text-muted-foreground mb-1">Parking Study Firm</label>
+                          <input type="text" value={pk.shared_parking_study_firm} onChange={e => setPk(p => ({ ...p, shared_parking_study_firm: e.target.value }))} placeholder="e.g. Walker Consultants" className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none" />
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <label className="flex items-center gap-2 text-sm">
+                            <input type="checkbox" checked={pk.shared_parking_study_completed} onChange={e => setPk(p => ({ ...p, shared_parking_study_completed: e.target.checked }))} className="accent-primary" />
+                            Study Completed
+                          </label>
+                          {pk.shared_parking_study_completed && (
+                            <input type="date" value={pk.shared_parking_study_date || ""} onChange={e => setPk(p => ({ ...p, shared_parking_study_date: e.target.value || null }))} className="border rounded-md px-2 py-1.5 text-sm bg-background outline-none" />
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Spaces needed by use */}
+                      <div className="grid grid-cols-3 gap-4 mb-4">
+                        <NumInput label="Spaces Needed — Residential" value={pk.spaces_needed_residential || Math.ceil(resDemand)} onChange={v => setPk(p => ({ ...p, spaces_needed_residential: v }))} />
+                        <NumInput label="Spaces Needed — Office" value={pk.spaces_needed_office} onChange={v => setPk(p => ({ ...p, spaces_needed_office: v }))} />
+                        <NumInput label="Spaces Needed — Retail" value={pk.spaces_needed_retail} onChange={v => setPk(p => ({ ...p, spaces_needed_retail: v }))} />
+                      </div>
+
+                      {/* Peak demand matrix */}
+                      <table className="w-full text-sm border-collapse mb-4">
+                        <thead>
+                          <tr className="bg-muted/30 border-b">
+                            <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Use</th>
+                            <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Spaces</th>
+                            <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">Weekday Day</th>
+                            <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">Evening</th>
+                            <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">Weekend</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b hover:bg-muted/10">
+                            <td className="px-2 py-1.5 font-medium">
+                              <span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-2" />Residential
+                            </td>
+                            <td className="px-2 py-1.5 text-center tabular-nums">{fn(Math.ceil(resDemand))}</td>
+                            <td className="px-2 py-1.5"><CellInput value={pk.peak_demand_residential_weekday_pct} onChange={v => setPk(p => ({ ...p, peak_demand_residential_weekday_pct: v }))} suffix="%" decimals={0} /></td>
+                            <td className="px-2 py-1.5"><CellInput value={pk.peak_demand_residential_evening_pct} onChange={v => setPk(p => ({ ...p, peak_demand_residential_evening_pct: v }))} suffix="%" decimals={0} /></td>
+                            <td className="px-2 py-1.5"><CellInput value={pk.peak_demand_residential_weekend_pct} onChange={v => setPk(p => ({ ...p, peak_demand_residential_weekend_pct: v }))} suffix="%" decimals={0} /></td>
+                          </tr>
+                          <tr className="border-b hover:bg-muted/10">
+                            <td className="px-2 py-1.5 font-medium">
+                              <span className="inline-block w-2 h-2 rounded-full bg-purple-500 mr-2" />Office
+                            </td>
+                            <td className="px-2 py-1.5 text-center tabular-nums">{fn(offDemand)}</td>
+                            <td className="px-2 py-1.5"><CellInput value={pk.peak_demand_office_weekday_pct} onChange={v => setPk(p => ({ ...p, peak_demand_office_weekday_pct: v }))} suffix="%" decimals={0} /></td>
+                            <td className="px-2 py-1.5"><CellInput value={pk.peak_demand_office_evening_pct} onChange={v => setPk(p => ({ ...p, peak_demand_office_evening_pct: v }))} suffix="%" decimals={0} /></td>
+                            <td className="px-2 py-1.5"><CellInput value={pk.peak_demand_office_weekend_pct} onChange={v => setPk(p => ({ ...p, peak_demand_office_weekend_pct: v }))} suffix="%" decimals={0} /></td>
+                          </tr>
+                          <tr className="border-b hover:bg-muted/10">
+                            <td className="px-2 py-1.5 font-medium">
+                              <span className="inline-block w-2 h-2 rounded-full bg-amber-500 mr-2" />Retail
+                            </td>
+                            <td className="px-2 py-1.5 text-center tabular-nums">{fn(retDemand)}</td>
+                            <td className="px-2 py-1.5"><CellInput value={pk.peak_demand_retail_weekday_pct} onChange={v => setPk(p => ({ ...p, peak_demand_retail_weekday_pct: v }))} suffix="%" decimals={0} /></td>
+                            <td className="px-2 py-1.5"><CellInput value={pk.peak_demand_retail_evening_pct} onChange={v => setPk(p => ({ ...p, peak_demand_retail_evening_pct: v }))} suffix="%" decimals={0} /></td>
+                            <td className="px-2 py-1.5"><CellInput value={pk.peak_demand_retail_weekend_pct} onChange={v => setPk(p => ({ ...p, peak_demand_retail_weekend_pct: v }))} suffix="%" decimals={0} /></td>
+                          </tr>
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t bg-muted/20">
+                            <td className="px-2 py-1.5 font-semibold">Peak Demand</td>
+                            <td className="px-2 py-1.5 text-center tabular-nums font-semibold">{fn(Math.ceil(nonSharedTotal))}</td>
+                            <td className="px-2 py-1.5 text-center tabular-nums font-medium">{fn(Math.ceil(weekdayPeak))}</td>
+                            <td className="px-2 py-1.5 text-center tabular-nums font-medium">{fn(Math.ceil(eveningPeak))}</td>
+                            <td className="px-2 py-1.5 text-center tabular-nums font-medium">{fn(Math.ceil(weekendPeak))}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+
+                      {/* Reduction override */}
+                      <div className="grid grid-cols-2 gap-4 mb-3">
+                        <NumInput label="Shared Parking Reduction (override or auto)" value={pk.shared_parking_reduction_pct || Math.round(computedReduction * 10) / 10} onChange={v => setPk(p => ({ ...p, shared_parking_reduction_pct: v }))} suffix="%" decimals={1} />
+                        <div>
+                          <label className="block text-xs font-medium text-muted-foreground mb-1">Auto-Computed Reduction</label>
+                          <p className="text-sm font-semibold py-1.5 text-primary">{computedReduction.toFixed(1)}%</p>
+                        </div>
+                      </div>
+
+                      {/* Results summary */}
+                      <div className={`rounded-md p-3 text-sm space-y-1.5 ${spacesSaved > 0 ? "bg-emerald-500/10 border border-emerald-500/30" : "bg-muted/10 border"}`}>
+                        <div className="flex justify-between"><span>Non-Shared Total (all uses at full ratio)</span><span className="font-semibold tabular-nums">{fn(Math.ceil(nonSharedTotal))} spaces</span></div>
+                        <div className="flex justify-between"><span>Peak Period</span><span className="font-semibold tabular-nums">{weekdayPeak >= eveningPeak && weekdayPeak >= weekendPeak ? "Weekday Day" : eveningPeak >= weekendPeak ? "Evening" : "Weekend"} — {fn(Math.ceil(maxPeak))} spaces</span></div>
+                        <div className="flex justify-between"><span>Shared Parking Target</span><span className="font-semibold tabular-nums text-emerald-400">{fn(sharedTotal)} spaces ({effectiveReduction.toFixed(1)}% reduction)</span></div>
+                        <div className="flex justify-between"><span>Spaces Saved</span><span className="font-semibold tabular-nums text-emerald-400">{fn(spacesSaved)} spaces</span></div>
+                        <div className="flex justify-between"><span>Estimated Cost Savings</span><span className="font-semibold tabular-nums text-emerald-400">{fc(costSaved)}</span></div>
+                        {!pk.shared_parking_study_completed && (
+                          <p className="text-xs text-amber-400 mt-2 font-medium">Note: Cities typically require a formal parking study by a traffic engineer to approve shared parking reductions. Budget $15K-$50K for the study.</p>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </>
             );
           })()}
