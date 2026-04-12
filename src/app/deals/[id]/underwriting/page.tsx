@@ -121,6 +121,11 @@ interface UWData {
   refi_loan_narrative: string;
   // Other income (monthly, property-level)
   rubs_per_unit_monthly: number; parking_monthly: number; laundry_monthly: number;
+  // Per-space parking revenue
+  parking_reserved_spaces: number;
+  parking_reserved_rate: number;       // $/space/month
+  parking_unreserved_spaces: number;
+  parking_unreserved_rate: number;     // $/space/month
   rent_growth_pct: number; expense_growth_pct: number;
   exit_cap_rate: number; hold_period_years: number; notes: string;
   scenarios: Scenario[];
@@ -179,6 +184,8 @@ const DEFAULT: UWData = {
   ip_repairs_annual: 0, ip_utilities_annual: 0, ip_other_annual: 0,
   ip_ga_annual: 0, ip_marketing_annual: 0, ip_reserves_annual: 0,
   rubs_per_unit_monthly: 0, parking_monthly: 0, laundry_monthly: 0,
+  parking_reserved_spaces: 0, parking_reserved_rate: 0,
+  parking_unreserved_spaces: 0, parking_unreserved_rate: 0,
   has_financing: true, acq_ltc: 65, acq_interest_rate: 6.5,
   acq_pp_ltv: 70, acq_capex_ltv: 100,
   acq_amort_years: 25, acq_io_years: 0,
@@ -350,14 +357,18 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   // ── Other Income (RUBS, Parking, Laundry) ──────────────────────────────────
   const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
-  // Parking revenue: use itemized parking config if available, else legacy flat monthly
+  // Parking revenue: per-space pricing → parking config entries → legacy flat monthly
   const parkingEntries = d.parking?.entries || [];
-  const otherIncomeParking = parkingEntries.length > 0
-    ? parkingEntries.reduce((s, e) => s
-        + (e.reserved_residential_spaces * e.reserved_monthly_rate)
-        + (e.unreserved_spaces * e.unreserved_monthly_rate)
-        + (e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12
-    : (d.parking_monthly || 0) * 12;
+  const perSpaceParkingMonthly = (d.parking_reserved_spaces || 0) * (d.parking_reserved_rate || 0)
+    + (d.parking_unreserved_spaces || 0) * (d.parking_unreserved_rate || 0);
+  const otherIncomeParking = perSpaceParkingMonthly > 0
+    ? perSpaceParkingMonthly * 12
+    : parkingEntries.length > 0
+      ? parkingEntries.reduce((s, e) => s
+          + (e.reserved_residential_spaces * e.reserved_monthly_rate)
+          + (e.unreserved_spaces * e.unreserved_monthly_rate)
+          + (e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12
+      : (d.parking_monthly || 0) * 12;
   const otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
   const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry;
 
@@ -856,7 +867,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     });
   };
   const isSH = deal?.property_type === "student_housing";
-  const isMF = deal?.property_type === "multifamily" || isSH;
+  const isMixedUseWithRes = deal?.property_type === "mixed_use" && (data.mixed_use?.components || []).some(c => c.component_type === "residential");
+  const isMF = deal?.property_type === "multifamily" || isSH || isMixedUseWithRes;
   const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
   const isGroundUp = deal?.investment_strategy === "ground_up";
 
@@ -2376,17 +2388,31 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <Plus className="h-4 w-4 mr-2" /> Add Row
             </Button>
           </div>
-          {/* Other Income */}
+          {/* Other Income + Parking Revenue */}
           <div className="mt-4 border-t pt-4">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Other Income</h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
               <NumInput label="RUBS / Unit / Month" value={d.rubs_per_unit_monthly} onChange={v => set("rubs_per_unit_monthly", v)} prefix="$" decimals={0} />
-              <NumInput label="Parking / Month (total)" value={d.parking_monthly} onChange={v => set("parking_monthly", v)} prefix="$" decimals={0} />
               <NumInput label="Laundry / Month (total)" value={d.laundry_monthly} onChange={v => set("laundry_monthly", v)} prefix="$" decimals={0} />
               <div className="p-3 bg-muted/50 rounded-lg">
                 <p className="text-xs text-muted-foreground mb-1">Total Other Income</p>
                 <p className="text-sm font-semibold">{fc(m.totalOtherIncome)}<span className="text-muted-foreground/60 text-xs">/yr</span></p>
               </div>
+            </div>
+
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Parking Revenue</h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+              <NumInput label="Reserved Spaces" value={d.parking_reserved_spaces} onChange={v => set("parking_reserved_spaces", v)} decimals={0} />
+              <NumInput label="Reserved $/Space/Mo" value={d.parking_reserved_rate} onChange={v => set("parking_reserved_rate", v)} prefix="$" decimals={0} />
+              <NumInput label="Unreserved Spaces" value={d.parking_unreserved_spaces} onChange={v => set("parking_unreserved_spaces", v)} decimals={0} />
+              <NumInput label="Unreserved $/Space/Mo" value={d.parking_unreserved_rate} onChange={v => set("parking_unreserved_rate", v)} prefix="$" decimals={0} />
+            </div>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span>Monthly: {fc((d.parking_reserved_spaces || 0) * (d.parking_reserved_rate || 0) + (d.parking_unreserved_spaces || 0) * (d.parking_unreserved_rate || 0))}</span>
+              <span>Annual: <span className="text-foreground font-medium">{fc(m.otherIncomeParking)}</span></span>
+              {(d.parking_reserved_spaces || 0) === 0 && (d.parking_unreserved_spaces || 0) === 0 && d.parking_monthly > 0 && (
+                <span className="text-amber-400">(using legacy flat ${d.parking_monthly}/mo)</span>
+              )}
             </div>
           </div>
         </div>
