@@ -5,9 +5,12 @@ import {
   Star,
   MapPin,
   FileText,
+  HardHat,
 } from "lucide-react";
 import { formatCurrency, cn, titleCase } from "@/lib/utils";
 import type { Deal } from "@/lib/types";
+import type { ExecutionPhase } from "@/lib/types";
+import { EXECUTION_PHASE_CONFIG } from "@/lib/types";
 
 interface KanbanCardProps {
   deal: Deal & { document_count?: number; checklist_complete?: number; checklist_total?: number; total_project_cost?: number | null };
@@ -72,6 +75,22 @@ export default function KanbanCard({ deal, onStar, onDragStart }: KanbanCardProp
           {formatCurrency(deal.total_project_cost && deal.total_project_cost > 0 ? deal.total_project_cost : deal.asking_price)}
         </p>
       ) : null}
+
+      {/* Execution badge for closed deals */}
+      {deal.execution_phase && (
+        <Link
+          href={`/deals/${deal.id}/construction`}
+          className="flex items-center gap-1.5 mb-2 px-2 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 transition-colors"
+          onClick={(e) => e.stopPropagation()}
+          draggable={false}
+        >
+          <HardHat className="h-3 w-3 text-amber-400" />
+          <span className="text-[10px] font-medium text-amber-400">In Execution</span>
+          <span className={cn("text-[10px] px-1 py-0 rounded ml-auto", EXECUTION_PHASE_CONFIG[deal.execution_phase]?.color ?? "")}>
+            {EXECUTION_PHASE_CONFIG[deal.execution_phase]?.label ?? deal.execution_phase}
+          </span>
+        </Link>
+      )}
 
       {/* Footer row */}
       <div className="flex items-center justify-between text-2xs text-muted-foreground">

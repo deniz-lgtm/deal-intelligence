@@ -617,6 +617,24 @@ export async function ensureColumns(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_progress_report_invites_deal_id ON progress_report_invites(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_change_orders (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      co_number INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      submitted_by TEXT,
+      cost_impact NUMERIC NOT NULL DEFAULT 0,
+      schedule_impact_days INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'draft',
+      submitted_date DATE,
+      decided_date DATE,
+      hardcost_category TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_change_orders_deal_id ON deal_change_orders(deal_id)`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -4169,6 +4187,62 @@ export const progressReportInviteQueries = {
   revoke: async (id: string) => {
     const pool = getPool();
     await pool.query("UPDATE progress_report_invites SET revoked_at = NOW() WHERE id = $1", [id]);
+  },
+};
+
+// ─── Change Order queries ─────────────────────────────────────────────────────
+
+export const changeOrderQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM deal_change_orders WHERE deal_id = $1 ORDER BY co_number",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (co: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_change_orders (id, deal_id, co_number, title, description, submitted_by, cost_impact, schedule_impact_days, status, submitted_date, decided_date, hardcost_category, notes, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+       RETURNING *`,
+      [
+        co.id, co.deal_id, co.co_number, co.title, co.description ?? "",
+        co.submitted_by ?? null, co.cost_impact ?? 0, co.schedule_impact_days ?? 0,
+        co.status ?? "draft", co.submitted_date ?? null, co.decided_date ?? null,
+        co.hardcost_category ?? null, co.notes ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [key, value] of Object.entries(updates)) {
+      if (["title", "description", "submitted_by", "cost_impact", "schedule_impact_days", "status", "submitted_date", "decided_date", "hardcost_category", "notes"].includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_change_orders SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM deal_change_orders WHERE id = $1", [id]);
   },
 };
 

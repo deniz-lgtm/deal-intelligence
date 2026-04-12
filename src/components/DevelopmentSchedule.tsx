@@ -347,6 +347,66 @@ export default function DevelopmentSchedule({ dealId }: Props) {
     return { left: `${left}%`, width: `${Math.max(width, 1)}%` };
   };
 
+  // ── Today marker position ──
+  const todayMs = Date.now();
+  const todayPct = minDate && maxDate && timelineRangeMs > 0
+    ? ((todayMs - new Date(minDate).getTime()) / timelineRangeMs) * 100
+    : null;
+  const showToday = todayPct !== null && todayPct >= 0 && todayPct <= 100;
+
+  // ── Critical path detection ──
+  // A phase is on the critical path if it has no slack: it's either an anchor
+  // or its predecessor is also critical, and it's not yet complete.
+  // Simple heuristic: phases that are in_progress or delayed with successor chains.
+  const criticalPhaseIds = new Set<string>();
+  const phaseById = new Map(phases.map((p) => [p.id, p]));
+  // Find the longest dependency chain (critical path heuristic)
+  const getChainEnd = (id: string): string | null => {
+    const successors = phases.filter((p) => p.predecessor_id === id);
+    if (successors.length === 0) return id;
+    // Pick the successor that ends latest
+    let latestEnd = "";
+    let latestId = id;
+    for (const s of successors) {
+      const chainEnd = getChainEnd(s.id);
+      const endPhase = chainEnd ? phaseById.get(chainEnd) : null;
+      if (endPhase?.end_date && endPhase.end_date > latestEnd) {
+        latestEnd = endPhase.end_date;
+        latestId = chainEnd!;
+      }
+    }
+    return latestId;
+  };
+  // Mark phases on the longest path that are not yet complete
+  if (phases.length > 0) {
+    // Find anchor phases (no predecessor)
+    const anchors = phases.filter((p) => !p.predecessor_id);
+    for (const anchor of anchors) {
+      // Walk the chain
+      let current: string | undefined = anchor.id;
+      while (current) {
+        const phase = phaseById.get(current);
+        if (phase && phase.status !== "complete") {
+          criticalPhaseIds.add(current);
+        }
+        const successors = phases.filter((p) => p.predecessor_id === current);
+        // Follow the successor that ends latest (critical path)
+        if (successors.length === 0) break;
+        let latest = successors[0];
+        for (const s of successors) {
+          if ((s.end_date || "") > (latest.end_date || "")) latest = s;
+        }
+        current = latest.id;
+      }
+    }
+  }
+
+  const isDelayed = (p: DevPhase) => {
+    if (p.status === "delayed") return true;
+    if (p.end_date && p.status !== "complete" && new Date(p.end_date).getTime() < todayMs) return true;
+    return false;
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -393,9 +453,28 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               <>
                 {/* Timeline range header */}
                 {minDate && maxDate && (
-                  <div className="flex justify-between text-2xs text-muted-foreground border-b border-border/30 pb-1">
+                  <div className="flex justify-between text-2xs text-muted-foreground border-b border-border/30 pb-1 relative">
                     <span>{new Date(minDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}</span>
+                    {showToday && (
+                      <span className="absolute text-[9px] text-red-400 font-medium" style={{ left: `calc(25% + ${todayPct! * 0.583}%)`, transform: "translateX(-50%)" }}>
+                        Today
+                      </span>
+                    )}
                     <span>{new Date(maxDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}</span>
+                  </div>
+                )}
+
+                {/* Legend */}
+                {criticalPhaseIds.size > 0 && (
+                  <div className="flex items-center gap-4 text-2xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-red-500/60" />
+                      Critical path
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-amber-500/60" />
+                      Delayed
+                    </span>
                   </div>
                 )}
 
@@ -407,15 +486,23 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                     const predLabel = p.predecessor_id
                       ? phases.find((x) => x.id === p.predecessor_id)?.label
                       : null;
+                    const isCritical = criticalPhaseIds.has(p.id);
+                    const delayed = isDelayed(p);
                     return (
                       <div key={p.id} className="group">
                         <div className="grid grid-cols-12 gap-2 items-center">
                           {/* Label */}
                           <button
                             onClick={() => openEditPhase(p)}
-                            className="col-span-3 text-left text-xs hover:text-primary truncate flex items-center gap-1"
+                            className={cn(
+                              "col-span-3 text-left text-xs hover:text-primary truncate flex items-center gap-1",
+                              delayed && "text-red-400"
+                            )}
                           >
-                            {!p.predecessor_id && (
+                            {isCritical && (
+                              <AlertTriangle className="h-2.5 w-2.5 text-red-400 flex-shrink-0" title="Critical path" />
+                            )}
+                            {!isCritical && !p.predecessor_id && (
                               <span className="text-2xs text-amber-400" title="Anchor phase">⚓</span>
                             )}
                             <span className="truncate">{p.label}</span>
@@ -425,10 +512,22 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                           </button>
                           {/* Bar */}
                           <div className="col-span-7 relative h-5 bg-muted/30 rounded">
+                            {/* Today marker */}
+                            {showToday && (
+                              <div
+                                className="absolute top-0 h-full w-px bg-red-500/50 z-10"
+                                style={{ left: `${todayPct}%` }}
+                              />
+                            )}
                             <div
-                              className={cn("absolute top-0 h-full rounded", cfg.bg)}
+                              className={cn(
+                                "absolute top-0 h-full rounded",
+                                delayed ? "bg-red-500/30 ring-1 ring-red-500/40" :
+                                isCritical ? "ring-1 ring-red-500/30 " + cfg.bg :
+                                cfg.bg
+                              )}
                               style={barStyle}
-                              title={`${p.label}: ${p.start_date || "?"} → ${p.end_date || "?"} (${p.pct_complete}%)${predLabel ? ` | After: ${predLabel}` : ""}`}
+                              title={`${p.label}: ${p.start_date || "?"} → ${p.end_date || "?"} (${p.pct_complete}%)${predLabel ? ` | After: ${predLabel}` : ""}${isCritical ? " [CRITICAL PATH]" : ""}${delayed ? " [DELAYED]" : ""}`}
                             >
                               {p.pct_complete > 0 && (
                                 <div
@@ -440,7 +539,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                           </div>
                           {/* Status + actions */}
                           <div className="col-span-2 flex items-center justify-end gap-1">
-                            <Badge variant="secondary" className={cn("text-2xs", cfg.color)}>
+                            <Badge variant="secondary" className={cn("text-2xs", delayed ? "text-red-400 bg-red-500/10" : cfg.color)}>
                               {p.pct_complete}%
                             </Badge>
                             <button

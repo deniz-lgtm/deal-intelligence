@@ -32,6 +32,7 @@ import {
   FileCheck,
   HardHat,
   ClipboardCheck,
+  FileWarning,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
@@ -110,6 +111,7 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
     { href: "/construction/permits", label: "Permits", icon: FileCheck },
     { href: "/construction/vendors", label: "Vendors", icon: Users },
     { href: "/construction/reports", label: "Reports", icon: ClipboardCheck },
+    { href: "/construction/change-orders", label: "Change Orders", icon: FileWarning },
   ],
 };
 

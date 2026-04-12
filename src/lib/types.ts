@@ -1596,6 +1596,36 @@ export const REPORT_PHOTO_CATEGORIES = [
   "Other",
 ] as const;
 
+// ─── Change Orders ────────────────────────────────────────────────────────
+
+export type ChangeOrderStatus = "draft" | "submitted" | "approved" | "rejected" | "voided";
+
+export interface ChangeOrder {
+  id: string;
+  deal_id: string;
+  co_number: number;
+  title: string;
+  description: string;
+  submitted_by: string | null;
+  cost_impact: number;
+  schedule_impact_days: number;
+  status: ChangeOrderStatus;
+  submitted_date: string | null;
+  decided_date: string | null;
+  hardcost_category: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const CHANGE_ORDER_STATUS_CONFIG: Record<ChangeOrderStatus, { label: string; color: string }> = {
+  draft: { label: "Draft", color: "bg-zinc-500/20 text-zinc-300" },
+  submitted: { label: "Submitted", color: "bg-blue-500/20 text-blue-300" },
+  approved: { label: "Approved", color: "bg-emerald-500/20 text-emerald-300" },
+  rejected: { label: "Rejected", color: "bg-red-500/20 text-red-300" },
+  voided: { label: "Voided", color: "bg-zinc-500/20 text-zinc-400" },
+};
+
 // ─── Chat ───────────────────────────────────────────────────────────────────
 
 export interface ChatMessage {
