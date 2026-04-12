@@ -158,7 +158,7 @@ export default function VendorDirectory({ dealId }: Props) {
             <select
               value={filterRole}
               onChange={(e) => setFilterRole(e.target.value)}
-              className="bg-card border border-border/40 rounded-md text-xs px-2 py-1 text-muted-foreground"
+              className="bg-background border border-border rounded-md text-xs px-2 py-1 text-foreground"
             >
               <option value="all">All roles</option>
               {roles.map((r) => (
@@ -261,7 +261,7 @@ export default function VendorDirectory({ dealId }: Props) {
                 type="text"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 placeholder="Vendor name"
               />
             </div>
@@ -271,7 +271,7 @@ export default function VendorDirectory({ dealId }: Props) {
                 <select
                   value={form.role}
                   onChange={(e) => setForm({ ...form, role: e.target.value })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 >
                   {VENDOR_ROLES.map((r) => (
                     <option key={r} value={r}>{r}</option>
@@ -284,7 +284,7 @@ export default function VendorDirectory({ dealId }: Props) {
                   type="text"
                   value={form.company}
                   onChange={(e) => setForm({ ...form, company: e.target.value })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   placeholder="Company name"
                 />
               </div>
@@ -296,7 +296,7 @@ export default function VendorDirectory({ dealId }: Props) {
                   type="email"
                   value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   placeholder="email@example.com"
                 />
               </div>
@@ -306,7 +306,7 @@ export default function VendorDirectory({ dealId }: Props) {
                   type="tel"
                   value={form.phone}
                   onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   placeholder="(555) 123-4567"
                 />
               </div>
@@ -317,7 +317,7 @@ export default function VendorDirectory({ dealId }: Props) {
                 <select
                   value={form.status}
                   onChange={(e) => setForm({ ...form, status: e.target.value as VendorStatus })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 >
                   {(Object.keys(VENDOR_STATUS_CONFIG) as VendorStatus[]).map((s) => (
                     <option key={s} value={s}>{VENDOR_STATUS_CONFIG[s].label}</option>
@@ -330,7 +330,7 @@ export default function VendorDirectory({ dealId }: Props) {
                   type="date"
                   value={form.engagement_date}
                   onChange={(e) => setForm({ ...form, engagement_date: e.target.value })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 />
               </div>
             </div>

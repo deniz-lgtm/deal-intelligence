@@ -336,7 +336,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
               <label className="block text-xs font-medium text-muted-foreground mb-1">Title *</label>
               <input
                 type="text"
-                className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={form.title}
                 onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
                 placeholder="CO title"
@@ -347,7 +347,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Description</label>
               <textarea
-                className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary min-h-[60px]"
+                className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary min-h-[60px]"
                 value={form.description}
                 onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
                 placeholder="Describe the change..."
@@ -359,7 +359,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
               <label className="block text-xs font-medium text-muted-foreground mb-1">Submitted By</label>
               <input
                 type="text"
-                className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={form.submitted_by}
                 onChange={(e) => setForm((f) => ({ ...f, submitted_by: e.target.value }))}
                 placeholder="Name or company"
@@ -372,7 +372,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
                 <label className="block text-xs font-medium text-muted-foreground mb-1">Cost Impact ($)</label>
                 <input
                   type="number"
-                  className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={form.cost_impact}
                   onChange={(e) => setForm((f) => ({ ...f, cost_impact: Number(e.target.value) }))}
                   placeholder="Positive = cost, negative = credit"
@@ -382,7 +382,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
                 <label className="block text-xs font-medium text-muted-foreground mb-1">Schedule Impact (days)</label>
                 <input
                   type="number"
-                  className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={form.schedule_impact_days}
                   onChange={(e) => setForm((f) => ({ ...f, schedule_impact_days: Number(e.target.value) }))}
                   placeholder="Days added"
@@ -394,7 +394,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Status</label>
               <select
-                className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={form.status}
                 onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as ChangeOrderStatus }))}
               >
@@ -412,7 +412,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
                 <label className="block text-xs font-medium text-muted-foreground mb-1">Submitted Date</label>
                 <input
                   type="date"
-                  className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={form.submitted_date}
                   onChange={(e) => setForm((f) => ({ ...f, submitted_date: e.target.value }))}
                 />
@@ -421,7 +421,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
                 <label className="block text-xs font-medium text-muted-foreground mb-1">Decided Date</label>
                 <input
                   type="date"
-                  className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={form.decided_date}
                   onChange={(e) => setForm((f) => ({ ...f, decided_date: e.target.value }))}
                 />
@@ -432,7 +432,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Hard Cost Category (optional)</label>
               <select
-                className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={form.hardcost_category}
                 onChange={(e) => setForm((f) => ({ ...f, hardcost_category: e.target.value }))}
               >
@@ -449,7 +449,7 @@ export default function ChangeOrderTracker({ dealId }: Props) {
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Notes</label>
               <textarea
-                className="w-full px-3 py-2 rounded-md border border-border/50 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary min-h-[48px]"
+                className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary min-h-[48px]"
                 value={form.notes}
                 onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
                 placeholder="Additional notes..."

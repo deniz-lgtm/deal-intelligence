@@ -170,7 +170,7 @@ export default function SiteWalkDeficiencies({ dealId, walkId, deficiencies, pho
               <select
                 value={areaTag}
                 onChange={(e) => setAreaTag(e.target.value as SiteWalkAreaTag)}
-                className="w-full text-xs border rounded px-2 py-1 bg-background mt-0.5"
+                className="w-full text-xs border border-border rounded px-2 py-1 bg-background text-foreground mt-0.5"
               >
                 {AREA_OPTIONS.map((a) => (
                   <option key={a} value={a}>
@@ -184,7 +184,7 @@ export default function SiteWalkDeficiencies({ dealId, walkId, deficiencies, pho
               <select
                 value={severity}
                 onChange={(e) => setSeverity(e.target.value as DeficiencySeverity)}
-                className="w-full text-xs border rounded px-2 py-1 bg-background mt-0.5"
+                className="w-full text-xs border border-border rounded px-2 py-1 bg-background text-foreground mt-0.5"
               >
                 {SEVERITY_OPTIONS.map((s) => (
                   <option key={s} value={s}>
@@ -198,7 +198,7 @@ export default function SiteWalkDeficiencies({ dealId, walkId, deficiencies, pho
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full text-xs border rounded px-2 py-1 bg-background mt-0.5"
+                className="w-full text-xs border border-border rounded px-2 py-1 bg-background text-foreground mt-0.5"
               >
                 {CATEGORY_OPTIONS.map((c) => (
                   <option key={c} value={c}>
@@ -214,7 +214,7 @@ export default function SiteWalkDeficiencies({ dealId, walkId, deficiencies, pho
                 value={estimatedCost}
                 onChange={(e) => setEstimatedCost(e.target.value)}
                 placeholder="0"
-                className="w-full text-xs border rounded px-2 py-1 bg-background mt-0.5"
+                className="w-full text-xs border border-border rounded px-2 py-1 bg-background text-foreground mt-0.5"
               />
             </div>
           </div>

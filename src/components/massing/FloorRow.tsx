@@ -59,7 +59,7 @@ export default function FloorRow({ floor, onChange, onDelete }: FloorRowProps) {
                 efficiency_pct: t === "parking" ? 98 : t === "retail" ? 95 : t === "residential" ? 80 : t === "office" ? 87 : t === "lobby_amenity" ? 60 : 0,
                 units_on_floor: t === "residential" ? floor.units_on_floor : 0,
               });
-            }} className="bg-transparent text-xs outline-none w-[90px]">
+            }} className="bg-background text-xs text-foreground outline-none w-[90px] rounded border border-border/40">
               {(Object.keys(FLOOR_USE_TYPE_LABELS) as FloorUseType[]).map(t => (
                 <option key={t} value={t}>{FLOOR_USE_TYPE_LABELS[t]}</option>
               ))}
@@ -95,7 +95,7 @@ export default function FloorRow({ floor, onChange, onDelete }: FloorRowProps) {
           <td className="px-1 py-1">
             <div className="flex items-center gap-1.5 pl-4">
               <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: FLOOR_USE_COLORS[floor.secondary_use!].fill }} />
-              <select value={floor.secondary_use!} onChange={e => onChange({ secondary_use: e.target.value as FloorUseType })} className="bg-transparent text-xs outline-none w-[80px]">
+              <select value={floor.secondary_use!} onChange={e => onChange({ secondary_use: e.target.value as FloorUseType })} className="bg-background text-xs text-foreground outline-none w-[80px] rounded border border-border/40">
                 {(Object.keys(FLOOR_USE_TYPE_LABELS) as FloorUseType[]).filter(t => t !== floor.use_type).map(t => (
                   <option key={t} value={t}>{FLOOR_USE_TYPE_LABELS[t]}</option>
                 ))}

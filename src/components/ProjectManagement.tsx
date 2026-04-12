@@ -459,7 +459,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Title</label>
                       <input
-                        className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                         value={milestoneForm.title}
                         onChange={(e) => setMilestoneForm({ ...milestoneForm, title: e.target.value })}
                         placeholder="e.g., Title review complete"
@@ -469,7 +469,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">Stage</label>
                         <select
-                          className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                           value={milestoneForm.stage}
                           onChange={(e) => setMilestoneForm({ ...milestoneForm, stage: e.target.value })}
                         >
@@ -483,7 +483,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                         <label className="text-xs text-muted-foreground mb-1 block">Target Date</label>
                         <input
                           type="date"
-                          className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                           value={milestoneForm.target_date}
                           onChange={(e) => setMilestoneForm({ ...milestoneForm, target_date: e.target.value })}
                         />
@@ -605,7 +605,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Title</label>
                       <input
-                        className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                         value={taskForm.title}
                         onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
                         placeholder="e.g., Review Phase I ESA report"
@@ -614,7 +614,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Description</label>
                       <textarea
-                        className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                        className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                         rows={2}
                         value={taskForm.description}
                         onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
@@ -625,7 +625,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">Assignee</label>
                         <input
-                          className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                           value={taskForm.assignee}
                           onChange={(e) => setTaskForm({ ...taskForm, assignee: e.target.value })}
                           placeholder="Name"
@@ -635,7 +635,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                         <label className="text-xs text-muted-foreground mb-1 block">Due Date</label>
                         <input
                           type="date"
-                          className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                           value={taskForm.due_date}
                           onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })}
                         />
@@ -645,7 +645,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">Priority</label>
                         <select
-                          className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                           value={taskForm.priority}
                           onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value as TaskPriority })}
                         >
@@ -657,7 +657,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">Status</label>
                         <select
-                          className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                           value={taskForm.status}
                           onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value as TaskStatus })}
                         >
@@ -669,7 +669,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">Milestone</label>
                         <select
-                          className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                          className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                           value={taskForm.milestone_id}
                           onChange={(e) => setTaskForm({ ...taskForm, milestone_id: e.target.value })}
                         >
@@ -700,7 +700,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
               <div className="flex items-center gap-1 ml-auto">
                 <span className="text-2xs text-muted-foreground mr-1">Filter:</span>
                 <select
-                  className="bg-muted/50 border border-border rounded px-2 py-1 text-2xs focus:outline-none"
+                  className="bg-background border border-border rounded px-2 py-1 text-2xs text-foreground focus:outline-none"
                   value={filterStatus}
                   onChange={(e) => setFilterStatus(e.target.value as TaskStatus | "all")}
                 >
@@ -711,7 +711,7 @@ export default function ProjectManagement({ dealId }: ProjectManagementProps) {
                 </select>
                 {milestones.length > 0 && (
                   <select
-                    className="bg-muted/50 border border-border rounded px-2 py-1 text-2xs focus:outline-none"
+                    className="bg-background border border-border rounded px-2 py-1 text-2xs text-foreground focus:outline-none"
                     value={filterMilestone}
                     onChange={(e) => setFilterMilestone(e.target.value)}
                   >

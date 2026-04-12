@@ -494,7 +494,7 @@ export default function HardCostBudget({ dealId }: Props) {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Category</label>
                 <select
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={itemForm.category}
                   onChange={(e) => setItemForm({ ...itemForm, category: e.target.value })}
                 >
@@ -506,7 +506,7 @@ export default function HardCostBudget({ dealId }: Props) {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Status</label>
                 <select
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={itemForm.status}
                   onChange={(e) => setItemForm({ ...itemForm, status: e.target.value as HardCostStatus })}
                 >
@@ -519,7 +519,7 @@ export default function HardCostBudget({ dealId }: Props) {
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Description</label>
               <input
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={itemForm.description}
                 onChange={(e) => setItemForm({ ...itemForm, description: e.target.value })}
                 placeholder="e.g., Steel framing package"
@@ -529,7 +529,7 @@ export default function HardCostBudget({ dealId }: Props) {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Vendor</label>
                 <input
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={itemForm.vendor}
                   onChange={(e) => setItemForm({ ...itemForm, vendor: e.target.value })}
                   placeholder="e.g., Turner Construction"
@@ -540,7 +540,7 @@ export default function HardCostBudget({ dealId }: Props) {
                 <input
                   type="number"
                   min={0}
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={itemForm.amount}
                   onChange={(e) => setItemForm({ ...itemForm, amount: Number(e.target.value) })}
                 />
@@ -550,7 +550,7 @@ export default function HardCostBudget({ dealId }: Props) {
               <label className="text-xs text-muted-foreground mb-1 block">Incurred Date</label>
               <input
                 type="date"
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={itemForm.incurred_date}
                 onChange={(e) => setItemForm({ ...itemForm, incurred_date: e.target.value })}
               />
@@ -559,7 +559,7 @@ export default function HardCostBudget({ dealId }: Props) {
               <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
               <textarea
                 rows={2}
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                 value={itemForm.notes}
                 onChange={(e) => setItemForm({ ...itemForm, notes: e.target.value })}
               />
@@ -589,7 +589,7 @@ export default function HardCostBudget({ dealId }: Props) {
               <input
                 type="number"
                 min={0}
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={settingsForm.total_budget ?? ""}
                 onChange={(e) => setSettingsForm({ ...settingsForm, total_budget: e.target.value ? Number(e.target.value) : null })}
               />
@@ -600,7 +600,7 @@ export default function HardCostBudget({ dealId }: Props) {
                 {settingsForm.thresholds.map((t, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <input
-                      className="flex-1 bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                      className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                       placeholder="Label"
                       value={t.label}
                       onChange={(e) => {
@@ -611,7 +611,7 @@ export default function HardCostBudget({ dealId }: Props) {
                     />
                     <input
                       type="number"
-                      className="w-32 bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                      className="w-32 bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                       placeholder="Amount"
                       value={t.amount}
                       onChange={(e) => {

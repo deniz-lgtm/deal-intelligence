@@ -730,7 +730,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Phase Name</label>
               <input
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={phaseForm.label}
                 onChange={(e) => setPhaseForm({ ...phaseForm, label: e.target.value })}
                 placeholder="e.g., Construction"
@@ -742,7 +742,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                 <input
                   type="number"
                   min={1}
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={phaseForm.duration_days}
                   onChange={(e) => setPhaseForm({ ...phaseForm, duration_days: Number(e.target.value) })}
                 />
@@ -752,7 +752,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                 <input
                   type="number"
                   min={0}
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
                   value={phaseForm.lag_days}
                   disabled={!phaseForm.predecessor_id}
                   onChange={(e) => setPhaseForm({ ...phaseForm, lag_days: Number(e.target.value) })}
@@ -762,7 +762,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Predecessor (Finish-to-Start)</label>
               <select
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={phaseForm.predecessor_id}
                 onChange={(e) => setPhaseForm({ ...phaseForm, predecessor_id: e.target.value })}
               >
@@ -785,7 +785,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               </label>
               <input
                 type="date"
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
                 value={phaseForm.start_date}
                 disabled={!!phaseForm.predecessor_id}
                 onChange={(e) => setPhaseForm({ ...phaseForm, start_date: e.target.value })}
@@ -798,7 +798,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                   type="number"
                   min={0}
                   max={100}
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={phaseForm.pct_complete}
                   onChange={(e) => setPhaseForm({ ...phaseForm, pct_complete: Number(e.target.value) })}
                 />
@@ -806,7 +806,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Status</label>
                 <select
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={phaseForm.status}
                   onChange={(e) => setPhaseForm({ ...phaseForm, status: e.target.value as DevPhaseStatus })}
                 >
@@ -820,7 +820,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
               <textarea
                 rows={2}
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                 value={phaseForm.notes}
                 onChange={(e) => setPhaseForm({ ...phaseForm, notes: e.target.value })}
               />
@@ -849,7 +849,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Category</label>
                 <select
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={costForm.category}
                   onChange={(e) => setCostForm({ ...costForm, category: e.target.value })}
                 >
@@ -861,7 +861,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Status</label>
                 <select
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={costForm.status}
                   onChange={(e) => setCostForm({ ...costForm, status: e.target.value as PreDevCostStatus })}
                 >
@@ -874,7 +874,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Description</label>
               <input
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={costForm.description}
                 onChange={(e) => setCostForm({ ...costForm, description: e.target.value })}
                 placeholder="e.g., Phase I ESA"
@@ -884,7 +884,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Vendor</label>
                 <input
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={costForm.vendor}
                   onChange={(e) => setCostForm({ ...costForm, vendor: e.target.value })}
                   placeholder="e.g., ABC Environmental"
@@ -895,7 +895,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                 <input
                   type="number"
                   min={0}
-                  className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   value={costForm.amount}
                   onChange={(e) => setCostForm({ ...costForm, amount: Number(e.target.value) })}
                 />
@@ -905,7 +905,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               <label className="text-xs text-muted-foreground mb-1 block">Incurred Date</label>
               <input
                 type="date"
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={costForm.incurred_date}
                 onChange={(e) => setCostForm({ ...costForm, incurred_date: e.target.value })}
               />
@@ -914,7 +914,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
               <textarea
                 rows={2}
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                 value={costForm.notes}
                 onChange={(e) => setCostForm({ ...costForm, notes: e.target.value })}
               />
@@ -944,7 +944,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
               <input
                 type="number"
                 min={0}
-                className="w-full bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 value={settingsForm.total_budget ?? ""}
                 onChange={(e) => setSettingsForm({ ...settingsForm, total_budget: e.target.value ? Number(e.target.value) : null })}
               />
@@ -955,7 +955,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                 {settingsForm.thresholds.map((t, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <input
-                      className="flex-1 bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                      className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                       placeholder="Label"
                       value={t.label}
                       onChange={(e) => {
@@ -966,7 +966,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                     />
                     <input
                       type="number"
-                      className="w-32 bg-muted/50 border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                      className="w-32 bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                       placeholder="Amount"
                       value={t.amount}
                       onChange={(e) => {

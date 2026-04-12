@@ -516,7 +516,7 @@ export default function PermitTracker({ dealId }: Props) {
                 Permit Type
               </label>
               <select
-                className="w-full bg-muted/50 border border-border/50 rounded-md px-2 py-1.5 text-sm"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 value={form.permit_type}
                 onChange={(e) =>
                   setForm({ ...form, permit_type: e.target.value })
@@ -536,7 +536,7 @@ export default function PermitTracker({ dealId }: Props) {
                 Jurisdiction
               </label>
               <input
-                className="w-full bg-muted/50 border border-border/50 rounded-md px-2 py-1.5 text-sm"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 placeholder="e.g. City of Austin"
                 value={form.jurisdiction}
                 onChange={(e) =>
@@ -551,7 +551,7 @@ export default function PermitTracker({ dealId }: Props) {
                 Description
               </label>
               <input
-                className="w-full bg-muted/50 border border-border/50 rounded-md px-2 py-1.5 text-sm"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 placeholder="Brief description"
                 value={form.description}
                 onChange={(e) =>
@@ -568,7 +568,7 @@ export default function PermitTracker({ dealId }: Props) {
                 </label>
                 <input
                   type="date"
-                  className="w-full bg-muted/50 border border-border/50 rounded-md px-2 py-1.5 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   value={form.submitted_date}
                   onChange={(e) =>
                     setForm({ ...form, submitted_date: e.target.value })
@@ -581,7 +581,7 @@ export default function PermitTracker({ dealId }: Props) {
                 </label>
                 <input
                   type="date"
-                  className="w-full bg-muted/50 border border-border/50 rounded-md px-2 py-1.5 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   value={form.expected_date}
                   onChange={(e) =>
                     setForm({ ...form, expected_date: e.target.value })
@@ -594,7 +594,7 @@ export default function PermitTracker({ dealId }: Props) {
                 </label>
                 <input
                   type="date"
-                  className="w-full bg-muted/50 border border-border/50 rounded-md px-2 py-1.5 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   value={form.actual_date}
                   onChange={(e) =>
                     setForm({ ...form, actual_date: e.target.value })
@@ -611,7 +611,7 @@ export default function PermitTracker({ dealId }: Props) {
                 </label>
                 <input
                   type="number"
-                  className="w-full bg-muted/50 border border-border/50 rounded-md px-2 py-1.5 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   value={form.fee}
                   onChange={(e) =>
                     setForm({ ...form, fee: Number(e.target.value) || 0 })
@@ -623,7 +623,7 @@ export default function PermitTracker({ dealId }: Props) {
                   Status
                 </label>
                 <select
-                  className="w-full bg-muted/50 border border-border/50 rounded-md px-2 py-1.5 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   value={form.status}
                   onChange={(e) =>
                     setForm({
@@ -647,7 +647,7 @@ export default function PermitTracker({ dealId }: Props) {
                 Notes
               </label>
               <textarea
-                className="w-full bg-muted/50 border border-border/50 rounded-md px-2 py-1.5 text-sm min-h-[60px]"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground min-h-[60px]"
                 placeholder="Additional notes..."
                 value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })}

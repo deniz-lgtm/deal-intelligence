@@ -654,7 +654,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 Title
               </label>
               <input
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                 value={drawForm.title}
                 onChange={(e) =>
                   setDrawForm((f) => ({ ...f, title: e.target.value }))
@@ -668,7 +668,7 @@ export default function DrawSchedule({ dealId }: Props) {
                   Status
                 </label>
                 <select
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={drawForm.status}
                   onChange={(e) =>
                     setDrawForm((f) => ({
@@ -692,7 +692,7 @@ export default function DrawSchedule({ dealId }: Props) {
                   type="number"
                   min={0}
                   max={100}
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={drawForm.pct_complete_claimed}
                   onChange={(e) =>
                     setDrawForm((f) => ({
@@ -712,7 +712,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 <input
                   type="number"
                   min={0}
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={drawForm.amount_requested}
                   onChange={(e) =>
                     setDrawForm((f) => ({
@@ -729,7 +729,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 <input
                   type="number"
                   min={0}
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={drawForm.amount_approved}
                   onChange={(e) =>
                     setDrawForm((f) => ({
@@ -746,7 +746,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 <input
                   type="number"
                   min={0}
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={drawForm.retainage_held}
                   onChange={(e) =>
                     setDrawForm((f) => ({
@@ -765,7 +765,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 </label>
                 <input
                   type="date"
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={drawForm.submitted_date}
                   onChange={(e) =>
                     setDrawForm((f) => ({
@@ -781,7 +781,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 </label>
                 <input
                   type="date"
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={drawForm.approved_date}
                   onChange={(e) =>
                     setDrawForm((f) => ({
@@ -797,7 +797,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 </label>
                 <input
                   type="date"
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={drawForm.funded_date}
                   onChange={(e) =>
                     setDrawForm((f) => ({
@@ -858,7 +858,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 Description
               </label>
               <input
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                 value={itemForm.description}
                 onChange={(e) =>
                   setItemForm((f) => ({ ...f, description: e.target.value }))
@@ -873,7 +873,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 <input
                   type="number"
                   min={0}
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={itemForm.amount_requested}
                   onChange={(e) =>
                     setItemForm((f) => ({
@@ -890,7 +890,7 @@ export default function DrawSchedule({ dealId }: Props) {
                 <input
                   type="number"
                   min={0}
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
                   value={itemForm.amount_approved}
                   onChange={(e) =>
                     setItemForm((f) => ({

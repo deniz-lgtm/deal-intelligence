@@ -426,7 +426,7 @@ export default function ProgressReports({ dealId }: Props) {
               <select
                 value={reportForm.report_type}
                 onChange={(e) => setReportForm({ ...reportForm, report_type: e.target.value as ReportType })}
-                className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
               >
                 <option value="weekly">Weekly</option>
                 <option value="monthly">Monthly</option>
@@ -438,7 +438,7 @@ export default function ProgressReports({ dealId }: Props) {
                 type="text"
                 value={reportForm.title}
                 onChange={(e) => setReportForm({ ...reportForm, title: e.target.value })}
-                className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 placeholder="Auto-generated from dates if left blank"
               />
             </div>
@@ -449,7 +449,7 @@ export default function ProgressReports({ dealId }: Props) {
                   type="date"
                   value={reportForm.period_start}
                   onChange={(e) => setReportForm({ ...reportForm, period_start: e.target.value })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 />
               </div>
               <div>
@@ -458,7 +458,7 @@ export default function ProgressReports({ dealId }: Props) {
                   type="date"
                   value={reportForm.period_end}
                   onChange={(e) => setReportForm({ ...reportForm, period_end: e.target.value })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                 />
               </div>
             </div>
@@ -505,7 +505,7 @@ export default function ProgressReports({ dealId }: Props) {
                   type="email"
                   value={inviteForm.email}
                   onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   placeholder="contractor@example.com"
                 />
               </div>
@@ -515,7 +515,7 @@ export default function ProgressReports({ dealId }: Props) {
                   type="text"
                   value={inviteForm.name}
                   onChange={(e) => setInviteForm({ ...inviteForm, name: e.target.value })}
-                  className="w-full bg-card border border-border/40 rounded-md px-3 py-2 text-sm"
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
                   placeholder="GC name"
                 />
               </div>

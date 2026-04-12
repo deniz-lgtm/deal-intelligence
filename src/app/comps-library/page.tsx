@@ -557,7 +557,7 @@ export default function CompsLibraryPage() {
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value as "" | "sale" | "rent")}
-              className="px-3 py-1.5 text-xs bg-muted/20 border border-border/40 rounded-md outline-none focus:border-primary/40"
+              className="px-3 py-1.5 text-xs bg-background border border-border rounded-md text-foreground outline-none focus:border-primary/40"
             >
               <option value="">All types</option>
               <option value="sale">Sale</option>
@@ -566,7 +566,7 @@ export default function CompsLibraryPage() {
             <select
               value={propertyTypeFilter}
               onChange={(e) => setPropertyTypeFilter(e.target.value)}
-              className="px-3 py-1.5 text-xs bg-muted/20 border border-border/40 rounded-md outline-none focus:border-primary/40"
+              className="px-3 py-1.5 text-xs bg-background border border-border rounded-md text-foreground outline-none focus:border-primary/40"
             >
               <option value="">All property types</option>
               {propertyTypes.map((t) => (
@@ -578,7 +578,7 @@ export default function CompsLibraryPage() {
             <select
               value={stateFilter}
               onChange={(e) => setStateFilter(e.target.value)}
-              className="px-3 py-1.5 text-xs bg-muted/20 border border-border/40 rounded-md outline-none focus:border-primary/40"
+              className="px-3 py-1.5 text-xs bg-background border border-border rounded-md text-foreground outline-none focus:border-primary/40"
             >
               <option value="">All states</option>
               {states.map((s) => (

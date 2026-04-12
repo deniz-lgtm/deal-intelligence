@@ -281,7 +281,7 @@ export default function CEQATracker({ dealId }: { dealId: string }) {
                   {data.mitigations.map(mit => (
                     <tr key={mit.id} className="border-b hover:bg-muted/5 group">
                       <td className="px-2 py-1.5">
-                        <select value={mit.category} onChange={e => setData(p => ({ ...p, mitigations: p.mitigations.map(m => m.id === mit.id ? { ...m, category: e.target.value } : m) }))} className="bg-transparent text-xs outline-none w-full">
+                        <select value={mit.category} onChange={e => setData(p => ({ ...p, mitigations: p.mitigations.map(m => m.id === mit.id ? { ...m, category: e.target.value } : m) }))} className="bg-background text-xs text-foreground outline-none w-full rounded border border-border/40">
                           {CEQA_MITIGATION_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </td>
