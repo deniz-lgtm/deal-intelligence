@@ -1853,6 +1853,222 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
+      {/* ═══════════════════ MIXED-USE COMPONENTS ═══════════════════ */}
+      {(deal?.property_type === "mixed_use" || d.mixed_use?.enabled) && (
+      <Section title="Mixed-Use Components" icon={<Layers className="h-4 w-4 text-violet-400" />}>
+        <div className="mt-3">
+          {(() => {
+            const mx = d.mixed_use || defaultMixedUseConfig();
+            const setMX = (fn: (prev: MixedUseConfig) => MixedUseConfig) => setData(p => ({ ...p, mixed_use: fn(p.mixed_use || defaultMixedUseConfig()) }));
+            const allocatedSF = mx.components.reduce((s, c) => s + c.sf_allocation, 0) + mx.common_area_sf;
+            const unallocated = mx.total_gfa - allocatedSF;
+
+            return (
+              <>
+                {/* Enable toggle + GFA */}
+                <div className="flex items-center gap-4 mb-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={mx.enabled} onChange={e => setMX(p => ({ ...p, enabled: e.target.checked }))} className="accent-primary" />
+                    Enable Mixed-Use Modeling
+                  </label>
+                </div>
+                {mx.enabled && (
+                  <>
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                      <NumInput label="Total GFA (SF)" value={mx.total_gfa} onChange={v => setMX(p => ({ ...p, total_gfa: v }))} />
+                      <NumInput label="Common Area (SF)" value={mx.common_area_sf} onChange={v => setMX(p => ({ ...p, common_area_sf: v }))} />
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Unallocated</label>
+                        <p className={`text-sm font-semibold py-1.5 ${unallocated < 0 ? "text-red-400" : unallocated > 0 ? "text-amber-400" : "text-emerald-400"}`}>{fn(unallocated)} SF</p>
+                      </div>
+                    </div>
+
+                    {/* GFA allocation bar */}
+                    {mx.total_gfa > 0 && (
+                      <div className="mb-4">
+                        <div className="flex h-3 rounded-full overflow-hidden bg-muted/30 mb-1">
+                          {mx.components.map(c => (
+                            <div key={c.id} className={`${c.component_type === "residential" ? "bg-blue-500/70" : c.component_type === "retail" ? "bg-amber-500/70" : c.component_type === "office" ? "bg-purple-500/70" : "bg-zinc-500/70"}`}
+                              style={{ width: `${(c.sf_allocation / mx.total_gfa) * 100}%` }} title={`${c.label}: ${fn(c.sf_allocation)} SF`} />
+                          ))}
+                          {mx.common_area_sf > 0 && <div className="bg-zinc-600/50" style={{ width: `${(mx.common_area_sf / mx.total_gfa) * 100}%` }} title={`Common: ${fn(mx.common_area_sf)} SF`} />}
+                        </div>
+                        <div className="flex gap-3 text-xs text-muted-foreground">
+                          {mx.components.map(c => (
+                            <span key={c.id} className="flex items-center gap-1">
+                              <span className={`inline-block w-2 h-2 rounded-full ${c.component_type === "residential" ? "bg-blue-500" : c.component_type === "retail" ? "bg-amber-500" : c.component_type === "office" ? "bg-purple-500" : "bg-zinc-500"}`} />
+                              {c.label} ({((c.sf_allocation / mx.total_gfa) * 100).toFixed(0)}%)
+                            </span>
+                          ))}
+                          {mx.common_area_sf > 0 && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-zinc-600" />Common ({((mx.common_area_sf / mx.total_gfa) * 100).toFixed(0)}%)</span>}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Component cards */}
+                    {mx.components.map((comp, ci) => {
+                      const updComp = (upd: Partial<MixedUseComponent>) => setMX(p => ({ ...p, components: p.components.map(c => c.id === comp.id ? { ...c, ...upd } : c) }));
+                      const isRetail = comp.component_type === "retail" || comp.component_type === "office";
+                      return (
+                        <div key={comp.id} className="border rounded-md p-3 mb-3 bg-muted/5">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-3 h-3 rounded-full ${comp.component_type === "residential" ? "bg-blue-500" : comp.component_type === "retail" ? "bg-amber-500" : "bg-purple-500"}`} />
+                              <input type="text" value={comp.label} onChange={e => updComp({ label: e.target.value })} className="bg-transparent text-sm font-semibold outline-none" />
+                            </div>
+                            <button onClick={() => setMX(p => ({ ...p, components: p.components.filter(c => c.id !== comp.id) }))} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <NumInput label="SF Allocation" value={comp.sf_allocation} onChange={v => updComp({ sf_allocation: v })} />
+                            <NumInput label="Cap Rate" value={comp.cap_rate} onChange={v => updComp({ cap_rate: v })} suffix="%" decimals={2} />
+                            <div>
+                              <label className="block text-xs font-medium text-muted-foreground mb-1">OpEx Mode</label>
+                              <select value={comp.opex_mode} onChange={e => updComp({ opex_mode: e.target.value as "own" | "shared" })} className="w-full bg-background border rounded-md px-2 py-1.5 text-sm outline-none">
+                                <option value="shared">Shared (% allocation)</option>
+                                <option value="own">Own OpEx</option>
+                              </select>
+                            </div>
+                            {comp.opex_mode === "shared" && <NumInput label="OpEx Allocation" value={comp.opex_allocation_pct} onChange={v => updComp({ opex_allocation_pct: v })} suffix="%" decimals={1} />}
+                          </div>
+                          {/* Retail-specific fields */}
+                          {isRetail && (
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 border-t pt-3">
+                              <NumInput label="TI Allowance ($/SF)" value={comp.ti_allowance_per_sf} onChange={v => updComp({ ti_allowance_per_sf: v })} prefix="$" decimals={2} />
+                              <NumInput label="Leasing Commission" value={comp.leasing_commission_pct} onChange={v => updComp({ leasing_commission_pct: v })} suffix="%" decimals={1} />
+                              <NumInput label="Free Rent (months)" value={comp.free_rent_months} onChange={v => updComp({ free_rent_months: v })} decimals={1} />
+                              <NumInput label="Rent Escalation" value={comp.rent_escalation_pct} onChange={v => updComp({ rent_escalation_pct: v })} suffix="%" decimals={1} />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Add component */}
+                    <div className="flex gap-2">
+                      {(["residential", "retail", "office"] as MixedUseComponentType[])
+                        .filter(t => !mx.components.some(c => c.component_type === t && t === "residential"))
+                        .map(t => (
+                          <Button key={t} variant="outline" size="sm" onClick={() => setMX(p => ({ ...p, components: [...p.components, newMixedUseComponent(t)] }))}>
+                            <Plus className="h-3.5 w-3.5 mr-1" /> {MIXED_USE_COMPONENT_LABELS[t]}
+                          </Button>
+                        ))
+                      }
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      </Section>
+      )}
+
+      {/* ═══════════════════ REDEVELOPMENT OVERLAY ═══════════════════ */}
+      <Section title="Redevelopment Overlay" icon={<Building2 className="h-4 w-4 text-rose-400" />} open={false}>
+        <div className="mt-3">
+          {(() => {
+            const rd = d.redevelopment || defaultRedevelopment();
+            const setRD = (upd: Partial<RedevelopmentConfig>) => setData(p => ({ ...p, redevelopment: { ...(p.redevelopment || defaultRedevelopment()), ...upd } }));
+            const transitionMonths = rd.vacancy_period_months + rd.demolition_period_months + rd.construction_period_months;
+            const calcLostIncome = rd.existing_noi * (rd.vacancy_period_months + rd.demolition_period_months) / 12;
+            const demoCost = rd.demolition_items.reduce((s, i) => s + i.amount, 0);
+            return (
+              <>
+                <label className="flex items-center gap-2 text-sm mb-4">
+                  <input type="checkbox" checked={rd.enabled} onChange={e => setRD({ enabled: e.target.checked })} className="accent-primary" />
+                  Enable Redevelopment Overlay (converting existing asset)
+                </label>
+                {rd.enabled && (
+                  <>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Existing Asset</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Current Use</label>
+                        <input type="text" value={rd.existing_use} onChange={e => setRD({ existing_use: e.target.value })} placeholder="e.g. Life Science, Office" className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none" />
+                      </div>
+                      <NumInput label="Existing SF" value={rd.existing_sf} onChange={v => setRD({ existing_sf: v })} />
+                      <NumInput label="Current NOI" value={rd.existing_noi} onChange={v => setRD({ existing_noi: v })} prefix="$" />
+                      <NumInput label="Current Occupancy" value={rd.existing_occupancy_pct} onChange={v => setRD({ existing_occupancy_pct: v })} suffix="%" decimals={1} />
+                    </div>
+
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Transition Timeline</h4>
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                      <NumInput label="Vacancy Period (mo)" value={rd.vacancy_period_months} onChange={v => setRD({ vacancy_period_months: v })} />
+                      <NumInput label="Demolition Period (mo)" value={rd.demolition_period_months} onChange={v => setRD({ demolition_period_months: v })} />
+                      <NumInput label="Construction Period (mo)" value={rd.construction_period_months} onChange={v => setRD({ construction_period_months: v })} />
+                    </div>
+
+                    {/* Demolition line items */}
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Demolition / Abatement Costs</h4>
+                    <table className="w-full text-sm border-collapse mb-2">
+                      <thead>
+                        <tr className="bg-muted/30 border-b">
+                          <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Description</th>
+                          <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Amount</th>
+                          <th className="w-[28px]" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rd.demolition_items.map(item => (
+                          <tr key={item.id} className="border-b hover:bg-muted/10 group">
+                            <td className="px-2 py-1.5"><input type="text" value={item.label} onChange={e => setRD({ demolition_items: rd.demolition_items.map(i => i.id === item.id ? { ...i, label: e.target.value } : i) })} className="w-full bg-transparent text-sm outline-none" /></td>
+                            <td className="px-2 py-1.5"><CellInput value={item.amount} onChange={v => setRD({ demolition_items: rd.demolition_items.map(i => i.id === item.id ? { ...i, amount: v } : i) })} prefix="$" /></td>
+                            <td className="px-1 py-1.5"><button onClick={() => setRD({ demolition_items: rd.demolition_items.filter(i => i.id !== item.id) })} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <Button variant="ghost" size="sm" className="mb-4" onClick={() => setRD({ demolition_items: [...rd.demolition_items, newDevBudgetItem("Demo / Abatement", "hard", "demolition", "lump sum")] })}>
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Add Item
+                    </Button>
+
+                    {/* Parking conversion */}
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Parking Conversion</h4>
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                      <NumInput label="Existing Parking Spaces" value={rd.existing_parking_spaces} onChange={v => setRD({ existing_parking_spaces: v })} />
+                      <NumInput label="Spaces Converted/Lost" value={rd.parking_spaces_converted} onChange={v => setRD({ parking_spaces_converted: v })} />
+                      <NumInput label="New Spaces Built" value={rd.new_parking_spaces_built} onChange={v => setRD({ new_parking_spaces_built: v })} />
+                    </div>
+
+                    {/* Phased redevelopment */}
+                    <label className="flex items-center gap-2 text-sm mb-3">
+                      <input type="checkbox" checked={rd.is_phased} onChange={e => setRD({ is_phased: e.target.checked })} className="accent-primary" />
+                      Phased Redevelopment
+                    </label>
+                    {rd.is_phased && (
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="border rounded-md p-3 bg-muted/5">
+                          <input type="text" value={rd.phase_1_label} onChange={e => setRD({ phase_1_label: e.target.value })} className="bg-transparent text-sm font-semibold outline-none mb-2 w-full" />
+                          <div className="grid grid-cols-2 gap-2">
+                            <NumInput label="SF" value={rd.phase_1_sf} onChange={v => setRD({ phase_1_sf: v })} />
+                            <NumInput label="Timeline (mo)" value={rd.phase_1_timeline_months} onChange={v => setRD({ phase_1_timeline_months: v })} />
+                          </div>
+                        </div>
+                        <div className="border rounded-md p-3 bg-muted/5">
+                          <input type="text" value={rd.phase_2_label} onChange={e => setRD({ phase_2_label: e.target.value })} className="bg-transparent text-sm font-semibold outline-none mb-2 w-full" />
+                          <div className="grid grid-cols-2 gap-2">
+                            <NumInput label="SF" value={rd.phase_2_sf} onChange={v => setRD({ phase_2_sf: v })} />
+                            <NumInput label="Timeline (mo)" value={rd.phase_2_timeline_months} onChange={v => setRD({ phase_2_timeline_months: v })} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Summary */}
+                    <div className="border rounded-md bg-muted/10 p-3 text-sm space-y-1">
+                      <div className="flex justify-between"><span>Total Transition Timeline</span><span className="font-semibold tabular-nums">{transitionMonths} months</span></div>
+                      <div className="flex justify-between"><span>Lost Income During Transition</span><span className="font-semibold tabular-nums text-red-400">{fc(calcLostIncome)}</span></div>
+                      <div className="flex justify-between"><span>Total Demolition / Abatement</span><span className="font-semibold tabular-nums">{fc(demoCost)}</span></div>
+                      <div className="flex justify-between"><span>Net Parking Impact</span><span className="font-semibold tabular-nums">{fn(rd.existing_parking_spaces - rd.parking_spaces_converted + rd.new_parking_spaces_built)} spaces (was {fn(rd.existing_parking_spaces)})</span></div>
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      </Section>
+
       <Section title="Revenue — Unit / Space Mix" icon={<Calculator className="h-4 w-4 text-indigo-400" />}>
         {/* NRSF Budget Allocator — Ground-Up Only */}
         {isGroundUp && d.max_nrsf > 0 && (() => {
