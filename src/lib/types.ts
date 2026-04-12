@@ -2081,6 +2081,7 @@ export interface MassingScenario {
   is_baseline: boolean;
   linked_uw_scenario_id: string | null;
   unit_mix: UnitMixEntry[];
+  parking_sf_per_space: number;  // avg SF per parking stall (default 350; surface ~325, structured ~350, underground ~375)
 }
 
 export interface BuildingProgram {

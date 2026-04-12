@@ -228,7 +228,7 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
         {/* LEFT — Floor Editor */}
         <div className="flex-1 min-w-0">
           {/* Footprint + Density Bonus */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Base Footprint (SF)</label>
               <input type="text" inputMode="decimal"
@@ -236,6 +236,15 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
                 onChange={e => updateScenario(activeScenario.id, s => ({ ...s, footprint_sf: parseFloat(e.target.value.replace(/,/g, "")) || 0 }))}
                 className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none tabular-nums"
                 placeholder="0" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Parking SF / Space</label>
+              <input type="text" inputMode="decimal"
+                value={activeScenario.parking_sf_per_space || 350}
+                onChange={e => updateScenario(activeScenario.id, s => ({ ...s, parking_sf_per_space: parseFloat(e.target.value) || 350 }))}
+                className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none tabular-nums"
+                placeholder="350" />
+              <p className="text-[10px] text-muted-foreground mt-0.5">Surface ~325 · Structured ~350 · Underground ~375</p>
             </div>
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Density Bonus</label>
@@ -352,7 +361,7 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
             <div className="flex justify-between"><span>Total GSF</span><span className="font-semibold tabular-nums">{fn(summary.total_gsf)}</span></div>
             <div className="flex justify-between"><span>Total NRSF</span><span className="font-semibold tabular-nums">{fn(summary.total_nrsf)}</span></div>
             <div className="flex justify-between"><span>Residential Units</span><span className="font-semibold tabular-nums">{fn(summary.total_units)}</span></div>
-            <div className="flex justify-between"><span>Est. Parking Spaces</span><span className="font-semibold tabular-nums">{fn(summary.total_parking_spaces_est)} <span className="text-muted-foreground text-xs">(@ 350 SF/space)</span></span></div>
+            <div className="flex justify-between"><span>Est. Parking Spaces</span><span className="font-semibold tabular-nums">{fn(summary.total_parking_spaces_est)} <span className="text-muted-foreground text-xs">(@ {activeScenario.parking_sf_per_space || 350} SF/space)</span></span></div>
             <div className="flex justify-between"><span>Building Height</span><span className="font-semibold tabular-nums">{summary.total_height_ft.toFixed(0)} ft ({summary.above_grade_floors} floors)</span></div>
             {summary.below_grade_floors > 0 && <div className="flex justify-between"><span>Below Grade</span><span className="font-semibold tabular-nums">{summary.total_below_grade_ft.toFixed(0)} ft ({summary.below_grade_floors} levels)</span></div>}
             <div className="flex justify-between"><span>Effective FAR</span><span className="font-semibold tabular-nums">{summary.effective_far.toFixed(2)}</span></div>

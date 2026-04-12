@@ -45,6 +45,7 @@ export function newScenario(name: string, floors: BuildingFloor[] = []): Massing
     density_bonus_applied: null, density_bonus_far_increase: 0, density_bonus_height_increase_ft: 0,
     notes: "", created_at: new Date().toISOString(), is_baseline: false, linked_uw_scenario_id: null,
     unit_mix: seedUnitMix(),
+    parking_sf_per_space: 350,
   };
 }
 
@@ -102,7 +103,8 @@ export function computeMassingSummary(scenario: MassingScenario, zoning: ZoningI
   }
 
   const total_parking_sf = gsf_by_use.parking || 0;
-  const total_parking_spaces_est = Math.floor(total_parking_sf / 350);
+  const sfPerSpace = scenario.parking_sf_per_space || 350;
+  const total_parking_spaces_est = Math.floor(total_parking_sf / sfPerSpace);
 
   const above_grade_gsf = aboveFloors.reduce((s, f) => s + f.floor_plate_sf, 0);
   const effective_far = zoning.land_sf > 0 ? above_grade_gsf / zoning.land_sf : 0;
