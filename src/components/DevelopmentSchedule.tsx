@@ -500,7 +500,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                             )}
                           >
                             {isCritical && (
-                              <AlertTriangle className="h-2.5 w-2.5 text-red-400 flex-shrink-0" title="Critical path" />
+                              <span title="Critical path"><AlertTriangle className="h-2.5 w-2.5 text-red-400 flex-shrink-0" /></span>
                             )}
                             {!isCritical && !p.predecessor_id && (
                               <span className="text-2xs text-amber-400" title="Anchor phase">⚓</span>
