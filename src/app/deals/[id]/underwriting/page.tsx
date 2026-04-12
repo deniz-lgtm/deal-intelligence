@@ -167,6 +167,12 @@ interface UWData {
   mixed_use: MixedUseConfig | null;
   // ── Redevelopment Overlay ──
   redevelopment: RedevelopmentConfig | null;
+  // Programming page data (read-only on UW page)
+  building_program: any;
+  commercial_tenants: any[];
+  other_income_items: any[];
+  // Site data (from site-zoning page)
+  site_info: any;
 }
 
 const DEFAULT: UWData = {
@@ -230,6 +236,11 @@ const DEFAULT: UWData = {
   mixed_use: null,
   // Redevelopment
   redevelopment: null,
+  // Programming page data
+  building_program: null,
+  commercial_tenants: [],
+  other_income_items: [],
+  site_info: null,
 };
 
 const EFFICIENCY_DEFAULTS: Record<string, number> = {
@@ -1561,6 +1572,38 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
+      {/* Building Massing Reference (from Programming page) */}
+      {isGroundUp && d.building_program?.scenarios?.length > 0 && (() => {
+        const bp = d.building_program;
+        const activeS = bp.scenarios.find((s: any) => s.is_baseline) || bp.scenarios.find((s: any) => s.id === bp.active_scenario_id) || bp.scenarios[0];
+        if (!activeS) return null;
+        const MassingSectionCut = require("@/components/massing/MassingSectionCut").default;
+        const { computeMassingSummary } = require("@/components/massing/massing-utils");
+        const landSF = d.site_info?.land_sf || (deal as any)?.land_acres * 43560 || 0;
+        const zi = { land_sf: landSF, far: d.far || 0, lot_coverage_pct: d.lot_coverage_pct || 0, height_limit_ft: d.height_limit_stories * 10 || 0, height_limit_stories: d.height_limit_stories || 0 };
+        const ms = computeMassingSummary(activeS, zi);
+        return (
+          <div className="border rounded-xl bg-card shadow-card p-4 mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-blue-400" />
+                <h3 className="text-sm font-semibold">Building Massing — {activeS.name}</h3>
+                {activeS.is_baseline && <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded">Baseline</span>}
+              </div>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span>{fn(ms.total_gsf)} GSF</span>
+                <span>{fn(ms.total_units)} units</span>
+                <span>{ms.total_height_ft.toFixed(0)} ft</span>
+                <span>{fn(ms.total_parking_spaces_est)} parking</span>
+              </div>
+            </div>
+            <div className="max-w-lg mx-auto">
+              <MassingSectionCut scenario={activeS} summary={ms} />
+            </div>
+          </div>
+        );
+      })()}
+
       <Section title={isGroundUp ? "Development Cost Basis" : "Purchase & Cost Basis"} icon={<DollarSign className="h-4 w-4 text-green-400" />}>
         {isGroundUp ? (
           <div className="mt-3 space-y-4">
@@ -2415,6 +2458,77 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               )}
             </div>
           </div>
+
+          {/* ── Commercial Tenants (from Programming) ── */}
+          {(d.commercial_tenants || []).length > 0 && (
+            <div className="mt-4 border-t pt-4">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Commercial Tenants</h4>
+              <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse mb-2 min-w-[600px]">
+                <thead>
+                  <tr className="bg-muted/30 border-b">
+                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Tenant</th>
+                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">Use</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">SF</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">$/SF</th>
+                    <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Lease</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Annual</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(d.commercial_tenants || []).map((t: any) => (
+                    <tr key={t.id} className="border-b hover:bg-muted/10">
+                      <td className="px-2 py-1.5">{t.tenant_name || "TBD"} <span className="text-[10px] text-muted-foreground">{t.suite}</span></td>
+                      <td className="px-2 py-1.5 text-xs text-muted-foreground">{t.use_type}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fn(t.sf)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">${(t.rent_per_sf || 0).toFixed(2)}</td>
+                      <td className="px-2 py-1.5 text-center text-xs">{t.lease_type}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(t.sf * t.rent_per_sf)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t bg-muted/20 font-semibold">
+                    <td colSpan={5} className="px-2 py-1.5 text-right">Commercial GPR</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.commercial_tenants || []).reduce((s: number, t: any) => s + t.sf * t.rent_per_sf, 0))}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Edit commercial tenants on the Programming page</p>
+            </div>
+          )}
+
+          {/* ── Dynamic Other Income Items (from Programming) ── */}
+          {(d.other_income_items || []).length > 0 && (
+            <div className="mt-4 border-t pt-4">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Other Income (from Programming)</h4>
+              <table className="w-full text-sm border-collapse mb-2">
+                <thead>
+                  <tr className="bg-muted/30 border-b">
+                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Source</th>
+                    <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Basis</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">$/Mo</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Annual</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(d.other_income_items || []).map((item: any) => {
+                    const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (m.totalParkingCost > 0 ? 1 : 0) : 1;
+                    return (
+                      <tr key={item.id} className="border-b hover:bg-muted/10">
+                        <td className="px-2 py-1.5">{item.label}</td>
+                        <td className="px-2 py-1.5 text-center text-xs text-muted-foreground">{item.basis === "per_unit" ? "Per Unit" : item.basis === "per_space" ? "Per Space" : "Per Property"}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{fc(item.amount)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(item.amount * mult * 12)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <p className="text-[10px] text-muted-foreground">Edit income items on the Programming page</p>
+            </div>
+          )}
         </div>
       </Section>
 

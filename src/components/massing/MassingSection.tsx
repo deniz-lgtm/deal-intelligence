@@ -369,7 +369,7 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
         </div>
 
         {/* RIGHT — Section Cut SVG */}
-        <div className="w-full lg:w-80 shrink-0 lg:sticky lg:top-4 lg:self-start">
+        <div className="w-full lg:w-96 xl:w-[28rem] shrink-0 lg:sticky lg:top-4 lg:self-start">
           <div className="border rounded-md bg-card/50 p-2">
             <MassingSectionCut scenario={activeScenario} summary={summary} />
           </div>
