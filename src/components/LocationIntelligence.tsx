@@ -21,6 +21,9 @@ import {
   Info,
   BarChart3,
   Target,
+  FileText,
+  X,
+  Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -236,8 +239,13 @@ export default function LocationIntelligence({
 }: Props) {
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
+  const [fetchingBls, setFetchingBls] = useState(false);
+  const [fetchingHpi, setFetchingHpi] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [pasteReportOpen, setPasteReportOpen] = useState(false);
+  const [reportText, setReportText] = useState("");
+  const [extracting, setExtracting] = useState(false);
   const [selectedRadius, setSelectedRadius] = useState<LocationRadiusMiles>(3);
   const [allData, setAllData] = useState<Record<number, LocationIntelligenceType>>({});
   const [meta, setMeta] = useState<{
@@ -375,6 +383,102 @@ export default function LocationIntelligence({
     }
   }
 
+  // Fetch BLS employment data
+  async function handleFetchBls() {
+    setFetchingBls(true);
+    try {
+      const res = await fetch(
+        `/api/deals/${dealId}/location-intelligence/fetch-bls`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ radius_miles: selectedRadius }),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Failed to fetch BLS data");
+        return;
+      }
+      const q = json.data;
+      toast.success(
+        `BLS employment data loaded (${q.year} Q${q.quarter}: ${Number(q.total_employment).toLocaleString()} jobs)`
+      );
+      loadData();
+    } catch {
+      toast.error("Failed to fetch BLS data");
+    } finally {
+      setFetchingBls(false);
+    }
+  }
+
+  // Fetch FHFA HPI data
+  async function handleFetchHpi() {
+    setFetchingHpi(true);
+    try {
+      const res = await fetch(
+        `/api/deals/${dealId}/location-intelligence/fetch-hpi`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ radius_miles: selectedRadius }),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Failed to fetch HPI data");
+        return;
+      }
+      const hpi = json.data;
+      toast.success(
+        `House Price Index loaded (YoY: ${hpi.yoy_change_pct != null ? hpi.yoy_change_pct + "%" : "N/A"})`
+      );
+      loadData();
+    } catch {
+      toast.error("Failed to fetch HPI data");
+    } finally {
+      setFetchingHpi(false);
+    }
+  }
+
+  // Extract from pasted report
+  async function handleExtractReport() {
+    if (reportText.trim().length < 50) {
+      toast.error("Paste at least a few lines of report data");
+      return;
+    }
+    setExtracting(true);
+    try {
+      const res = await fetch(
+        `/api/deals/${dealId}/location-intelligence/extract-report`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: reportText,
+            radius_miles: selectedRadius,
+          }),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Failed to extract report data");
+        return;
+      }
+      const { fields_extracted, source_description } = json.extracted || {};
+      toast.success(
+        `Extracted ${fields_extracted || 0} fields${source_description ? ` from ${source_description}` : ""}`
+      );
+      setPasteReportOpen(false);
+      setReportText("");
+      loadData();
+    } catch {
+      toast.error("Failed to extract report data");
+    } finally {
+      setExtracting(false);
+    }
+  }
+
   // Save projections
   async function handleSaveProjections() {
     setSaving(true);
@@ -491,7 +595,48 @@ export default function LocationIntelligence({
             ) : (
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
             )}
-            {snapshot ? "Refresh Census Data" : "Pull Census Data"}
+            {snapshot ? "Refresh Census" : "Pull Census Data"}
+          </Button>
+          {snapshot && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleFetchBls}
+                disabled={fetchingBls}
+                title="Fetch current employment & wages from BLS QCEW"
+              >
+                {fetchingBls ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                ) : (
+                  <Briefcase className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                BLS Jobs
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleFetchHpi}
+                disabled={fetchingHpi}
+                title="Fetch FHFA House Price Index via FRED"
+              >
+                {fetchingHpi ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                ) : (
+                  <Wallet className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                HPI
+              </Button>
+            </>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setPasteReportOpen(true)}
+            title="Paste text from CoStar, ESRI, or other market reports"
+          >
+            <FileText className="h-3.5 w-3.5 mr-1.5" />
+            Paste Report
           </Button>
         </div>
       </div>
@@ -671,6 +816,23 @@ export default function LocationIntelligence({
                 value={fpct(snapshot.unemployment_rate)}
                 icon={Briefcase}
               />
+              {(snapshot as unknown as Record<string, unknown>).avg_weekly_wage != null && (
+                <StatCard
+                  label="Avg Weekly Wage"
+                  value={fc((snapshot as unknown as Record<string, unknown>).avg_weekly_wage as number)}
+                  subtitle={(snapshot as unknown as Record<string, unknown>).bls_year
+                    ? `BLS ${(snapshot as unknown as Record<string, unknown>).bls_year}Q${(snapshot as unknown as Record<string, unknown>).bls_quarter}`
+                    : undefined}
+                  icon={DollarSign}
+                />
+              )}
+              {(snapshot as unknown as Record<string, unknown>).total_establishments != null && (
+                <StatCard
+                  label="Establishments"
+                  value={fn((snapshot as unknown as Record<string, unknown>).total_establishments as number)}
+                  icon={Building2}
+                />
+              )}
             </div>
 
             {/* Industry breakdown */}
@@ -760,6 +922,70 @@ export default function LocationIntelligence({
             </div>
           </Panel>
         </>
+      )}
+
+      {/* ── Paste Report Modal ─────────────────────────────────────── */}
+      {pasteReportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-card border border-border/60 rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/40">
+              <div>
+                <h3 className="font-semibold text-sm">Paste Market Report</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Paste text from CoStar, ESRI, Placer.ai, Yardi Matrix, or
+                  any market report. Claude will extract demographics, housing,
+                  employment, and growth projections.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setPasteReportOpen(false);
+                  setReportText("");
+                }}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4 flex-1 overflow-auto">
+              <textarea
+                value={reportText}
+                onChange={(e) => setReportText(e.target.value)}
+                placeholder={`Paste market report text here…\n\nExamples of what works well:\n• CoStar submarket demographic summaries\n• ESRI Community Analyst exports\n• Placer.ai trade area reports\n• Yardi Matrix market snapshots\n• Any text with population, income, rent, employment data`}
+                rows={14}
+                className="w-full px-3 py-2 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none resize-none focus:border-primary/40 font-mono"
+              />
+              <div className="text-[10px] text-muted-foreground mt-1.5">
+                Data will be extracted and merged with existing location
+                intelligence for the {selectedRadius}-mile radius.
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border/40">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setPasteReportOpen(false);
+                  setReportText("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleExtractReport}
+                disabled={extracting || reportText.trim().length < 50}
+              >
+                {extracting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                Extract Data
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
