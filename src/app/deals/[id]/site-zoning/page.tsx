@@ -8,11 +8,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import type { BuildingProgram, MassingScenario } from "@/lib/types";
-import MassingSection from "@/components/massing/MassingSection";
-import { newBuildingProgram, computeMassingSummary } from "@/components/massing/massing-utils";
-import type { ZoningInputs } from "@/components/massing/massing-utils";
-
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface Setback { label: string; feet: number | null; }
@@ -218,7 +213,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   const [devParams, setDevParams] = useState<DevParams>(DEFAULT_DEV);
   const [narrative, setNarrative] = useState("");
   const [lastReportDate, setLastReportDate] = useState<string | null>(null);
-  const [buildingProgram, setBuildingProgram] = useState<BuildingProgram>(newBuildingProgram());
   const [dirty, setDirty] = useState(false);
 
   // ── Load data ──────────────────────────────────────────────────────────
@@ -279,9 +273,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       setDevParams(dp);
       setNarrative(uw?.zoning_narrative || "");
       setLastReportDate(uw?.last_report_date || null);
-      if (uw?.building_program?.scenarios?.length > 0) {
-        setBuildingProgram(uw.building_program);
-      }
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [params.id]);
@@ -326,7 +317,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         dev_params: finalDev,
         zoning_narrative: narrative,
         last_report_date: lastReportDate,
-        building_program: buildingProgram,
         // Also sync flat fields used by underwriting page
         development_mode: deal?.investment_strategy === "ground_up" || current.development_mode,
         lot_coverage_pct: finalDev.lot_coverage_pct,
@@ -361,7 +351,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     } finally {
       setSaving(false);
     }
-  }, [params.id, siteInfo, zoning, devParams, narrative, lastReportDate, deal, recalcBuilding, buildingProgram]);
+  }, [params.id, siteInfo, zoning, devParams, narrative, lastReportDate, deal, recalcBuilding]);
 
   // ── AI Zoning Report ───────────────────────────────────────────────────
   const runZoningReport = async () => {
@@ -838,211 +828,8 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         </Section>
       )}
 
-      {/* ── Building Program / Massing ──────────────────────────────── */}
-      {isGroundUp && (
-        <Section title="Building Program" icon={<Building2 className="h-4 w-4 text-blue-400" />}>
-          {(() => {
-            const landSF = siteInfo.land_sf || siteInfo.land_acres * 43560;
-            // Parse height limit from zoning height_limits array
-            let heightLimitFt = 0;
-            for (const h of zoning.height_limits) {
-              const match = h.value.match(/(\d+)\s*(ft|feet|')/i);
-              if (match) { heightLimitFt = parseInt(match[1]); break; }
-            }
-            if (!heightLimitFt && devParams.height_limit_stories > 0) {
-              heightLimitFt = devParams.height_limit_stories * 10;
-            }
+      {/* Building Program moved to /deals/[id]/programming page */}
 
-            const zoningInputs: ZoningInputs = {
-              land_sf: landSF,
-              far: devParams.far || zoning.far || 0,
-              lot_coverage_pct: devParams.lot_coverage_pct || zoning.lot_coverage_pct || 0,
-              height_limit_ft: heightLimitFt,
-              height_limit_stories: devParams.height_limit_stories,
-            };
-
-            const handlePushBaseline = async (scenario: MassingScenario) => {
-              const summary = computeMassingSummary(scenario, zoningInputs);
-              try {
-                const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
-                const uwJson = await uwRes.json();
-                const current = uwJson.data?.data
-                  ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
-                  : {};
-
-                // Build unit_groups from unit mix + residential NRSF
-                const resNRSF = summary.nrsf_by_use.residential || 0;
-                const mix = scenario.unit_mix || [];
-                const weightedAvgSF = mix.length > 0 ? mix.reduce((s: number, m: { avg_sf: number; allocation_pct: number }) => s + m.avg_sf * (m.allocation_pct / 100), 0) : 0;
-                const totalUnitsFromMix = weightedAvgSF > 0 ? Math.floor(resNRSF / weightedAvgSF) : summary.total_units;
-                const unitGroups = mix.length > 0
-                  ? mix.map((m: { type_label: string; allocation_pct: number; avg_sf: number }) => ({
-                      id: crypto.randomUUID(),
-                      label: m.type_label,
-                      unit_count: Math.round(totalUnitsFromMix * (m.allocation_pct / 100)),
-                      renovation_count: 0, renovation_cost_per_unit: 0,
-                      unit_change: "none", unit_change_count: 0,
-                      bedrooms: m.type_label.includes("Studio") ? 0 : m.type_label.includes("3") ? 3 : m.type_label.includes("2") ? 2 : 1,
-                      bathrooms: m.type_label.includes("Studio") ? 1 : m.type_label.includes("3") ? 2 : m.type_label.includes("2") ? 2 : 1,
-                      sf_per_unit: m.avg_sf,
-                      current_rent_per_sf: 0, market_rent_per_sf: 0,
-                      lease_type: "NNN", expense_reimbursement_per_sf: 0,
-                      current_rent_per_unit: 0, market_rent_per_unit: 0,
-                      beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 0,
-                    }))
-                  : current.unit_groups || [];
-
-                // Build parking config from massing parking spaces
-                const sfPerSpace = scenario.parking_sf_per_space || 350;
-                const parkingSpaces = summary.total_parking_spaces_est;
-                const hasBelowGrade = scenario.floors.some((f: { is_below_grade: boolean; use_type: string }) => f.is_below_grade && f.use_type === "parking");
-                const hasAboveGrade = scenario.floors.some((f: { is_below_grade: boolean; use_type: string }) => !f.is_below_grade && f.use_type === "parking");
-
-                // Determine if mixed-use (has multiple use types in massing)
-                const useTypes = Array.from(new Set(scenario.floors.filter((f: { use_type: string }) => f.use_type !== "mechanical" && f.use_type !== "parking").map((f: { use_type: string }) => f.use_type)));
-                const isMixedUse = useTypes.length > 1;
-
-                // Build mixed-use config if multiple use types
-                const mixedUseConfig = isMixedUse ? {
-                  enabled: true,
-                  total_gfa: summary.total_gsf,
-                  common_area_sf: 0,
-                  components: useTypes.map((t: string) => ({
-                    id: crypto.randomUUID(),
-                    component_type: t === "lobby_amenity" ? "other" : t,
-                    label: t === "residential" ? "Residential" : t === "retail" ? "Retail" : t === "office" ? "Office" : t,
-                    sf_allocation: summary.gsf_by_use[t as keyof typeof summary.gsf_by_use] || 0,
-                    unit_groups: [],
-                    opex_mode: "shared",
-                    opex_allocation_pct: t === "residential" ? 70 : 30,
-                    cap_rate: t === "residential" ? 5.0 : 6.5,
-                    ti_allowance_per_sf: 0,
-                    leasing_commission_pct: t === "retail" ? 6 : 0,
-                    free_rent_months: 0,
-                    rent_escalation_pct: 3,
-                  })),
-                } : current.mixed_use || null;
-
-                const merged = {
-                  ...current,
-                  // Core building metrics
-                  max_gsf: summary.total_gsf,
-                  max_nrsf: summary.total_nrsf,
-                  efficiency_pct: summary.total_gsf > 0 ? Math.round((summary.total_nrsf / summary.total_gsf) * 100) : devParams.efficiency_pct,
-                  // Development mode + zoning fields
-                  development_mode: true,
-                  far: devParams.far || current.far || 0,
-                  lot_coverage_pct: devParams.lot_coverage_pct || current.lot_coverage_pct || 0,
-                  height_limit_stories: devParams.height_limit_stories || current.height_limit_stories || 0,
-                  // Site info
-                  site_info: siteInfo,
-                  zoning_info: zoning,
-                  dev_params: devParams,
-                  // Unit groups from mix
-                  unit_groups: unitGroups,
-                  // Mixed-use config
-                  mixed_use: mixedUseConfig,
-                  // Parking per-space from massing
-                  parking_reserved_spaces: parkingSpaces,
-                  parking_reserved_rate: 0,
-                  parking_unreserved_spaces: 0,
-                  parking_unreserved_rate: 0,
-                  // Building program
-                  building_program: buildingProgram,
-                  // Push parking config if massing has parking floors
-                  ...(parkingSpaces > 0 ? {
-                    parking: {
-                      ...(current.parking || {}),
-                      entries: [
-                        ...(hasBelowGrade ? [{ id: crypto.randomUUID(), type: "underground", spaces: Math.round(parkingSpaces * (hasAboveGrade ? 0.5 : 1)), cost_per_space: current.parking?.entries?.[0]?.cost_per_space || 55000, reserved_residential_spaces: 0, reserved_monthly_rate: 0, unreserved_spaces: 0, unreserved_monthly_rate: 0, guest_visitor_spaces: 0, retail_shared_spaces: 0, retail_shared_monthly_rate: 0 }] : []),
-                        ...(hasAboveGrade ? [{ id: crypto.randomUUID(), type: "structured", spaces: Math.round(parkingSpaces * (hasBelowGrade ? 0.5 : 1)), cost_per_space: current.parking?.entries?.[0]?.cost_per_space || 35000, reserved_residential_spaces: 0, reserved_monthly_rate: 0, unreserved_spaces: 0, unreserved_monthly_rate: 0, guest_visitor_spaces: 0, retail_shared_spaces: 0, retail_shared_monthly_rate: 0 }] : []),
-                      ],
-                      zoning_required_ratio_residential: current.parking?.zoning_required_ratio_residential || zoning.parking_ratio_residential || 1.5,
-                      zoning_required_ratio_commercial: current.parking?.zoning_required_ratio_commercial || zoning.parking_ratio_commercial || 4.0,
-                    },
-                  } : {}),
-                };
-                await fetch("/api/underwriting", {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ deal_id: params.id, data: merged }),
-                });
-                setDevParams(dp => ({ ...dp, max_gsf: summary.total_gsf, max_nrsf: summary.total_nrsf }));
-                toast.success(`Baseline pushed: ${summary.total_gsf.toLocaleString()} GSF, ${totalUnitsFromMix} units, ${parkingSpaces} parking spaces`);
-              } catch {
-                toast.error("Failed to push baseline to underwriting");
-              }
-            };
-
-            const handlePushScenario = async (scenario: MassingScenario) => {
-              const summary = computeMassingSummary(scenario, zoningInputs);
-              try {
-                const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
-                const uwJson = await uwRes.json();
-                const current = uwJson.data?.data
-                  ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
-                  : {};
-                const existingScenarios = current.scenarios || [];
-                const scenarioName = `Massing: ${scenario.name}`;
-                const existingIdx = existingScenarios.findIndex((s: { name: string }) => s.name === scenarioName);
-                // Build unit groups from mix for the scenario override
-                const resNRSF2 = summary.nrsf_by_use.residential || 0;
-                const mix2 = scenario.unit_mix || [];
-                const wavg2 = mix2.length > 0 ? mix2.reduce((s: number, m: { avg_sf: number; allocation_pct: number }) => s + m.avg_sf * (m.allocation_pct / 100), 0) : 0;
-                const totalU2 = wavg2 > 0 ? Math.floor(resNRSF2 / wavg2) : summary.total_units;
-                const scenarioUnitGroups = mix2.length > 0
-                  ? mix2.map((m: { type_label: string; allocation_pct: number; avg_sf: number }) => ({
-                      id: crypto.randomUUID(), label: m.type_label,
-                      unit_count: Math.round(totalU2 * (m.allocation_pct / 100)),
-                      renovation_count: 0, renovation_cost_per_unit: 0,
-                      unit_change: "none", unit_change_count: 0,
-                      bedrooms: m.type_label.includes("Studio") ? 0 : m.type_label.includes("3") ? 3 : m.type_label.includes("2") ? 2 : 1,
-                      bathrooms: 1, sf_per_unit: m.avg_sf,
-                      current_rent_per_sf: 0, market_rent_per_sf: 0, lease_type: "NNN", expense_reimbursement_per_sf: 0,
-                      current_rent_per_unit: 0, market_rent_per_unit: 0,
-                      beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 0,
-                    }))
-                  : undefined;
-
-                const uwScenario = {
-                  id: existingIdx >= 0 ? existingScenarios[existingIdx].id : crypto.randomUUID(),
-                  name: scenarioName,
-                  type: "custom",
-                  description: `Auto-generated from building program "${scenario.name}" — ${summary.total_gsf.toLocaleString()} GSF, ${totalU2} units, ${summary.total_parking_spaces_est} parking`,
-                  overrides: {
-                    max_gsf: summary.total_gsf,
-                    max_nrsf: summary.total_nrsf,
-                    efficiency_pct: summary.total_gsf > 0 ? Math.round((summary.total_nrsf / summary.total_gsf) * 100) : 80,
-                    ...(scenarioUnitGroups ? { unit_groups: scenarioUnitGroups } : {}),
-                  },
-                };
-                if (existingIdx >= 0) existingScenarios[existingIdx] = uwScenario;
-                else existingScenarios.push(uwScenario);
-                const merged = { ...current, scenarios: existingScenarios, building_program: buildingProgram };
-                await fetch("/api/underwriting", {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ deal_id: params.id, data: merged }),
-                });
-                toast.success(`UW scenario "${scenarioName}" ${existingIdx >= 0 ? "updated" : "created"}`);
-              } catch {
-                toast.error("Failed to push scenario to underwriting");
-              }
-            };
-
-            return (
-              <MassingSection
-                program={buildingProgram}
-                onChange={(p) => { setBuildingProgram(p); setDirty(true); }}
-                zoning={zoningInputs}
-                densityBonuses={zoning.density_bonuses || []}
-                onPushBaseline={handlePushBaseline}
-                onPushScenario={handlePushScenario}
-              />
-            );
-          })()}
-        </Section>
-      )}
 
       {/* ── AI Zoning Report Narrative ────────────────────────────────── */}
       {narrative && (

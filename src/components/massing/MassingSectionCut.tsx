@@ -102,14 +102,25 @@ export default function MassingSectionCut({ scenario, summary }: Props) {
       {floorRects.map(({ floor, x, y, w, h }) => {
         const color = FLOOR_USE_COLORS[floor.use_type as FloorUseType];
         const showLabel = h >= 14;
+        const hasSecondary = floor.secondary_use && floor.secondary_sf > 0;
+        const primarySF = hasSecondary ? floor.floor_plate_sf - floor.secondary_sf : floor.floor_plate_sf;
+        const primaryW = hasSecondary ? (primarySF / floor.floor_plate_sf) * w : w;
+        const secondaryW = hasSecondary ? (floor.secondary_sf / floor.floor_plate_sf) * w : 0;
+        const secondaryColor = hasSecondary ? FLOOR_USE_COLORS[floor.secondary_use as FloorUseType] : null;
         return (
           <g key={floor.id}>
-            <rect x={x} y={y} width={w} height={h} fill={color.fill} opacity={0.6} stroke={color.fill} strokeWidth="1" rx="1" />
+            {/* Primary use rect */}
+            <rect x={x} y={y} width={primaryW} height={h} fill={color.fill} opacity={0.6} stroke={color.fill} strokeWidth="1" rx="1" />
+            {/* Secondary use rect (right side) */}
+            {hasSecondary && secondaryColor && (
+              <rect x={x + primaryW} y={y} width={secondaryW} height={h} fill={secondaryColor.fill} opacity={0.6} stroke={secondaryColor.fill} strokeWidth="1" rx="1" />
+            )}
             {floor.is_below_grade && <rect x={x} y={y} width={w} height={h} fill="url(#hatch)" />}
             {showLabel && (
               <>
                 <text x={x + 6} y={y + h / 2 - 3} fill="white" fontSize="9" fontWeight="500" opacity="0.9">
                   {floor.label || FLOOR_USE_TYPE_LABELS[floor.use_type]}
+                  {hasSecondary ? ` + ${FLOOR_USE_TYPE_LABELS[floor.secondary_use as FloorUseType]}` : ""}
                 </text>
                 <text x={x + 6} y={y + h / 2 + 8} fill="white" fontSize="7" opacity="0.6">
                   {fc(floor.floor_plate_sf)} SF · {floor.floor_to_floor_ft}ft

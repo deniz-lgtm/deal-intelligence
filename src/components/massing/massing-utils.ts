@@ -98,8 +98,16 @@ export function computeMassingSummary(scenario: MassingScenario, zoning: ZoningI
   const gsf_by_use: Partial<Record<FloorUseType, number>> = {};
   const nrsf_by_use: Partial<Record<FloorUseType, number>> = {};
   for (const f of scenario.floors) {
-    gsf_by_use[f.use_type] = (gsf_by_use[f.use_type] || 0) + f.floor_plate_sf;
-    nrsf_by_use[f.use_type] = (nrsf_by_use[f.use_type] || 0) + Math.round(f.floor_plate_sf * (f.efficiency_pct / 100));
+    // If floor has a secondary use, split SF between primary and secondary
+    const primarySF = f.secondary_use && f.secondary_sf > 0 ? f.floor_plate_sf - f.secondary_sf : f.floor_plate_sf;
+    gsf_by_use[f.use_type] = (gsf_by_use[f.use_type] || 0) + primarySF;
+    nrsf_by_use[f.use_type] = (nrsf_by_use[f.use_type] || 0) + Math.round(primarySF * (f.efficiency_pct / 100));
+    if (f.secondary_use && f.secondary_sf > 0) {
+      gsf_by_use[f.secondary_use] = (gsf_by_use[f.secondary_use] || 0) + f.secondary_sf;
+      // Use a reasonable efficiency for the secondary use
+      const secEff = f.secondary_use === "retail" ? 95 : f.secondary_use === "office" ? 87 : f.secondary_use === "parking" ? 98 : 80;
+      nrsf_by_use[f.secondary_use] = (nrsf_by_use[f.secondary_use] || 0) + Math.round(f.secondary_sf * (secEff / 100));
+    }
   }
 
   const total_parking_sf = gsf_by_use.parking || 0;
