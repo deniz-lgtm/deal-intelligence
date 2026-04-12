@@ -19,6 +19,7 @@ import {
   FileSearch,
   Map as MapIcon,
   Table as TableIcon,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -35,6 +36,18 @@ const CompsMapView = dynamic(() => import("@/components/CompsMapView"), {
     </div>
   ),
 });
+
+const LocationIntelligence = dynamic(
+  () => import("@/components/LocationIntelligence"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    ),
+  }
+);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -159,7 +172,7 @@ export default function CompsPage({ params }: { params: { id: string } }) {
   const [radiusMiles, setRadiusMiles] = useState<number | null>(null);
   const [geocodingSubject, setGeocodingSubject] = useState(false);
   const [geocodingMissing, setGeocodingMissing] = useState(false);
-  const [viewMode, setViewMode] = useState<"table" | "map">("table");
+  const [viewMode, setViewMode] = useState<"table" | "map" | "location">("table");
 
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteType, setPasteType] = useState<"sale" | "rent">("sale");
@@ -597,8 +610,7 @@ export default function CompsPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {/* View toggle (Table | Map). The map view is only useful once at least
-          one comp or the subject has coordinates. */}
+      {/* View toggle (Table | Map | Location Intel) */}
       {(saleComps.length > 0 || rentComps.length > 0 || subject?.lat) && (
         <div className="flex items-center justify-between gap-3">
           <div className="inline-flex items-center rounded-lg border border-border/40 bg-muted/20 p-0.5">
@@ -625,6 +637,18 @@ export default function CompsPage({ params }: { params: { id: string } }) {
             >
               <MapIcon className="h-3.5 w-3.5" />
               Map
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("location")}
+              className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition-colors ${
+                viewMode === "location"
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Globe className="h-3.5 w-3.5" />
+              Location Intel
             </button>
           </div>
 
@@ -693,6 +717,19 @@ export default function CompsPage({ params }: { params: { id: string } }) {
             </p>
           </div>
         )
+      ) : viewMode === "location" ? (
+        <LocationIntelligence
+          dealId={params.id}
+          dealLat={subject?.lat ? Number(subject.lat) : null}
+          dealLng={subject?.lng ? Number(subject.lng) : null}
+          dealAddress={
+            subject
+              ? [subject.address, subject.city, subject.state]
+                  .filter(Boolean)
+                  .join(", ") || null
+              : null
+          }
+        />
       ) : (
         <>
           {/* Sale comps */}

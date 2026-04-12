@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries, compQueries, submarketMetricsQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries, compQueries, submarketMetricsQueries, locationIntelligenceQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
@@ -47,7 +47,7 @@ export async function POST(
     const { audience, format, sections, existingNotes = {} } = body;
 
     // Fetch ALL deal data in parallel
-    const [deal, uwRow, omAnalysis, docs, checklist, photosRes, devPhases, preDevCosts, compsAll, submarketMetrics] = await Promise.all([
+    const [deal, uwRow, omAnalysis, docs, checklist, photosRes, devPhases, preDevCosts, compsAll, submarketMetrics, locationIntelRows] = await Promise.all([
       dealQueries.getById(params.id),
       underwritingQueries.getByDealId(params.id),
       omAnalysisQueries.getByDealId(params.id),
@@ -58,6 +58,7 @@ export async function POST(
       preDevCostQueries.getByDealId(params.id).catch(() => []),
       compQueries.getByDealId(params.id).catch(() => []),
       submarketMetricsQueries.getByDealId(params.id).catch(() => null),
+      locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
     ]);
 
     // Use deal notes for context instead of legacy context_notes
@@ -81,7 +82,7 @@ export async function POST(
     // Build per-section context
     const sectionContexts: Record<string, string> = {};
     for (const sectionId of sections) {
-      sectionContexts[sectionId] = buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc, businessPlan as AnyRecord | null, devPhases as AnyRecord[], preDevCosts as AnyRecord[], compsAll as AnyRecord[], submarketMetrics as AnyRecord | null);
+      sectionContexts[sectionId] = buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc, businessPlan as AnyRecord | null, devPhases as AnyRecord[], preDevCosts as AnyRecord[], compsAll as AnyRecord[], submarketMetrics as AnyRecord | null, locationIntelRows as AnyRecord[]);
     }
 
     const audienceTone = AUDIENCE_TONES[audience] || AUDIENCE_TONES.investment_committee;
@@ -187,7 +188,8 @@ function buildSectionContext(
   docs: AnyRecord[], checklist: AnyRecord[], photos: AnyRecord[],
   n: (v: unknown) => number, fc: (v: number) => string, bp?: AnyRecord | null,
   devPhases: AnyRecord[] = [], preDevCosts: AnyRecord[] = [],
-  compsAll: AnyRecord[] = [], submarketMetrics: AnyRecord | null = null
+  compsAll: AnyRecord[] = [], submarketMetrics: AnyRecord | null = null,
+  locationIntel: AnyRecord[] = []
 ): string {
   const isMF = deal.property_type === "multifamily" || deal.property_type === "student_housing";
   const unitGroups = uw?.unit_groups || [];
@@ -246,6 +248,45 @@ function buildSectionContext(
           return "  " + parts.join(" | ");
         });
         lines.push(`Sale Comparables (${saleComps.length}):\n${compLines.join("\n")}`);
+      }
+
+      // Location Intelligence data (demographics, housing, employment)
+      if (locationIntel && locationIntel.length > 0) {
+        // Use the best available radius (prefer 3mi, then smallest available)
+        const sorted = [...locationIntel].sort((a, b) => {
+          if (Number(a.radius_miles) === 3) return -1;
+          if (Number(b.radius_miles) === 3) return 1;
+          return Number(a.radius_miles) - Number(b.radius_miles);
+        });
+        const li = sorted[0];
+        const data = typeof li.data === "string" ? JSON.parse(li.data) : (li.data || {});
+        const proj = typeof li.projections === "string" ? JSON.parse(li.projections) : (li.projections || {});
+
+        const demoLines: string[] = [];
+        demoLines.push(`[${li.radius_miles}-Mile Radius Demographics — ${li.data_source === "census_acs" ? `Census ACS ${li.source_year || ""}` : "User-provided data"}]`);
+        if (data.total_population != null) demoLines.push(`Population: ${Number(data.total_population).toLocaleString()}`);
+        if (data.median_household_income != null) demoLines.push(`Median HH Income: $${Number(data.median_household_income).toLocaleString()}`);
+        if (data.median_age != null) demoLines.push(`Median Age: ${data.median_age}`);
+        if (data.bachelors_degree_pct != null) demoLines.push(`Bachelor's Degree+: ${data.bachelors_degree_pct}%`);
+        if (data.median_home_value != null) demoLines.push(`Median Home Value: $${Number(data.median_home_value).toLocaleString()}`);
+        if (data.median_gross_rent != null) demoLines.push(`Median Rent: $${Number(data.median_gross_rent).toLocaleString()}/mo`);
+        if (data.owner_occupied_pct != null) demoLines.push(`Owner-Occupied: ${data.owner_occupied_pct}% | Renter: ${data.renter_occupied_pct ?? "—"}%`);
+        if (data.unemployment_rate != null) demoLines.push(`Unemployment Rate: ${data.unemployment_rate}%`);
+        if (data.labor_force != null) demoLines.push(`Labor Force: ${Number(data.labor_force).toLocaleString()}`);
+        if (data.top_industries?.length) {
+          demoLines.push(`Top Industries: ${data.top_industries.slice(0, 5).map((i: AnyRecord) => `${i.name} (${i.share_pct}%)`).join(", ")}`);
+        }
+        // Growth projections
+        const projLines: string[] = [];
+        if (proj.population_growth_5yr_pct != null) projLines.push(`Population Growth (5yr): ${proj.population_growth_5yr_pct}%`);
+        if (proj.job_growth_5yr_pct != null) projLines.push(`Job Growth (5yr): ${proj.job_growth_5yr_pct}%`);
+        if (proj.home_value_growth_5yr_pct != null) projLines.push(`Home Value Growth (5yr): ${proj.home_value_growth_5yr_pct}%`);
+        if (proj.rent_growth_5yr_pct != null) projLines.push(`Rent Growth (5yr): ${proj.rent_growth_5yr_pct}%`);
+        if (proj.new_units_pipeline != null) projLines.push(`New Units Pipeline: ${Number(proj.new_units_pipeline).toLocaleString()} units`);
+        if (proj.notes) projLines.push(`Projection Notes: ${proj.notes}`);
+        if (projLines.length) demoLines.push("Growth Projections:\n  " + projLines.join("\n  "));
+
+        if (demoLines.length > 1) lines.push(demoLines.join("\n  "));
       }
 
       // Market-category documents

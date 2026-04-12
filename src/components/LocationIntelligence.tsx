@@ -1,0 +1,750 @@
+"use client";
+
+import { useState, useCallback, useEffect } from "react";
+import {
+  Loader2,
+  Download,
+  RefreshCw,
+  Users,
+  Briefcase,
+  Home,
+  DollarSign,
+  TrendingUp,
+  TrendingDown,
+  Building2,
+  GraduationCap,
+  MapPin,
+  ChevronDown,
+  ChevronRight,
+  Save,
+  Upload,
+  Info,
+  BarChart3,
+  Target,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import type {
+  DemographicSnapshot,
+  LocationIntelligence as LocationIntelligenceType,
+  LocationRadiusMiles,
+} from "@/lib/types";
+import { LOCATION_RADIUS_OPTIONS } from "@/lib/types";
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const fn = (n: number | null | undefined, digits = 0) =>
+  n == null ? "—" : Number(n).toLocaleString("en-US", { maximumFractionDigits: digits });
+const fc = (n: number | null | undefined) =>
+  n == null ? "—" : "$" + Math.round(Number(n)).toLocaleString("en-US");
+const fpct = (n: number | null | undefined, digits = 1) =>
+  n == null ? "—" : Number(n).toFixed(digits) + "%";
+
+function TrendBadge({ value, suffix = "%" }: { value: number | null | undefined; suffix?: string }) {
+  if (value == null) return <span className="text-muted-foreground text-[10px]">—</span>;
+  const positive = value > 0;
+  const neutral = value === 0;
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${
+        neutral
+          ? "text-muted-foreground"
+          : positive
+          ? "text-emerald-400"
+          : "text-red-400"
+      }`}
+    >
+      {positive ? (
+        <TrendingUp className="h-3 w-3" />
+      ) : neutral ? null : (
+        <TrendingDown className="h-3 w-3" />
+      )}
+      {positive ? "+" : ""}
+      {Number(value).toFixed(1)}
+      {suffix}
+    </span>
+  );
+}
+
+// ── Stat Card ────────────────────────────────────────────────────────────────
+
+function StatCard({
+  label,
+  value,
+  subtitle,
+  trend,
+  trendLabel,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  subtitle?: string;
+  trend?: number | null;
+  trendLabel?: string;
+  icon: typeof Users;
+}) {
+  return (
+    <div className="border border-border/40 rounded-lg bg-muted/10 p-3.5 space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <Icon className="h-3 w-3" />
+          {label}
+        </span>
+        {trend != null && (
+          <TrendBadge value={trend} suffix={trendLabel || "%"} />
+        )}
+      </div>
+      <div className="text-lg font-semibold text-foreground">{value}</div>
+      {subtitle && (
+        <div className="text-[10px] text-muted-foreground">{subtitle}</div>
+      )}
+    </div>
+  );
+}
+
+// ── Inline editor for a numeric field ────────────────────────────────────────
+
+function InlineField({
+  label,
+  value,
+  onChange,
+  suffix,
+  type = "number",
+}: {
+  label: string;
+  value: string | number | null;
+  onChange: (v: string) => void;
+  suffix?: string;
+  type?: string;
+}) {
+  return (
+    <div>
+      <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+        {label}
+      </label>
+      <div className="flex items-center border border-border/40 rounded-lg bg-muted/20 overflow-hidden">
+        <input
+          type={type}
+          value={value ?? ""}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="—"
+          className="flex-1 px-3 py-1.5 text-sm bg-transparent outline-none"
+        />
+        {suffix && (
+          <span className="px-2 text-xs text-muted-foreground bg-muted/30 border-l border-border/40 py-1.5">
+            {suffix}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Collapsible section ──────────────────────────────────────────────────────
+
+function Panel({
+  title,
+  icon,
+  children,
+  defaultOpen = true,
+  action,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  action?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+      <div className="w-full flex items-center gap-3 px-5 py-3 bg-muted/20 text-left">
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-3 flex-1 hover:opacity-80"
+        >
+          {open ? (
+            <ChevronDown className="h-4 w-4 text-muted-foreground/60" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground/60" />
+          )}
+          <span className="flex items-center gap-2">
+            {icon}
+            <span className="font-semibold text-sm">{title}</span>
+          </span>
+        </button>
+        {action}
+      </div>
+      {open && <div className="px-5 py-4">{children}</div>}
+    </div>
+  );
+}
+
+// ── Industry bar ─────────────────────────────────────────────────────────────
+
+function IndustryBar({
+  industries,
+}: {
+  industries: Array<{ name: string; share_pct?: number }>;
+}) {
+  if (!industries || industries.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground py-2">
+        No industry data available
+      </div>
+    );
+  }
+  const maxPct = Math.max(...industries.map((i) => i.share_pct ?? 0));
+  return (
+    <div className="space-y-1.5">
+      {industries.map((ind, idx) => (
+        <div key={idx} className="flex items-center gap-2 text-xs">
+          <span className="w-[180px] truncate text-muted-foreground flex-shrink-0">
+            {ind.name}
+          </span>
+          <div className="flex-1 h-2 bg-muted/30 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full bg-primary/60"
+              style={{
+                width: `${maxPct > 0 ? ((ind.share_pct ?? 0) / maxPct) * 100 : 0}%`,
+              }}
+            />
+          </div>
+          <span className="w-12 text-right text-muted-foreground flex-shrink-0">
+            {ind.share_pct != null ? `${ind.share_pct}%` : "—"}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Main Component ───────────────────────────────────────────────────────────
+
+interface Props {
+  dealId: string;
+  dealLat: number | null;
+  dealLng: number | null;
+  dealAddress?: string | null;
+}
+
+export default function LocationIntelligence({
+  dealId,
+  dealLat,
+  dealLng,
+  dealAddress,
+}: Props) {
+  const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [selectedRadius, setSelectedRadius] = useState<LocationRadiusMiles>(3);
+  const [allData, setAllData] = useState<Record<number, LocationIntelligenceType>>({});
+  const [meta, setMeta] = useState<{
+    source?: string;
+    year?: number;
+    geography?: string;
+    note?: string;
+  } | null>(null);
+
+  // Projections editing state
+  const [projections, setProjections] = useState<{
+    population_growth_5yr_pct: number | null;
+    job_growth_5yr_pct: number | null;
+    home_value_growth_5yr_pct: number | null;
+    rent_growth_5yr_pct: number | null;
+    new_units_pipeline: number | null;
+    notes: string | null;
+  }>({
+    population_growth_5yr_pct: null,
+    job_growth_5yr_pct: null,
+    home_value_growth_5yr_pct: null,
+    rent_growth_5yr_pct: null,
+    new_units_pipeline: null,
+    notes: null,
+  });
+
+  const currentData = allData[selectedRadius];
+  const snapshot: DemographicSnapshot | null = currentData
+    ? typeof currentData.data === "string"
+      ? JSON.parse(currentData.data)
+      : currentData.data
+    : null;
+
+  // Load all location intelligence data for this deal
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/location-intelligence`);
+      const json = await res.json();
+      const rows: LocationIntelligenceType[] = json.data || [];
+      const byRadius: Record<number, LocationIntelligenceType> = {};
+      for (const row of rows) {
+        byRadius[Number(row.radius_miles)] = row;
+      }
+      setAllData(byRadius);
+
+      // Load projections for current radius
+      const curr = byRadius[selectedRadius];
+      if (curr?.projections) {
+        const p =
+          typeof curr.projections === "string"
+            ? JSON.parse(curr.projections)
+            : curr.projections;
+        setProjections({
+          population_growth_5yr_pct: p.population_growth_5yr_pct ?? null,
+          job_growth_5yr_pct: p.job_growth_5yr_pct ?? null,
+          home_value_growth_5yr_pct: p.home_value_growth_5yr_pct ?? null,
+          rent_growth_5yr_pct: p.rent_growth_5yr_pct ?? null,
+          new_units_pipeline: p.new_units_pipeline ?? null,
+          notes: p.notes ?? null,
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to load location intelligence data");
+    } finally {
+      setLoading(false);
+    }
+  }, [dealId, selectedRadius]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // When radius changes, update projections from stored data
+  useEffect(() => {
+    const curr = allData[selectedRadius];
+    if (curr?.projections) {
+      const p =
+        typeof curr.projections === "string"
+          ? JSON.parse(curr.projections)
+          : curr.projections;
+      setProjections({
+        population_growth_5yr_pct: p.population_growth_5yr_pct ?? null,
+        job_growth_5yr_pct: p.job_growth_5yr_pct ?? null,
+        home_value_growth_5yr_pct: p.home_value_growth_5yr_pct ?? null,
+        rent_growth_5yr_pct: p.rent_growth_5yr_pct ?? null,
+        new_units_pipeline: p.new_units_pipeline ?? null,
+        notes: p.notes ?? null,
+      });
+      setDirty(false);
+    } else {
+      setProjections({
+        population_growth_5yr_pct: null,
+        job_growth_5yr_pct: null,
+        home_value_growth_5yr_pct: null,
+        rent_growth_5yr_pct: null,
+        new_units_pipeline: null,
+        notes: null,
+      });
+      setDirty(false);
+    }
+  }, [selectedRadius, allData]);
+
+  // Fetch Census data
+  async function handleFetchCensus() {
+    setFetching(true);
+    setMeta(null);
+    try {
+      const res = await fetch(
+        `/api/deals/${dealId}/location-intelligence/fetch-census`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ radius_miles: selectedRadius }),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Failed to fetch Census data");
+        return;
+      }
+      if (json.meta) setMeta(json.meta);
+      toast.success("Census data loaded successfully");
+      loadData();
+    } catch {
+      toast.error("Failed to fetch Census data");
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  // Save projections
+  async function handleSaveProjections() {
+    setSaving(true);
+    try {
+      const dataToSave = snapshot || {};
+      const res = await fetch(
+        `/api/deals/${dealId}/location-intelligence`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            radius_miles: selectedRadius,
+            data: dataToSave,
+            projections,
+            data_source: currentData?.data_source || "manual",
+            source_year: currentData?.source_year || null,
+            source_notes: currentData?.source_notes || null,
+          }),
+        }
+      );
+      if (!res.ok) {
+        toast.error("Failed to save projections");
+        return;
+      }
+      setDirty(false);
+      toast.success("Projections saved");
+      loadData();
+    } catch {
+      toast.error("Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateProjection(key: string, rawVal: string) {
+    const val = rawVal === "" ? null : Number(rawVal);
+    setProjections((prev) => ({ ...prev, [key]: val }));
+    setDirty(true);
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  if (!dealLat || !dealLng) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <MapPin className="h-10 w-10 text-muted-foreground/40 mb-3" />
+        <p className="text-sm text-muted-foreground">
+          Geocode this deal to unlock location intelligence.
+        </p>
+        <p className="text-xs text-muted-foreground/70 mt-1">
+          Go to the Comps tab and click &quot;Geocode Subject&quot; to set the
+          property coordinates.
+        </p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* ── Radius Selector + Actions ──────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Target className="h-4 w-4 text-primary" />
+          <span className="text-xs font-medium text-muted-foreground">Radius:</span>
+          <div className="inline-flex items-center rounded-lg border border-border/40 bg-muted/20 p-0.5">
+            {LOCATION_RADIUS_OPTIONS.map((r) => (
+              <button
+                key={r}
+                onClick={() => setSelectedRadius(r)}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  selectedRadius === r
+                    ? "bg-primary/15 text-primary font-medium"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {r} mi
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {dirty && (
+            <Button
+              size="sm"
+              variant="default"
+              onClick={handleSaveProjections}
+              disabled={saving}
+            >
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+              <span className="ml-1.5">Save Projections</span>
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleFetchCensus}
+            disabled={fetching}
+          >
+            {fetching ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            {snapshot ? "Refresh Census Data" : "Pull Census Data"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Data source info */}
+      {(currentData?.data_source || meta) && (
+        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-primary/5 border border-primary/20 text-xs text-muted-foreground">
+          <Info className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 text-primary/60" />
+          <div>
+            <span className="font-medium text-foreground/80">
+              {meta?.source || "Census ACS 5-Year"}
+            </span>
+            {currentData?.source_year && (
+              <span> ({currentData.source_year})</span>
+            )}
+            {meta?.geography && <span> · {meta.geography}</span>}
+            {meta?.note && (
+              <span className="block mt-0.5 text-muted-foreground/70">
+                {meta.note}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── No data state ─────────────────────────────────────────────── */}
+      {!snapshot ? (
+        <div className="border border-dashed border-border/40 rounded-xl bg-card/40 py-16 text-center">
+          <BarChart3 className="h-10 w-10 mx-auto mb-3 text-muted-foreground/40" />
+          <p className="text-sm text-muted-foreground">
+            No location data for {selectedRadius}-mile radius yet.
+          </p>
+          <p className="text-xs text-muted-foreground/70 mt-1 max-w-md mx-auto">
+            Click &quot;Pull Census Data&quot; to automatically fetch population,
+            demographics, income, housing, and employment data from the US Census
+            Bureau, or manually enter data below.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-4"
+            onClick={handleFetchCensus}
+            disabled={fetching}
+          >
+            {fetching ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+            ) : (
+              <Download className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            Pull Census Data
+          </Button>
+        </div>
+      ) : (
+        <>
+          {/* ── Population & Demographics ──────────────────────────────── */}
+          <Panel
+            title="Population & Demographics"
+            icon={<Users className="h-4 w-4 text-primary" />}
+          >
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatCard
+                label="Population"
+                value={fn(snapshot.total_population)}
+                trend={snapshot.population_growth_pct}
+                trendLabel="% yr"
+                icon={Users}
+              />
+              <StatCard
+                label="Median Age"
+                value={fn(snapshot.median_age, 1)}
+                icon={Users}
+              />
+              <StatCard
+                label="Avg Household Size"
+                value={fn(snapshot.avg_household_size, 1)}
+                icon={Home}
+              />
+              <StatCard
+                label="Family Households"
+                value={fpct(snapshot.family_households_pct)}
+                icon={Users}
+              />
+              <StatCard
+                label="Median HH Income"
+                value={fc(snapshot.median_household_income)}
+                icon={DollarSign}
+              />
+              <StatCard
+                label="Per Capita Income"
+                value={fc(snapshot.per_capita_income)}
+                icon={DollarSign}
+              />
+              <StatCard
+                label="Poverty Rate"
+                value={fpct(snapshot.poverty_rate)}
+                icon={DollarSign}
+              />
+              <StatCard
+                label="Bachelor's Degree+"
+                value={fpct(snapshot.bachelors_degree_pct)}
+                icon={GraduationCap}
+              />
+            </div>
+          </Panel>
+
+          {/* ── Housing Market ─────────────────────────────────────────── */}
+          <Panel
+            title="Housing Market"
+            icon={<Home className="h-4 w-4 text-primary" />}
+          >
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatCard
+                label="Median Home Value"
+                value={fc(snapshot.median_home_value)}
+                trend={snapshot.home_value_growth_pct}
+                trendLabel="% yr"
+                icon={Home}
+              />
+              <StatCard
+                label="Median Rent"
+                value={
+                  snapshot.median_gross_rent != null
+                    ? `$${fn(snapshot.median_gross_rent)}/mo`
+                    : "—"
+                }
+                trend={snapshot.rent_growth_pct}
+                trendLabel="% yr"
+                icon={DollarSign}
+              />
+              <StatCard
+                label="Total Housing Units"
+                value={fn(snapshot.total_housing_units)}
+                icon={Building2}
+              />
+              <StatCard
+                label="Owner-Occupied"
+                value={fpct(snapshot.owner_occupied_pct)}
+                subtitle={
+                  snapshot.renter_occupied_pct != null
+                    ? `Renter: ${fpct(snapshot.renter_occupied_pct)}`
+                    : undefined
+                }
+                icon={Home}
+              />
+            </div>
+          </Panel>
+
+          {/* ── Employment & Economy ───────────────────────────────────── */}
+          <Panel
+            title="Employment & Economy"
+            icon={<Briefcase className="h-4 w-4 text-primary" />}
+          >
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+              <StatCard
+                label="Labor Force"
+                value={fn(snapshot.labor_force)}
+                icon={Briefcase}
+              />
+              <StatCard
+                label="Total Employed"
+                value={fn(snapshot.total_employed)}
+                icon={Briefcase}
+              />
+              <StatCard
+                label="Unemployment Rate"
+                value={fpct(snapshot.unemployment_rate)}
+                icon={Briefcase}
+              />
+            </div>
+
+            {/* Industry breakdown */}
+            <div className="mt-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                Top Industries by Employment
+              </div>
+              <IndustryBar industries={snapshot.top_industries || []} />
+            </div>
+          </Panel>
+
+          {/* ── Growth Projections (editable) ──────────────────────────── */}
+          <Panel
+            title="Growth Projections & Pipeline"
+            icon={<TrendingUp className="h-4 w-4 text-primary" />}
+            action={
+              dirty ? (
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={handleSaveProjections}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  <span className="ml-1.5">Save</span>
+                </Button>
+              ) : null
+            }
+          >
+            <p className="text-xs text-muted-foreground mb-3">
+              Enter projections from market reports, CoStar, ESRI, or your own
+              analysis. These will be included in investment packages.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <InlineField
+                label="Population Growth (5yr)"
+                value={projections.population_growth_5yr_pct}
+                onChange={(v) => updateProjection("population_growth_5yr_pct", v)}
+                suffix="%"
+              />
+              <InlineField
+                label="Job Growth (5yr)"
+                value={projections.job_growth_5yr_pct}
+                onChange={(v) => updateProjection("job_growth_5yr_pct", v)}
+                suffix="%"
+              />
+              <InlineField
+                label="Home Value Growth (5yr)"
+                value={projections.home_value_growth_5yr_pct}
+                onChange={(v) => updateProjection("home_value_growth_5yr_pct", v)}
+                suffix="%"
+              />
+              <InlineField
+                label="Rent Growth (5yr)"
+                value={projections.rent_growth_5yr_pct}
+                onChange={(v) => updateProjection("rent_growth_5yr_pct", v)}
+                suffix="%"
+              />
+              <InlineField
+                label="New Units Pipeline"
+                value={projections.new_units_pipeline}
+                onChange={(v) => updateProjection("new_units_pipeline", v)}
+                suffix="units"
+              />
+            </div>
+            <div className="mt-3">
+              <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+                Notes / Sources
+              </label>
+              <textarea
+                value={projections.notes ?? ""}
+                onChange={(e) => {
+                  setProjections((prev) => ({
+                    ...prev,
+                    notes: e.target.value || null,
+                  }));
+                  setDirty(true);
+                }}
+                placeholder="E.g., CoStar Q4 2024 submarket report, ESRI demographic forecast, local economic development authority data…"
+                rows={2}
+                className="w-full px-3 py-2 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none resize-none focus:border-primary/40"
+              />
+            </div>
+          </Panel>
+        </>
+      )}
+    </div>
+  );
+}
