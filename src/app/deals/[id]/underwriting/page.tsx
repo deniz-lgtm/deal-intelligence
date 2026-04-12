@@ -2148,41 +2148,212 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         <div className="mt-3 overflow-x-auto">
           {isGroundUp ? (
             <>
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="bg-muted/30 border-b">
-                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Description</th>
-                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Qty</th>
-                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Units</th>
-                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">$ / Unit</th>
-                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* Hard Costs row */}
-                  <tr className="border-b hover:bg-muted/10">
-                    <td className="px-2 py-1.5 font-medium">Hard Costs</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{fn(d.max_gsf || 0)}</td>
-                    <td className="px-2 py-1.5 text-xs text-muted-foreground">GSF</td>
-                    <td className="px-2 py-1.5"><CellInput value={d.hard_cost_per_sf} onChange={v => set("hard_cost_per_sf", v)} prefix="$" decimals={2} /></td>
-                    <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(m.totalHardCosts)}</td>
-                  </tr>
-                  {/* Soft Costs row */}
-                  <tr className="border-b hover:bg-muted/10">
-                    <td className="px-2 py-1.5 font-medium">Soft Costs</td>
-                    <td className="px-2 py-1.5"><CellInput value={d.soft_cost_pct} onChange={v => set("soft_cost_pct", v)} decimals={1} /></td>
-                    <td className="px-2 py-1.5 text-xs text-muted-foreground">% of Hard</td>
-                    <td className="px-2 py-1.5 text-right text-muted-foreground">—</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(m.softCostsTotal)}</td>
-                  </tr>
-                </tbody>
-                <tfoot>
-                  <tr className="border-t bg-muted/20 font-semibold">
-                    <td colSpan={4} className="px-2 py-2 text-right">Total Hard + Soft Costs</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalHardCosts + m.softCostsTotal)}</td>
-                  </tr>
-                </tfoot>
-              </table>
+              {/* Seed button if no itemized budget yet */}
+              {d.dev_budget_items.length === 0 && (
+                <div className="flex items-center gap-3 mb-3">
+                  <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, dev_budget_items: seedDevBudget() }))}>
+                    <Plus className="h-4 w-4 mr-2" /> Seed Itemized Budget
+                  </Button>
+                  <p className="text-xs text-muted-foreground">Or continue using simple Hard Cost/SF + Soft Cost % below</p>
+                </div>
+              )}
+
+              {d.dev_budget_items.length > 0 ? (
+                <>
+                  {/* ── Hard Costs ── */}
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 mt-2">Hard Costs</h4>
+                  <table className="w-full text-sm border-collapse mb-3">
+                    <thead>
+                      <tr className="bg-muted/30 border-b">
+                        <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Line Item</th>
+                        <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Qty / %</th>
+                        <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Unit</th>
+                        <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">$ / Unit</th>
+                        <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Total</th>
+                        <th className="w-[28px]" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {d.dev_budget_items.filter(i => i.category === "hard").map(item => {
+                        const updBI = (upd: Partial<DevBudgetLineItem>) => {
+                          setData(p => ({
+                            ...p,
+                            dev_budget_items: p.dev_budget_items.map(bi =>
+                              bi.id === item.id ? { ...bi, ...upd, amount: upd.is_pct ?? item.is_pct ? bi.amount : ((upd.quantity ?? item.quantity) * (upd.unit_cost ?? item.unit_cost)) } : bi
+                            ),
+                          }));
+                        };
+                        const resolvedAmt = item.is_pct
+                          ? m.totalHardCosts * (item.pct_value / 100)
+                          : item.quantity * item.unit_cost;
+                        return (
+                          <tr key={item.id} className="border-b hover:bg-muted/10 group">
+                            <td className="px-2 py-1.5">
+                              <input type="text" value={item.label} onChange={e => updBI({ label: e.target.value })} className="w-full bg-transparent text-sm outline-none" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              {item.is_pct
+                                ? <CellInput value={item.pct_value} onChange={v => updBI({ pct_value: v, amount: m.totalHardCosts * v / 100 })} suffix="%" decimals={1} />
+                                : <CellInput value={item.quantity} onChange={v => updBI({ quantity: v })} />
+                              }
+                            </td>
+                            <td className="px-2 py-1.5 text-xs text-muted-foreground">{item.unit_label}</td>
+                            <td className="px-2 py-1.5">
+                              {item.is_pct ? <span className="text-muted-foreground text-xs">—</span> : <CellInput value={item.unit_cost} onChange={v => updBI({ unit_cost: v })} prefix="$" />}
+                            </td>
+                            <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(resolvedAmt)}</td>
+                            <td className="px-1 py-1.5">
+                              <button onClick={() => setData(p => ({ ...p, dev_budget_items: p.dev_budget_items.filter(bi => bi.id !== item.id) }))} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t bg-muted/20 font-semibold">
+                        <td colSpan={4} className="px-2 py-2 text-right">Total Hard Costs</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalHardCosts)}</td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <Button variant="ghost" size="sm" className="mb-4" onClick={() => setData(p => ({ ...p, dev_budget_items: [...p.dev_budget_items, newDevBudgetItem("New Hard Cost", "hard", "custom", "lump sum")] }))}>
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Add Hard Cost
+                  </Button>
+
+                  {/* ── Soft Costs ── */}
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Soft Costs</h4>
+                  <table className="w-full text-sm border-collapse mb-3">
+                    <thead>
+                      <tr className="bg-muted/30 border-b">
+                        <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Line Item</th>
+                        <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Qty / %</th>
+                        <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Unit</th>
+                        <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">$ / Unit</th>
+                        <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Total</th>
+                        <th className="w-[28px]" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {d.dev_budget_items.filter(i => i.category === "soft").map(item => {
+                        const updBI = (upd: Partial<DevBudgetLineItem>) => {
+                          setData(p => ({
+                            ...p,
+                            dev_budget_items: p.dev_budget_items.map(bi =>
+                              bi.id === item.id ? { ...bi, ...upd, amount: upd.is_pct ?? item.is_pct ? bi.amount : ((upd.quantity ?? item.quantity) * (upd.unit_cost ?? item.unit_cost)) } : bi
+                            ),
+                          }));
+                        };
+                        const resolvedAmt = item.is_pct
+                          ? m.totalHardCosts * (item.pct_value / 100)
+                          : (item.subcategory === "interest_carry" ? m.capitalizedInterest : item.quantity * item.unit_cost);
+                        return (
+                          <tr key={item.id} className="border-b hover:bg-muted/10 group">
+                            <td className="px-2 py-1.5">
+                              <input type="text" value={item.label} onChange={e => updBI({ label: e.target.value })} className="w-full bg-transparent text-sm outline-none" />
+                              {item.subcategory === "interest_carry" && <span className="text-[10px] text-primary">auto-computed from construction loan</span>}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              {item.is_pct
+                                ? <CellInput value={item.pct_value} onChange={v => updBI({ pct_value: v, amount: m.totalHardCosts * v / 100 })} suffix="%" decimals={1} />
+                                : item.subcategory === "interest_carry"
+                                  ? <span className="text-xs text-muted-foreground">auto</span>
+                                  : <CellInput value={item.quantity || item.amount} onChange={v => updBI({ quantity: 1, unit_cost: v, amount: v })} />
+                              }
+                            </td>
+                            <td className="px-2 py-1.5 text-xs text-muted-foreground">{item.unit_label}</td>
+                            <td className="px-2 py-1.5">
+                              {item.is_pct || item.subcategory === "interest_carry" ? <span className="text-muted-foreground text-xs">—</span> : <CellInput value={item.unit_cost} onChange={v => updBI({ unit_cost: v })} prefix="$" />}
+                            </td>
+                            <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(resolvedAmt)}</td>
+                            <td className="px-1 py-1.5">
+                              <button onClick={() => setData(p => ({ ...p, dev_budget_items: p.dev_budget_items.filter(bi => bi.id !== item.id) }))} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t bg-muted/20 font-semibold">
+                        <td colSpan={4} className="px-2 py-2 text-right">Total Soft Costs</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fc(m.softCostsTotal)}</td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <Button variant="ghost" size="sm" className="mb-4" onClick={() => setData(p => ({ ...p, dev_budget_items: [...p.dev_budget_items, newDevBudgetItem("New Soft Cost", "soft", "custom", "lump sum")] }))}>
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Add Soft Cost
+                  </Button>
+
+                  {/* ── Project Total Summary ── */}
+                  <div className="border rounded-md bg-muted/10 p-3 mt-2">
+                    <table className="w-full text-sm">
+                      <tbody>
+                        <tr><td className="py-1">Land Acquisition</td><td className="text-right tabular-nums">{fc(d.land_cost)}</td></tr>
+                        <tr><td className="py-1">Total Hard Costs</td><td className="text-right tabular-nums">{fc(m.totalHardCosts)}</td></tr>
+                        <tr><td className="py-1">Total Soft Costs</td><td className="text-right tabular-nums">{fc(m.softCostsTotal)}</td></tr>
+                        {m.totalParkingCost > 0 && <tr><td className="py-1">Parking Structure</td><td className="text-right tabular-nums">{fc(m.totalParkingCost)}</td></tr>}
+                        {m.capitalizedInterest > 0 && <tr><td className="py-1">Capitalized Interest</td><td className="text-right tabular-nums">{fc(m.capitalizedInterest)}</td></tr>}
+                        {m.demolitionCosts > 0 && <tr><td className="py-1">Demolition / Abatement</td><td className="text-right tabular-nums">{fc(m.demolitionCosts)}</td></tr>}
+                        <tr><td className="py-1">Closing Costs</td><td className="text-right tabular-nums">{fc(m.closingCosts)}</td></tr>
+                        <tr className="border-t font-semibold text-base">
+                          <td className="pt-2">Total Project Cost</td>
+                          <td className="text-right tabular-nums pt-2">{fc(m.totalCost)}</td>
+                        </tr>
+                        {m.totalUnits > 0 && (
+                          <tr className="text-muted-foreground text-xs">
+                            <td className="py-0.5">Per Unit</td>
+                            <td className="text-right tabular-nums">{fc(m.totalCost / m.totalUnits)}</td>
+                          </tr>
+                        )}
+                        {(d.max_nrsf || d.max_gsf) > 0 && (
+                          <tr className="text-muted-foreground text-xs">
+                            <td className="py-0.5">Per SF (NRSF)</td>
+                            <td className="text-right tabular-nums">{fc(m.totalCost / (d.max_nrsf || d.max_gsf))}</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Legacy simple budget: hard_cost_per_sf + soft_cost_pct */}
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="bg-muted/30 border-b">
+                        <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Description</th>
+                        <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Qty</th>
+                        <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Units</th>
+                        <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">$ / Unit</th>
+                        <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b hover:bg-muted/10">
+                        <td className="px-2 py-1.5 font-medium">Hard Costs</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{fn(d.max_gsf || 0)}</td>
+                        <td className="px-2 py-1.5 text-xs text-muted-foreground">GSF</td>
+                        <td className="px-2 py-1.5"><CellInput value={d.hard_cost_per_sf} onChange={v => set("hard_cost_per_sf", v)} prefix="$" decimals={2} /></td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(m.totalHardCosts)}</td>
+                      </tr>
+                      <tr className="border-b hover:bg-muted/10">
+                        <td className="px-2 py-1.5 font-medium">Soft Costs</td>
+                        <td className="px-2 py-1.5"><CellInput value={d.soft_cost_pct} onChange={v => set("soft_cost_pct", v)} decimals={1} /></td>
+                        <td className="px-2 py-1.5 text-xs text-muted-foreground">% of Hard</td>
+                        <td className="px-2 py-1.5 text-right text-muted-foreground">—</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(m.softCostsTotal)}</td>
+                      </tr>
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t bg-muted/20 font-semibold">
+                        <td colSpan={4} className="px-2 py-2 text-right">Total Hard + Soft Costs</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalHardCosts + m.softCostsTotal)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </>
+              )}
               <div className="flex items-center justify-between mt-3">
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={estimateCapex} disabled={capexEstimating}>
