@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
 import {
   Loader2, MapPin, Sparkles, RefreshCw, Download, Save,
-  Building2, Ruler, Trees, ChevronDown, ChevronRight,
+  Building2, Ruler, Trees, ChevronDown, ChevronRight, FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -773,10 +774,39 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       {/* ── AI Zoning Report Narrative ────────────────────────────────── */}
       {narrative && (
         <Section title="AI Zoning Report" icon={<Sparkles className="h-4 w-4 text-amber-400" />}>
-          <div className="prose prose-sm prose-invert max-w-none">
-            <div className="whitespace-pre-wrap text-sm text-muted-foreground leading-relaxed">
-              {narrative}
-            </div>
+          <div className="prose prose-sm prose-invert max-w-none
+            prose-headings:text-foreground prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
+            prose-p:text-muted-foreground prose-p:leading-relaxed prose-p:mb-2
+            prose-li:text-muted-foreground prose-li:leading-relaxed
+            prose-ul:list-disc prose-ul:pl-5 prose-ul:mb-2
+            prose-ol:list-decimal prose-ol:pl-5 prose-ol:mb-2
+            prose-strong:text-foreground">
+            <ReactMarkdown>{narrative}</ReactMarkdown>
+          </div>
+          <div className="flex gap-2 mt-4 pt-3 border-t border-border/30">
+            <Button variant="outline" size="sm" onClick={exportWord} disabled={exporting}>
+              {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+              Export Word
+            </Button>
+            <Button variant="outline" size="sm" onClick={async () => {
+              try {
+                const res = await fetch(`/api/deals/${params.id}/zoning-report/export`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ dealName: deal?.name || "Deal", siteInfo, zoningInfo: zoning, devParams, narrative }),
+                });
+                if (!res.ok) throw new Error();
+                const blob = await res.blob();
+                const formData = new FormData();
+                formData.append("deal_id", params.id);
+                formData.append("files", new File([blob], `Zoning-Report-${(deal?.name || "Deal").replace(/[^a-zA-Z0-9]/g, "_")}.docx`, { type: blob.type }));
+                const uploadRes = await fetch("/api/documents/upload", { method: "POST", body: formData });
+                if (uploadRes.ok) toast.success("Zoning report saved to deal documents");
+                else throw new Error();
+              } catch { toast.error("Failed to save report to documents"); }
+            }}>
+              <FileText className="h-4 w-4 mr-2" /> Save to Documents
+            </Button>
           </div>
         </Section>
       )}

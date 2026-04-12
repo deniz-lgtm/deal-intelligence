@@ -54,6 +54,12 @@ const EMPTY_FORM = {
   bedrooms: "",
   year_built: "",
   notes: "",
+  // Ground-up / Redevelopment fields
+  land_acres: "",
+  entitlement_status: "" as string,
+  demolition_required: false,
+  environmental_phase: "" as string,
+  expected_delivery: "",
 };
 
 export default function NewDealPage() {
@@ -191,6 +197,7 @@ export default function NewDealPage() {
           units: form.units ? Number(form.units) : null,
           bedrooms: form.bedrooms ? Number(form.bedrooms) : null,
           year_built: form.year_built ? Number(form.year_built) : null,
+          land_acres: form.land_acres ? Number(form.land_acres) : null,
           investment_strategy: form.investment_strategy || null,
           business_plan_id: selectedPlanId,
         }),
@@ -674,6 +681,73 @@ export default function NewDealPage() {
               </Field>
             </div>
           </Section>
+
+          {/* Ground-Up / Redevelopment Details */}
+          {(form.investment_strategy === "ground_up" || form.investment_strategy === "opportunistic") && (
+          <Section title="Development Details">
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Land (Acres)">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={form.land_acres}
+                  onChange={(e) => set("land_acres", e.target.value)}
+                  placeholder="2.5"
+                  className="input-field tabular-nums"
+                />
+              </Field>
+              <Field label="Entitlement Status">
+                <select
+                  value={form.entitlement_status}
+                  onChange={(e) => set("entitlement_status", e.target.value)}
+                  className="input-field"
+                >
+                  <option value="">Select...</option>
+                  <option value="not_entitled">Not Entitled</option>
+                  <option value="pre_application">Pre-Application</option>
+                  <option value="application_filed">Application Filed</option>
+                  <option value="pending_approval">Pending Approval</option>
+                  <option value="entitled">Entitled / Approved</option>
+                </select>
+              </Field>
+              <Field label="Environmental Phase">
+                <select
+                  value={form.environmental_phase}
+                  onChange={(e) => set("environmental_phase", e.target.value)}
+                  className="input-field"
+                >
+                  <option value="">Select...</option>
+                  <option value="none">Not Started</option>
+                  <option value="phase_1_complete">Phase I ESA Complete</option>
+                  <option value="phase_2_needed">Phase II Needed</option>
+                  <option value="phase_2_complete">Phase II Complete</option>
+                  <option value="remediation_needed">Remediation Required</option>
+                  <option value="cleared">Cleared / No Issues</option>
+                </select>
+              </Field>
+              <Field label="Expected Delivery">
+                <input
+                  type="text"
+                  value={form.expected_delivery}
+                  onChange={(e) => set("expected_delivery", e.target.value)}
+                  placeholder="Q3 2028"
+                  className="input-field"
+                />
+              </Field>
+              <Field label="">
+                <label className="flex items-center gap-2 text-sm py-2">
+                  <input
+                    type="checkbox"
+                    checked={form.demolition_required}
+                    onChange={(e) => setForm(p => ({ ...p, demolition_required: e.target.checked }))}
+                    className="accent-primary"
+                  />
+                  Demolition / Abatement Required
+                </label>
+              </Field>
+            </div>
+          </Section>
+          )}
 
           <div className="flex justify-end gap-3 pt-2">
             <Link href="/">

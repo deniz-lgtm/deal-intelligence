@@ -216,11 +216,11 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
       </div>
 
       {/* ── Split Layout: Editor + Section Cut ── */}
-      <div className="flex gap-4">
+      <div className="flex flex-col lg:flex-row gap-4">
         {/* LEFT — Floor Editor */}
         <div className="flex-1 min-w-0">
           {/* Footprint + Density Bonus */}
-          <div className="grid grid-cols-2 gap-3 mb-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Base Footprint (SF)</label>
               <input type="text" inputMode="decimal"
@@ -247,7 +247,8 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
 
           {/* Above Grade Floors */}
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Above Grade</h4>
-          <table className="w-full text-xs border-collapse mb-2">
+          <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse mb-2 min-w-[580px]">
             <thead>
               <tr className="bg-muted/30 border-b">
                 <th className="w-[24px]" />
@@ -270,6 +271,7 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
               </SortableContext>
             </DndContext>
           </table>
+          </div>
           <Button variant="ghost" size="sm" className="text-xs mb-3" onClick={() => addFloor(false)}>
             <Plus className="h-3 w-3 mr-1" /> Add Floor
           </Button>
@@ -283,7 +285,8 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
 
           {/* Below Grade Floors */}
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Below Grade</h4>
-          <table className="w-full text-xs border-collapse mb-2">
+          <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse mb-2 min-w-[580px]">
             <thead>
               <tr className="bg-muted/30 border-b">
                 <th className="w-[24px]" />
@@ -306,6 +309,7 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
               </SortableContext>
             </DndContext>
           </table>
+          </div>
           <Button variant="ghost" size="sm" className="text-xs mb-3" onClick={() => addFloor(true)}>
             <Plus className="h-3 w-3 mr-1" /> Add Below Grade
           </Button>
@@ -323,7 +327,7 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
         </div>
 
         {/* RIGHT — Section Cut SVG */}
-        <div className="w-72 lg:w-80 shrink-0 sticky top-4 self-start">
+        <div className="w-full lg:w-80 shrink-0 lg:sticky lg:top-4 lg:self-start">
           <div className="border rounded-md bg-card/50 p-2">
             <MassingSectionCut scenario={activeScenario} summary={summary} />
           </div>
