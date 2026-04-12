@@ -2110,6 +2110,52 @@ export interface MassingSummary {
   max_allowed_height_ft: number;
 }
 
+// ─── Other Income (Dynamic Line Items) ────────────────────────────────────
+
+export interface OtherIncomeItem {
+  id: string;
+  label: string;              // e.g., "RUBS", "Pet Rent", "Storage", "Parking"
+  amount: number;             // $ amount
+  basis: "per_unit" | "per_property" | "per_space";  // how it's charged
+  unit_type_filter: string;   // "" = all units, or specific type label to filter
+  notes: string;
+}
+
+export const COMMON_OTHER_INCOME = [
+  { label: "RUBS (Utility Reimbursement)", basis: "per_unit" as const, amount: 50 },
+  { label: "Parking — Reserved", basis: "per_space" as const, amount: 200 },
+  { label: "Parking — Unreserved", basis: "per_space" as const, amount: 100 },
+  { label: "Pet Rent", basis: "per_unit" as const, amount: 35 },
+  { label: "Storage Units", basis: "per_property" as const, amount: 0 },
+  { label: "Laundry", basis: "per_property" as const, amount: 0 },
+  { label: "Application Fees", basis: "per_property" as const, amount: 0 },
+  { label: "Cable / Internet", basis: "per_unit" as const, amount: 0 },
+  { label: "Vending", basis: "per_property" as const, amount: 0 },
+  { label: "Late Fees", basis: "per_property" as const, amount: 0 },
+];
+
+// ─── Commercial Tenants ──────────────────────────────────────────────────
+
+export type CommercialLeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
+
+export interface CommercialTenant {
+  id: string;
+  tenant_name: string;
+  suite: string;
+  use_type: "retail" | "office" | "restaurant" | "other";
+  sf: number;
+  rent_per_sf: number;        // annual $/SF
+  lease_type: CommercialLeaseType;
+  cam_reimbursement_pct: number;  // % of CAM pool reimbursed
+  ti_allowance_per_sf: number;
+  lc_pct: number;             // leasing commission % of year 1 rent
+  free_rent_months: number;
+  rent_escalation_pct: number;  // annual escalation %
+  lease_start: string;
+  lease_term_years: number;
+  notes: string;
+}
+
 // ─── API Response ───────────────────────────────────────────────────────────
 
 export interface ApiResponse<T> {
