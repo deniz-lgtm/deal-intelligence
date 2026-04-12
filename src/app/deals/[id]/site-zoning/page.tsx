@@ -28,9 +28,19 @@ interface ZoningInfo {
   lot_coverage_pct: number | null;
   far: number | null;
   parking_requirements: string;
+  parking_ratio_residential: number;   // spaces per unit
+  parking_ratio_commercial: number;    // spaces per 1,000 SF
+  parking_reduction_allowed: boolean;
+  parking_reduction_notes: string;
   open_space_requirements: string;
+  open_space_pct: number | null;       // % of lot
+  open_space_sf: number | null;        // or fixed SF
   density_bonuses: DensityBonus[];
   additional_notes: string;
+  zone_change_needed: boolean;
+  zone_change_from: string;
+  zone_change_to: string;
+  zone_change_notes: string;
 }
 
 interface SiteInfo {
@@ -41,8 +51,11 @@ interface SiteInfo {
   topography: string;
   flood_zone: string;
   utilities: string;
+  utilities_available: string[];   // structured: Water, Sewer, Gas, Electric, Fiber, Storm Drain
   environmental_notes: string;
+  environmental_status: string;    // structured dropdown
   soil_conditions: string;
+  soil_type: string;               // structured dropdown
 }
 
 interface DevParams {
@@ -70,7 +83,8 @@ const EFFICIENCY_DEFAULTS: Record<string, number> = {
 const DEFAULT_SITE_INFO: SiteInfo = {
   land_acres: 0, land_sf: 0, parcel_id: "",
   current_improvements: "", topography: "", flood_zone: "",
-  utilities: "", environmental_notes: "", soil_conditions: "",
+  utilities: "", utilities_available: [], environmental_notes: "", environmental_status: "",
+  soil_conditions: "", soil_type: "",
 };
 
 const DEFAULT_ZONING: ZoningInfo = {
@@ -81,7 +95,11 @@ const DEFAULT_ZONING: ZoningInfo = {
   ],
   height_limits: [{ label: "Base Zoning", value: "" }],
   lot_coverage_pct: null, far: null, parking_requirements: "",
-  open_space_requirements: "", density_bonuses: [], additional_notes: "",
+  parking_ratio_residential: 0, parking_ratio_commercial: 0,
+  parking_reduction_allowed: false, parking_reduction_notes: "",
+  open_space_requirements: "", open_space_pct: null, open_space_sf: null,
+  density_bonuses: [], additional_notes: "",
+  zone_change_needed: false, zone_change_from: "", zone_change_to: "", zone_change_notes: "",
 };
 
 const DEFAULT_DEV: DevParams = {
@@ -143,6 +161,45 @@ function TextArea({ label, value, onChange, placeholder, rows = 2 }: {
         rows={rows}
         className="w-full px-3 py-1.5 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none resize-none focus:border-primary/40"
       />
+    </div>
+  );
+}
+
+function SelectInput({ label, value, onChange, options, className = "" }: {
+  label: string; value: string; onChange: (v: string) => void;
+  options: Array<{ value: string; label: string }>; className?: string;
+}) {
+  return (
+    <div className={className}>
+      <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">{label}</label>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="w-full px-3 py-1.5 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none focus:border-primary/40"
+      >
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function CheckboxGroup({ label, options, selected, onChange }: {
+  label: string; options: string[]; selected: string[]; onChange: (v: string[]) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1.5">{label}</label>
+      <div className="flex flex-wrap gap-2">
+        {options.map(opt => {
+          const active = selected.includes(opt);
+          return (
+            <button key={opt} type="button"
+              onClick={() => onChange(active ? selected.filter(s => s !== opt) : [...selected, opt])}
+              className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${active ? "bg-primary/20 border-primary/30 text-primary" : "bg-muted/20 border-border/40 text-muted-foreground hover:border-primary/20"}`}
+            >{opt}</button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -285,6 +342,17 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deal_id: params.id, data: merged }),
       });
+
+      // Save zoning strategy notes as a deal note (context category) if non-empty
+      if (zoning.additional_notes?.trim()) {
+        try {
+          await fetch(`/api/deals/${params.id}/notes`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: `[Zoning] ${zoning.additional_notes}`, category: "context", source: "manual" }),
+          });
+        } catch { /* non-critical */ }
+      }
 
       setDirty(false);
       toast.success("Site & zoning data saved");
@@ -468,14 +536,56 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           <FieldInput label="Land (Acres)" value={siteInfo.land_acres || ""} onChange={v => updateSite("land_acres", parseFloat(v) || 0)} type="number" suffix="AC" />
           <FieldInput label="Land (Square Feet)" value={siteInfo.land_sf || ""} onChange={v => updateSite("land_sf", parseFloat(v) || 0)} type="number" suffix="SF" />
           <FieldInput label="Parcel ID / APN" value={siteInfo.parcel_id} onChange={v => updateSite("parcel_id", v)} placeholder="e.g. 123-456-789" />
-          <FieldInput label="Flood Zone" value={siteInfo.flood_zone} onChange={v => updateSite("flood_zone", v)} placeholder="e.g. Zone X" />
+          <SelectInput label="Flood Zone" value={siteInfo.flood_zone} onChange={v => updateSite("flood_zone", v)} options={[
+            { value: "", label: "Select..." },
+            { value: "Zone X", label: "Zone X (Minimal Risk)" },
+            { value: "Zone AE", label: "Zone AE (100-Year Floodplain)" },
+            { value: "Zone A", label: "Zone A (100-Year, No BFE)" },
+            { value: "Zone AH", label: "Zone AH (Shallow Flooding)" },
+            { value: "Zone VE", label: "Zone VE (Coastal High Hazard)" },
+            { value: "Zone X500", label: "Zone X (500-Year / Moderate)" },
+            { value: "Zone D", label: "Zone D (Undetermined)" },
+          ]} />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+          <SelectInput label="Topography" value={siteInfo.topography} onChange={v => updateSite("topography", v)} options={[
+            { value: "", label: "Select..." },
+            { value: "Flat", label: "Flat" },
+            { value: "Gently Sloped", label: "Gently Sloped" },
+            { value: "Moderately Sloped", label: "Moderately Sloped" },
+            { value: "Steep", label: "Steep" },
+            { value: "Varied / Irregular", label: "Varied / Irregular" },
+          ]} />
+          <SelectInput label="Environmental Status" value={siteInfo.environmental_status || ""} onChange={v => updateSite("environmental_status", v)} options={[
+            { value: "", label: "Select..." },
+            { value: "Not Started", label: "Not Started" },
+            { value: "Phase I Clean", label: "Phase I — Clean" },
+            { value: "Phase I RECs Found", label: "Phase I — RECs Found" },
+            { value: "Phase II In Progress", label: "Phase II In Progress" },
+            { value: "Phase II Clean", label: "Phase II — Clean" },
+            { value: "Remediation Needed", label: "Remediation Needed" },
+            { value: "Remediation Complete", label: "Remediation Complete" },
+            { value: "Cleared", label: "Cleared / No Issues" },
+          ]} />
+          <SelectInput label="Soil Type" value={siteInfo.soil_type || ""} onChange={v => updateSite("soil_type", v)} options={[
+            { value: "", label: "Select..." },
+            { value: "Rock / Bedrock", label: "Rock / Bedrock" },
+            { value: "Gravel", label: "Gravel" },
+            { value: "Sand", label: "Sand" },
+            { value: "Clay", label: "Clay" },
+            { value: "Silt", label: "Silt" },
+            { value: "Fill / Engineered", label: "Fill / Engineered" },
+            { value: "Expansive", label: "Expansive Soil" },
+            { value: "Unknown", label: "Unknown — Geotech Needed" },
+          ]} />
+        </div>
+        <div className="mt-4">
+          <CheckboxGroup label="Utilities Available" options={["Water", "Sewer", "Gas", "Electric", "Fiber/Telecom", "Storm Drain", "Reclaimed Water"]}
+            selected={siteInfo.utilities_available || []} onChange={v => updateSite("utilities_available", v)} />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
           <TextArea label="Current Improvements" value={siteInfo.current_improvements} onChange={v => updateSite("current_improvements", v)} placeholder="Existing structures, parking, etc." />
-          <TextArea label="Topography & Grading" value={siteInfo.topography} onChange={v => updateSite("topography", v)} placeholder="Flat, sloped, drainage issues, etc." />
-          <TextArea label="Utilities Available" value={siteInfo.utilities} onChange={v => updateSite("utilities", v)} placeholder="Water, sewer, gas, electric, fiber..." />
-          <TextArea label="Environmental Notes" value={siteInfo.environmental_notes} onChange={v => updateSite("environmental_notes", v)} placeholder="Phase I findings, USTs, RECs..." />
-          <TextArea label="Soil Conditions" value={siteInfo.soil_conditions} onChange={v => updateSite("soil_conditions", v)} placeholder="Geotechnical findings, bearing capacity..." />
+          <TextArea label="Additional Site Notes" value={siteInfo.environmental_notes} onChange={v => updateSite("environmental_notes", v)} placeholder="Additional environmental, geotechnical, or site notes..." />
         </div>
       </Section>
 
@@ -600,10 +710,39 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           >+ Add height limit</button>
         </div>
 
-        {/* Parking & Open Space */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-          <TextArea label="Parking Requirements" value={zoning.parking_requirements} onChange={v => updateZoning("parking_requirements", v)} placeholder="e.g. 1 space per 1,000 SF" />
-          <TextArea label="Open Space Requirements" value={zoning.open_space_requirements} onChange={v => updateZoning("open_space_requirements", v)} placeholder="e.g. 15% of lot area" />
+        {/* Parking Requirements (structured) */}
+        <div className="mt-4">
+          <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-2">Parking Requirements</label>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <FieldInput label="Spaces / Residential Unit" value={zoning.parking_ratio_residential || ""} onChange={v => updateZoning("parking_ratio_residential", parseFloat(v) || 0)} type="number" />
+            <FieldInput label="Spaces / 1,000 SF Commercial" value={zoning.parking_ratio_commercial || ""} onChange={v => updateZoning("parking_ratio_commercial", parseFloat(v) || 0)} type="number" />
+            <div className="col-span-2 flex items-center gap-3">
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={zoning.parking_reduction_allowed} onChange={e => updateZoning("parking_reduction_allowed", e.target.checked)} className="accent-primary" />
+                Shared Parking / Reduction Allowed
+              </label>
+            </div>
+          </div>
+          {zoning.parking_reduction_allowed && (
+            <div className="mt-2">
+              <FieldInput label="Reduction Basis (program, study, TOD, etc.)" value={zoning.parking_reduction_notes} onChange={v => updateZoning("parking_reduction_notes", v)} placeholder="e.g. TOD overlay allows 50% reduction within 0.5mi of transit" />
+            </div>
+          )}
+          <div className="mt-2">
+            <TextArea label="Additional Parking Notes" value={zoning.parking_requirements} onChange={v => updateZoning("parking_requirements", v)} placeholder="Additional context on parking code, EV requirements, bicycle parking..." rows={2} />
+          </div>
+        </div>
+
+        {/* Open Space (structured) */}
+        <div className="mt-4">
+          <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-2">Open Space Requirements</label>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <FieldInput label="Open Space % of Lot" value={zoning.open_space_pct ?? ""} onChange={v => updateZoning("open_space_pct", parseFloat(v) || null)} type="number" suffix="%" />
+            <FieldInput label="Or: Fixed SF Required" value={zoning.open_space_sf ?? ""} onChange={v => updateZoning("open_space_sf", parseFloat(v) || null)} type="number" suffix="SF" />
+            <div className="col-span-2">
+              <TextArea label="Open Space Notes" value={zoning.open_space_requirements} onChange={v => updateZoning("open_space_requirements", v)} placeholder="Common open space, private balconies, rooftop, ground-level..." rows={2} />
+            </div>
+          </div>
         </div>
 
         {/* Density Bonuses */}
@@ -635,8 +774,35 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           >+ Add density bonus</button>
         </div>
 
+        {/* Zone Change / Rezone */}
         <div className="mt-4">
-          <TextArea label="Additional Zoning Notes" value={zoning.additional_notes} onChange={v => updateZoning("additional_notes", v)} placeholder="Special conditions, variances needed, non-conforming status..." rows={3} />
+          <label className="flex items-center gap-2 text-xs mb-2">
+            <input type="checkbox" checked={zoning.zone_change_needed} onChange={e => updateZoning("zone_change_needed", e.target.checked)} className="accent-primary" />
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">Zone Change / Rezone Required</span>
+          </label>
+          {zoning.zone_change_needed && (
+            <div className="border border-amber-500/20 bg-amber-500/5 rounded-lg p-3 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <FieldInput label="Current Zoning" value={zoning.zone_change_from || zoning.zoning_designation} onChange={v => updateZoning("zone_change_from", v)} placeholder="e.g. C-2 Commercial" />
+                <FieldInput label="Proposed Zoning" value={zoning.zone_change_to} onChange={v => updateZoning("zone_change_to", v)} placeholder="e.g. MF-3 Multifamily" />
+                <SelectInput label="Zone Change Type" value={zoning.zone_change_notes} onChange={v => updateZoning("zone_change_notes", v)} options={[
+                  { value: "", label: "Select..." },
+                  { value: "Rezone Application", label: "Rezone Application" },
+                  { value: "Planned Development (PD)", label: "Planned Development (PD)" },
+                  { value: "Specific Plan Amendment", label: "Specific Plan Amendment" },
+                  { value: "General Plan Amendment", label: "General Plan Amendment" },
+                  { value: "Overlay District", label: "Overlay District / Exemption" },
+                  { value: "By-Right (CCHS/SB35)", label: "By-Right (CCHS / SB 35 / Housing)" },
+                ]} />
+              </div>
+              <p className="text-[10px] text-amber-400">A zone change adds 6-18 months and requires planning commission + city council approval. Programs like CCHS or SB 35 may allow residential by-right in commercial zones.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Zoning Notes → saved to deal context */}
+        <div className="mt-4">
+          <TextArea label="Zoning Strategy Notes (saves to Deal Context)" value={zoning.additional_notes} onChange={v => updateZoning("additional_notes", v)} placeholder="Key zoning considerations, local legislation (CCHS, SB 35, density bonuses), entitlement strategy..." rows={3} />
         </div>
       </Section>
 
