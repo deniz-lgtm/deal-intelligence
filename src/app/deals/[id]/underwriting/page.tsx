@@ -2777,6 +2777,85 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
+      {/* ═══════════════════ ABSORPTION / LEASE-UP ═══════════════════ */}
+      {isGroundUp && (
+      <Section title="Absorption / Lease-Up" icon={<ArrowDownUp className="h-4 w-4 text-green-400" />}>
+        <div className="mt-3">
+          {(() => {
+            const lu = d.lease_up || defaultLeaseUp();
+            const setLU = (upd: Partial<LeaseUpConfig>) => setData(p => ({ ...p, lease_up: { ...(p.lease_up || defaultLeaseUp()), ...upd } }));
+            const monthsToStab = lu.absorption_units_per_month > 0 ? Math.ceil((m.totalUnits * (lu.stabilization_occupancy_pct / 100)) / lu.absorption_units_per_month) : 0;
+            const totalConcessions = lu.concession_free_months > 0
+              ? m.totalUnits * lu.concession_free_months * (m.gpr / m.totalUnits / 12 || 0)
+              : m.totalUnits * lu.concession_per_unit;
+            return (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+                  <NumInput label="Construction Period (months)" value={lu.construction_months} onChange={v => setLU({ construction_months: v })} />
+                  <NumInput label="Absorption (units/month)" value={lu.absorption_units_per_month} onChange={v => setLU({ absorption_units_per_month: v })} />
+                  <NumInput label="Stabilization Target" value={lu.stabilization_occupancy_pct} onChange={v => setLU({ stabilization_occupancy_pct: v })} suffix="%" decimals={1} />
+                </div>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <NumInput label="Concession (free months)" value={lu.concession_free_months} onChange={v => setLU({ concession_free_months: v, concession_per_unit: 0 })} decimals={1} />
+                  <NumInput label="Or: Concession $/unit" value={lu.concession_per_unit} onChange={v => setLU({ concession_per_unit: v, concession_free_months: 0 })} prefix="$" />
+                </div>
+                {/* Summary */}
+                <div className="border rounded-md bg-muted/10 p-3 text-sm space-y-1">
+                  <div className="flex justify-between"><span>Months to Stabilization</span><span className="font-semibold tabular-nums">{monthsToStab} months</span></div>
+                  <div className="flex justify-between"><span>Total Timeline (construction + lease-up)</span><span className="font-semibold tabular-nums">{lu.construction_months + monthsToStab} months</span></div>
+                  <div className="flex justify-between"><span>Est. Total Concessions</span><span className="font-semibold tabular-nums text-amber-400">{fc(totalConcessions)}</span></div>
+                  {/* Simple lease-up progress bar */}
+                  <div className="mt-2">
+                    <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                      <span>Construction</span><span>Lease-Up</span><span>Stabilized</span>
+                    </div>
+                    <div className="flex h-2 rounded-full overflow-hidden bg-muted/30">
+                      <div className="bg-orange-500/60" style={{ width: `${lu.construction_months / (lu.construction_months + monthsToStab + 3) * 100}%` }} />
+                      <div className="bg-blue-500/60" style={{ width: `${monthsToStab / (lu.construction_months + monthsToStab + 3) * 100}%` }} />
+                      <div className="bg-emerald-500/60 flex-1" />
+                    </div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      </Section>
+      )}
+
+      {/* ═══════════════════ CONSTRUCTION FINANCING ═══════════════════ */}
+      {isGroundUp && (
+      <Section title="Construction Financing" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
+        <div className="mt-3">
+          {(() => {
+            const cl = d.construction_loan || defaultConstructionLoan();
+            const setCL = (upd: Partial<ConstructionLoanConfig>) => setData(p => ({ ...p, construction_loan: { ...(p.construction_loan || defaultConstructionLoan()), ...upd } }));
+            const loanAmt = m.totalCost * (cl.ltc_pct / 100);
+            const monthlyRate = cl.rate / 100 / 12;
+            const avgInterest = loanAmt * 0.5 * monthlyRate * cl.term_months;
+            return (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                  <NumInput label="Loan-to-Cost (LTC)" value={cl.ltc_pct} onChange={v => setCL({ ltc_pct: v })} suffix="%" decimals={1} />
+                  <NumInput label="Interest Rate" value={cl.rate} onChange={v => setCL({ rate: v })} suffix="%" decimals={2} />
+                  <NumInput label="Term (months)" value={cl.term_months} onChange={v => setCL({ term_months: v })} />
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Loan Amount</label>
+                    <p className="text-sm font-semibold py-1.5">{fc(loanAmt)}</p>
+                  </div>
+                </div>
+                <div className="border rounded-md bg-muted/10 p-3 text-sm space-y-1">
+                  <div className="flex justify-between"><span>Estimated Capitalized Interest (avg 50% draw)</span><span className="font-semibold tabular-nums">{fc(avgInterest)}</span></div>
+                  <div className="flex justify-between"><span>Computed Cap. Interest (from calc)</span><span className="font-semibold tabular-nums text-primary">{fc(m.capitalizedInterest)}</span></div>
+                  <p className="text-xs text-muted-foreground mt-1">Interest carry is auto-included in the Development Budget soft costs and total project cost.</p>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      </Section>
+      )}
+
       <Section title="Financing" icon={<TrendingUp className="h-4 w-4 text-purple-400" />}>
         <div className="mt-3 space-y-5">
           <div>
