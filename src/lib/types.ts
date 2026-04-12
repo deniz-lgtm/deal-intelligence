@@ -602,6 +602,64 @@ export interface SubmarketMetrics {
   updated_at: string;
 }
 
+// ─── Location Intelligence ──────────────────────────────────────────────────
+
+export type LocationRadiusMiles = 1 | 2 | 3 | 5 | 10 | 15 | 25;
+
+export const LOCATION_RADIUS_OPTIONS: LocationRadiusMiles[] = [1, 2, 3, 5, 10, 15, 25];
+
+export interface DemographicSnapshot {
+  total_population: number | null;
+  population_growth_pct: number | null;        // annual %
+  median_age: number | null;
+  median_household_income: number | null;
+  per_capita_income: number | null;
+  poverty_rate: number | null;                 // %
+  bachelors_degree_pct: number | null;         // %
+  // Housing
+  total_housing_units: number | null;
+  owner_occupied_pct: number | null;           // %
+  renter_occupied_pct: number | null;          // %
+  median_home_value: number | null;
+  median_gross_rent: number | null;
+  home_value_growth_pct: number | null;        // annual %
+  rent_growth_pct: number | null;              // annual %
+  // Employment
+  labor_force: number | null;
+  unemployment_rate: number | null;            // %
+  total_employed: number | null;
+  // Top industries (name + share %)
+  top_employers: Array<{ name: string; share_pct?: number }>;
+  top_industries: Array<{ name: string; share_pct?: number }>;
+  // Household composition
+  avg_household_size: number | null;
+  family_households_pct: number | null;        // %
+}
+
+export interface LocationIntelligence {
+  id: string;
+  deal_id: string;
+  radius_miles: LocationRadiusMiles;
+  // Core demographic data
+  data: DemographicSnapshot;
+  // Growth projections (user-entered or from paid reports)
+  projections: {
+    population_growth_5yr_pct: number | null;
+    job_growth_5yr_pct: number | null;
+    home_value_growth_5yr_pct: number | null;
+    rent_growth_5yr_pct: number | null;
+    new_units_pipeline: number | null;         // units under construction / planned
+    notes: string | null;
+  };
+  // Data provenance
+  data_source: "census_acs" | "manual" | "report_upload" | "mixed";
+  source_year: number | null;                  // e.g. 2023
+  source_notes: string | null;
+  // Map snapshot for investment packages
+  map_snapshot_url: string | null;
+  updated_at: string;
+}
+
 // ─── LOI ────────────────────────────────────────────────────────────────────
 
 export interface LOIData {

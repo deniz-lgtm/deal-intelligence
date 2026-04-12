@@ -319,6 +319,21 @@ export async function ensureColumns(): Promise<void> {
       sources JSONB NOT NULL DEFAULT '[]',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
+    // ── Location Intelligence ─────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS location_intelligence (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      radius_miles NUMERIC NOT NULL DEFAULT 3,
+      data JSONB NOT NULL DEFAULT '{}',
+      projections JSONB NOT NULL DEFAULT '{}',
+      data_source TEXT NOT NULL DEFAULT 'manual',
+      source_year INTEGER,
+      source_notes TEXT,
+      map_snapshot_url TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(deal_id, radius_miles)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_location_intelligence_deal_id ON location_intelligence(deal_id)`,
     // ── Deal Room (guest-accessible document sharing) ──────────────────────
     `CREATE TABLE IF NOT EXISTS deal_rooms (
       id TEXT PRIMARY KEY,
@@ -1022,6 +1037,21 @@ export async function initSchema(): Promise<void> {
       sources JSONB NOT NULL DEFAULT '[]',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
+    // ── Location Intelligence ─────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS location_intelligence (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      radius_miles NUMERIC NOT NULL DEFAULT 3,
+      data JSONB NOT NULL DEFAULT '{}',
+      projections JSONB NOT NULL DEFAULT '{}',
+      data_source TEXT NOT NULL DEFAULT 'manual',
+      source_year INTEGER,
+      source_notes TEXT,
+      map_snapshot_url TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(deal_id, radius_miles)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_location_intelligence_deal_id ON location_intelligence(deal_id)`,
     // ── Deal Room (guest-accessible document sharing) ──────────────────────
     `CREATE TABLE IF NOT EXISTS deal_rooms (
       id TEXT PRIMARY KEY,
@@ -2324,6 +2354,73 @@ export const submarketMetricsQueries = {
       ]
     );
     return submarketMetricsQueries.getByDealId(dealId);
+  },
+};
+
+// ─── Location Intelligence queries ────────────────────────────────────────────
+
+export const locationIntelligenceQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM location_intelligence WHERE deal_id = $1 ORDER BY radius_miles",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getByDealAndRadius: async (dealId: string, radiusMiles: number) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM location_intelligence WHERE deal_id = $1 AND radius_miles = $2",
+      [dealId, radiusMiles]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  upsert: async (
+    dealId: string,
+    id: string,
+    radiusMiles: number,
+    data: Record<string, unknown>,
+    projections: Record<string, unknown>,
+    dataSource: string,
+    sourceYear: number | null,
+    sourceNotes: string | null
+  ) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO location_intelligence (
+         id, deal_id, radius_miles, data, projections,
+         data_source, source_year, source_notes, updated_at
+       ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, NOW())
+       ON CONFLICT (deal_id, radius_miles) DO UPDATE SET
+         data = EXCLUDED.data,
+         projections = EXCLUDED.projections,
+         data_source = EXCLUDED.data_source,
+         source_year = EXCLUDED.source_year,
+         source_notes = EXCLUDED.source_notes,
+         updated_at = NOW()`,
+      [
+        id,
+        dealId,
+        radiusMiles,
+        JSON.stringify(data),
+        JSON.stringify(projections),
+        dataSource,
+        sourceYear,
+        sourceNotes,
+      ]
+    );
+    return locationIntelligenceQueries.getByDealAndRadius(dealId, radiusMiles);
+  },
+
+  delete: async (dealId: string, radiusMiles: number) => {
+    const pool = getPool();
+    await pool.query(
+      "DELETE FROM location_intelligence WHERE deal_id = $1 AND radius_miles = $2",
+      [dealId, radiusMiles]
+    );
   },
 };
 
