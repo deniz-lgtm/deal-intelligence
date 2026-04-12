@@ -869,20 +869,62 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 const current = uwJson.data?.data
                   ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
                   : {};
+
+                // Build unit_groups from unit mix + residential NRSF
+                const resNRSF = summary.nrsf_by_use.residential || 0;
+                const mix = scenario.unit_mix || [];
+                const weightedAvgSF = mix.length > 0 ? mix.reduce((s: number, m: { avg_sf: number; allocation_pct: number }) => s + m.avg_sf * (m.allocation_pct / 100), 0) : 0;
+                const totalUnitsFromMix = weightedAvgSF > 0 ? Math.floor(resNRSF / weightedAvgSF) : summary.total_units;
+                const unitGroups = mix.length > 0
+                  ? mix.map((m: { type_label: string; allocation_pct: number; avg_sf: number }) => ({
+                      id: crypto.randomUUID(),
+                      label: m.type_label,
+                      unit_count: Math.round(totalUnitsFromMix * (m.allocation_pct / 100)),
+                      renovation_count: 0, renovation_cost_per_unit: 0,
+                      unit_change: "none", unit_change_count: 0,
+                      bedrooms: m.type_label.includes("Studio") ? 0 : m.type_label.includes("3") ? 3 : m.type_label.includes("2") ? 2 : 1,
+                      bathrooms: m.type_label.includes("Studio") ? 1 : m.type_label.includes("3") ? 2 : m.type_label.includes("2") ? 2 : 1,
+                      sf_per_unit: m.avg_sf,
+                      current_rent_per_sf: 0, market_rent_per_sf: 0,
+                      lease_type: "NNN", expense_reimbursement_per_sf: 0,
+                      current_rent_per_unit: 0, market_rent_per_unit: 0,
+                      beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 0,
+                    }))
+                  : current.unit_groups || [];
+
+                // Build parking config from massing parking spaces
+                const sfPerSpace = scenario.parking_sf_per_space || 350;
+                const parkingSpaces = summary.total_parking_spaces_est;
+                const hasBelowGrade = scenario.floors.some((f: { is_below_grade: boolean; use_type: string }) => f.is_below_grade && f.use_type === "parking");
+                const hasAboveGrade = scenario.floors.some((f: { is_below_grade: boolean; use_type: string }) => !f.is_below_grade && f.use_type === "parking");
+
                 const merged = {
                   ...current,
                   max_gsf: summary.total_gsf,
                   max_nrsf: summary.total_nrsf,
                   efficiency_pct: summary.total_gsf > 0 ? Math.round((summary.total_nrsf / summary.total_gsf) * 100) : devParams.efficiency_pct,
+                  unit_groups: unitGroups,
                   building_program: buildingProgram,
+                  // Push parking if massing has parking floors
+                  ...(parkingSpaces > 0 ? {
+                    parking: {
+                      ...(current.parking || {}),
+                      entries: [
+                        ...(hasBelowGrade ? [{ id: crypto.randomUUID(), type: "underground", spaces: Math.round(parkingSpaces * (hasAboveGrade ? 0.5 : 1)), cost_per_space: current.parking?.entries?.[0]?.cost_per_space || 55000, reserved_residential_spaces: 0, reserved_monthly_rate: 0, unreserved_spaces: 0, unreserved_monthly_rate: 0, guest_visitor_spaces: 0, retail_shared_spaces: 0, retail_shared_monthly_rate: 0 }] : []),
+                        ...(hasAboveGrade ? [{ id: crypto.randomUUID(), type: "structured", spaces: Math.round(parkingSpaces * (hasBelowGrade ? 0.5 : 1)), cost_per_space: current.parking?.entries?.[0]?.cost_per_space || 35000, reserved_residential_spaces: 0, reserved_monthly_rate: 0, unreserved_spaces: 0, unreserved_monthly_rate: 0, guest_visitor_spaces: 0, retail_shared_spaces: 0, retail_shared_monthly_rate: 0 }] : []),
+                      ],
+                      zoning_required_ratio_residential: current.parking?.zoning_required_ratio_residential || 1.5,
+                      zoning_required_ratio_commercial: current.parking?.zoning_required_ratio_commercial || 4.0,
+                    },
+                  } : {}),
                 };
                 await fetch("/api/underwriting", {
                   method: "PUT",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ deal_id: params.id, data: merged }),
                 });
-                // Also update local devParams to reflect
                 setDevParams(dp => ({ ...dp, max_gsf: summary.total_gsf, max_nrsf: summary.total_nrsf }));
+                toast.success(`Baseline pushed: ${summary.total_gsf.toLocaleString()} GSF, ${totalUnitsFromMix} units, ${parkingSpaces} parking spaces`);
               } catch {
                 toast.error("Failed to push baseline to underwriting");
               }
@@ -899,15 +941,35 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 const existingScenarios = current.scenarios || [];
                 const scenarioName = `Massing: ${scenario.name}`;
                 const existingIdx = existingScenarios.findIndex((s: { name: string }) => s.name === scenarioName);
+                // Build unit groups from mix for the scenario override
+                const resNRSF2 = summary.nrsf_by_use.residential || 0;
+                const mix2 = scenario.unit_mix || [];
+                const wavg2 = mix2.length > 0 ? mix2.reduce((s: number, m: { avg_sf: number; allocation_pct: number }) => s + m.avg_sf * (m.allocation_pct / 100), 0) : 0;
+                const totalU2 = wavg2 > 0 ? Math.floor(resNRSF2 / wavg2) : summary.total_units;
+                const scenarioUnitGroups = mix2.length > 0
+                  ? mix2.map((m: { type_label: string; allocation_pct: number; avg_sf: number }) => ({
+                      id: crypto.randomUUID(), label: m.type_label,
+                      unit_count: Math.round(totalU2 * (m.allocation_pct / 100)),
+                      renovation_count: 0, renovation_cost_per_unit: 0,
+                      unit_change: "none", unit_change_count: 0,
+                      bedrooms: m.type_label.includes("Studio") ? 0 : m.type_label.includes("3") ? 3 : m.type_label.includes("2") ? 2 : 1,
+                      bathrooms: 1, sf_per_unit: m.avg_sf,
+                      current_rent_per_sf: 0, market_rent_per_sf: 0, lease_type: "NNN", expense_reimbursement_per_sf: 0,
+                      current_rent_per_unit: 0, market_rent_per_unit: 0,
+                      beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 0,
+                    }))
+                  : undefined;
+
                 const uwScenario = {
                   id: existingIdx >= 0 ? existingScenarios[existingIdx].id : crypto.randomUUID(),
                   name: scenarioName,
                   type: "custom",
-                  description: `Auto-generated from building program "${scenario.name}"`,
+                  description: `Auto-generated from building program "${scenario.name}" — ${summary.total_gsf.toLocaleString()} GSF, ${totalU2} units, ${summary.total_parking_spaces_est} parking`,
                   overrides: {
                     max_gsf: summary.total_gsf,
                     max_nrsf: summary.total_nrsf,
                     efficiency_pct: summary.total_gsf > 0 ? Math.round((summary.total_nrsf / summary.total_gsf) * 100) : 80,
+                    ...(scenarioUnitGroups ? { unit_groups: scenarioUnitGroups } : {}),
                   },
                 };
                 if (existingIdx >= 0) existingScenarios[existingIdx] = uwScenario;

@@ -1260,6 +1260,20 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     if (activeScenarioId === id) setActiveScenarioId(null);
   };
 
+  const promoteToBaseline = (id: string) => {
+    const scenario = (data.scenarios || []).find(s => s.id === id);
+    if (!scenario) return;
+    // Merge the scenario overrides into the base data
+    setData(prev => {
+      const merged = { ...prev, ...scenario.overrides };
+      // Remove the promoted scenario from the list
+      merged.scenarios = (prev.scenarios || []).filter(s => s.id !== id);
+      return merged;
+    });
+    setActiveScenarioId(null);
+    toast.success(`"${scenario.name}" promoted to baseline`);
+  };
+
   const renameScenario = (id: string, name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -1375,6 +1389,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   >
                     <span>{s.name}</span>
                     {isActive && <Pencil className="h-2.5 w-2.5 opacity-50" />}
+                    {isActive && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); promoteToBaseline(s.id); }}
+                        className="ml-0.5 rounded p-0.5 transition-colors text-primary/50 hover:text-emerald-400 hover:bg-emerald-500/10"
+                        title="Set as new baseline (merge into base model)"
+                      >
+                        <Check className="h-2.5 w-2.5" />
+                      </button>
+                    )}
                     <button
                       onClick={(e) => { e.stopPropagation(); deleteScenario(s.id); }}
                       className={`ml-0.5 rounded p-0.5 transition-colors ${
