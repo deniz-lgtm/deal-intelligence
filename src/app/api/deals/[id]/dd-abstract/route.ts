@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries, omAnalysisQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries, omAnalysisQueries, locationIntelligenceQueries } from "@/lib/db";
 import type { OmAnalysisRow } from "@/lib/db";
 import { generateDDAbstract } from "@/lib/claude";
 import type { Document, ChecklistItem, Deal } from "@/lib/types";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { formatLocationIntelContext } from "@/lib/location-intel-context";
 
 export async function POST(
   req: NextRequest,
@@ -20,11 +21,12 @@ export async function POST(
 
     const deal = await dealQueries.getById(params.id);
 
-    const [documents, checklist, uwRow, omAnalysis] = await Promise.all([
+    const [documents, checklist, uwRow, omAnalysis, locationIntelRows] = await Promise.all([
       documentQueries.getByDealId(params.id) as Promise<Document[]>,
       checklistQueries.getByDealId(params.id) as Promise<ChecklistItem[]>,
       underwritingQueries.getByDealId(params.id),
       omAnalysisQueries.getByDealId(params.id),
+      locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
     ]);
 
     // Parse raw UW data — it's stored as JSONB, may be string or object
@@ -60,12 +62,16 @@ export async function POST(
       }
     }
 
+    // Append location intelligence to the context
+    const locationContext = formatLocationIntelContext(locationIntelRows);
+    const fullContext = [bpContext, locationContext].filter(Boolean).join("\n\n");
+
     const abstract = await generateDDAbstract(
       deal as Deal,
       documents,
       checklist,
       uwSummary,
-      bpContext,
+      fullContext,
       sections
     );
     return NextResponse.json({ data: abstract });

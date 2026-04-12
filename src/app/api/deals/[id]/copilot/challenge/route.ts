@@ -3,9 +3,11 @@ import {
   dealQueries,
   underwritingQueries,
   submarketMetricsQueries,
+  locationIntelligenceQueries,
 } from "@/lib/db";
 import { challengeUnderwriting } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { formatLocationIntelContext } from "@/lib/location-intel-context";
 
 /**
  * POST /api/deals/[id]/copilot/challenge
@@ -29,10 +31,11 @@ export async function POST(
     const body = await req.json().catch(() => ({}));
     const metrics: Record<string, unknown> | null = body.metrics ?? null;
 
-    const [deal, uwRow, market] = await Promise.all([
+    const [deal, uwRow, market, locationIntelRows] = await Promise.all([
       dealQueries.getById(params.id),
       underwritingQueries.getByDealId(params.id),
       submarketMetricsQueries.getByDealId(params.id),
+      locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
     ]);
 
     if (!uwRow?.data) {
@@ -45,9 +48,17 @@ export async function POST(
     const uw =
       typeof uwRow.data === "string" ? JSON.parse(uwRow.data) : uwRow.data;
 
+    // Enrich market context with location intelligence demographics
+    const locationContext = formatLocationIntelContext(locationIntelRows);
+    const enrichedMarket = market
+      ? { ...market, _locationIntel: locationContext }
+      : locationContext
+      ? { _locationIntel: locationContext }
+      : null;
+
     const challenges = await challengeUnderwriting(uw, {
       deal,
-      market,
+      market: enrichedMarket,
       metrics,
     });
 

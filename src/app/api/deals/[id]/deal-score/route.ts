@@ -7,12 +7,14 @@ import {
   omAnalysisQueries,
   checklistQueries,
   businessPlanQueries,
+  locationIntelligenceQueries,
   type OmAnalysisRow,
 } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ChecklistItem, DealNote, BusinessPlan } from "@/lib/types";
 import { CONCISE_STYLE } from "@/lib/ai-style";
+import { formatLocationIntelContext } from "@/lib/location-intel-context";
 
 const MODEL = "claude-sonnet-4-5";
 let _client: Anthropic | null = null;
@@ -49,13 +51,14 @@ export async function POST(
       return NextResponse.json({ error: "Invalid stage" }, { status: 400 });
     }
 
-    const [deal, omAnalysis, uwRow, notes, memoryText] =
+    const [deal, omAnalysis, uwRow, notes, memoryText, locationIntelRows] =
       await Promise.all([
         dealQueries.getById(params.id),
         omAnalysisQueries.getByDealId(params.id),
         underwritingQueries.getByDealId(params.id),
         dealNoteQueries.getByDealId(params.id),
         dealNoteQueries.getMemoryText(params.id),
+        locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
       ]);
 
     // Checklist may not exist yet — fetch separately to avoid breaking the whole request
@@ -80,6 +83,7 @@ export async function POST(
       : null;
 
     // Build the prompt based on stage
+    const locationContext = formatLocationIntelContext(locationIntelRows);
     const prompt = buildScorePrompt(
       stage,
       deal,
@@ -88,7 +92,8 @@ export async function POST(
       checklist,
       notes,
       memoryText,
-      businessPlan as unknown as BusinessPlan | null
+      businessPlan as unknown as BusinessPlan | null,
+      locationContext
     );
 
     const response = await getClient().messages.create({
@@ -201,7 +206,8 @@ function buildScorePrompt(
   checklist: ChecklistItem[],
   notes: DealNote[],
   memoryText: string,
-  businessPlan: BusinessPlan | null
+  businessPlan: BusinessPlan | null,
+  locationContext: string = ""
 ): string {
   const fc = (n: number) =>
     n ? "$" + Math.round(n).toLocaleString("en-US") : "—";
@@ -320,6 +326,9 @@ ${uw.has_financing ? `- DSCR: ${dscr > 0 ? dscr.toFixed(2) + "x" : "N/A"}
           .join("\n")}\n`
       : "";
 
+  // ── Location intelligence context
+  const locationBlock = locationContext ? `\n${locationContext}\n` : "";
+
   if (stage === "underwriting") {
     return `${CONCISE_STYLE}
 
@@ -335,13 +344,14 @@ IMPORTANT SCORING RULES:
 ${bpBlock}
 DEAL: ${deal.name}
 Property: ${deal.property_type} | ${deal.address}, ${deal.city}, ${deal.state} ${deal.zip}
-${omBlock}${uwBlock}${notesBlock}${checklistBlock}
+${omBlock}${uwBlock}${notesBlock}${checklistBlock}${locationBlock}
 Score this deal based on the ACTUAL underwriting numbers. Consider:
 1. Are the return metrics strong? (YoC > 6% good, > 8% strong, > 10% excellent)
 2. Is the debt coverage adequate? (DSCR > 1.25x good, > 1.5x strong)
 3. Is the equity multiple compelling? (> 1.8x good, > 2.0x strong, > 2.5x excellent)
 4. Have analyst notes addressed OM concerns?
 5. Does the deal match the business plan targets?
+6. Do the location demographics support the investment thesis? (population growth, income levels, employment, housing demand)
 
 Return ONLY a JSON object:
 {
@@ -366,7 +376,7 @@ This score represents: "Should we proceed to put together the investment package
 ${bpBlock}
 DEAL: ${deal.name}
 Property: ${deal.property_type} | ${deal.address}, ${deal.city}, ${deal.state} ${deal.zip}
-${omBlock}${uwBlock}${notesBlock}${checklistBlock}
+${omBlock}${uwBlock}${notesBlock}${checklistBlock}${locationBlock}
 SCORE PROGRESSION:
 - OM Analysis Score: ${omAnalysis?.deal_score ?? "N/A"}/10
 - Post-Underwriting Score: ${deal.uw_score ?? "N/A"}/10
@@ -376,7 +386,8 @@ Provide a comprehensive final score considering:
 2. All red flags and whether they've been adequately addressed
 3. Diligence checklist status — any open issues or blockers?
 4. Overall risk/return profile vs. business plan targets
-5. Is this deal ready for IC / investment package presentation?
+5. Location and market fundamentals — do demographics, employment, and housing demand support the thesis?
+6. Is this deal ready for IC / investment package presentation?
 
 Return ONLY a JSON object:
 {
