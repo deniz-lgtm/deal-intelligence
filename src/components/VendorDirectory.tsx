@@ -137,7 +137,7 @@ export default function VendorDirectory({ dealId }: Props) {
     ? vendors
     : vendors.filter((v) => v.role === filterRole);
 
-  const roles = [...new Set(vendors.map((v) => v.role))];
+  const roles = Array.from(new Set(vendors.map((v) => v.role)));
 
   if (loading) {
     return (
