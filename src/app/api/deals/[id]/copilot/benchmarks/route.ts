@@ -87,11 +87,58 @@ const PROPERTY_TYPE_DEFAULTS: Record<
   },
 };
 
+// Ground-up development benchmarks by property type (California-focused)
+const GROUND_UP_DEFAULTS: Record<
+  string,
+  {
+    hard_cost_per_sf_low: number;
+    hard_cost_per_sf_high: number;
+    soft_cost_pct: number;
+    parking_cost_surface: number;
+    parking_cost_structured: number;
+    parking_cost_underground: number;
+    parking_ratio_residential: number;
+    parking_ratio_commercial: number;
+    absorption_units_per_month: number;
+    construction_months: number;
+    construction_loan_rate: number;
+    construction_ltc: number;
+    dev_fee_pct: number;
+  }
+> = {
+  multifamily: {
+    hard_cost_per_sf_low: 250, hard_cost_per_sf_high: 450,
+    soft_cost_pct: 25, parking_cost_surface: 10000, parking_cost_structured: 35000,
+    parking_cost_underground: 55000, parking_ratio_residential: 1.5, parking_ratio_commercial: 4.0,
+    absorption_units_per_month: 15, construction_months: 18, construction_loan_rate: 7.5,
+    construction_ltc: 65, dev_fee_pct: 4,
+  },
+  mixed_use: {
+    hard_cost_per_sf_low: 280, hard_cost_per_sf_high: 500,
+    soft_cost_pct: 28, parking_cost_surface: 10000, parking_cost_structured: 40000,
+    parking_cost_underground: 60000, parking_ratio_residential: 1.25, parking_ratio_commercial: 4.0,
+    absorption_units_per_month: 12, construction_months: 22, construction_loan_rate: 7.5,
+    construction_ltc: 60, dev_fee_pct: 4,
+  },
+  retail: {
+    hard_cost_per_sf_low: 200, hard_cost_per_sf_high: 400,
+    soft_cost_pct: 22, parking_cost_surface: 8000, parking_cost_structured: 30000,
+    parking_cost_underground: 50000, parking_ratio_residential: 0, parking_ratio_commercial: 5.0,
+    absorption_units_per_month: 0, construction_months: 14, construction_loan_rate: 7.5,
+    construction_ltc: 60, dev_fee_pct: 3.5,
+  },
+};
+
 function defaultsFor(propertyType: string | null) {
   if (!propertyType) return PROPERTY_TYPE_DEFAULTS.multifamily;
   return (
     PROPERTY_TYPE_DEFAULTS[propertyType] ?? PROPERTY_TYPE_DEFAULTS.multifamily
   );
+}
+
+function groundUpDefaultsFor(propertyType: string | null) {
+  if (!propertyType) return GROUND_UP_DEFAULTS.multifamily;
+  return GROUND_UP_DEFAULTS[propertyType] ?? GROUND_UP_DEFAULTS.multifamily;
 }
 
 export async function GET(
@@ -159,10 +206,13 @@ export async function GET(
       (r) => r.comp_type === "rent"
     );
 
+    const groundUpDefaults = groundUpDefaultsFor(propertyType);
+
     return NextResponse.json({
       data: {
         property_type: propertyType,
         defaults,
+        ground_up_defaults: groundUpDefaults,
         submarket: submarket
           ? {
               submarket_name: submarket.submarket_name,

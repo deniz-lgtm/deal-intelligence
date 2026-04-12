@@ -794,6 +794,34 @@ export const DILIGENCE_CHECKLIST_TEMPLATE: Array<{
       "Insurance quote for acquisition obtained",
     ],
   },
+  {
+    category: "CEQA & Environmental Review (CA)",
+    items: [
+      "CEQA pathway determined (exempt, ND, MND, EIR, SB 35)",
+      "CEQA exemption basis documented (if applicable)",
+      "Initial Study prepared (if ND/MND)",
+      "Environmental consultant engaged",
+      "Public comment period completed",
+      "Mitigation measures identified and costed",
+      "Notice of Determination (NOD) filed",
+      "CEQA challenge period expired (35 days post-NOD)",
+    ],
+  },
+  {
+    category: "Ground-Up Development",
+    items: [
+      "Entitlements confirmed or application filed",
+      "Site plan and architectural drawings approved",
+      "Grading and building permits issued",
+      "Construction loan commitment obtained",
+      "GC / design-build contract executed",
+      "Construction schedule and draw schedule finalized",
+      "Absorption and lease-up assumptions validated",
+      "Parking requirements met per zoning",
+      "Utility capacity confirmed for new construction",
+      "Development agreement with city executed (if applicable)",
+    ],
+  },
 ];
 
 // ─── Project Management ────────────────────────────────────────────────────
