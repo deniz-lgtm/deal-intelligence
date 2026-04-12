@@ -74,7 +74,7 @@ export default function MassingSectionCut({ scenario, summary }: Props) {
   }
 
   // Collect unique use types for legend
-  const useTypes = [...new Set(scenario.floors.map(f => f.use_type))];
+  const useTypes = Array.from(new Set(scenario.floors.map(f => f.use_type)));
 
   const fc = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(0)}K` : `${n}`;
 

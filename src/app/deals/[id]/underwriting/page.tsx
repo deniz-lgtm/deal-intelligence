@@ -284,7 +284,7 @@ function defaultConstructionLoan(): ConstructionLoanConfig {
 }
 
 function newMixedUseComponent(type: MixedUseComponentType): MixedUseComponent {
-  return { id: uuidv4(), component_type: type, label: MIXED_USE_COMPONENT_LABELS[type], sf_allocation: 0, unit_groups: type === "residential" ? [newGroup()] : [], opex_mode: "shared", opex_allocation_pct: type === "residential" ? 70 : 30, cap_rate: type === "residential" ? 5.0 : 6.5, ti_allowance_per_sf: 0, leasing_commission_pct: type === "retail" ? 6 : 0, free_rent_months: 0, rent_escalation_pct: 3 };
+  return { id: uuidv4(), component_type: type, label: MIXED_USE_COMPONENT_LABELS[type], sf_allocation: 0, unit_groups: [], opex_mode: "shared", opex_allocation_pct: type === "residential" ? 70 : 30, cap_rate: type === "residential" ? 5.0 : 6.5, ti_allowance_per_sf: 0, leasing_commission_pct: type === "retail" ? 6 : 0, free_rent_months: 0, rent_escalation_pct: 3 };
 }
 
 function defaultMixedUseConfig(): MixedUseConfig {

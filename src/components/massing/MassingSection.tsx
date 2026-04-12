@@ -35,7 +35,7 @@ export default function MassingSection({ program, onChange, zoning, onPushBaseli
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateTransformations: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const activeScenario = program.scenarios.find(s => s.id === program.active_scenario_id) || program.scenarios[0];

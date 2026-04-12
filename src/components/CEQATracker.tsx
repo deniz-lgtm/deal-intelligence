@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
-  ChevronDown, ChevronUp, Plus, Trash2, Save, Loader2,
+  ChevronDown, ChevronUp, Plus, Trash2, Save, Loader2, DollarSign,
   Scale, AlertTriangle, Calendar, FileText, CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
