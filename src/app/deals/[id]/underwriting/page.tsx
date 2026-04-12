@@ -2455,6 +2455,139 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
+      {/* ═══════════════════ PARKING CONFIGURATION ═══════════════════ */}
+      {(isGroundUp || d.parking?.entries?.length) && (
+      <Section title="Parking Configuration" icon={<Car className="h-4 w-4 text-cyan-400" />}>
+        <div className="mt-3">
+          {(() => {
+            const pk = d.parking || defaultParkingConfig();
+            const totalSpaces = pk.entries.reduce((s, e) => s + e.spaces, 0);
+            const totalPkCost = pk.entries.reduce((s, e) => s + e.spaces * e.cost_per_space, 0);
+            const totalPkRevenue = pk.entries.reduce((s, e) => s + (e.reserved_residential_spaces * e.reserved_monthly_rate + e.unreserved_spaces * e.unreserved_monthly_rate + e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12;
+            const requiredResSpaces = pk.zoning_required_ratio_residential * m.totalUnits;
+            const isMixedUse = deal?.property_type === "mixed_use";
+            const retailSF = isMixedUse ? (d.mixed_use?.components || []).filter(c => c.component_type === "retail").reduce((s, c) => s + c.sf_allocation, 0) : 0;
+            const requiredComSpaces = pk.zoning_required_ratio_commercial * (retailSF / 1000);
+            const requiredTotal = requiredResSpaces + requiredComSpaces;
+            const underParked = totalSpaces > 0 && requiredTotal > 0 && totalSpaces < requiredTotal;
+
+            const setPk = (fn: (prev: ParkingConfig) => ParkingConfig) => setData(p => ({ ...p, parking: fn(p.parking || defaultParkingConfig()) }));
+            const updEntry = (id: string, upd: Partial<ParkingEntry>) => setPk(prev => ({ ...prev, entries: prev.entries.map(e => e.id === id ? { ...e, ...upd } : e) }));
+
+            return (
+              <>
+                {/* Zoning ratios */}
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <NumInput label="Zoning Req: Spaces / Unit" value={pk.zoning_required_ratio_residential} onChange={v => setPk(p => ({ ...p, zoning_required_ratio_residential: v }))} decimals={2} />
+                  <NumInput label="Zoning Req: Spaces / 1,000 SF Retail" value={pk.zoning_required_ratio_commercial} onChange={v => setPk(p => ({ ...p, zoning_required_ratio_commercial: v }))} decimals={2} />
+                </div>
+
+                {/* Parking entries table */}
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Parking Inventory & Cost</h4>
+                <table className="w-full text-sm border-collapse mb-3">
+                  <thead>
+                    <tr className="bg-muted/30 border-b">
+                      <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Type</th>
+                      <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Spaces</th>
+                      <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[110px]">Cost / Space</th>
+                      <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Total Cost</th>
+                      <th className="w-[28px]" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pk.entries.map(entry => (
+                      <tr key={entry.id} className="border-b hover:bg-muted/10 group">
+                        <td className="px-2 py-1.5">
+                          <select value={entry.type} onChange={e => { const t = e.target.value as ParkingType; updEntry(entry.id, { type: t, cost_per_space: PARKING_COST_DEFAULTS[t] }); }} className="bg-transparent text-sm outline-none">
+                            {(Object.keys(PARKING_TYPE_LABELS) as ParkingType[]).map(t => <option key={t} value={t}>{PARKING_TYPE_LABELS[t]}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-2 py-1.5"><CellInput value={entry.spaces} onChange={v => updEntry(entry.id, { spaces: v })} /></td>
+                        <td className="px-2 py-1.5"><CellInput value={entry.cost_per_space} onChange={v => updEntry(entry.id, { cost_per_space: v })} prefix="$" /></td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(entry.spaces * entry.cost_per_space)}</td>
+                        <td className="px-1 py-1.5">
+                          <button onClick={() => setPk(p => ({ ...p, entries: p.entries.filter(e => e.id !== entry.id) }))} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                    {pk.entries.length === 0 && <tr><td colSpan={5} className="px-2 py-3 text-center text-muted-foreground text-sm">No parking entries. Add one below.</td></tr>}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t bg-muted/20 font-semibold">
+                      <td className="px-2 py-2">Total</td>
+                      <td className="px-2 py-2 text-right tabular-nums">{fn(totalSpaces)}</td>
+                      <td />
+                      <td className="px-2 py-2 text-right tabular-nums">{fc(totalPkCost)}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+                <Button variant="ghost" size="sm" className="mb-4" onClick={() => setPk(p => ({ ...p, entries: [...p.entries, newParkingEntry()] }))}>
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Add Parking Type
+                </Button>
+
+                {/* Parking ratios */}
+                {totalSpaces > 0 && m.totalUnits > 0 && (
+                  <div className={`rounded-md p-3 text-sm ${underParked ? "bg-red-500/10 border border-red-500/30" : "bg-muted/10 border"}`}>
+                    <div className="flex justify-between">
+                      <span>Actual Ratio</span>
+                      <span className="tabular-nums font-medium">{(totalSpaces / m.totalUnits).toFixed(2)} spaces/unit</span>
+                    </div>
+                    {requiredTotal > 0 && (
+                      <div className="flex justify-between mt-1">
+                        <span>Zoning Required</span>
+                        <span className="tabular-nums font-medium">{fn(Math.ceil(requiredTotal))} spaces</span>
+                      </div>
+                    )}
+                    {underParked && <p className="text-red-400 text-xs mt-2 font-medium">Warning: {fn(Math.ceil(requiredTotal - totalSpaces))} spaces short of zoning requirement</p>}
+                  </div>
+                )}
+
+                {/* Parking Revenue */}
+                {pk.entries.length > 0 && (
+                  <>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 mt-4">Parking Revenue</h4>
+                    <table className="w-full text-sm border-collapse mb-2">
+                      <thead>
+                        <tr className="bg-muted/30 border-b">
+                          <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Type</th>
+                          <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Reserved</th>
+                          <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">$/mo</th>
+                          <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Unreserved</th>
+                          <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">$/mo</th>
+                          <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Retail</th>
+                          <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">$/mo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pk.entries.map(entry => (
+                          <tr key={entry.id} className="border-b hover:bg-muted/10">
+                            <td className="px-2 py-1.5 text-muted-foreground">{PARKING_TYPE_LABELS[entry.type]}</td>
+                            <td className="px-2 py-1.5"><CellInput value={entry.reserved_residential_spaces} onChange={v => updEntry(entry.id, { reserved_residential_spaces: v })} /></td>
+                            <td className="px-2 py-1.5"><CellInput value={entry.reserved_monthly_rate} onChange={v => updEntry(entry.id, { reserved_monthly_rate: v })} prefix="$" /></td>
+                            <td className="px-2 py-1.5"><CellInput value={entry.unreserved_spaces} onChange={v => updEntry(entry.id, { unreserved_spaces: v })} /></td>
+                            <td className="px-2 py-1.5"><CellInput value={entry.unreserved_monthly_rate} onChange={v => updEntry(entry.id, { unreserved_monthly_rate: v })} prefix="$" /></td>
+                            <td className="px-2 py-1.5"><CellInput value={entry.retail_shared_spaces} onChange={v => updEntry(entry.id, { retail_shared_spaces: v })} /></td>
+                            <td className="px-2 py-1.5"><CellInput value={entry.retail_shared_monthly_rate} onChange={v => updEntry(entry.id, { retail_shared_monthly_rate: v })} prefix="$" /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t bg-muted/20 font-semibold">
+                          <td colSpan={6} className="px-2 py-2 text-right">Annual Parking Revenue</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{fc(totalPkRevenue)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      </Section>
+      )}
+
       <Section title="Operating Assumptions" icon={<Calculator className="h-4 w-4 text-blue-400" />}>
         <div className="mt-3 overflow-x-auto">
           {/* Vacancy row */}
