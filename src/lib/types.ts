@@ -89,6 +89,9 @@ export interface Deal {
   auto_ingested: boolean;
   inbox_reviewed_at: string | null;
   ingested_from_path: string | null;
+  // Execution / Post-Closing
+  execution_phase: ExecutionPhase | null;
+  execution_started_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1248,6 +1251,225 @@ export interface PreDevSettings {
   total_budget: number | null;
   thresholds: Array<{ amount: number; label: string }>;
 }
+
+// ─── Execution / Post-Closing Phases ──────────────────────────────────────
+
+export type ExecutionPhase =
+  | "preconstruction"
+  | "construction"
+  | "punch_list"
+  | "lease_up"
+  | "stabilization";
+
+export const EXECUTION_PHASES: ExecutionPhase[] = [
+  "preconstruction",
+  "construction",
+  "punch_list",
+  "lease_up",
+  "stabilization",
+];
+
+export const EXECUTION_PHASE_LABELS: Record<ExecutionPhase, string> = {
+  preconstruction: "Pre-Construction",
+  construction: "Construction",
+  punch_list: "Punch List",
+  lease_up: "Lease-Up",
+  stabilization: "Stabilization",
+};
+
+export const EXECUTION_PHASE_CONFIG: Record<ExecutionPhase, { label: string; color: string }> = {
+  preconstruction: { label: "Pre-Construction", color: "bg-blue-500/20 text-blue-300" },
+  construction: { label: "Construction", color: "bg-amber-500/20 text-amber-300" },
+  punch_list: { label: "Punch List", color: "bg-orange-500/20 text-orange-300" },
+  lease_up: { label: "Lease-Up", color: "bg-purple-500/20 text-purple-300" },
+  stabilization: { label: "Stabilization", color: "bg-emerald-500/20 text-emerald-300" },
+};
+
+// ─── Hard Cost Budget Tracker ─────────────────────────────────────────────
+
+export type HardCostStatus = "estimated" | "committed" | "incurred" | "paid";
+
+export interface HardCostItem {
+  id: string;
+  deal_id: string;
+  category: string;
+  description: string;
+  vendor: string | null;
+  amount: number;
+  status: HardCostStatus;
+  incurred_date: string | null;
+  notes: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const HARDCOST_STATUS_CONFIG: Record<HardCostStatus, { label: string; color: string }> = {
+  estimated: { label: "Estimated", color: "bg-zinc-500/20 text-zinc-300" },
+  committed: { label: "Committed", color: "bg-blue-500/20 text-blue-300" },
+  incurred: { label: "Incurred", color: "bg-amber-500/20 text-amber-300" },
+  paid: { label: "Paid", color: "bg-emerald-500/20 text-emerald-300" },
+};
+
+export const HARDCOST_CATEGORIES = [
+  "General Conditions",
+  "Sitework",
+  "Foundation",
+  "Structure",
+  "Envelope",
+  "MEP",
+  "Interior Finishes",
+  "FF&E",
+  "Landscaping",
+  "Contingency",
+  "Other",
+] as const;
+
+export const DEFAULT_HARDCOST_THRESHOLDS: Array<{ amount: number; label: string }> = [
+  { amount: 100000, label: "Initial Discretionary Spend" },
+  { amount: 500000, label: "Director Approval" },
+  { amount: 1500000, label: "VP Approval" },
+  { amount: 5000000, label: "IC Approval" },
+  { amount: 15000000, label: "Full Committee Approval" },
+];
+
+export interface HardCostSettings {
+  total_budget: number | null;
+  thresholds: Array<{ amount: number; label: string }>;
+}
+
+// ─── Draw Schedule ────────────────────────────────────────────────────────
+
+export type DrawStatus = "draft" | "submitted" | "approved" | "funded" | "rejected";
+
+export interface Draw {
+  id: string;
+  deal_id: string;
+  draw_number: number;
+  title: string;
+  status: DrawStatus;
+  submitted_date: string | null;
+  approved_date: string | null;
+  funded_date: string | null;
+  amount_requested: number;
+  amount_approved: number | null;
+  retainage_held: number;
+  pct_complete_claimed: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DrawItem {
+  id: string;
+  draw_id: string;
+  hardcost_item_id: string | null;
+  description: string;
+  amount_requested: number;
+  amount_approved: number | null;
+  sort_order: number;
+}
+
+export const DRAW_STATUS_CONFIG: Record<DrawStatus, { label: string; color: string }> = {
+  draft: { label: "Draft", color: "bg-zinc-500/20 text-zinc-300" },
+  submitted: { label: "Submitted", color: "bg-blue-500/20 text-blue-300" },
+  approved: { label: "Approved", color: "bg-amber-500/20 text-amber-300" },
+  funded: { label: "Funded", color: "bg-emerald-500/20 text-emerald-300" },
+  rejected: { label: "Rejected", color: "bg-red-500/20 text-red-300" },
+};
+
+// ─── Permit & Approval Tracker ────────────────────────────────────────────
+
+export type PermitStatus = "not_submitted" | "submitted" | "in_review" | "approved" | "denied" | "expired";
+
+export interface Permit {
+  id: string;
+  deal_id: string;
+  permit_type: string;
+  jurisdiction: string;
+  description: string;
+  submitted_date: string | null;
+  expected_date: string | null;
+  actual_date: string | null;
+  fee: number;
+  status: PermitStatus;
+  notes: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const PERMIT_STATUS_CONFIG: Record<PermitStatus, { label: string; color: string }> = {
+  not_submitted: { label: "Not Submitted", color: "bg-zinc-500/20 text-zinc-300" },
+  submitted: { label: "Submitted", color: "bg-blue-500/20 text-blue-300" },
+  in_review: { label: "In Review", color: "bg-amber-500/20 text-amber-300" },
+  approved: { label: "Approved", color: "bg-emerald-500/20 text-emerald-300" },
+  denied: { label: "Denied", color: "bg-red-500/20 text-red-300" },
+  expired: { label: "Expired", color: "bg-orange-500/20 text-orange-300" },
+};
+
+export const PERMIT_TYPES = [
+  "Building Permit",
+  "Demolition Permit",
+  "Grading Permit",
+  "Electrical Permit",
+  "Plumbing Permit",
+  "Mechanical Permit",
+  "Fire Permit",
+  "Zoning Variance",
+  "Special Use Permit",
+  "Certificate of Occupancy",
+  "Environmental Permit",
+  "Stormwater Permit",
+  "Other",
+] as const;
+
+// ─── Vendor / Contractor Directory ────────────────────────────────────────
+
+export type VendorStatus = "prospective" | "engaged" | "under_contract" | "active" | "inactive";
+
+export interface Vendor {
+  id: string;
+  deal_id: string;
+  name: string;
+  role: string;
+  company: string | null;
+  email: string | null;
+  phone: string | null;
+  status: VendorStatus;
+  engagement_date: string | null;
+  notes: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const VENDOR_STATUS_CONFIG: Record<VendorStatus, { label: string; color: string }> = {
+  prospective: { label: "Prospective", color: "bg-zinc-500/20 text-zinc-300" },
+  engaged: { label: "Engaged", color: "bg-blue-500/20 text-blue-300" },
+  under_contract: { label: "Under Contract", color: "bg-amber-500/20 text-amber-300" },
+  active: { label: "Active", color: "bg-emerald-500/20 text-emerald-300" },
+  inactive: { label: "Inactive", color: "bg-red-500/20 text-red-300" },
+};
+
+export const VENDOR_ROLES = [
+  "General Contractor",
+  "Architect",
+  "Civil Engineer",
+  "Structural Engineer",
+  "MEP Engineer",
+  "Geotechnical Engineer",
+  "Environmental Consultant",
+  "Surveyor",
+  "Attorney",
+  "Title Company",
+  "Lender",
+  "Insurance Broker",
+  "Interior Designer",
+  "Landscape Architect",
+  "Subcontractor",
+  "Other",
+] as const;
 
 // ─── Chat ───────────────────────────────────────────────────────────────────
 

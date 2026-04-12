@@ -27,10 +27,14 @@ import {
   BarChart3,
   Share2,
   Footprints,
+  DollarSign,
+  Wallet,
+  FileCheck,
+  HardHat,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DEAL_STAGE_LABELS } from "@/lib/types";
-import type { DealStatus } from "@/lib/types";
+import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
+import type { DealStatus, ExecutionPhase } from "@/lib/types";
 import { useAuth } from "@clerk/nextjs";
 import ShareDealDialog from "@/components/ShareDealDialog";
 import { usePermissions } from "@/lib/usePermissions";
@@ -44,12 +48,15 @@ interface Deal {
   status: DealStatus;
   starred: boolean;
   owner_id: string | null;
+  execution_phase: ExecutionPhase | null;
 }
 
-const NAV_GROUPS: {
+type NavGroup = {
   label: string | null;
   items: { href: string; label: string; icon: typeof LayoutDashboard }[];
-}[] = [
+};
+
+const BASE_NAV_GROUPS: NavGroup[] = [
   {
     label: null,
     items: [{ href: "", label: "Overview", icon: LayoutDashboard }],
@@ -93,6 +100,25 @@ const NAV_GROUPS: {
   },
 ];
 
+const CONSTRUCTION_NAV_GROUP: NavGroup = {
+  label: "Construction",
+  items: [
+    { href: "/construction", label: "Dashboard", icon: HardHat },
+    { href: "/construction/budget", label: "Hard Costs", icon: DollarSign },
+    { href: "/construction/draws", label: "Draws", icon: Wallet },
+    { href: "/construction/permits", label: "Permits", icon: FileCheck },
+    { href: "/construction/vendors", label: "Vendors", icon: Users },
+  ],
+};
+
+function getNavGroups(executionPhase: ExecutionPhase | null): NavGroup[] {
+  if (!executionPhase) return BASE_NAV_GROUPS;
+  // Insert Construction group after Execution (index 3)
+  const groups = [...BASE_NAV_GROUPS];
+  groups.splice(4, 0, CONSTRUCTION_NAV_GROUP);
+  return groups;
+}
+
 const STATUS_COLORS: Record<string, string> = {
   sourcing: "bg-zinc-500/20 text-zinc-300",
   screening: "bg-blue-500/20 text-blue-300",
@@ -102,6 +128,12 @@ const STATUS_COLORS: Record<string, string> = {
   closing: "bg-emerald-500/20 text-emerald-300",
   closed: "bg-emerald-500/20 text-emerald-300",
   dead: "bg-red-500/20 text-red-300",
+  // Execution phases
+  preconstruction: "bg-blue-500/20 text-blue-300",
+  construction: "bg-amber-500/20 text-amber-300",
+  punch_list: "bg-orange-500/20 text-orange-300",
+  lease_up: "bg-purple-500/20 text-purple-300",
+  stabilization: "bg-emerald-500/20 text-emerald-300",
 };
 
 export default function DealLayout({
@@ -186,6 +218,16 @@ export default function DealLayout({
                 >
                   {DEAL_STAGE_LABELS[deal.status] || deal.status}
                 </span>
+                {deal.execution_phase && (
+                  <span
+                    className={cn(
+                      "text-2xs px-2 py-0.5 rounded-full font-medium flex-shrink-0",
+                      EXECUTION_PHASE_CONFIG[deal.execution_phase]?.color ?? "bg-muted text-muted-foreground"
+                    )}
+                  >
+                    {EXECUTION_PHASE_CONFIG[deal.execution_phase]?.label ?? deal.execution_phase}
+                  </span>
+                )}
                 <div className="ml-auto flex-shrink-0">
                   {userId && can("deals.share") && (
                     <ShareDealDialog
@@ -214,7 +256,7 @@ export default function DealLayout({
           )}
         >
           <nav className="py-3 px-2 flex flex-col gap-4 min-h-full">
-            {NAV_GROUPS.map((group, gi) => (
+            {getNavGroups(deal?.execution_phase ?? null).map((group, gi) => (
               <div key={gi} className="flex flex-col gap-0.5">
                 {group.label && !sidebarCollapsed && (
                   <div className="px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 font-medium">

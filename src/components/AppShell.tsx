@@ -11,6 +11,7 @@ import {
   BookOpen,
   Users,
   Shield,
+  HardHat,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -67,6 +68,16 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
         label: "Contacts",
         icon: Users,
         permission: "contacts.access",
+      },
+    ],
+  },
+  {
+    label: "Execution",
+    items: [
+      {
+        href: "/execution",
+        label: "Construction",
+        icon: HardHat,
       },
     ],
   },
