@@ -262,13 +262,13 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
                     updateScenario(activeScenario.id, s => ({ ...s, density_bonus_applied: val, density_bonus_far_increase: farIncrease }));
                   }
                 }}
-                className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none"
+                className="w-full border rounded-md px-2 py-1.5 text-sm bg-background text-foreground outline-none"
               >
-                <option value="">None</option>
+                <option value="" className="bg-background text-foreground">None</option>
                 {densityBonuses.map((b, i) => (
-                  <option key={i} value={b.source}>{b.source} — {b.description} ({b.additional_density})</option>
+                  <option key={i} value={b.source} className="bg-background text-foreground">{b.source} — {b.description} ({b.additional_density})</option>
                 ))}
-                <option value="__custom">Custom...</option>
+                <option value="__custom" className="bg-background text-foreground">Custom...</option>
               </select>
               {activeScenario.density_bonus_applied === "__custom" && (
                 <div className="flex gap-2 mt-1">

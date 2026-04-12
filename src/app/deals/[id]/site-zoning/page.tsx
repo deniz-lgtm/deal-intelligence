@@ -175,9 +175,9 @@ function SelectInput({ label, value, onChange, options, className = "" }: {
       <select
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="w-full px-3 py-1.5 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none focus:border-primary/40"
+        className="w-full px-3 py-1.5 text-sm bg-background text-foreground border border-border/40 rounded-lg outline-none focus:border-primary/40"
       >
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {options.map(o => <option key={o.value} value={o.value} className="bg-background text-foreground">{o.label}</option>)}
       </select>
     </div>
   );

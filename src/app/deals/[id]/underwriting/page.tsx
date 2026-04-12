@@ -1967,7 +1967,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             <NumInput label="Cap Rate" value={comp.cap_rate} onChange={v => updComp({ cap_rate: v })} suffix="%" decimals={2} />
                             <div>
                               <label className="block text-xs font-medium text-muted-foreground mb-1">OpEx Mode</label>
-                              <select value={comp.opex_mode} onChange={e => updComp({ opex_mode: e.target.value as "own" | "shared" })} className="w-full bg-background border rounded-md px-2 py-1.5 text-sm outline-none">
+                              <select value={comp.opex_mode} onChange={e => updComp({ opex_mode: e.target.value as "own" | "shared" })} className="w-full bg-background text-foreground border rounded-md px-2 py-1.5 text-sm outline-none">
                                 <option value="shared">Shared (% allocation)</option>
                                 <option value="own">Own OpEx</option>
                               </select>
@@ -2772,7 +2772,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     {pk.entries.map(entry => (
                       <tr key={entry.id} className="border-b hover:bg-muted/10 group">
                         <td className="px-2 py-1.5">
-                          <select value={entry.type} onChange={e => { const t = e.target.value as ParkingType; updEntry(entry.id, { type: t, cost_per_space: PARKING_COST_DEFAULTS[t] }); }} className="bg-transparent text-sm outline-none">
+                          <select value={entry.type} onChange={e => { const t = e.target.value as ParkingType; updEntry(entry.id, { type: t, cost_per_space: PARKING_COST_DEFAULTS[t] }); }} className="bg-background text-foreground text-sm outline-none rounded border border-border/40">
                             {(Object.keys(PARKING_TYPE_LABELS) as ParkingType[]).map(t => <option key={t} value={t}>{PARKING_TYPE_LABELS[t]}</option>)}
                           </select>
                         </td>
