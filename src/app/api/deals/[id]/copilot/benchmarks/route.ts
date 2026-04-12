@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getPool, dealQueries, submarketMetricsQueries } from "@/lib/db";
+import { getPool, dealQueries, submarketMetricsQueries, locationIntelligenceQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -154,9 +154,10 @@ export async function GET(
     );
     if (accessError) return accessError;
 
-    const [deal, submarket] = await Promise.all([
+    const [deal, submarket, locationIntelRows] = await Promise.all([
       dealQueries.getById(params.id),
       submarketMetricsQueries.getByDealId(params.id),
+      locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
     ]);
 
     const propertyType: string | null = deal?.property_type ?? null;
@@ -208,6 +209,29 @@ export async function GET(
 
     const groundUpDefaults = groundUpDefaultsFor(propertyType);
 
+    // Pick best location intel row (prefer 3mi radius)
+    const bestLocIntel = (() => {
+      if (!locationIntelRows || locationIntelRows.length === 0) return null;
+      const sorted = [...locationIntelRows].sort((a, b) => {
+        if (Number(a.radius_miles) === 3) return -1;
+        if (Number(b.radius_miles) === 3) return 1;
+        return Number(a.radius_miles) - Number(b.radius_miles);
+      });
+      const row = sorted[0];
+      const data = typeof row.data === "string" ? JSON.parse(row.data) : (row.data || {});
+      return {
+        radius_miles: Number(row.radius_miles),
+        population: data.total_population ?? null,
+        median_household_income: data.median_household_income ?? null,
+        median_home_value: data.median_home_value ?? null,
+        median_rent: data.median_gross_rent ?? null,
+        unemployment_rate: data.unemployment_rate ?? null,
+        owner_occupied_pct: data.owner_occupied_pct ?? null,
+        renter_occupied_pct: data.renter_occupied_pct ?? null,
+        source_year: row.source_year ?? null,
+      };
+    })();
+
     return NextResponse.json({
       data: {
         property_type: propertyType,
@@ -221,6 +245,7 @@ export async function GET(
               market_rent_growth: submarket.market_rent_growth,
             }
           : null,
+        location_intel: bestLocIntel,
         comps: {
           sale: sale
             ? {

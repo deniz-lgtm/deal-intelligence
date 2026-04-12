@@ -1569,6 +1569,8 @@ export async function challengeUnderwriting(
       if (m.market_cap_rate != null) ctxLines.push(`Market cap rate: ${m.market_cap_rate}%`);
       if (m.market_vacancy != null) ctxLines.push(`Market vacancy: ${m.market_vacancy}%`);
       if (m.market_rent_growth != null) ctxLines.push(`Rent growth: ${m.market_rent_growth}%/yr`);
+      // Location intelligence (demographics, housing, employment)
+      if (m._locationIntel) ctxLines.push(`\n${m._locationIntel}`);
     }
     if (context.metrics) {
       const m = context.metrics;
