@@ -548,6 +548,60 @@ export async function ensureColumns(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_vendors_deal_id ON deal_vendors(deal_id)`,
+    // Progress Reports
+    `CREATE TABLE IF NOT EXISTS progress_reports (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      report_type TEXT NOT NULL DEFAULT 'weekly',
+      title TEXT NOT NULL DEFAULT '',
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      summary TEXT,
+      work_completed TEXT,
+      work_planned TEXT,
+      issues TEXT,
+      weather_delays INTEGER,
+      pct_complete INTEGER,
+      ai_executive_summary TEXT,
+      ai_budget_narrative TEXT,
+      ai_schedule_narrative TEXT,
+      ai_risk_narrative TEXT,
+      contractor_invite_id TEXT,
+      submitted_by_email TEXT,
+      submitted_at TIMESTAMPTZ,
+      published_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_progress_reports_deal_id ON progress_reports(deal_id)`,
+    // Progress Report Photos
+    `CREATE TABLE IF NOT EXISTS progress_report_photos (
+      id TEXT PRIMARY KEY,
+      report_id TEXT NOT NULL REFERENCES progress_reports(id) ON DELETE CASCADE,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      name TEXT,
+      original_name TEXT,
+      file_path TEXT NOT NULL,
+      file_size INTEGER,
+      mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+      caption TEXT,
+      category TEXT,
+      uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_progress_report_photos_report_id ON progress_report_photos(report_id)`,
+    // Progress Report Contractor Invites (magic-link tokens like deal rooms)
+    `CREATE TABLE IF NOT EXISTS progress_report_invites (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      name TEXT,
+      token_hash TEXT NOT NULL UNIQUE,
+      revoked_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_progress_report_invites_deal_id ON progress_report_invites(deal_id)`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -3869,6 +3923,151 @@ export const vendorQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_vendors WHERE id = $1", [id]);
+  },
+};
+
+// ─── Progress Report queries ──────────────────────────────────────────────────
+
+export const progressReportQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM progress_reports WHERE deal_id = $1 ORDER BY period_end DESC, created_at DESC",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM progress_reports WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
+  create: async (report: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO progress_reports (id, deal_id, report_type, title, period_start, period_end, status, summary, work_completed, work_planned, issues, weather_delays, pct_complete, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+       RETURNING *`,
+      [
+        report.id, report.deal_id, report.report_type ?? "weekly",
+        report.title ?? "", report.period_start, report.period_end,
+        report.status ?? "draft", report.summary ?? null,
+        report.work_completed ?? null, report.work_planned ?? null,
+        report.issues ?? null, report.weather_delays ?? null,
+        report.pct_complete ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "title", "report_type", "period_start", "period_end", "status",
+      "summary", "work_completed", "work_planned", "issues",
+      "weather_delays", "pct_complete",
+      "ai_executive_summary", "ai_budget_narrative", "ai_schedule_narrative", "ai_risk_narrative",
+      "contractor_invite_id", "submitted_by_email", "submitted_at", "published_at",
+    ];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [key, value] of Object.entries(updates)) {
+      if (allowed.includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE progress_reports SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM progress_reports WHERE id = $1", [id]);
+  },
+};
+
+export const progressReportPhotoQueries = {
+  getByReportId: async (reportId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM progress_report_photos WHERE report_id = $1 ORDER BY uploaded_at",
+      [reportId]
+    );
+    return res.rows;
+  },
+
+  create: async (photo: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO progress_report_photos (id, report_id, deal_id, name, original_name, file_path, file_size, mime_type, caption, category, uploaded_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+       RETURNING *`,
+      [
+        photo.id, photo.report_id, photo.deal_id,
+        photo.name, photo.original_name, photo.file_path,
+        photo.file_size ?? 0, photo.mime_type ?? "image/jpeg",
+        photo.caption ?? null, photo.category ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query("SELECT file_path FROM progress_report_photos WHERE id = $1", [id]);
+    await pool.query("DELETE FROM progress_report_photos WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+};
+
+export const progressReportInviteQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT id, deal_id, email, name, revoked_at, expires_at, created_at FROM progress_report_invites WHERE deal_id = $1 ORDER BY created_at DESC",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (invite: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO progress_report_invites (id, deal_id, email, name, token_hash, expires_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       RETURNING id, deal_id, email, name, revoked_at, expires_at, created_at`,
+      [invite.id, invite.deal_id, invite.email, invite.name ?? null, invite.token_hash, invite.expires_at ?? null]
+    );
+    return res.rows[0];
+  },
+
+  findByTokenHash: async (tokenHash: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT i.*, d.name AS deal_name, d.address AS deal_address, d.city AS deal_city, d.state AS deal_state
+       FROM progress_report_invites i
+       JOIN deals d ON d.id = i.deal_id
+       WHERE i.token_hash = $1 AND i.revoked_at IS NULL
+         AND (i.expires_at IS NULL OR i.expires_at > NOW())`,
+      [tokenHash]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  revoke: async (id: string) => {
+    const pool = getPool();
+    await pool.query("UPDATE progress_report_invites SET revoked_at = NOW() WHERE id = $1", [id]);
   },
 };
 
