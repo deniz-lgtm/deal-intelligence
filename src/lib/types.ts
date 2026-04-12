@@ -1443,6 +1443,73 @@ export const VENDOR_ROLES = [
   "Other",
 ] as const;
 
+// ─── Progress Reports ─────────────────────────────────────────────────────
+
+export type ReportType = "weekly" | "monthly";
+export type ReportStatus = "draft" | "submitted" | "reviewed" | "published";
+
+export interface ProgressReport {
+  id: string;
+  deal_id: string;
+  report_type: ReportType;
+  title: string;
+  period_start: string;
+  period_end: string;
+  status: ReportStatus;
+  // Contractor-submitted fields
+  summary: string | null;
+  work_completed: string | null;
+  work_planned: string | null;
+  issues: string | null;
+  weather_delays: number | null;
+  pct_complete: number | null;
+  // AI-generated fields
+  ai_executive_summary: string | null;
+  ai_budget_narrative: string | null;
+  ai_schedule_narrative: string | null;
+  ai_risk_narrative: string | null;
+  // Sharing
+  contractor_invite_id: string | null;
+  submitted_by_email: string | null;
+  submitted_at: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProgressReportPhoto {
+  id: string;
+  report_id: string;
+  deal_id: string;
+  name: string;
+  original_name: string;
+  file_path: string;
+  file_size: number;
+  mime_type: string;
+  caption: string | null;
+  category: string | null;
+  uploaded_at: string;
+}
+
+export const REPORT_STATUS_CONFIG: Record<ReportStatus, { label: string; color: string }> = {
+  draft: { label: "Draft", color: "bg-zinc-500/20 text-zinc-300" },
+  submitted: { label: "Submitted", color: "bg-blue-500/20 text-blue-300" },
+  reviewed: { label: "Reviewed", color: "bg-amber-500/20 text-amber-300" },
+  published: { label: "Published", color: "bg-emerald-500/20 text-emerald-300" },
+};
+
+export const REPORT_PHOTO_CATEGORIES = [
+  "General Progress",
+  "Foundation",
+  "Framing",
+  "MEP Rough-In",
+  "Exterior",
+  "Interior",
+  "Site Work",
+  "Safety / Issue",
+  "Other",
+] as const;
+
 // ─── Chat ───────────────────────────────────────────────────────────────────
 
 export interface ChatMessage {
