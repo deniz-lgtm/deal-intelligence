@@ -7,6 +7,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import type { BuildingProgram, MassingScenario } from "@/lib/types";
+import MassingSection from "@/components/massing/MassingSection";
+import { newBuildingProgram, computeMassingSummary } from "@/components/massing/massing-utils";
+import type { ZoningInputs } from "@/components/massing/massing-utils";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -156,6 +160,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   const [devParams, setDevParams] = useState<DevParams>(DEFAULT_DEV);
   const [narrative, setNarrative] = useState("");
   const [lastReportDate, setLastReportDate] = useState<string | null>(null);
+  const [buildingProgram, setBuildingProgram] = useState<BuildingProgram>(newBuildingProgram());
   const [dirty, setDirty] = useState(false);
 
   // ── Load data ──────────────────────────────────────────────────────────
@@ -216,6 +221,9 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       setDevParams(dp);
       setNarrative(uw?.zoning_narrative || "");
       setLastReportDate(uw?.last_report_date || null);
+      if (uw?.building_program?.scenarios?.length > 0) {
+        setBuildingProgram(uw.building_program);
+      }
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [params.id]);
@@ -260,6 +268,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         dev_params: finalDev,
         zoning_narrative: narrative,
         last_report_date: lastReportDate,
+        building_program: buildingProgram,
         // Also sync flat fields used by underwriting page
         development_mode: deal?.investment_strategy === "ground_up" || current.development_mode,
         lot_coverage_pct: finalDev.lot_coverage_pct,
@@ -283,7 +292,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     } finally {
       setSaving(false);
     }
-  }, [params.id, siteInfo, zoning, devParams, narrative, lastReportDate, deal, recalcBuilding]);
+  }, [params.id, siteInfo, zoning, devParams, narrative, lastReportDate, deal, recalcBuilding, buildingProgram]);
 
   // ── AI Zoning Report ───────────────────────────────────────────────────
   const runZoningReport = async () => {
@@ -659,6 +668,105 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
               <p className="text-[10px] text-muted-foreground mt-0.5">{devParams.efficiency_pct}% efficiency</p>
             </div>
           </div>
+        </Section>
+      )}
+
+      {/* ── Building Program / Massing ──────────────────────────────── */}
+      {isGroundUp && (
+        <Section title="Building Program" icon={<Building2 className="h-4 w-4 text-blue-400" />}>
+          {(() => {
+            const landSF = siteInfo.land_sf || siteInfo.land_acres * 43560;
+            // Parse height limit from zoning height_limits array
+            let heightLimitFt = 0;
+            for (const h of zoning.height_limits) {
+              const match = h.value.match(/(\d+)\s*(ft|feet|')/i);
+              if (match) { heightLimitFt = parseInt(match[1]); break; }
+            }
+            if (!heightLimitFt && devParams.height_limit_stories > 0) {
+              heightLimitFt = devParams.height_limit_stories * 10;
+            }
+
+            const zoningInputs: ZoningInputs = {
+              land_sf: landSF,
+              far: devParams.far || zoning.far || 0,
+              lot_coverage_pct: devParams.lot_coverage_pct || zoning.lot_coverage_pct || 0,
+              height_limit_ft: heightLimitFt,
+              height_limit_stories: devParams.height_limit_stories,
+            };
+
+            const handlePushBaseline = async (scenario: MassingScenario) => {
+              const summary = computeMassingSummary(scenario, zoningInputs);
+              try {
+                const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+                const uwJson = await uwRes.json();
+                const current = uwJson.data?.data
+                  ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
+                  : {};
+                const merged = {
+                  ...current,
+                  max_gsf: summary.total_gsf,
+                  max_nrsf: summary.total_nrsf,
+                  efficiency_pct: summary.total_gsf > 0 ? Math.round((summary.total_nrsf / summary.total_gsf) * 100) : devParams.efficiency_pct,
+                  building_program: buildingProgram,
+                };
+                await fetch("/api/underwriting", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ deal_id: params.id, data: merged }),
+                });
+                // Also update local devParams to reflect
+                setDevParams(dp => ({ ...dp, max_gsf: summary.total_gsf, max_nrsf: summary.total_nrsf }));
+              } catch {
+                toast.error("Failed to push baseline to underwriting");
+              }
+            };
+
+            const handlePushScenario = async (scenario: MassingScenario) => {
+              const summary = computeMassingSummary(scenario, zoningInputs);
+              try {
+                const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+                const uwJson = await uwRes.json();
+                const current = uwJson.data?.data
+                  ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
+                  : {};
+                const existingScenarios = current.scenarios || [];
+                const scenarioName = `Massing: ${scenario.name}`;
+                const existingIdx = existingScenarios.findIndex((s: { name: string }) => s.name === scenarioName);
+                const uwScenario = {
+                  id: existingIdx >= 0 ? existingScenarios[existingIdx].id : crypto.randomUUID(),
+                  name: scenarioName,
+                  type: "custom",
+                  description: `Auto-generated from building program "${scenario.name}"`,
+                  overrides: {
+                    max_gsf: summary.total_gsf,
+                    max_nrsf: summary.total_nrsf,
+                    efficiency_pct: summary.total_gsf > 0 ? Math.round((summary.total_nrsf / summary.total_gsf) * 100) : 80,
+                  },
+                };
+                if (existingIdx >= 0) existingScenarios[existingIdx] = uwScenario;
+                else existingScenarios.push(uwScenario);
+                const merged = { ...current, scenarios: existingScenarios, building_program: buildingProgram };
+                await fetch("/api/underwriting", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ deal_id: params.id, data: merged }),
+                });
+                toast.success(`UW scenario "${scenarioName}" ${existingIdx >= 0 ? "updated" : "created"}`);
+              } catch {
+                toast.error("Failed to push scenario to underwriting");
+              }
+            };
+
+            return (
+              <MassingSection
+                program={buildingProgram}
+                onChange={(p) => { setBuildingProgram(p); setDirty(true); }}
+                zoning={zoningInputs}
+                onPushBaseline={handlePushBaseline}
+                onPushScenario={handlePushScenario}
+              />
+            );
+          })()}
         </Section>
       )}
 

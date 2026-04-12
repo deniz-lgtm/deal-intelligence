@@ -1,0 +1,207 @@
+import { v4 as uuidv4 } from "uuid";
+import type {
+  FloorUseType, BuildingFloor, MassingScenario, MassingSummary, BuildingProgram,
+} from "@/lib/types";
+import { FLOOR_HEIGHT_DEFAULTS, PARKING_ABOVE_GRADE_HEIGHT } from "@/lib/types";
+
+// ── Floor factory ────────────────────────────────────────────────────────────
+
+const EFFICIENCY_BY_USE: Record<FloorUseType, number> = {
+  parking: 98, retail: 95, lobby_amenity: 60, residential: 80, mechanical: 0, office: 87,
+};
+
+export function newFloor(
+  use_type: FloorUseType,
+  floor_plate_sf: number,
+  floor_to_floor_ft?: number,
+  is_below_grade = false,
+  units_on_floor = 0,
+  efficiency_pct?: number,
+): BuildingFloor {
+  return {
+    id: uuidv4(),
+    use_type,
+    label: "",
+    floor_plate_sf,
+    floor_to_floor_ft: floor_to_floor_ft ?? (is_below_grade && use_type === "parking" ? FLOOR_HEIGHT_DEFAULTS.parking : use_type === "parking" ? PARKING_ABOVE_GRADE_HEIGHT : FLOOR_HEIGHT_DEFAULTS[use_type]),
+    is_below_grade,
+    units_on_floor,
+    efficiency_pct: efficiency_pct ?? EFFICIENCY_BY_USE[use_type],
+    sort_order: 0,
+  };
+}
+
+// ── Scenario factory ─────────────────────────────────────────────────────────
+
+export function newScenario(name: string, floors: BuildingFloor[] = []): MassingScenario {
+  return {
+    id: uuidv4(), name, floors, footprint_sf: 0,
+    density_bonus_applied: null, density_bonus_far_increase: 0, density_bonus_height_increase_ft: 0,
+    notes: "", created_at: new Date().toISOString(), is_baseline: false, linked_uw_scenario_id: null,
+  };
+}
+
+export function newBuildingProgram(): BuildingProgram {
+  const scenario = newScenario("Base Case");
+  scenario.is_baseline = true;
+  return { scenarios: [scenario], active_scenario_id: scenario.id };
+}
+
+// ── Auto-label floors ────────────────────────────────────────────────────────
+
+export function autoLabelFloors(floors: BuildingFloor[]): BuildingFloor[] {
+  const below = floors.filter(f => f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
+  const above = floors.filter(f => !f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
+
+  let parkingCounter = below.length;
+  below.forEach(f => {
+    if (f.use_type === "parking") { f.label = `P${parkingCounter}`; parkingCounter--; }
+    else f.label = f.use_type.charAt(0).toUpperCase() + f.use_type.slice(1);
+  });
+
+  let levelCounter = 1;
+  above.forEach(f => {
+    if (f.use_type === "residential") { f.label = `Level ${levelCounter}`; }
+    else if (f.use_type === "mechanical") { f.label = "Roof Mech"; }
+    else { f.label = f.use_type === "lobby_amenity" ? "Lobby" : f.use_type.charAt(0).toUpperCase() + f.use_type.slice(1); }
+    levelCounter++;
+  });
+  return [...below, ...above];
+}
+
+// ── Compute massing summary ──────────────────────────────────────────────────
+
+export interface ZoningInputs {
+  land_sf: number;
+  far: number;
+  lot_coverage_pct: number;
+  height_limit_ft: number;
+  height_limit_stories: number;
+}
+
+export function computeMassingSummary(scenario: MassingScenario, zoning: ZoningInputs): MassingSummary {
+  const aboveFloors = scenario.floors.filter(f => !f.is_below_grade);
+  const belowFloors = scenario.floors.filter(f => f.is_below_grade);
+
+  const total_gsf = scenario.floors.reduce((s, f) => s + f.floor_plate_sf, 0);
+  const total_nrsf = scenario.floors.reduce((s, f) => s + Math.round(f.floor_plate_sf * (f.efficiency_pct / 100)), 0);
+  const total_height_ft = aboveFloors.reduce((s, f) => s + f.floor_to_floor_ft, 0);
+  const total_below_grade_ft = belowFloors.reduce((s, f) => s + f.floor_to_floor_ft, 0);
+  const total_units = scenario.floors.reduce((s, f) => s + f.units_on_floor, 0);
+
+  const gsf_by_use: Partial<Record<FloorUseType, number>> = {};
+  const nrsf_by_use: Partial<Record<FloorUseType, number>> = {};
+  for (const f of scenario.floors) {
+    gsf_by_use[f.use_type] = (gsf_by_use[f.use_type] || 0) + f.floor_plate_sf;
+    nrsf_by_use[f.use_type] = (nrsf_by_use[f.use_type] || 0) + Math.round(f.floor_plate_sf * (f.efficiency_pct / 100));
+  }
+
+  const total_parking_sf = gsf_by_use.parking || 0;
+  const total_parking_spaces_est = Math.floor(total_parking_sf / 350);
+
+  const above_grade_gsf = aboveFloors.reduce((s, f) => s + f.floor_plate_sf, 0);
+  const effective_far = zoning.land_sf > 0 ? above_grade_gsf / zoning.land_sf : 0;
+  const maxPlate = Math.max(...scenario.floors.map(f => f.floor_plate_sf), 0);
+  const effective_lot_coverage_pct = zoning.land_sf > 0 ? (maxPlate / zoning.land_sf) * 100 : 0;
+
+  const bonusFar = 1 + (scenario.density_bonus_far_increase || 0);
+  const max_allowed_far = (zoning.far || 0) * bonusFar;
+  const baseHeightFt = zoning.height_limit_ft || (zoning.height_limit_stories * 10) || 0;
+  const max_allowed_height_ft = baseHeightFt + (scenario.density_bonus_height_increase_ft || 0);
+
+  return {
+    total_gsf, total_nrsf, total_height_ft, total_below_grade_ft,
+    above_grade_floors: aboveFloors.length, below_grade_floors: belowFloors.length,
+    total_units, total_parking_sf, total_parking_spaces_est,
+    gsf_by_use, nrsf_by_use, effective_far, effective_lot_coverage_pct,
+    height_compliant: max_allowed_height_ft <= 0 || total_height_ft <= max_allowed_height_ft,
+    far_compliant: max_allowed_far <= 0 || effective_far <= max_allowed_far,
+    lot_coverage_compliant: !zoning.lot_coverage_pct || effective_lot_coverage_pct <= zoning.lot_coverage_pct,
+    max_allowed_far, max_allowed_height_ft,
+  };
+}
+
+// ── Quick Stack Generators ───────────────────────────────────────────────────
+
+export function quickStackPodium5over1(landSF: number, lotCovPct: number): BuildingFloor[] {
+  const footprint = Math.round(landSF * (lotCovPct / 100));
+  const tower = Math.round(footprint * 0.85);
+  const unitsPerFloor = Math.floor(tower * 0.80 / 850);
+  return autoLabelFloors([
+    newFloor("parking", footprint, 10, true),
+    newFloor("retail", footprint, 14, false, 0, 95),
+    newFloor("residential", tower, 9.5, false, unitsPerFloor),
+    newFloor("residential", tower, 9.5, false, unitsPerFloor),
+    newFloor("residential", tower, 9.5, false, unitsPerFloor),
+    newFloor("residential", tower, 9.5, false, unitsPerFloor),
+    newFloor("residential", tower, 9.5, false, unitsPerFloor),
+    newFloor("mechanical", Math.round(tower * 0.3), 8, false),
+  ]);
+}
+
+export function quickStackMidRise3over2(landSF: number, lotCovPct: number): BuildingFloor[] {
+  const footprint = Math.round(landSF * (lotCovPct / 100));
+  const unitsPerFloor = Math.floor(footprint * 0.80 / 850);
+  return autoLabelFloors([
+    newFloor("parking", footprint, 10, true),
+    newFloor("parking", footprint, 11, false, 0, 98),
+    newFloor("lobby_amenity", footprint, 12, false),
+    newFloor("residential", footprint, 9.5, false, unitsPerFloor),
+    newFloor("residential", footprint, 9.5, false, unitsPerFloor),
+    newFloor("residential", footprint, 9.5, false, unitsPerFloor),
+    newFloor("mechanical", Math.round(footprint * 0.25), 8, false),
+  ]);
+}
+
+export function quickStackHighRise(landSF: number, lotCovPct: number): BuildingFloor[] {
+  const podium = Math.round(landSF * (lotCovPct / 100));
+  const tower = Math.round(podium * 0.6);
+  const unitsPerFloor = Math.floor(tower * 0.80 / 900);
+  const floors: BuildingFloor[] = [
+    newFloor("parking", podium, 10, true),
+    newFloor("parking", podium, 10, true),
+    newFloor("parking", podium, 10, true),
+    newFloor("retail", podium, 14, false, 0, 95),
+    newFloor("office", tower, 12, false, 0, 87),
+    newFloor("office", tower, 12, false, 0, 87),
+  ];
+  for (let i = 0; i < 8; i++) floors.push(newFloor("residential", tower, 9.5, false, unitsPerFloor));
+  floors.push(newFloor("mechanical", Math.round(tower * 0.3), 8, false));
+  return autoLabelFloors(floors);
+}
+
+export function quickStackGardenStyle(landSF: number, lotCovPct: number): BuildingFloor[] {
+  const footprint = Math.round(landSF * (lotCovPct / 100) * 0.5);
+  const unitsPerFloor = Math.floor(footprint * 0.85 / 800);
+  return autoLabelFloors([
+    newFloor("lobby_amenity", footprint, 10, false),
+    newFloor("residential", footprint, 9.5, false, unitsPerFloor),
+    newFloor("residential", footprint, 9.5, false, unitsPerFloor),
+    newFloor("residential", footprint, 9.5, false, unitsPerFloor),
+  ]);
+}
+
+export function quickStackAutoFromZoning(
+  landSF: number, far: number, lotCovPct: number, heightLimitFt: number,
+): BuildingFloor[] {
+  if (landSF <= 0 || far <= 0) return [];
+  const maxFootprint = Math.round(landSF * (lotCovPct / 100));
+  const maxGSF = Math.round(landSF * far);
+  const effectiveHeight = heightLimitFt > 0 ? heightLimitFt : 100;
+  // 1 retail (14ft) + N residential (9.5ft) + 1 mechanical (8ft)
+  const maxResStories = Math.floor((effectiveHeight - 22) / 9.5);
+  // Check GSF constraint
+  const tower = Math.round(maxFootprint * 0.85);
+  let resStories = maxResStories;
+  while (resStories > 0 && (maxFootprint * 1 + tower * resStories + tower * 0.3) > maxGSF) resStories--;
+  if (resStories <= 0) resStories = 1;
+
+  const unitsPerFloor = Math.floor(tower * 0.80 / 850);
+  const floors: BuildingFloor[] = [
+    newFloor("parking", maxFootprint, 10, true),
+    newFloor("retail", maxFootprint, 14, false, 0, 95),
+  ];
+  for (let i = 0; i < resStories; i++) floors.push(newFloor("residential", tower, 9.5, false, unitsPerFloor));
+  floors.push(newFloor("mechanical", Math.round(tower * 0.3), 8, false));
+  return autoLabelFloors(floors);
+}

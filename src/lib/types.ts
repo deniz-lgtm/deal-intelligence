@@ -1621,6 +1621,99 @@ export const CEQA_MITIGATION_CATEGORIES = [
 
 // ─── API Response ───────────────────────────────────────────────────────────
 
+// ─── Building Program / Massing ──────────────────────────────────────────────
+
+export type FloorUseType =
+  | "parking"
+  | "retail"
+  | "lobby_amenity"
+  | "residential"
+  | "mechanical"
+  | "office";
+
+export const FLOOR_USE_TYPE_LABELS: Record<FloorUseType, string> = {
+  parking: "Parking",
+  retail: "Retail",
+  lobby_amenity: "Lobby / Amenity",
+  residential: "Residential",
+  mechanical: "Mechanical / Rooftop",
+  office: "Office",
+};
+
+export const FLOOR_USE_COLORS: Record<FloorUseType, { fill: string; bg: string; text: string }> = {
+  parking:       { fill: "#6b7280", bg: "bg-gray-500/20",    text: "text-gray-400" },
+  retail:        { fill: "#f59e0b", bg: "bg-amber-500/20",   text: "text-amber-400" },
+  lobby_amenity: { fill: "#8b5cf6", bg: "bg-violet-500/20",  text: "text-violet-400" },
+  residential:   { fill: "#3b82f6", bg: "bg-blue-500/20",    text: "text-blue-400" },
+  mechanical:    { fill: "#ef4444", bg: "bg-red-500/20",     text: "text-red-400" },
+  office:        { fill: "#10b981", bg: "bg-emerald-500/20", text: "text-emerald-400" },
+};
+
+export const FLOOR_HEIGHT_DEFAULTS: Record<FloorUseType, number> = {
+  parking: 10,
+  retail: 14,
+  lobby_amenity: 12,
+  residential: 9.5,
+  mechanical: 8,
+  office: 12,
+};
+
+export const PARKING_ABOVE_GRADE_HEIGHT = 11;
+
+export interface BuildingFloor {
+  id: string;
+  use_type: FloorUseType;
+  label: string;
+  floor_plate_sf: number;
+  floor_to_floor_ft: number;
+  is_below_grade: boolean;
+  units_on_floor: number;
+  efficiency_pct: number;
+  sort_order: number;
+}
+
+export interface MassingScenario {
+  id: string;
+  name: string;
+  floors: BuildingFloor[];
+  footprint_sf: number;
+  density_bonus_applied: string | null;
+  density_bonus_far_increase: number;
+  density_bonus_height_increase_ft: number;
+  notes: string;
+  created_at: string;
+  is_baseline: boolean;
+  linked_uw_scenario_id: string | null;
+}
+
+export interface BuildingProgram {
+  scenarios: MassingScenario[];
+  active_scenario_id: string;
+}
+
+export interface MassingSummary {
+  total_gsf: number;
+  total_nrsf: number;
+  total_height_ft: number;
+  total_below_grade_ft: number;
+  above_grade_floors: number;
+  below_grade_floors: number;
+  total_units: number;
+  total_parking_sf: number;
+  total_parking_spaces_est: number;
+  gsf_by_use: Partial<Record<FloorUseType, number>>;
+  nrsf_by_use: Partial<Record<FloorUseType, number>>;
+  effective_far: number;
+  effective_lot_coverage_pct: number;
+  height_compliant: boolean;
+  far_compliant: boolean;
+  lot_coverage_compliant: boolean;
+  max_allowed_far: number;
+  max_allowed_height_ft: number;
+}
+
+// ─── API Response ───────────────────────────────────────────────────────────
+
 export interface ApiResponse<T> {
   data?: T;
   error?: string;
