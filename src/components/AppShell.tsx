@@ -40,12 +40,9 @@ interface NavItem {
 
 const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
-    label: null,
-    items: [{ href: "/", label: "Home", icon: Home }],
-  },
-  {
     label: "Workspace",
     items: [
+      { href: "/", label: "Home", icon: Home },
       {
         href: "/inbox",
         label: "Inbox",
@@ -69,11 +66,6 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
         icon: Users,
         permission: "contacts.access",
       },
-    ],
-  },
-  {
-    label: "Execution",
-    items: [
       {
         href: "/execution",
         label: "Construction",
