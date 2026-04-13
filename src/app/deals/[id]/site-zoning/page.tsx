@@ -796,35 +796,29 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         </div>
       </Section>
 
-      {/* ── Development Parameters (Ground-Up) ───────────────────────── */}
+      {/* ── Development Summary (read-only, data from Zoning + Programming) ── */}
       {isGroundUp && (
-        <Section title="Development Parameters" icon={<Ruler className="h-4 w-4 text-purple-400" />}>
+        <Section title="Development Summary" icon={<Ruler className="h-4 w-4 text-purple-400" />}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {isIndustrial ? (
-              <FieldInput label="Lot Coverage %" value={devParams.lot_coverage_pct || ""} onChange={v => updateDev("lot_coverage_pct", parseFloat(v) || 0)} type="number" suffix="%" />
-            ) : (
-              <>
-                <FieldInput label="FAR" value={devParams.far || ""} onChange={v => updateDev("far", parseFloat(v) || 0)} type="number" />
-                {isMF && <FieldInput label="Height Limit (Stories)" value={devParams.height_limit_stories || ""} onChange={v => updateDev("height_limit_stories", parseInt(v) || 0)} type="number" />}
-              </>
-            )}
-            <FieldInput label="Efficiency (GSF → NRSF)" value={devParams.efficiency_pct || ""} onChange={v => updateDev("efficiency_pct", parseFloat(v) || 0)} type="number" suffix="%" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 mt-4">
-            <div className="p-4 bg-muted/30 rounded-lg">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Max Gross SF (GSF)</p>
-              <p className="text-xl font-bold">{computedDev.max_gsf > 0 ? fn(computedDev.max_gsf) : "—"}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                {isIndustrial ? `${fn(siteInfo.land_sf || siteInfo.land_acres * 43560)} SF × ${devParams.lot_coverage_pct}%` : `${fn(siteInfo.land_sf || siteInfo.land_acres * 43560)} SF × ${devParams.far} FAR`}
-              </p>
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">FAR (from zoning)</p>
+              <p className="text-lg font-bold tabular-nums">{devParams.far || zoning.far || "u2014"}</p>
             </div>
-            <div className="p-4 bg-primary/10 rounded-lg">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Max Net Rentable SF (NRSF)</p>
-              <p className="text-xl font-bold text-primary">{computedDev.max_nrsf > 0 ? fn(computedDev.max_nrsf) : "—"}</p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">{devParams.efficiency_pct}% efficiency</p>
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Max GSF</p>
+              <p className="text-lg font-bold tabular-nums">{computedDev.max_gsf > 0 ? fn(computedDev.max_gsf) : "u2014"}</p>
+            </div>
+            <div className="p-3 bg-primary/10 rounded-lg">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Max NRSF</p>
+              <p className="text-lg font-bold text-primary tabular-nums">{computedDev.max_nrsf > 0 ? fn(computedDev.max_nrsf) : "u2014"}</p>
+              <p className="text-[10px] text-muted-foreground">{devParams.efficiency_pct}% eff.</p>
+            </div>
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Lot Coverage</p>
+              <p className="text-lg font-bold tabular-nums">{devParams.lot_coverage_pct || zoning.lot_coverage_pct || "u2014"}%</p>
             </div>
           </div>
+          <p className="text-[10px] text-muted-foreground mt-2">Configure building program on the <a href={`/deals/${params.id}/programming`} className="text-primary hover:underline">Programming page</a></p>
         </Section>
       )}
 
