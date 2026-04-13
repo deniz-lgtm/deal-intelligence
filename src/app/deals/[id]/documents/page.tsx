@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import DocumentUpload from "@/components/DocumentUpload";
 import DropboxImportModal from "@/components/DropboxImportModal";
+import CloudImportModal from "@/components/CloudImportModal";
 import { DOCUMENT_CATEGORIES, type Document, type DocumentCategory } from "@/lib/types";
 import { formatBytes } from "@/lib/utils";
 import { toast } from "sonner";
@@ -145,14 +146,13 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="space-y-5">
-      {/* Dropbox import modal */}
-      {showDropbox && (
-        <DropboxImportModal
-          dealId={params.id}
-          onClose={() => setShowDropbox(false)}
-          onImportComplete={() => { setShowDropbox(false); loadDocuments(); }}
-        />
-      )}
+      {/* Cloud import modal (Dropbox + Google Drive) */}
+      <CloudImportModal
+        dealId={params.id}
+        open={showDropbox}
+        onClose={() => setShowDropbox(false)}
+        onImported={() => { setShowDropbox(false); loadDocuments(); }}
+      />
 
       {/* Document viewer modal */}
       {viewingDoc && (
@@ -236,7 +236,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
             className="gap-2 border-blue-200 text-blue-700 hover:bg-blue-50"
           >
             <CloudDownload className="h-4 w-4" />
-            Dropbox
+            Cloud Import
           </Button>
           <Button size="sm" onClick={() => setShowUpload(!showUpload)}>
             <Upload className="h-4 w-4 mr-2" />
