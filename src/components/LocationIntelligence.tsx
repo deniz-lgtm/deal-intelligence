@@ -247,7 +247,9 @@ const DATA_SOURCES = [
   { id: "flood", label: "FEMA Flood Zone", description: "Flood risk + auto-populates Site & Zoning", icon: MapPin, free: true },
   { id: "walkscore", label: "Walk Score", description: "Walk, transit, and bike scores", icon: MapPin, free: true },
   { id: "schools", label: "Schools", description: "Nearby schools with ratings (GreatSchools)", icon: GraduationCap, free: true },
-  { id: "amenities", label: "Amenities", description: "Restaurants, shopping, groceries, parks, gyms", icon: MapPin, free: true },
+  { id: "amenities", label: "Amenities (OSM)", description: "Restaurants, shopping, groceries, parks, gyms (free)", icon: MapPin, free: true },
+  { id: "google_places", label: "Google Places", description: "Amenities with star ratings, reviews, price levels", icon: MapPin, free: false },
+  { id: "commute", label: "Commute Analysis", description: "Drive times to airports, hospitals, transit, downtown", icon: MapPin, free: false },
 ] as const;
 
 type DataSourceId = typeof DATA_SOURCES[number]["id"];
@@ -312,6 +314,8 @@ function DataSourceWizard({
         case "amenities": url = `/api/deals/${dealId}/location-intelligence/fetch-amenities`; break;
         case "employers": url = `/api/deals/${dealId}/location-intelligence/fetch-employers`; break;
         case "diversity": url = `/api/deals/${dealId}/location-intelligence/fetch-diversity`; break;
+        case "google_places": url = `/api/deals/${dealId}/location-intelligence/fetch-places`; break;
+        case "commute": url = `/api/deals/${dealId}/location-intelligence/fetch-commute`; break;
       }
       if (url) {
         const res = await fetch(url, {
@@ -420,6 +424,7 @@ function DataSourceWizard({
                 <div className="text-xs font-medium text-foreground/90 flex items-center gap-1.5">
                   {src.label}
                   {isDone && <span className="text-[9px] text-emerald-400">loaded</span>}
+                  {!src.free && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400">Google</span>}
                 </div>
                 <div className="text-[10px] text-muted-foreground/70 leading-tight mt-0.5">
                   {src.description}

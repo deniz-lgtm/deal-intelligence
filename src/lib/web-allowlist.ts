@@ -38,6 +38,7 @@ const ALLOWED_HOSTS = [
   "greatschools.org",
   "gs-api.greatschools.org",
   "overpass-api.de",
+  "maps.googleapis.com",
   // Research / aggregated public data
   "zillow.com/research", // Zillow Research CSVs only (not listings)
   "redfin.com/news/data-center", // Redfin Data Center CSVs only
