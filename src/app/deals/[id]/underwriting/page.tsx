@@ -176,6 +176,15 @@ interface UWData {
   // AI estimate narratives
   opex_narrative: string;
   loan_narrative: string;
+  // Affordability config (set from Programming page)
+  affordability_config: {
+    enabled: boolean;
+    tiers: Array<{ ami_pct: number; units_pct: number; units_count: number }>;
+    tax_exemption_enabled: boolean;
+    tax_exemption_pct: number;
+    tax_exemption_years: number;
+    tax_exemption_type: string;
+  } | null;
 }
 
 const DEFAULT: UWData = {
@@ -246,6 +255,7 @@ const DEFAULT: UWData = {
   site_info: null,
   opex_narrative: "",
   loan_narrative: "",
+  affordability_config: null,
 };
 
 // Property-type-aware defaults — overrides the generic DEFAULT based on deal.property_type
@@ -3272,6 +3282,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 <td className="px-2 py-1.5"><span className="block text-right text-sm tabular-nums">{fc(m.mgmtFee)}</span></td>
                 <td className="px-2 py-1.5 text-right text-sm tabular-nums text-muted-foreground">{m.totalUnits > 0 ? fc(Math.round(m.mgmtFee / m.totalUnits)) : "—"}</td>
               </tr>
+              {/* Affordability tax exemption notice */}
+              {d.affordability_config?.tax_exemption_enabled && d.affordability_config?.tax_exemption_pct > 0 && (
+                <tr>
+                  <td colSpan={6} className="px-2 py-1.5">
+                    <div className="flex items-center gap-2 text-[10px] text-emerald-400 bg-emerald-500/5 border border-emerald-500/20 rounded px-2 py-1">
+                      <span>Tax Exemption Active: {d.affordability_config.tax_exemption_pct}% reduction ({d.affordability_config.tax_exemption_type || "affordable housing"}) for {d.affordability_config.tax_exemption_years || "?"} years. Adjust Property Taxes below accordingly.</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
               {/* Editable expense rows */}
               {([
                 { label: "Property Taxes", ipKey: "ip_taxes_annual" as keyof UWData, pfKey: "taxes_annual" as keyof UWData, camKey: "cam_taxes" as keyof UWData },

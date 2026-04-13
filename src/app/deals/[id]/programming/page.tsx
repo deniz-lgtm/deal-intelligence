@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { COMMON_OTHER_INCOME } from "@/lib/types";
 import MassingSection from "@/components/massing/MassingSection";
+import AffordabilityPlanner from "@/components/AffordabilityPlanner";
 import { newBuildingProgram, computeMassingSummary } from "@/components/massing/massing-utils";
 import type { ZoningInputs } from "@/components/massing/massing-utils";
 
@@ -71,6 +72,8 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const [zoningInputs, setZoningInputs] = useState<ZoningInputs>({ land_sf: 0, far: 0, lot_coverage_pct: 0, height_limit_ft: 0, height_limit_stories: 0 });
   const [densityBonuses, setDensityBonuses] = useState<Array<{ source: string; description: string; additional_density: string }>>([]);
   const [unitGroups, setUnitGroups] = useState<any[]>([]);
+  const [affordabilityConfig, setAffordabilityConfig] = useState<any>(null);
+  const [taxesAnnual, setTaxesAnnual] = useState(0);
 
   // Load data
   useEffect(() => {
@@ -86,6 +89,8 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       if (uw.other_income_items?.length > 0) setOtherIncomeItems(uw.other_income_items);
       if (uw.commercial_tenants?.length > 0) setCommercialTenants(uw.commercial_tenants);
       if (uw.unit_groups?.length > 0) setUnitGroups(uw.unit_groups);
+      if (uw.affordability_config) setAffordabilityConfig(uw.affordability_config);
+      if (uw.taxes_annual) setTaxesAnnual(uw.taxes_annual);
 
       // Build zoning inputs from UW data
       const si = uw.site_info || {};
@@ -123,6 +128,11 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         building_program: buildingProgram,
         other_income_items: otherIncomeItems,
         commercial_tenants: commercialTenants,
+        affordability_config: affordabilityConfig,
+        // Apply tax exemption to taxes if configured
+        ...(affordabilityConfig?.tax_exemption_enabled && affordabilityConfig.tax_exemption_pct > 0 && current.taxes_annual > 0
+          ? { taxes_annual: Math.round(current.taxes_annual * (1 - affordabilityConfig.tax_exemption_pct / 100)) }
+          : {}),
       };
 
       await fetch("/api/underwriting", {
@@ -137,7 +147,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     } finally {
       setSaving(false);
     }
-  }, [params.id, buildingProgram, otherIncomeItems, commercialTenants]);
+  }, [params.id, buildingProgram, otherIncomeItems, commercialTenants, affordabilityConfig]);
 
   // Auto-save
   useEffect(() => {
@@ -357,6 +367,29 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           onPushScenario={pushToUW}
         />
       </Section>
+
+      {/* ═══════════════════ AFFORDABILITY ═══════════════════ */}
+      <AffordabilityPlanner
+        dealId={params.id}
+        totalUnits={(() => {
+          // Compute total units from active massing scenario or UW unit groups
+          const activeScenario = buildingProgram.scenarios.find(s => s.id === buildingProgram.active_scenario_id);
+          if (activeScenario) {
+            const summary = computeMassingSummary(activeScenario, zoningInputs);
+            return summary.total_units || unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
+          }
+          return unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0) || 100;
+        })()}
+        avgMarketRent={(() => {
+          if (unitGroups.length === 0) return 0;
+          const totalUnits = unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
+          if (totalUnits === 0) return 0;
+          const totalRent = unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0) * (g.market_rent_per_unit || 0), 0);
+          return totalRent / totalUnits;
+        })()}
+        currentTaxes={taxesAnnual}
+        onConfigChange={(cfg) => { setAffordabilityConfig(cfg); setDirty(true); }}
+      />
 
       {/* Commercial Tenants and Other Income are now on the Underwriting page under Revenue */}
     </div>
