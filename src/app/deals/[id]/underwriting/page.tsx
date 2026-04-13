@@ -266,13 +266,38 @@ const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity
 
 // ── Factory helpers for new feature types ────────────────────────────────
 function newDevBudgetItem(label: string, category: "hard" | "soft", subcategory: string, unit_label: string): DevBudgetLineItem {
-  return { id: uuidv4(), label, category, subcategory, amount: 0, quantity: 0, unit_cost: 0, unit_label, is_pct: unit_label === "% of hard", pct_basis: unit_label === "% of hard" ? "hard_costs" : "none", pct_value: 0, notes: "" };
+  const isPct = unit_label === "% of hard";
+  return { id: uuidv4(), label, category, subcategory, amount: 0, quantity: 0, unit_cost: 0, unit_label, is_pct: isPct, pct_basis: isPct ? "hard_costs" : "none", pct_value: isPct ? (subcategory === "contingency" ? 5 : subcategory === "general_conditions" || subcategory === "contractor_fee" ? 4 : subcategory === "dev_fee" ? 4 : subcategory === "a_and_e" ? 8 : 0) : 0, notes: "" };
 }
 
-function seedDevBudget(): DevBudgetLineItem[] {
+function seedDevBudget(d?: UWData): DevBudgetLineItem[] {
+  // Auto-populate quantities from programming/massing data
+  const landSF = d?.site_info?.land_sf || 0;
+  const gsf = d?.max_gsf || 0;
+  const nrsf = d?.max_nrsf || 0;
+  const totalUnits = d?.unit_groups?.reduce((s: number, g: any) => s + (g.unit_count || 0), 0) || 0;
+  const parkingSpaces = d?.parking?.entries?.reduce((s: number, e: any) => s + (e.spaces || 0), 0) || 0;
+
+  const autoQty = (source: string): number => {
+    if (source === "land_sf") return landSF;
+    if (source === "max_gsf") return gsf;
+    if (source === "max_nrsf") return nrsf;
+    if (source === "parking_spaces") return parkingSpaces;
+    if (source === "total_units") return totalUnits;
+    return 0;
+  };
+
   return [
-    ...DEFAULT_DEV_BUDGET_HARD.map(h => newDevBudgetItem(h.label, "hard", h.subcategory, h.unit_label)),
-    ...DEFAULT_DEV_BUDGET_SOFT.map(s => newDevBudgetItem(s.label, "soft", s.subcategory, s.unit_label)),
+    ...DEFAULT_DEV_BUDGET_HARD.map(h => {
+      const item = newDevBudgetItem(h.label, "hard", h.subcategory, h.unit_label);
+      if (h.auto_qty_source !== "pct" && h.auto_qty_source !== "manual") item.quantity = autoQty(h.auto_qty_source);
+      return item;
+    }),
+    ...DEFAULT_DEV_BUDGET_SOFT.map(s => {
+      const item = newDevBudgetItem(s.label, "soft", s.subcategory, s.unit_label);
+      if (s.auto_qty_source !== "pct" && s.auto_qty_source !== "manual" && s.auto_qty_source !== "computed") item.quantity = autoQty(s.auto_qty_source);
+      return item;
+    }),
   ];
 }
 
@@ -2459,76 +2484,100 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </div>
           </div>
 
-          {/* ── Commercial Tenants (from Programming) ── */}
-          {(d.commercial_tenants || []).length > 0 && (
-            <div className="mt-4 border-t pt-4">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Commercial Tenants</h4>
+          {/* ── Commercial Tenants ── */}
+          <div className="mt-4 border-t pt-4">
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Commercial Tenants</h4>
+            {(d.commercial_tenants || []).length > 0 && (
               <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse mb-2 min-w-[600px]">
+              <table className="w-full text-sm border-collapse mb-2 min-w-[650px]">
                 <thead>
                   <tr className="bg-muted/30 border-b">
                     <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Tenant</th>
                     <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">Use</th>
-                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">SF</th>
-                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">$/SF</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[65px]">SF</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[65px]">$/SF</th>
                     <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Lease</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">TI</th>
+                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">Esc%</th>
                     <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Annual</th>
+                    <th className="w-[24px]" />
                   </tr>
                 </thead>
                 <tbody>
-                  {(d.commercial_tenants || []).map((t: any) => (
-                    <tr key={t.id} className="border-b hover:bg-muted/10">
-                      <td className="px-2 py-1.5">{t.tenant_name || "TBD"} <span className="text-[10px] text-muted-foreground">{t.suite}</span></td>
-                      <td className="px-2 py-1.5 text-xs text-muted-foreground">{t.use_type}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{fn(t.sf)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">${(t.rent_per_sf || 0).toFixed(2)}</td>
-                      <td className="px-2 py-1.5 text-center text-xs">{t.lease_type}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(t.sf * t.rent_per_sf)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t bg-muted/20 font-semibold">
-                    <td colSpan={5} className="px-2 py-1.5 text-right">Commercial GPR</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.commercial_tenants || []).reduce((s: number, t: any) => s + t.sf * t.rent_per_sf, 0))}</td>
-                  </tr>
-                </tfoot>
-              </table>
-              </div>
-              <p className="text-[10px] text-muted-foreground">Edit commercial tenants on the Programming page</p>
-            </div>
-          )}
-
-          {/* ── Dynamic Other Income Items (from Programming) ── */}
-          {(d.other_income_items || []).length > 0 && (
-            <div className="mt-4 border-t pt-4">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Other Income (from Programming)</h4>
-              <table className="w-full text-sm border-collapse mb-2">
-                <thead>
-                  <tr className="bg-muted/30 border-b">
-                    <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Source</th>
-                    <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Basis</th>
-                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">$/Mo</th>
-                    <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Annual</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(d.other_income_items || []).map((item: any) => {
-                    const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (m.totalParkingCost > 0 ? 1 : 0) : 1;
+                  {(d.commercial_tenants || []).map((t: any, i: number) => {
+                    const updCT = (upd: Record<string, any>) => setData(p => ({ ...p, commercial_tenants: (p.commercial_tenants || []).map((ct: any, j: number) => j === i ? { ...ct, ...upd } : ct) }));
                     return (
-                      <tr key={item.id} className="border-b hover:bg-muted/10">
-                        <td className="px-2 py-1.5">{item.label}</td>
-                        <td className="px-2 py-1.5 text-center text-xs text-muted-foreground">{item.basis === "per_unit" ? "Per Unit" : item.basis === "per_space" ? "Per Space" : "Per Property"}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums">{fc(item.amount)}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc(item.amount * mult * 12)}</td>
+                      <tr key={t.id || i} className="border-b hover:bg-muted/10 group">
+                        <td className="px-2 py-1.5"><input type="text" value={t.tenant_name || ""} onChange={e => updCT({ tenant_name: e.target.value })} placeholder="Tenant" className="w-full bg-transparent text-sm outline-none" /></td>
+                        <td className="px-2 py-1.5"><select value={t.use_type || "retail"} onChange={e => updCT({ use_type: e.target.value })} className="bg-background text-foreground text-xs outline-none w-full rounded border border-border/40"><option value="retail">Retail</option><option value="office">Office</option><option value="restaurant">Rest.</option></select></td>
+                        <td className="px-2 py-1.5"><CellInput value={t.sf || 0} onChange={v => updCT({ sf: v })} /></td>
+                        <td className="px-2 py-1.5"><CellInput value={t.rent_per_sf || 0} onChange={v => updCT({ rent_per_sf: v })} prefix="$" decimals={2} /></td>
+                        <td className="px-2 py-1.5"><select value={t.lease_type || "NNN"} onChange={e => updCT({ lease_type: e.target.value })} className="bg-background text-foreground text-xs outline-none w-full rounded border border-border/40"><option value="NNN">NNN</option><option value="MG">MG</option><option value="Gross">Gross</option></select></td>
+                        <td className="px-2 py-1.5"><CellInput value={t.ti_allowance_per_sf || 0} onChange={v => updCT({ ti_allowance_per_sf: v })} prefix="$" /></td>
+                        <td className="px-2 py-1.5"><CellInput value={t.rent_escalation_pct || 0} onChange={v => updCT({ rent_escalation_pct: v })} suffix="%" decimals={1} /></td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc((t.sf || 0) * (t.rent_per_sf || 0))}</td>
+                        <td className="px-1"><button onClick={() => setData(p => ({ ...p, commercial_tenants: (p.commercial_tenants || []).filter((_: any, j: number) => j !== i) }))} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button></td>
                       </tr>
                     );
                   })}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t bg-muted/20 font-semibold">
+                    <td colSpan={7} className="px-2 py-1.5 text-right">Commercial GPR</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.commercial_tenants || []).reduce((s: number, t: any) => s + (t.sf || 0) * (t.rent_per_sf || 0), 0))}</td>
+                    <td />
+                  </tr>
+                </tfoot>
               </table>
-              <p className="text-[10px] text-muted-foreground">Edit income items on the Programming page</p>
-            </div>
-          )}
+              </div>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => setData(p => ({ ...p, commercial_tenants: [...(p.commercial_tenants || []), { id: uuidv4(), tenant_name: "", suite: "", use_type: "retail", sf: 0, rent_per_sf: 0, lease_type: "NNN", cam_reimbursement_pct: 100, ti_allowance_per_sf: 0, lc_pct: 6, free_rent_months: 0, rent_escalation_pct: 3, lease_start: "", lease_term_years: 10, notes: "" }] }))}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Add Tenant
+            </Button>
+          </div>
+
+          {/* ── Other Income (dynamic line items) ── */}
+          <div className="mt-4 border-t pt-4">
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Other Income</h4>
+            <table className="w-full text-sm border-collapse mb-2">
+              <thead>
+                <tr className="bg-muted/30 border-b">
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Source</th>
+                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Basis</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">$/Mo</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Annual</th>
+                  <th className="w-[24px]" />
+                </tr>
+              </thead>
+              <tbody>
+                {(d.other_income_items || []).map((item: any, i: number) => {
+                  const updOI = (upd: Record<string, any>) => setData(p => ({ ...p, other_income_items: (p.other_income_items || []).map((oi: any, j: number) => j === i ? { ...oi, ...upd } : oi) }));
+                  const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1;
+                  return (
+                    <tr key={item.id || i} className="border-b hover:bg-muted/10 group">
+                      <td className="px-2 py-1.5"><input type="text" value={item.label} onChange={e => updOI({ label: e.target.value })} className="w-full bg-transparent text-sm outline-none" /></td>
+                      <td className="px-2 py-1.5"><select value={item.basis} onChange={e => updOI({ basis: e.target.value })} className="w-full bg-background text-foreground text-xs outline-none rounded border border-border/40"><option value="per_unit">Per Unit ({m.totalUnits})</option><option value="per_property">Per Property</option><option value="per_space">Per Space</option></select></td>
+                      <td className="px-2 py-1.5"><CellInput value={item.amount || 0} onChange={v => updOI({ amount: v })} prefix="$" /></td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc((item.amount || 0) * mult * 12)}</td>
+                      <td className="px-1"><button onClick={() => setData(p => ({ ...p, other_income_items: (p.other_income_items || []).filter((_: any, j: number) => j !== i) }))} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              {(d.other_income_items || []).length > 0 && (
+                <tfoot>
+                  <tr className="border-t bg-muted/20 font-semibold">
+                    <td colSpan={3} className="px-2 py-1.5 text-right">Total Other Income</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1; return s + (item.amount || 0) * mult * 12; }, 0))}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+            <Button variant="ghost" size="sm" onClick={() => setData(p => ({ ...p, other_income_items: [...(p.other_income_items || []), { id: uuidv4(), label: "", amount: 0, basis: "per_unit", unit_type_filter: "", notes: "" }] }))}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Add Income Item
+            </Button>
+          </div>
         </div>
       </Section>
 
@@ -2539,7 +2588,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               {/* Seed button if no itemized budget yet */}
               {d.dev_budget_items.length === 0 && (
                 <div className="flex items-center gap-3 mb-3">
-                  <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, dev_budget_items: seedDevBudget() }))}>
+                  <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, dev_budget_items: seedDevBudget(p) }))}>
                     <Plus className="h-4 w-4 mr-2" /> Seed Itemized Budget
                   </Button>
                   <p className="text-xs text-muted-foreground">Or continue using simple Hard Cost/SF + Soft Cost % below</p>

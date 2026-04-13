@@ -1653,24 +1653,26 @@ export interface DevBudgetLineItem {
   notes: string;
 }
 
-export const DEFAULT_DEV_BUDGET_HARD: Array<{ label: string; subcategory: string; unit_label: string }> = [
-  { label: "Site Work", subcategory: "site_work", unit_label: "SF" },
-  { label: "Vertical Construction (Shell & Core)", subcategory: "vertical", unit_label: "SF" },
-  { label: "Parking Structure", subcategory: "parking_structure", unit_label: "space" },
-  { label: "FF&E / Amenities", subcategory: "ffe_amenities", unit_label: "unit" },
-  { label: "General Conditions", subcategory: "general_conditions", unit_label: "lump sum" },
-  { label: "Contingency", subcategory: "contingency", unit_label: "% of hard" },
+export const DEFAULT_DEV_BUDGET_HARD: Array<{ label: string; subcategory: string; unit_label: string; auto_qty_source: string }> = [
+  { label: "Site Work", subcategory: "site_work", unit_label: "SF", auto_qty_source: "land_sf" },
+  { label: "Off-Sites", subcategory: "off_sites", unit_label: "LF", auto_qty_source: "manual" },
+  { label: "Vertical Construction (Shell & Core)", subcategory: "vertical", unit_label: "GSF", auto_qty_source: "max_gsf" },
+  { label: "Parking Structure", subcategory: "parking_structure", unit_label: "space", auto_qty_source: "parking_spaces" },
+  { label: "FF&E / Amenities", subcategory: "ffe_amenities", unit_label: "NRSF", auto_qty_source: "max_nrsf" },
+  { label: "General Conditions", subcategory: "general_conditions", unit_label: "% of hard", auto_qty_source: "pct" },
+  { label: "Contractor Fee & Overhead", subcategory: "contractor_fee", unit_label: "% of hard", auto_qty_source: "pct" },
+  { label: "Contingency", subcategory: "contingency", unit_label: "% of hard", auto_qty_source: "pct" },
 ];
 
-export const DEFAULT_DEV_BUDGET_SOFT: Array<{ label: string; subcategory: string; unit_label: string }> = [
-  { label: "Architecture & Engineering", subcategory: "a_and_e", unit_label: "lump sum" },
-  { label: "Permits & Fees", subcategory: "permits", unit_label: "lump sum" },
-  { label: "Legal", subcategory: "legal", unit_label: "lump sum" },
-  { label: "Development Fee", subcategory: "dev_fee", unit_label: "% of hard" },
-  { label: "Construction Interest Carry", subcategory: "interest_carry", unit_label: "lump sum" },
-  { label: "Marketing / Lease-Up", subcategory: "marketing_leaseup", unit_label: "lump sum" },
-  { label: "Insurance", subcategory: "insurance", unit_label: "lump sum" },
-  { label: "Accounting / Consulting", subcategory: "accounting", unit_label: "lump sum" },
+export const DEFAULT_DEV_BUDGET_SOFT: Array<{ label: string; subcategory: string; unit_label: string; auto_qty_source: string }> = [
+  { label: "Architecture & Engineering", subcategory: "a_and_e", unit_label: "% of hard", auto_qty_source: "pct" },
+  { label: "Permits & Impact Fees", subcategory: "permits", unit_label: "per unit", auto_qty_source: "total_units" },
+  { label: "Legal", subcategory: "legal", unit_label: "lump sum", auto_qty_source: "manual" },
+  { label: "Development Fee", subcategory: "dev_fee", unit_label: "% of hard", auto_qty_source: "pct" },
+  { label: "Construction Interest Carry", subcategory: "interest_carry", unit_label: "lump sum", auto_qty_source: "computed" },
+  { label: "Marketing / Lease-Up", subcategory: "marketing_leaseup", unit_label: "per unit", auto_qty_source: "total_units" },
+  { label: "Insurance", subcategory: "insurance", unit_label: "lump sum", auto_qty_source: "manual" },
+  { label: "Accounting / Consulting", subcategory: "accounting", unit_label: "lump sum", auto_qty_source: "manual" },
 ];
 
 // ─── Parking Configuration ────────────────────────────────────────────────

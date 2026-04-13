@@ -66,11 +66,11 @@ export function autoLabelFloors(floors: BuildingFloor[]): BuildingFloor[] {
     f.label = f.use_type === "parking" ? `P${below.length - i}` : `B${below.length - i}`;
   });
 
-  // Above grade: Floor 1 (ground), Floor 2, etc.
+  // Above grade: 1 (ground), 2, 3, etc.
   above.forEach((f, i) => {
     const floorNum = i + 1;
     const useLabel = FLOOR_USE_TYPE_LABELS[f.use_type] || f.use_type;
-    f.label = `${floorNum}F — ${useLabel}`;
+    f.label = `${floorNum} — ${useLabel}`;
   });
   return [...below, ...above];
 }
