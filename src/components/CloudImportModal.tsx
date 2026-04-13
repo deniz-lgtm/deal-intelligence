@@ -211,14 +211,13 @@ export default function CloudImportModal({ dealId, open, onClose, onImported }: 
               {dropboxStatus?.connected && <Check className="h-4 w-4 text-emerald-400" />}
             </button>
 
-            {gdriveStatus?.configured !== false && (
-              <button
-                onClick={() => {
-                  if (gdriveStatus?.connected) setProvider("google_drive");
-                  else window.location.href = `/api/google-drive/auth?deal_id=${dealId}`;
-                }}
-                className="w-full flex items-center gap-3 p-4 border rounded-lg hover:bg-muted/30 transition-colors text-left"
-              >
+            <button
+              onClick={() => {
+                if (gdriveStatus?.connected) setProvider("google_drive");
+                else window.location.href = `/api/google-drive/auth?deal_id=${dealId}`;
+              }}
+              className="w-full flex items-center gap-3 p-4 border rounded-lg hover:bg-muted/30 transition-colors text-left"
+            >
                 <div className="h-10 w-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
                   <Cloud className="h-5 w-5 text-amber-400" />
                 </div>
@@ -230,7 +229,6 @@ export default function CloudImportModal({ dealId, open, onClose, onImported }: 
                 </div>
                 {gdriveStatus?.connected && <Check className="h-4 w-4 text-emerald-400" />}
               </button>
-            )}
           </div>
         )}
 
