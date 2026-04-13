@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeCodeForTokens, getUserInfo } from "@/lib/google-drive";
+import { exchangeCodeForTokens, getUserInfo, getRedirectUri } from "@/lib/google-drive";
 import { getPool } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
@@ -10,7 +10,8 @@ export async function GET(req: NextRequest) {
   if (!code) return NextResponse.redirect(`${origin}/?error=no_code`);
 
   try {
-    const tokens = await exchangeCodeForTokens(code);
+    const redirectUri = getRedirectUri(origin);
+    const tokens = await exchangeCodeForTokens(code, redirectUri);
     const userInfo = await getUserInfo(tokens.access_token);
 
     const pool = getPool();

@@ -17,10 +17,10 @@ export function isConfigured(): boolean {
   return !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REDIRECT_URI);
 }
 
-export function buildAuthUrl(state: string): string {
+export function buildAuthUrl(state: string, redirectUri?: string): string {
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
-    redirect_uri: GOOGLE_REDIRECT_URI,
+    redirect_uri: redirectUri || GOOGLE_REDIRECT_URI,
     response_type: "code",
     scope: SCOPES,
     access_type: "offline",
@@ -30,7 +30,11 @@ export function buildAuthUrl(state: string): string {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-export async function exchangeCodeForTokens(code: string): Promise<{
+export function getRedirectUri(fallbackOrigin?: string): string {
+  return GOOGLE_REDIRECT_URI || `${fallbackOrigin}/api/google-drive/callback`;
+}
+
+export async function exchangeCodeForTokens(code: string, redirectUri?: string): Promise<{
   access_token: string;
   refresh_token: string;
   expires_in: number;
@@ -42,7 +46,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{
       code,
       client_id: GOOGLE_CLIENT_ID,
       client_secret: GOOGLE_CLIENT_SECRET,
-      redirect_uri: GOOGLE_REDIRECT_URI,
+      redirect_uri: redirectUri || GOOGLE_REDIRECT_URI,
       grant_type: "authorization_code",
     }),
   });
