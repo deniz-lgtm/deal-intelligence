@@ -246,7 +246,7 @@ const DATA_SOURCES = [
   { id: "migration", label: "Migration Flows", description: "Inflow/outflow — where people are moving", icon: TrendingUp, free: true },
   { id: "flood", label: "FEMA Flood Zone", description: "Flood risk + auto-populates Site & Zoning", icon: MapPin, free: true },
   { id: "walkscore", label: "Walk Score", description: "Walk, transit, and bike scores", icon: MapPin, free: true },
-  { id: "schools", label: "Schools", description: "Nearby schools with ratings (GreatSchools)", icon: GraduationCap, free: true },
+  { id: "schools", label: "Schools", description: "Nearby schools with locations (mappable)", icon: GraduationCap, free: true },
   { id: "amenities", label: "Amenities (OSM)", description: "Restaurants, shopping, groceries, parks, gyms (free)", icon: MapPin, free: true },
   { id: "google_places", label: "Google Places", description: "Amenities with star ratings, reviews, price levels", icon: MapPin, free: false },
   { id: "commute", label: "Commute Analysis", description: "Drive times to airports, hospitals, transit, downtown", icon: MapPin, free: false },

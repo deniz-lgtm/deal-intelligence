@@ -35,8 +35,6 @@ const ALLOWED_HOSTS = [
   "bea.gov",
   "walkscore.com",
   "api.walkscore.com",
-  "greatschools.org",
-  "gs-api.greatschools.org",
   "overpass-api.de",
   "maps.googleapis.com",
   // Research / aggregated public data
