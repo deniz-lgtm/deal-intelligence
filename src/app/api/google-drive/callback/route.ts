@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   if (!code) return NextResponse.redirect(`${origin}/?error=no_code`);
 
   try {
-    const redirectUri = getRedirectUri(origin);
+    const redirectUri = getRedirectUri();
     const tokens = await exchangeCodeForTokens(code, redirectUri);
     const userInfo = await getUserInfo(tokens.access_token);
 

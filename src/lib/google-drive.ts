@@ -30,8 +30,8 @@ export function buildAuthUrl(state: string, redirectUri?: string): string {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
-export function getRedirectUri(fallbackOrigin?: string): string {
-  return GOOGLE_REDIRECT_URI || `${fallbackOrigin}/api/google-drive/callback`;
+export function getRedirectUri(): string {
+  return GOOGLE_REDIRECT_URI;
 }
 
 export async function exchangeCodeForTokens(code: string, redirectUri?: string): Promise<{
