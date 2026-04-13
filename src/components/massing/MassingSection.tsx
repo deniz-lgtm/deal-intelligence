@@ -228,7 +228,7 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
         {/* LEFT — Floor Editor */}
         <div className="flex-1 min-w-0">
           {/* Footprint + Density Bonus */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Base Footprint (SF)</label>
               <input type="text" inputMode="decimal"
@@ -247,7 +247,7 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
               <p className="text-[10px] text-muted-foreground mt-0.5">Surface ~325 · Structured ~350 · Underground ~375</p>
             </div>
             <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Density Bonus</label>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Density Bonus (from Zoning)</label>
               <select
                 value={activeScenario.density_bonus_applied || ""}
                 onChange={e => {
@@ -466,13 +466,30 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
             </table>
             </div>
             {Math.abs(totalAllocPct - 100) > 0.1 && <p className="text-xs text-red-400 mb-1">Allocation must equal 100% (currently {totalAllocPct.toFixed(0)}%)</p>}
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Button variant="ghost" size="sm" className="text-xs" onClick={addMixType}>
                 <Plus className="h-3 w-3 mr-1" /> Add Unit Type
               </Button>
               {mix.length === 0 && (
                 <Button variant="ghost" size="sm" className="text-xs" onClick={() => updateScenario(activeScenario.id, s => ({ ...s, unit_mix: seedUnitMix() }))}>
                   Seed Default Mix
+                </Button>
+              )}
+              {totalUnitsFromMix > 0 && (
+                <Button variant="outline" size="sm" className="text-xs" onClick={() => {
+                  const resFloors = activeScenario.floors.filter(f => !f.is_below_grade && f.use_type === "residential");
+                  if (resFloors.length === 0) return;
+                  const unitsPerFloor = Math.floor(totalUnitsFromMix / resFloors.length);
+                  const remainder = totalUnitsFromMix - unitsPerFloor * resFloors.length;
+                  const updatedFloors = activeScenario.floors.map(f => {
+                    if (f.use_type !== "residential" || f.is_below_grade) return f;
+                    const idx = resFloors.findIndex(rf => rf.id === f.id);
+                    return { ...f, units_on_floor: unitsPerFloor + (idx < remainder ? 1 : 0) };
+                  });
+                  updateActiveFloors(updatedFloors);
+                  toast.success(`Distributed ${totalUnitsFromMix} units across ${resFloors.length} floors`);
+                }}>
+                  Auto-distribute {totalUnitsFromMix} units to floors
                 </Button>
               )}
             </div>
