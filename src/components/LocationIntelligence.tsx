@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
 import {
   Loader2,
   Download,
@@ -33,6 +34,19 @@ import type {
   LocationRadiusMiles,
 } from "@/lib/types";
 import { LOCATION_RADIUS_OPTIONS } from "@/lib/types";
+
+const LocationMapBuilder = dynamic(
+  () => import("@/components/LocationMapBuilder"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="border border-border/40 rounded-xl bg-card/40 h-[600px] flex items-center justify-center text-xs text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+        Loading map…
+      </div>
+    ),
+  }
+);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -761,6 +775,103 @@ function DataPanels({
   );
 }
 
+// ── Map Section ─────────────────────────────────────────────────────────────
+
+function MapSection({
+  dealId,
+  dealLat,
+  dealLng,
+  dealAddress,
+  currentData,
+  selectedRadius,
+}: {
+  dealId: string;
+  dealLat: number;
+  dealLng: number;
+  dealAddress?: string | null;
+  currentData: LocationIntelligenceType;
+  selectedRadius: number;
+}) {
+  const ext: AnyData = currentData?.data
+    ? typeof currentData.data === "string"
+      ? JSON.parse(currentData.data)
+      : currentData.data
+    : {};
+
+  const subject = {
+    lat: dealLat,
+    lng: dealLng,
+    name: "Subject Property",
+    address: dealAddress || undefined,
+  };
+
+  // Parse amenities — handle both Google Places and OSM formats
+  const amenities = (ext.google_places || ext.amenities || []).map((a: AnyData) => ({
+    name: a.name || "Unknown",
+    category: a.category || "other",
+    lat: Number(a.lat || 0),
+    lng: Number(a.lng || 0),
+    distance_mi: a.distance_mi ?? 0,
+    rating: a.rating ?? null,
+  }));
+
+  // Parse employers
+  const employers = (ext.top_employers || [])
+    .filter((e: AnyData) => e.lat && e.lng)
+    .map((e: AnyData) => ({
+      name: e.name,
+      type: e.type || "Business",
+      lat: Number(e.lat),
+      lng: Number(e.lng),
+      distance_mi: e.distance_mi ?? 0,
+    }));
+
+  // Parse schools
+  const schools = (ext.schools || [])
+    .filter((s: AnyData) => s.lat && s.lng)
+    .map((s: AnyData) => ({
+      name: s.name,
+      lat: Number(s.lat),
+      lng: Number(s.lng),
+      distance_mi: s.distance_mi ?? null,
+      rating: s.rating ?? null,
+    }));
+
+  // Parse commute destinations
+  const commuteDestinations = (ext.commute_destinations || [])
+    .filter((d: AnyData) => d.lat && d.lng)
+    .map((d: AnyData) => ({
+      name: d.name,
+      type: d.type || "Destination",
+      lat: Number(d.lat),
+      lng: Number(d.lng),
+      drive_text: d.drive_text ?? null,
+    }));
+
+  const hasMapData = amenities.length > 0 || employers.length > 0 || schools.length > 0 || commuteDestinations.length > 0;
+
+  if (!hasMapData) return null;
+
+  return (
+    <Panel
+      title="Location Map"
+      icon={<MapPin className="h-4 w-4 text-primary" />}
+      defaultOpen={true}
+    >
+      <LocationMapBuilder
+        dealId={dealId}
+        subject={subject}
+        radiusMiles={selectedRadius}
+        amenities={amenities}
+        employers={employers}
+        schools={schools}
+        commuteDestinations={commuteDestinations}
+        height={560}
+      />
+    </Panel>
+  );
+}
+
 // ── Score Card (for Walk/Transit/Bike) ───────────────────────────────────────
 
 function ScoreCard({ label, score, description }: { label: string; score: number | null; description: string | null }) {
@@ -1166,6 +1277,18 @@ export default function LocationIntelligence({
         selectedRadius={selectedRadius}
         onDataLoaded={loadData}
       />
+
+      {/* ── Map Builder ──────────────────────────────────────────── */}
+      {dealLat && dealLng && currentData && (
+        <MapSection
+          dealId={dealId}
+          dealLat={dealLat}
+          dealLng={dealLng}
+          dealAddress={dealAddress}
+          currentData={currentData}
+          selectedRadius={selectedRadius}
+        />
+      )}
 
       {/* Data source info */}
       {(currentData?.data_source || meta) && (
