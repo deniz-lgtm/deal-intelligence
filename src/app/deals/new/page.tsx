@@ -232,8 +232,15 @@ export default function NewDealPage() {
         await fetch(`/api/deals/${dealId}/om-init`, { method: "POST", body: fd });
         router.push(`/deals/${dealId}/om-analysis`);
       } else {
-        toast.success("Deal created with diligence checklist");
-        router.push(`/deals/${dealId}`);
+        // Auto-run AI zoning report for ground-up deals with an address
+        if (form.investment_strategy === "ground_up" && form.address) {
+          toast.success("Deal created — running AI zoning report...");
+          fetch(`/api/deals/${dealId}/zoning-report`, { method: "POST" }).catch(() => {});
+          router.push(`/deals/${dealId}/site-zoning`);
+        } else {
+          toast.success("Deal created with diligence checklist");
+          router.push(`/deals/${dealId}`);
+        }
       }
     } catch {
       toast.error("Something went wrong");

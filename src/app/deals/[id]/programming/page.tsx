@@ -206,8 +206,11 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         building_program: buildingProgram,
         other_income_items: otherIncomeItems,
         commercial_tenants: commercialTenants,
-        // Parking
-        parking_reserved_spaces: parkingSpaces,
+        // Parking — auto-split 70% reserved / 30% unreserved with default rates
+        parking_reserved_spaces: Math.round(parkingSpaces * 0.7),
+        parking_reserved_rate: current.parking_reserved_rate || 200,
+        parking_unreserved_spaces: Math.round(parkingSpaces * 0.3),
+        parking_unreserved_rate: current.parking_unreserved_rate || 100,
         // Legacy fields for backward compat
         rubs_per_unit_monthly: otherIncomeItems.find(i => i.label.toLowerCase().includes("rubs"))?.amount || 0,
         parking_monthly: 0,
@@ -220,6 +223,59 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         body: JSON.stringify({ deal_id: params.id, data: merged }),
       });
       toast.success(`Pushed to UW: ${fn(summary.total_gsf)} GSF, ${totalU} units, ${parkingSpaces} parking`);
+
+      // Auto-trigger AI OpEx estimate if opex fields are empty
+      const hasOpex = current.taxes_annual > 0 || current.insurance_annual > 0;
+      if (!hasOpex) {
+        toast.info("Running AI OpEx estimate...");
+        fetch(`/api/deals/${params.id}/opex-estimate`, { method: "POST" })
+          .then(r => r.json())
+          .then(json => {
+            if (json.data) {
+              const est = json.data;
+              // Merge opex into UW
+              fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
+                const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
+                const opexMerged = { ...cur,
+                  vacancy_rate: est.vacancy_rate ?? cur.vacancy_rate,
+                  management_fee_pct: est.management_fee_pct ?? cur.management_fee_pct,
+                  taxes_annual: est.taxes_annual ?? cur.taxes_annual,
+                  insurance_annual: est.insurance_annual ?? cur.insurance_annual,
+                  repairs_annual: est.repairs_annual ?? cur.repairs_annual,
+                  utilities_annual: est.utilities_annual ?? cur.utilities_annual,
+                  ga_annual: est.ga_annual ?? cur.ga_annual,
+                  marketing_annual: est.marketing_annual ?? cur.marketing_annual,
+                  reserves_annual: est.reserves_annual ?? cur.reserves_annual,
+                  opex_narrative: est.basis || "",
+                };
+                fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: opexMerged }) });
+                toast.success("AI OpEx estimate applied to underwriting");
+              });
+            }
+          }).catch(() => {});
+
+        // Auto-trigger AI loan sizing
+        fetch(`/api/deals/${params.id}/loan-size`, { method: "POST" })
+          .then(r => r.json())
+          .then(json => {
+            if (json.data) {
+              const est = json.data;
+              fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
+                const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
+                const loanMerged = { ...cur,
+                  has_financing: true,
+                  acq_ltc: est.acq_ltc ?? cur.acq_ltc,
+                  acq_interest_rate: est.acq_interest_rate ?? cur.acq_interest_rate,
+                  acq_amort_years: est.acq_amort_years ?? cur.acq_amort_years,
+                  acq_io_years: est.acq_io_years ?? cur.acq_io_years,
+                  loan_narrative: est.narrative || "",
+                };
+                fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: loanMerged }) });
+                toast.success("AI loan sizing applied to underwriting");
+              });
+            }
+          }).catch(() => {});
+      }
     } catch {
       toast.error("Failed to push to underwriting");
     }

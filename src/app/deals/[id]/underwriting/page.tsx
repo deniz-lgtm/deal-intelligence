@@ -623,10 +623,35 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const rg = (d.rent_growth_pct || 0) / 100;
   const eg = (d.expense_growth_pct || 0) / 100;
   const yearlyDCF: DCFYear[] = [];
+
+  // Lease-up ramp for ground-up: Year 1 gets partial income
+  const lu = d.lease_up;
+  const constructionMonths = lu?.construction_months || 0;
+  const absUnitsPerMo = lu?.absorption_units_per_month || 0;
+  const stabOccPct = lu?.stabilization_occupancy_pct || 93;
+  const monthsToStab = absUnitsPerMo > 0 ? Math.ceil((totalUnits * stabOccPct / 100) / absUnitsPerMo) : 0;
+  // Lease-up occupancy factor for Year 1: average occupancy during first 12 months post-construction
+  let yr1LeaseUpFactor = 1; // default: fully stabilized
+  if (d.development_mode && lu && absUnitsPerMo > 0 && totalUnits > 0) {
+    // Months of lease-up in Year 1 (construction may eat into Year 1)
+    const leaseUpStartMonth = Math.max(0, 12 - constructionMonths); // months of Year 1 with income
+    if (leaseUpStartMonth < 12) {
+      let totalOccupancyMonths = 0;
+      for (let m = 1; m <= 12; m++) {
+        if (m <= (12 - leaseUpStartMonth)) { totalOccupancyMonths += 0; continue; } // still in construction
+        const leaseUpMonth = m - (12 - leaseUpStartMonth);
+        const occupied = Math.min(leaseUpMonth * absUnitsPerMo, totalUnits);
+        totalOccupancyMonths += occupied / totalUnits;
+      }
+      yr1LeaseUpFactor = totalOccupancyMonths / 12;
+    }
+  }
+
   for (let yr = 1; yr <= 5; yr++) {
     const rentMult = Math.pow(1 + rg, yr);
     const expMult = Math.pow(1 + eg, yr);
-    const yrGPR = proformaGPR * rentMult;
+    const leaseUpFactor = yr === 1 ? yr1LeaseUpFactor : (yr === 2 && yr1LeaseUpFactor < 0.8) ? Math.min(1, yr1LeaseUpFactor + 0.5) : 1;
+    const yrGPR = proformaGPR * rentMult * leaseUpFactor;
     const yrVacLoss = yrGPR * (d.vacancy_rate / 100);
     const yrEGI = yrGPR - yrVacLoss;
     const yrOtherIncome = totalOtherIncome * rentMult;
