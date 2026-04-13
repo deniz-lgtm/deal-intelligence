@@ -18,6 +18,11 @@ import {
   Pencil,
   Tag,
   Tags,
+  Save,
+  FolderOpen,
+  Copy,
+  Trash2,
+  ChevronDown,
 } from "lucide-react";
 import { getTileConfig, hasMapbox, MAP_STYLE_OPTIONS } from "@/lib/map-config";
 import type { MapStyle } from "@/lib/map-config";
@@ -86,6 +91,18 @@ export interface MapBuilderProps {
   comps?: Array<{ id: string; name: string | null; lat: number; lng: number; comp_type: "sale" | "rent"; sale_price?: number | null; cap_rate?: number | null; rent_per_unit?: number | null }>;
   height?: number;
   onSnapshotCaptured?: (dataUrl: string) => void;
+}
+
+// ── Saved map config shape ───────────────────────────────────────────────────
+
+export interface SavedMapConfig {
+  title: string;
+  style: string;
+  visibleLayers: string[];
+  showLabels: boolean;
+  radiusMiles: number | null;
+  zoom?: number;
+  center?: [number, number];
 }
 
 // ── FitBounds helper ─────────────────────────────────────────────────────────
@@ -187,8 +204,153 @@ export default function LocationMapBuilder({
   const [mapTitle, setMapTitle] = useState("Location Map");
   const [editingTitle, setEditingTitle] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
+  const [savedMaps, setSavedMaps] = useState<Array<{ id: string; name: string; description: string | null; config: SavedMapConfig; thumbnail_url: string | null; updated_at: string }>>([]);
+  const [savingMap, setSavingMap] = useState(false);
+  const [showSavedMaps, setShowSavedMaps] = useState(false);
+  const [activeMapId, setActiveMapId] = useState<string | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Load saved maps on mount
+  useEffect(() => {
+    fetch(`/api/deals/${dealId}/saved-maps`)
+      .then((r) => r.json())
+      .then((json) => {
+        const rows = (json.data || []).map((r: Record<string, unknown>) => ({
+          ...r,
+          config: typeof r.config === "string" ? JSON.parse(r.config as string) : r.config,
+        }));
+        setSavedMaps(rows);
+      })
+      .catch(() => {});
+  }, [dealId]);
+
+  // Get current config for saving
+  function getCurrentConfig(): SavedMapConfig {
+    const map = mapRef.current;
+    return {
+      title: mapTitle,
+      style: mapStyle,
+      visibleLayers: Array.from(visibleLayers),
+      showLabels,
+      radiusMiles,
+      zoom: map?.getZoom(),
+      center: map ? [map.getCenter().lat, map.getCenter().lng] : undefined,
+    };
+  }
+
+  // Save current map configuration
+  async function handleSaveMap() {
+    setSavingMap(true);
+    try {
+      // Capture a thumbnail
+      let thumbnailUrl: string | null = null;
+      if (containerRef.current) {
+        try {
+          const { toPng } = await import("html-to-image");
+          thumbnailUrl = await toPng(containerRef.current, {
+            quality: 0.6,
+            pixelRatio: 0.5,
+            filter: (node) => {
+              if (node instanceof HTMLElement && node.dataset.excludeSnapshot === "true") return false;
+              return true;
+            },
+          });
+        } catch { /* non-fatal */ }
+      }
+
+      const config = getCurrentConfig();
+      const endpoint = `/api/deals/${dealId}/saved-maps`;
+
+      let res: Response;
+      if (activeMapId) {
+        // Update existing
+        res = await fetch(endpoint, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            map_id: activeMapId,
+            name: mapTitle,
+            description: null,
+            config,
+            thumbnail_url: thumbnailUrl,
+          }),
+        });
+      } else {
+        // Create new
+        res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: mapTitle,
+            description: null,
+            config,
+            thumbnail_url: thumbnailUrl,
+          }),
+        });
+      }
+
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Failed to save map");
+        return;
+      }
+
+      // Refresh saved maps list
+      const listRes = await fetch(`/api/deals/${dealId}/saved-maps`);
+      const listJson = await listRes.json();
+      setSavedMaps((listJson.data || []).map((r: Record<string, unknown>) => ({
+        ...r,
+        config: typeof r.config === "string" ? JSON.parse(r.config as string) : r.config,
+      })));
+
+      setActiveMapId(json.data?.id || activeMapId);
+      toast.success(activeMapId ? "Map updated" : "Map saved");
+    } catch {
+      toast.error("Failed to save map");
+    } finally {
+      setSavingMap(false);
+    }
+  }
+
+  // Load a saved map configuration
+  function handleLoadMap(saved: typeof savedMaps[0]) {
+    const c = saved.config;
+    setMapTitle(c.title || saved.name);
+    if (c.style) setMapStyle(c.style as MapStyle);
+    if (c.visibleLayers) {
+      setVisibleLayers(new Set(c.visibleLayers as LayerKey[]));
+    }
+    if (c.showLabels != null) setShowLabels(c.showLabels);
+    setActiveMapId(saved.id);
+    setShowSavedMaps(false);
+
+    // Restore zoom/center if available
+    if (mapRef.current && c.zoom && c.center) {
+      mapRef.current.setView(c.center, c.zoom);
+    }
+
+    toast.success(`Loaded "${saved.name}"`);
+  }
+
+  // Delete a saved map
+  async function handleDeleteMap(mapId: string) {
+    try {
+      await fetch(`/api/deals/${dealId}/saved-maps?map_id=${mapId}`, { method: "DELETE" });
+      setSavedMaps((prev) => prev.filter((m) => m.id !== mapId));
+      if (activeMapId === mapId) setActiveMapId(null);
+      toast.success("Map deleted");
+    } catch {
+      toast.error("Failed to delete");
+    }
+  }
+
+  // Save as new (fork from current)
+  function handleSaveAsNew() {
+    setActiveMapId(null);
+    setMapTitle(mapTitle + " (copy)");
+    setEditingTitle(true);
+  }
 
   const tiles = getTileConfig(mapStyle);
   const handleMapRef = useCallback((map: L.Map) => { mapRef.current = map; }, []);
@@ -395,6 +557,95 @@ export default function LocationMapBuilder({
               Labels
             </button>
 
+            {/* Save / Load / Export */}
+            <div className="relative">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowSavedMaps(!showSavedMaps)}
+              >
+                <FolderOpen className="h-3.5 w-3.5 mr-1.5" />
+                Saved{savedMaps.length > 0 ? ` (${savedMaps.length})` : ""}
+                <ChevronDown className="h-3 w-3 ml-1" />
+              </Button>
+
+              {/* Saved maps dropdown */}
+              {showSavedMaps && (
+                <div className="absolute right-0 top-full mt-1 z-50 w-72 bg-card border border-border/60 rounded-lg shadow-xl overflow-hidden">
+                  <div className="px-3 py-2 border-b border-border/40 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Saved Maps
+                  </div>
+                  {savedMaps.length === 0 ? (
+                    <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                      No saved maps yet
+                    </div>
+                  ) : (
+                    <div className="max-h-64 overflow-auto">
+                      {savedMaps.map((m) => (
+                        <div
+                          key={m.id}
+                          className={`flex items-center gap-2 px-3 py-2 hover:bg-muted/20 cursor-pointer border-b border-border/20 last:border-0 ${
+                            activeMapId === m.id ? "bg-primary/5" : ""
+                          }`}
+                        >
+                          {m.thumbnail_url && (
+                            <img
+                              src={m.thumbnail_url}
+                              alt=""
+                              className="w-12 h-8 rounded object-cover flex-shrink-0 border border-border/30"
+                            />
+                          )}
+                          <button
+                            onClick={() => handleLoadMap(m)}
+                            className="flex-1 text-left min-w-0"
+                          >
+                            <div className="text-xs font-medium truncate">{m.name}</div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {m.config?.visibleLayers?.length ?? 0} layers ·{" "}
+                              {new Date(m.updated_at).toLocaleDateString()}
+                            </div>
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteMap(m.id); }}
+                            className="text-muted-foreground/50 hover:text-red-400 flex-shrink-0"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <Button
+              size="sm"
+              variant="default"
+              onClick={handleSaveMap}
+              disabled={savingMap}
+            >
+              {savingMap ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              ) : (
+                <Save className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              {activeMapId ? "Update" : "Save"}
+            </Button>
+
+            {activeMapId && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleSaveAsNew}
+                title="Save as a new map"
+              >
+                <Copy className="h-3.5 w-3.5 mr-1.5" />
+                Save As
+              </Button>
+            )}
+
             <Button
               size="sm"
               variant="outline"
@@ -406,7 +657,7 @@ export default function LocationMapBuilder({
               ) : (
                 <Camera className="h-3.5 w-3.5 mr-1.5" />
               )}
-              Export Map
+              Export
             </Button>
           </div>
         </div>

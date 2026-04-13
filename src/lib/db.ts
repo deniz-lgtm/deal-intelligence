@@ -334,6 +334,18 @@ export async function ensureColumns(): Promise<void> {
       UNIQUE(deal_id, radius_miles)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_location_intelligence_deal_id ON location_intelligence(deal_id)`,
+    // ── Saved Maps ────────────────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS saved_maps (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      config JSONB NOT NULL DEFAULT '{}',
+      thumbnail_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_saved_maps_deal_id ON saved_maps(deal_id)`,
     // ── Deal Room (guest-accessible document sharing) ──────────────────────
     `CREATE TABLE IF NOT EXISTS deal_rooms (
       id TEXT PRIMARY KEY,
@@ -1070,6 +1082,18 @@ export async function initSchema(): Promise<void> {
       UNIQUE(deal_id, radius_miles)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_location_intelligence_deal_id ON location_intelligence(deal_id)`,
+    // ── Saved Maps ────────────────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS saved_maps (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      config JSONB NOT NULL DEFAULT '{}',
+      thumbnail_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_saved_maps_deal_id ON saved_maps(deal_id)`,
     // ── Deal Room (guest-accessible document sharing) ──────────────────────
     `CREATE TABLE IF NOT EXISTS deal_rooms (
       id TEXT PRIMARY KEY,
@@ -2443,6 +2467,62 @@ export const locationIntelligenceQueries = {
       "DELETE FROM location_intelligence WHERE deal_id = $1 AND radius_miles = $2",
       [dealId, radiusMiles]
     );
+  },
+};
+
+// ─── Saved Maps queries ───────────────────────────────────────────────────────
+
+export const savedMapsQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM saved_maps WHERE deal_id = $1 ORDER BY updated_at DESC",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM saved_maps WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
+  create: async (
+    id: string,
+    dealId: string,
+    name: string,
+    description: string | null,
+    config: Record<string, unknown>,
+    thumbnailUrl: string | null
+  ) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO saved_maps (id, deal_id, name, description, config, thumbnail_url, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW(), NOW())`,
+      [id, dealId, name, description, JSON.stringify(config), thumbnailUrl]
+    );
+    return savedMapsQueries.getById(id);
+  },
+
+  update: async (
+    id: string,
+    name: string,
+    description: string | null,
+    config: Record<string, unknown>,
+    thumbnailUrl: string | null
+  ) => {
+    const pool = getPool();
+    await pool.query(
+      `UPDATE saved_maps SET name = $2, description = $3, config = $4::jsonb, thumbnail_url = $5, updated_at = NOW() WHERE id = $1`,
+      [id, name, description, JSON.stringify(config), thumbnailUrl]
+    );
+    return savedMapsQueries.getById(id);
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM saved_maps WHERE id = $1", [id]);
   },
 };
 
