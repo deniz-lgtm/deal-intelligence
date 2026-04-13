@@ -127,6 +127,27 @@ const GROUND_UP_DEFAULTS: Record<
     absorption_units_per_month: 0, construction_months: 14, construction_loan_rate: 7.5,
     construction_ltc: 60, dev_fee_pct: 3.5,
   },
+  office: {
+    hard_cost_per_sf_low: 200, hard_cost_per_sf_high: 400,
+    soft_cost_pct: 25, parking_cost_surface: 10000, parking_cost_structured: 35000,
+    parking_cost_underground: 55000, parking_ratio_residential: 0, parking_ratio_commercial: 3.5,
+    absorption_units_per_month: 0, construction_months: 20, construction_loan_rate: 7.5,
+    construction_ltc: 60, dev_fee_pct: 4,
+  },
+  industrial: {
+    hard_cost_per_sf_low: 80, hard_cost_per_sf_high: 200,
+    soft_cost_pct: 18, parking_cost_surface: 5000, parking_cost_structured: 0,
+    parking_cost_underground: 0, parking_ratio_residential: 0, parking_ratio_commercial: 1.5,
+    absorption_units_per_month: 0, construction_months: 12, construction_loan_rate: 7.0,
+    construction_ltc: 65, dev_fee_pct: 3,
+  },
+  student_housing: {
+    hard_cost_per_sf_low: 230, hard_cost_per_sf_high: 420,
+    soft_cost_pct: 25, parking_cost_surface: 8000, parking_cost_structured: 30000,
+    parking_cost_underground: 50000, parking_ratio_residential: 0.5, parking_ratio_commercial: 0,
+    absorption_units_per_month: 0, construction_months: 18, construction_loan_rate: 7.5,
+    construction_ltc: 60, dev_fee_pct: 4,
+  },
 };
 
 function defaultsFor(propertyType: string | null) {

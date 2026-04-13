@@ -202,7 +202,7 @@ const DEFAULT: UWData = {
   has_refi: false, refi_year: 3, refi_ltv: 70,
   refi_rate: 6.0, refi_amort_years: 25,
   refi_loan_narrative: "",
-  rent_growth_pct: 3, expense_growth_pct: 2,
+  rent_growth_pct: 3, expense_growth_pct: 3,
   exit_cap_rate: 5.5, hold_period_years: 5, notes: "",
   scenarios: [],
   rent_comps: [],
@@ -247,6 +247,46 @@ const DEFAULT: UWData = {
   opex_narrative: "",
   loan_narrative: "",
 };
+
+// Property-type-aware defaults — overrides the generic DEFAULT based on deal.property_type
+const PROPERTY_OVERRIDES: Record<string, Partial<UWData>> = {
+  multifamily: {
+    vacancy_rate: 5, management_fee_pct: 4, exit_cap_rate: 5.5,
+    rent_growth_pct: 3, expense_growth_pct: 3, lc_new_pct: 0, lc_renewal_pct: 0,
+  },
+  student_housing: {
+    vacancy_rate: 7, management_fee_pct: 4, exit_cap_rate: 6.0,
+    rent_growth_pct: 3, expense_growth_pct: 3, lc_new_pct: 0, lc_renewal_pct: 0,
+  },
+  office: {
+    vacancy_rate: 10, management_fee_pct: 3, exit_cap_rate: 7.0,
+    rent_growth_pct: 2.5, expense_growth_pct: 3, lc_new_pct: 5, lc_renewal_pct: 2.5,
+    cam_taxes: true, cam_insurance: true, cam_repairs: true, cam_utilities: true,
+  },
+  retail: {
+    vacancy_rate: 7, management_fee_pct: 2.5, exit_cap_rate: 6.5,
+    rent_growth_pct: 2, expense_growth_pct: 3, lc_new_pct: 6, lc_renewal_pct: 3,
+    cam_taxes: true, cam_insurance: true, cam_repairs: true, cam_utilities: true,
+  },
+  industrial: {
+    vacancy_rate: 5, management_fee_pct: 2.5, exit_cap_rate: 6.0,
+    rent_growth_pct: 3.5, expense_growth_pct: 3, lc_new_pct: 4, lc_renewal_pct: 2,
+    cam_taxes: true, cam_insurance: true, cam_repairs: true, cam_utilities: true,
+  },
+  mixed_use: {
+    vacancy_rate: 7, management_fee_pct: 3.5, exit_cap_rate: 6.0,
+    rent_growth_pct: 2.5, expense_growth_pct: 3, lc_new_pct: 6, lc_renewal_pct: 3,
+  },
+  hospitality: {
+    vacancy_rate: 30, management_fee_pct: 4, exit_cap_rate: 8.0,
+    rent_growth_pct: 2, expense_growth_pct: 3, lc_new_pct: 0, lc_renewal_pct: 0,
+  },
+};
+
+function getDefaultsForPropertyType(propertyType: string | undefined): UWData {
+  const overrides = PROPERTY_OVERRIDES[propertyType || ""] || {};
+  return { ...DEFAULT, ...overrides };
+}
 
 const EFFICIENCY_DEFAULTS: Record<string, number> = {
   industrial: 98, multifamily: 80, student_housing: 78,
@@ -1017,7 +1057,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             cost_per_unit: c.cost_per_unit ?? c.cost ?? 0,
           }));
         }
-        const merged = { ...DEFAULT, ...parsed };
+        const typeDefaults = getDefaultsForPropertyType(dr.data?.property_type);
+        const merged = { ...typeDefaults, ...parsed };
         // Migrate legacy soft_costs (lump sum) → soft_cost_pct (% of hard costs)
         if (typeof (parsed as Record<string, unknown>).soft_costs === "number" && parsed.soft_cost_pct == null) {
           const legacySoft = (parsed as Record<string, unknown>).soft_costs as number;
