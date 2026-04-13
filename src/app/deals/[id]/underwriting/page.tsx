@@ -173,6 +173,9 @@ interface UWData {
   other_income_items: any[];
   // Site data (from site-zoning page)
   site_info: any;
+  // AI estimate narratives
+  opex_narrative: string;
+  loan_narrative: string;
 }
 
 const DEFAULT: UWData = {
@@ -182,7 +185,7 @@ const DEFAULT: UWData = {
     { id: "default-contracts", label: "Contracts", ip_annual: 0, pf_annual: 0, cam: false },
     { id: "default-staff", label: "Staff", ip_annual: 0, pf_annual: 0, cam: false },
   ],
-  vacancy_rate: 5, in_place_vacancy_rate: 5, management_fee_pct: 5,
+  vacancy_rate: 5, in_place_vacancy_rate: 5, management_fee_pct: 4,
   taxes_annual: 0, insurance_annual: 0, repairs_annual: 0,
   utilities_annual: 0, other_expenses_annual: 0,
   ga_annual: 0, marketing_annual: 0, reserves_annual: 0,
@@ -241,6 +244,8 @@ const DEFAULT: UWData = {
   commercial_tenants: [],
   other_income_items: [],
   site_info: null,
+  opex_narrative: "",
+  loan_narrative: "",
 };
 
 const EFFICIENCY_DEFAULTS: Record<string, number> = {
@@ -1101,6 +1106,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         marketing_annual: est.marketing_annual ?? p.marketing_annual,
         reserves_annual: est.reserves_annual ?? p.reserves_annual,
         other_expenses_annual: est.other_expenses_annual ?? p.other_expenses_annual,
+        opex_narrative: est.basis || est.narrative || "",
       }));
       toast.success(est.basis ? `OpEx estimated — ${est.basis}` : "Operating expenses estimated");
     } catch { toast.error("OpEx estimation failed"); }
@@ -3335,6 +3341,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               AI Estimate
             </Button>
           </div>
+          {/* AI OpEx Narrative (persistent) */}
+          {d.opex_narrative && (
+            <div className="mt-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+              <p className="text-xs font-medium text-primary mb-1">AI Estimate Basis</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">{d.opex_narrative}</p>
+            </div>
+          )}
           {/* Leasing Commissions — commercial only */}
           {!isMF && !isSH && (
             <div className="mt-4 border-t pt-4">
