@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
-import { isConfigured } from "@/lib/google-drive";
 
 export async function GET() {
-  if (!isConfigured()) {
+  const configured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+  if (!configured) {
     return NextResponse.json({ data: { configured: false, connected: false } });
   }
   try {
