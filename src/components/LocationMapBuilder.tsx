@@ -14,11 +14,13 @@ import "leaflet/dist/leaflet.css";
 import {
   Camera,
   Layers,
-  Eye,
-  EyeOff,
   Loader2,
-  Check,
+  Pencil,
+  Tag,
+  Tags,
 } from "lucide-react";
+import { getTileConfig, hasMapbox, MAP_STYLE_OPTIONS } from "@/lib/map-config";
+import type { MapStyle } from "@/lib/map-config";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -116,6 +118,45 @@ function FitBounds({
   return null;
 }
 
+// ── Tile layer updater (react-leaflet MapContainer doesn't re-render tiles) ──
+
+function TileUpdater({ url, attribution, tileSize, zoomOffset }: { url: string; attribution: string; tileSize?: number; zoomOffset?: number }) {
+  const map = useMap();
+  useEffect(() => {
+    // Remove existing tile layers and add the new one
+    map.eachLayer((layer) => {
+      if ((layer as L.TileLayer).getTileUrl) {
+        map.removeLayer(layer);
+      }
+    });
+    const newLayer = L.tileLayer(url, {
+      attribution,
+      ...(tileSize ? { tileSize } : {}),
+      ...(zoomOffset != null ? { zoomOffset } : {}),
+    });
+    newLayer.addTo(map);
+  }, [map, url, attribution, tileSize, zoomOffset]);
+  return null;
+}
+
+// ── Labeled marker icon ──────────────────────────────────────────────────────
+
+function createLabeledPin(color: string, label: string, size: [number, number] = [18, 24]): L.DivIcon {
+  return L.divIcon({
+    className: "location-map-labeled-marker",
+    html: `<div style="position:relative;display:inline-block">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${size[0]}" height="${size[1]}" fill="${color}" stroke="white" stroke-width="2">
+        <path d="M12 0C7 0 3 4 3 9c0 7 9 15 9 15s9-8 9-15c0-5-4-9-9-9z"/>
+        <circle cx="12" cy="9" r="3" fill="white"/>
+      </svg>
+      <div style="position:absolute;top:${size[1] + 2}px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:9px;font-weight:600;color:${color};text-shadow:0 0 3px rgba(0,0,0,0.8),0 0 6px rgba(0,0,0,0.6);pointer-events:none">${label}</div>
+    </div>`,
+    iconSize: [size[0], size[1] + 14],
+    iconAnchor: [size[0] / 2, size[1]],
+    popupAnchor: [0, -size[1] + 4],
+  });
+}
+
 // ── Map ref for snapshot ─────────────────────────────────────────────────────
 
 function MapRefCapture({ onMapRef }: { onMapRef: (map: L.Map) => void }) {
@@ -142,9 +183,14 @@ export default function LocationMapBuilder({
     () => new Set(["amenities", "employers", "schools", "commute", "comps_sale", "comps_rent"] as LayerKey[])
   );
   const [capturing, setCapturing] = useState(false);
+  const [mapStyle, setMapStyle] = useState<MapStyle>("dark");
+  const [mapTitle, setMapTitle] = useState("Location Map");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const tiles = getTileConfig(mapStyle);
   const handleMapRef = useCallback((map: L.Map) => { mapRef.current = map; }, []);
 
   // Build all map points
@@ -290,8 +336,82 @@ export default function LocationMapBuilder({
 
   return (
     <div className="space-y-3">
-      {/* Layer controls + export */}
-      <div className="flex items-center justify-between gap-3 flex-wrap" data-exclude-snapshot="true">
+      {/* ── Title + Style + Controls ─────────────────────────────── */}
+      <div className="space-y-2" data-exclude-snapshot="true">
+        {/* Row 1: Title + Style + Export */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            {editingTitle ? (
+              <input
+                autoFocus
+                value={mapTitle}
+                onChange={(e) => setMapTitle(e.target.value)}
+                onBlur={() => setEditingTitle(false)}
+                onKeyDown={(e) => { if (e.key === "Enter") setEditingTitle(false); }}
+                className="text-sm font-semibold bg-muted/20 border border-border/40 rounded px-2 py-0.5 outline-none focus:border-primary/40 w-48"
+              />
+            ) : (
+              <button
+                onClick={() => setEditingTitle(true)}
+                className="text-sm font-semibold text-foreground/90 hover:text-foreground flex items-center gap-1.5"
+              >
+                {mapTitle}
+                <Pencil className="h-3 w-3 text-muted-foreground/50" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Style selector */}
+            {hasMapbox() && (
+              <div className="inline-flex items-center rounded-lg border border-border/40 bg-muted/20 p-0.5">
+                {MAP_STYLE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setMapStyle(opt.value)}
+                    className={`px-2 py-0.5 text-[10px] rounded-md transition-colors ${
+                      mapStyle === opt.value
+                        ? "bg-primary/15 text-primary font-medium"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Label toggle */}
+            <button
+              onClick={() => setShowLabels(!showLabels)}
+              className={`inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border transition-colors ${
+                showLabels
+                  ? "border-primary/30 text-primary bg-primary/5"
+                  : "border-border/40 text-muted-foreground"
+              }`}
+              title={showLabels ? "Hide marker labels" : "Show marker labels"}
+            >
+              {showLabels ? <Tag className="h-3 w-3" /> : <Tags className="h-3 w-3" />}
+              Labels
+            </button>
+
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={captureSnapshot}
+              disabled={capturing}
+            >
+              {capturing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              ) : (
+                <Camera className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Export Map
+            </Button>
+          </div>
+        </div>
+
+        {/* Row 2: Layer toggles */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <Layers className="h-3.5 w-3.5 text-muted-foreground mr-1" />
           {(Object.entries(LAYER_CONFIG) as Array<[LayerKey, typeof LAYER_CONFIG[LayerKey]]>).map(([key, cfg]) => {
@@ -317,28 +437,18 @@ export default function LocationMapBuilder({
             );
           })}
         </div>
-
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={captureSnapshot}
-          disabled={capturing}
-        >
-          {capturing ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-          ) : (
-            <Camera className="h-3.5 w-3.5 mr-1.5" />
-          )}
-          Export Map
-        </Button>
       </div>
 
-      {/* Map */}
+      {/* ── Map ──────────────────────────────────────────────────── */}
       <div
         ref={containerRef}
-        className="border border-border/40 rounded-xl overflow-hidden bg-card"
+        className="border border-border/40 rounded-xl overflow-hidden bg-card relative"
         style={{ height }}
       >
+        {/* Title overlay on the map (included in snapshot) */}
+        <div className="absolute top-3 left-3 z-[1000] bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-lg">
+          <div className="text-sm font-semibold text-white">{mapTitle}</div>
+        </div>
         <MapContainer
           center={defaultCenter}
           zoom={subject ? 13 : 4}
@@ -346,10 +456,13 @@ export default function LocationMapBuilder({
           scrollWheelZoom
         >
           <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-            subdomains={["a", "b", "c", "d"]}
+            attribution={tiles.attribution}
+            url={tiles.url}
+            {...(tiles.subdomains ? { subdomains: tiles.subdomains } : {})}
+            {...(tiles.tileSize ? { tileSize: tiles.tileSize } : {})}
+            {...(tiles.zoomOffset != null ? { zoomOffset: tiles.zoomOffset } : {})}
           />
+          <TileUpdater url={tiles.url} attribution={tiles.attribution} tileSize={tiles.tileSize} zoomOffset={tiles.zoomOffset} />
 
           {/* Radius ring */}
           {subject && radiusMiles != null && radiusMiles > 0 && (
@@ -371,7 +484,9 @@ export default function LocationMapBuilder({
             <Marker
               key={p.id}
               position={[p.lat, p.lng]}
-              icon={LAYER_CONFIG[p.layer].icon}
+              icon={showLabels
+                ? createLabeledPin(LAYER_CONFIG[p.layer].color, p.name.length > 20 ? p.name.slice(0, 18) + "…" : p.name)
+                : LAYER_CONFIG[p.layer].icon}
             >
               <Popup>
                 <div className="space-y-1 text-xs" style={{ minWidth: 160 }}>

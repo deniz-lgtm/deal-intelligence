@@ -13,6 +13,7 @@ import L from "leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import Link from "next/link";
 import "leaflet/dist/leaflet.css";
+import { getTileConfig } from "@/lib/map-config";
 
 // The stock Leaflet marker icons don't load correctly under bundlers because
 // they reference relative image paths. Override with inline SVG data URIs so
@@ -131,6 +132,7 @@ export default function CompsMapView({
 }: Props) {
   // Stable default center (geographic middle of contiguous US) until bounds fit
   const defaultCenter: [number, number] = [39.8283, -98.5795];
+  const tiles = getTileConfig("dark");
 
   // Memoize marker list so react-leaflet doesn't thrash the DOM
   const markers = useMemo(() => {
@@ -207,9 +209,11 @@ export default function CompsMapView({
         scrollWheelZoom
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          subdomains={["a", "b", "c", "d"]}
+          attribution={tiles.attribution}
+          url={tiles.url}
+          {...(tiles.subdomains ? { subdomains: tiles.subdomains } : {})}
+          {...(tiles.tileSize ? { tileSize: tiles.tileSize } : {})}
+          {...(tiles.zoomOffset != null ? { zoomOffset: tiles.zoomOffset } : {})}
         />
         <MarkerClusterGroup
           chunkedLoading
