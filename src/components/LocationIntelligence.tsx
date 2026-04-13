@@ -231,6 +231,200 @@ interface Props {
   dealAddress?: string | null;
 }
 
+// ── Data Source Wizard ───────────────────────────────────────────────────────
+
+const DATA_SOURCES = [
+  { id: "census", label: "Census ACS", description: "Demographics, income, housing, education", icon: Users, free: true },
+  { id: "bls_qcew", label: "BLS Employment", description: "Quarterly jobs, wages, establishments", icon: Briefcase, free: true },
+  { id: "bls_laus", label: "BLS Unemployment", description: "Monthly unemployment rate (most current)", icon: Briefcase, free: true },
+  { id: "hpi", label: "FHFA House Prices", description: "State-level home price appreciation trends", icon: Wallet, free: true, needsKey: "FRED_API_KEY" },
+  { id: "permits", label: "Building Permits", description: "Annual new construction permits (supply pipeline)", icon: Building2, free: true },
+  { id: "fmr", label: "HUD Fair Market Rents", description: "Official rent benchmarks by bedroom count", icon: Home, free: true, needsKey: "HUD_API_TOKEN" },
+  { id: "population", label: "Population Estimates", description: "Annual county population (more current than ACS)", icon: Users, free: true },
+  { id: "migration", label: "Migration Flows", description: "Inflow/outflow — where people are moving", icon: TrendingUp, free: true },
+  { id: "flood", label: "FEMA Flood Zone", description: "Flood risk + auto-populates Site & Zoning", icon: MapPin, free: true },
+] as const;
+
+type DataSourceId = typeof DATA_SOURCES[number]["id"];
+
+function DataSourceWizard({
+  snapshot,
+  onFetchCensus,
+  fetchingCensus,
+  onFetchBls,
+  fetchingBls,
+  onFetchHpi,
+  fetchingHpi,
+  dealId,
+  selectedRadius,
+  onDataLoaded,
+}: {
+  snapshot: DemographicSnapshot | null;
+  onFetchCensus: () => void;
+  fetchingCensus: boolean;
+  onFetchBls: () => void;
+  fetchingBls: boolean;
+  onFetchHpi: () => void;
+  fetchingHpi: boolean;
+  dealId: string;
+  selectedRadius: number;
+  onDataLoaded: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<DataSourceId>>(new Set());
+  const [running, setRunning] = useState<Set<DataSourceId>>(new Set());
+  const [completed, setCompleted] = useState<Set<DataSourceId>>(new Set());
+  const [open, setOpen] = useState(!snapshot);
+
+  function toggleSource(id: DataSourceId) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelected(new Set(DATA_SOURCES.map((s) => s.id)));
+  }
+
+  async function fetchSource(id: DataSourceId) {
+    setRunning((prev) => new Set([...Array.from(prev), id]));
+    try {
+      let url = "";
+      switch (id) {
+        case "census": onFetchCensus(); setCompleted((p) => new Set([...Array.from(p), id])); return;
+        case "bls_qcew": onFetchBls(); setCompleted((p) => new Set([...Array.from(p), id])); return;
+        case "hpi": onFetchHpi(); setCompleted((p) => new Set([...Array.from(p), id])); return;
+        case "bls_laus": url = `/api/deals/${dealId}/location-intelligence/fetch-laus`; break;
+        case "permits": url = `/api/deals/${dealId}/location-intelligence/fetch-permits`; break;
+        case "fmr": url = `/api/deals/${dealId}/location-intelligence/fetch-fmr`; break;
+        case "population": url = `/api/deals/${dealId}/location-intelligence/fetch-population`; break;
+        case "migration": url = `/api/deals/${dealId}/location-intelligence/fetch-migration`; break;
+        case "flood": url = `/api/deals/${dealId}/location-intelligence/fetch-flood`; break;
+      }
+      if (url) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ radius_miles: selectedRadius }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          toast.error(`${id}: ${json.error || "Failed"}`);
+        } else {
+          toast.success(`${DATA_SOURCES.find((s) => s.id === id)?.label} loaded`);
+          setCompleted((p) => new Set([...Array.from(p), id]));
+          onDataLoaded();
+        }
+      }
+    } catch {
+      toast.error(`Failed to fetch ${id}`);
+    } finally {
+      setRunning((prev) => {
+        const next = new Set(Array.from(prev));
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
+  async function fetchSelected() {
+    const ids = Array.from(selected);
+    for (const id of ids) {
+      await fetchSource(id);
+    }
+    setSelected(new Set());
+  }
+
+  const anyRunning = running.size > 0 || fetchingCensus || fetchingBls || fetchingHpi;
+
+  return (
+    <Panel
+      title="Data Sources"
+      icon={<Download className="h-4 w-4 text-primary" />}
+      defaultOpen={open}
+      action={
+        <div className="flex items-center gap-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); selectAll(); }}
+            className="text-[10px] text-primary hover:underline"
+          >
+            Select All
+          </button>
+          {selected.size > 0 && (
+            <Button
+              size="sm"
+              onClick={(e) => { e.stopPropagation(); fetchSelected(); }}
+              disabled={anyRunning}
+            >
+              {anyRunning ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              ) : (
+                <Download className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Fetch {selected.size} Source{selected.size === 1 ? "" : "s"}
+            </Button>
+          )}
+        </div>
+      }
+    >
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        {DATA_SOURCES.map((src) => {
+          const isRunning = running.has(src.id) ||
+            (src.id === "census" && fetchingCensus) ||
+            (src.id === "bls_qcew" && fetchingBls) ||
+            (src.id === "hpi" && fetchingHpi);
+          const isDone = completed.has(src.id);
+          const isSelected = selected.has(src.id);
+          const Icon = src.icon;
+
+          return (
+            <button
+              key={src.id}
+              onClick={() => toggleSource(src.id)}
+              className={`flex items-start gap-2.5 p-2.5 rounded-lg border text-left transition-all ${
+                isSelected
+                  ? "border-primary/40 bg-primary/5"
+                  : isDone
+                  ? "border-emerald-500/30 bg-emerald-500/5"
+                  : "border-border/40 bg-muted/10 hover:border-border/60"
+              }`}
+            >
+              <div className="flex-shrink-0 mt-0.5">
+                {isRunning ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                ) : isDone ? (
+                  <div className="h-3.5 w-3.5 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  </div>
+                ) : isSelected ? (
+                  <div className="h-3.5 w-3.5 rounded border border-primary bg-primary/20 flex items-center justify-center">
+                    <div className="h-1.5 w-1.5 rounded-sm bg-primary" />
+                  </div>
+                ) : (
+                  <Icon className="h-3.5 w-3.5 text-muted-foreground/60" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-foreground/90 flex items-center gap-1.5">
+                  {src.label}
+                  {isDone && <span className="text-[9px] text-emerald-400">loaded</span>}
+                </div>
+                <div className="text-[10px] text-muted-foreground/70 leading-tight mt-0.5">
+                  {src.description}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
+// ── Main Component ───────────────────────────────────────────────────────────
+
 export default function LocationIntelligence({
   dealId,
   dealLat,
@@ -568,7 +762,7 @@ export default function LocationIntelligence({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {dirty && (
             <Button
               size="sm"
@@ -587,51 +781,6 @@ export default function LocationIntelligence({
           <Button
             size="sm"
             variant="outline"
-            onClick={handleFetchCensus}
-            disabled={fetching}
-          >
-            {fetching ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-            )}
-            {snapshot ? "Refresh Census" : "Pull Census Data"}
-          </Button>
-          {snapshot && (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleFetchBls}
-                disabled={fetchingBls}
-                title="Fetch current employment & wages from BLS QCEW"
-              >
-                {fetchingBls ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                ) : (
-                  <Briefcase className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                BLS Jobs
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleFetchHpi}
-                disabled={fetchingHpi}
-                title="Fetch FHFA House Price Index via FRED"
-              >
-                {fetchingHpi ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                ) : (
-                  <Wallet className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                HPI
-              </Button>
-            </>
-          )}
-          <Button
-            size="sm"
-            variant="outline"
             onClick={() => setPasteReportOpen(true)}
             title="Paste text from CoStar, ESRI, or other market reports"
           >
@@ -640,6 +789,20 @@ export default function LocationIntelligence({
           </Button>
         </div>
       </div>
+
+      {/* ── Data Source Wizard ──────────────────────────────────────── */}
+      <DataSourceWizard
+        snapshot={snapshot}
+        onFetchCensus={handleFetchCensus}
+        fetchingCensus={fetching}
+        onFetchBls={handleFetchBls}
+        fetchingBls={fetchingBls}
+        onFetchHpi={handleFetchHpi}
+        fetchingHpi={fetchingHpi}
+        dealId={dealId}
+        selectedRadius={selectedRadius}
+        onDataLoaded={loadData}
+      />
 
       {/* Data source info */}
       {(currentData?.data_source || meta) && (

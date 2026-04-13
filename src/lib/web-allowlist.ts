@@ -29,6 +29,10 @@ const ALLOWED_HOSTS = [
   "huduser.gov",
   "sec.gov",
   "fdic.gov",
+  "fema.gov",
+  "hazards.fema.gov",
+  "irs.gov",
+  "bea.gov",
   // Research / aggregated public data
   "zillow.com/research", // Zillow Research CSVs only (not listings)
   "redfin.com/news/data-center", // Redfin Data Center CSVs only
