@@ -1986,12 +1986,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </div>
                 {mx.enabled && (
                   <>
-                    <div className="grid grid-cols-3 gap-4 mb-4">
-                      <NumInput label="Total GFA (SF)" value={mx.total_gfa} onChange={v => setMX(p => ({ ...p, total_gfa: v }))} />
-                      <NumInput label="Common Area (SF)" value={mx.common_area_sf} onChange={v => setMX(p => ({ ...p, common_area_sf: v }))} />
+                    <div className="grid grid-cols-2 gap-4 mb-4">
                       <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Unallocated</label>
-                        <p className={`text-sm font-semibold py-1.5 ${unallocated < 0 ? "text-red-400" : unallocated > 0 ? "text-amber-400" : "text-emerald-400"}`}>{fn(unallocated)} SF</p>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Total GFA (from Programming)</label>
+                        <p className="text-sm font-semibold py-1.5 tabular-nums">{fn(d.max_gsf || mx.total_gfa)} SF</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Allocated</label>
+                        <p className="text-sm font-semibold py-1.5 tabular-nums">{fn(allocatedSF)} SF</p>
                       </div>
                     </div>
 
@@ -2031,7 +2033,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             <button onClick={() => setMX(p => ({ ...p, components: p.components.filter(c => c.id !== comp.id) }))} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                           </div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                            <NumInput label="SF Allocation" value={comp.sf_allocation} onChange={v => updComp({ sf_allocation: v })} />
+                            <div>
+                              <label className="block text-xs font-medium text-muted-foreground mb-1">SF (from Programming)</label>
+                              <p className="text-sm font-semibold py-1.5 tabular-nums">{fn(comp.sf_allocation)}</p>
+                            </div>
                             <NumInput label="Cap Rate" value={comp.cap_rate} onChange={v => updComp({ cap_rate: v })} suffix="%" decimals={2} />
                             <div>
                               <label className="block text-xs font-medium text-muted-foreground mb-1">OpEx Mode</label>
