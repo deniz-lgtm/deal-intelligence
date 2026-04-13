@@ -256,6 +256,7 @@ const DATA_SOURCES = [
   { id: "hpi", label: "FHFA House Prices", description: "State-level home price appreciation trends", icon: Wallet, free: true },
   { id: "permits", label: "Building Permits", description: "Annual new construction permits (supply pipeline)", icon: Building2, free: true },
   { id: "fmr", label: "HUD Fair Market Rents", description: "Official rent benchmarks by bedroom count", icon: Home, free: true },
+  { id: "ami", label: "HUD AMI / Income Limits", description: "Area Median Income, max rents by AMI level (LIHTC/affordability)", icon: DollarSign, free: true },
   { id: "population", label: "Population Estimates", description: "Annual county population (more current than ACS)", icon: Users, free: true },
   { id: "migration", label: "Migration Flows", description: "Inflow/outflow — where people are moving", icon: TrendingUp, free: true },
   { id: "flood", label: "FEMA Flood Zone", description: "Flood risk + auto-populates Site & Zoning", icon: MapPin, free: true },
@@ -320,6 +321,7 @@ function DataSourceWizard({
         case "bls_laus": url = `/api/deals/${dealId}/location-intelligence/fetch-laus`; break;
         case "permits": url = `/api/deals/${dealId}/location-intelligence/fetch-permits`; break;
         case "fmr": url = `/api/deals/${dealId}/location-intelligence/fetch-fmr`; break;
+        case "ami": url = `/api/deals/${dealId}/location-intelligence/fetch-ami`; break;
         case "population": url = `/api/deals/${dealId}/location-intelligence/fetch-population`; break;
         case "migration": url = `/api/deals/${dealId}/location-intelligence/fetch-migration`; break;
         case "flood": url = `/api/deals/${dealId}/location-intelligence/fetch-flood`; break;
@@ -607,6 +609,105 @@ function DataPanels({
               </div>
             </div>
           )}
+        </Panel>
+      )}
+
+      {/* ── AMI / Income Limits (Affordability) ──────────────────── */}
+      {ext.ami && (
+        <Panel title={`Area Median Income — FY${ext.ami.year}`} icon={<DollarSign className="h-4 w-4 text-primary" />}>
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <StatCard
+                label="Median Family Income"
+                value={fc(ext.ami.median_family_income)}
+                subtitle={ext.ami.area_name}
+                icon={DollarSign}
+              />
+            </div>
+
+            {/* Max affordable rents by AMI level */}
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                Max Affordable Rents by AMI Level (30% of income)
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-muted-foreground border-b border-border/40">
+                      <th className="pb-2 pr-3">AMI Level</th>
+                      <th className="pb-2 pr-3 text-right">Studio</th>
+                      <th className="pb-2 pr-3 text-right">1 BR</th>
+                      <th className="pb-2 pr-3 text-right">2 BR</th>
+                      <th className="pb-2 text-right">3 BR</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { level: "30% AMI", key: "ami_30", color: "text-red-400" },
+                      { level: "50% AMI", key: "ami_50", color: "text-amber-400" },
+                      { level: "60% AMI (LIHTC)", key: "ami_60", color: "text-amber-300" },
+                      { level: "80% AMI", key: "ami_80", color: "text-emerald-400" },
+                      { level: "100% AMI", key: "ami_100", color: "text-foreground/80" },
+                      { level: "120% AMI", key: "ami_120", color: "text-primary" },
+                    ].map((row) => {
+                      const rents = ext.ami.max_rents?.[row.key] as Record<string, number> | undefined;
+                      if (!rents) return null;
+                      return (
+                        <tr key={row.key} className="border-b border-border/20 last:border-0">
+                          <td className={`py-1.5 pr-3 font-medium ${row.color}`}>{row.level}</td>
+                          <td className="py-1.5 pr-3 text-right">${fn(rents.studio)}</td>
+                          <td className="py-1.5 pr-3 text-right">${fn(rents.one_br)}</td>
+                          <td className="py-1.5 pr-3 text-right">${fn(rents.two_br)}</td>
+                          <td className="py-1.5 text-right">${fn(rents.three_br)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Income limits by household size */}
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                Income Limits by Household Size
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-muted-foreground border-b border-border/40">
+                      <th className="pb-2 pr-3">AMI Level</th>
+                      {[1, 2, 3, 4, 5, 6].map((p) => (
+                        <th key={p} className="pb-2 pr-2 text-right">{p}p</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { level: "30%", key: "extremely_low_30" },
+                      { level: "50%", key: "very_low_50" },
+                      { level: "60%", key: "sixty_pct" },
+                      { level: "80%", key: "low_80" },
+                    ].map((row) => {
+                      const limits = ext.ami.income_limits?.[row.key] as number[] | undefined;
+                      if (!limits) return null;
+                      return (
+                        <tr key={row.key} className="border-b border-border/20 last:border-0">
+                          <td className="py-1.5 pr-3 font-medium text-muted-foreground">{row.level}</td>
+                          {limits.slice(0, 6).map((v: number, i: number) => (
+                            <td key={i} className="py-1.5 pr-2 text-right">${fn(v)}</td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-[10px] text-muted-foreground/60 mt-1.5">
+                Source: HUD FY{ext.ami.year} Income Limits for {ext.ami.area_name}. Max rents = 30% of income / 12. Utility allowances not deducted.
+              </div>
+            </div>
+          </div>
         </Panel>
       )}
 

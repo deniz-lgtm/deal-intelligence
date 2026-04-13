@@ -125,5 +125,27 @@ export function formatLocationIntelContext(rows: AnyRecord[]): string {
     }
   }
 
+  // AMI / Income Limits (critical for affordable housing deals)
+  if (data.ami) {
+    const ami = data.ami;
+    const amiLines: string[] = [];
+    amiLines.push(
+      `Area Median Income (FY${ami.year}, ${ami.area_name}): $${Number(ami.median_family_income).toLocaleString()}`
+    );
+    if (ami.max_rents) {
+      const r60 = ami.max_rents.ami_60;
+      const r80 = ami.max_rents.ami_80;
+      if (r60) amiLines.push(`  60% AMI Max Rent: Studio $${r60.studio}/mo, 1BR $${r60.one_br}/mo, 2BR $${r60.two_br}/mo, 3BR $${r60.three_br}/mo`);
+      if (r80) amiLines.push(`  80% AMI Max Rent: Studio $${r80.studio}/mo, 1BR $${r80.one_br}/mo, 2BR $${r80.two_br}/mo, 3BR $${r80.three_br}/mo`);
+    }
+    if (ami.income_limits?.low_80) {
+      amiLines.push(`  80% AMI Income Limit (4-person HH): $${Number(ami.income_limits.low_80[3] || 0).toLocaleString()}`);
+    }
+    lines.push(`  AMI & Affordability:`);
+    for (const al of amiLines) {
+      lines.push(`    ${al}`);
+    }
+  }
+
   return lines.length > 1 ? lines.join("\n") : "";
 }
