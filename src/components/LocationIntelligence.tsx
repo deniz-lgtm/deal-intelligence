@@ -438,6 +438,344 @@ function DataSourceWizard({
   );
 }
 
+// ── Data Panels ─────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyData = Record<string, any>;
+
+function DataPanels({
+  snapshot,
+  currentData,
+  projections,
+  dirty,
+  saving,
+  onSaveProjections,
+  onUpdateProjection,
+  setProjections,
+  setDirty,
+}: {
+  snapshot: DemographicSnapshot | null;
+  currentData: LocationIntelligenceType | undefined;
+  projections: { population_growth_5yr_pct: number | null; job_growth_5yr_pct: number | null; home_value_growth_5yr_pct: number | null; rent_growth_5yr_pct: number | null; new_units_pipeline: number | null; notes: string | null };
+  dirty: boolean;
+  saving: boolean;
+  onSaveProjections: () => void;
+  onUpdateProjection: (key: string, val: string) => void;
+  setProjections: React.Dispatch<React.SetStateAction<typeof projections>>;
+  setDirty: React.Dispatch<React.SetStateAction<boolean>>;
+}) {
+  // Extended data (non-typed fields from BLS, FEMA, schools, amenities, etc.)
+  const ext: AnyData = currentData?.data
+    ? typeof currentData.data === "string"
+      ? JSON.parse(currentData.data)
+      : currentData.data
+    : {};
+
+  return (
+    <>
+      {/* ── Walk Score / Transit / Bike ────────────────────────────── */}
+      {(ext.walkscore != null || ext.transit_score != null || ext.bike_score != null) && (
+        <Panel title="Walk Score" icon={<MapPin className="h-4 w-4 text-primary" />}>
+          <div className="grid grid-cols-3 gap-3">
+            <ScoreCard label="Walk Score" score={ext.walkscore} description={ext.walkscore_description} />
+            <ScoreCard label="Transit Score" score={ext.transit_score} description={ext.transit_description} />
+            <ScoreCard label="Bike Score" score={ext.bike_score} description={ext.bike_description} />
+          </div>
+        </Panel>
+      )}
+
+      {/* ── FEMA Flood Zone ────────────────────────────────────────── */}
+      {ext.fema_flood_zone && (
+        <Panel title="Flood Zone" icon={<MapPin className="h-4 w-4 text-primary" />} defaultOpen={ext.fema_flood_zone !== "X"}>
+          <div className="flex items-center gap-3">
+            <div className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${ext.fema_flood_zone === "X" ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"}`}>
+              Zone {ext.fema_flood_zone}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {ext.fema_flood_subtype || (ext.fema_flood_zone === "X" ? "Minimal flood hazard" : "Special Flood Hazard Area — flood insurance required")}
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {/* ── Population & Demographics ──────────────────────────────── */}
+      {snapshot && (
+        <Panel title="Population & Demographics" icon={<Users className="h-4 w-4 text-primary" />}>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCard label="Population" value={fn(snapshot.total_population)} trend={snapshot.population_growth_pct} trendLabel="% yr" icon={Users} />
+            <StatCard label="Median Age" value={fn(snapshot.median_age, 1)} icon={Users} />
+            <StatCard label="Avg Household Size" value={fn(snapshot.avg_household_size, 1)} icon={Home} />
+            <StatCard label="Family Households" value={fpct(snapshot.family_households_pct)} icon={Users} />
+            <StatCard label="Median HH Income" value={fc(snapshot.median_household_income)} icon={DollarSign} />
+            <StatCard label="Per Capita Income" value={fc(snapshot.per_capita_income)} icon={DollarSign} />
+            <StatCard label="Poverty Rate" value={fpct(snapshot.poverty_rate)} icon={DollarSign} />
+            <StatCard label="Bachelor's Degree+" value={fpct(snapshot.bachelors_degree_pct)} icon={GraduationCap} />
+          </div>
+        </Panel>
+      )}
+
+      {/* ── Diversity & Age Distribution ───────────────────────────── */}
+      {ext.race_ethnicity && (
+        <Panel title="Diversity & Age Distribution" icon={<Users className="h-4 w-4 text-primary" />}>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <StatCard label="White" value={fpct(ext.race_ethnicity.white_pct)} icon={Users} />
+            <StatCard label="Hispanic/Latino" value={fpct(ext.race_ethnicity.hispanic_pct)} icon={Users} />
+            <StatCard label="Black" value={fpct(ext.race_ethnicity.black_pct)} icon={Users} />
+            <StatCard label="Asian" value={fpct(ext.race_ethnicity.asian_pct)} icon={Users} />
+            <StatCard label="Two or More" value={fpct(ext.race_ethnicity.two_or_more_pct)} icon={Users} />
+            <StatCard label="Diversity Index" value={ext.race_ethnicity.diversity_index != null ? String(ext.race_ethnicity.diversity_index) : "—"} subtitle="0 = homogeneous, 1 = diverse" icon={Users} />
+          </div>
+          {ext.age_distribution && (
+            <div className="space-y-1.5 mt-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Age Distribution</div>
+              {[
+                { label: "Under 18", pct: ext.age_distribution.under_18_pct },
+                { label: "18–24", pct: ext.age_distribution.age_18_24_pct },
+                { label: "25–44", pct: ext.age_distribution.age_25_44_pct },
+                { label: "45–64", pct: ext.age_distribution.age_45_64_pct },
+                { label: "65+", pct: ext.age_distribution.age_65_plus_pct },
+              ].map((ag) => (
+                <div key={ag.label} className="flex items-center gap-2 text-xs">
+                  <span className="w-16 text-muted-foreground flex-shrink-0">{ag.label}</span>
+                  <div className="flex-1 h-2 bg-muted/30 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-primary/60" style={{ width: `${ag.pct ?? 0}%` }} />
+                  </div>
+                  <span className="w-12 text-right text-muted-foreground flex-shrink-0">{ag.pct != null ? `${ag.pct}%` : "—"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {ext.languages && ext.languages.length > 0 && (
+            <div className="mt-4">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Languages Spoken at Home</div>
+              <div className="flex flex-wrap gap-1.5">
+                {ext.languages.slice(0, 6).map((l: AnyData, i: number) => (
+                  <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-muted/30 text-muted-foreground">
+                    {l.language} {l.pct != null ? `(${l.pct}%)` : ""}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {/* ── Housing Market ─────────────────────────────────────────── */}
+      {snapshot && (
+        <Panel title="Housing Market" icon={<Home className="h-4 w-4 text-primary" />}>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCard label="Median Home Value" value={fc(snapshot.median_home_value)} trend={snapshot.home_value_growth_pct} trendLabel="% yr" icon={Home} />
+            <StatCard label="Median Rent" value={snapshot.median_gross_rent != null ? `$${fn(snapshot.median_gross_rent)}/mo` : "—"} trend={snapshot.rent_growth_pct} trendLabel="% yr" icon={DollarSign} />
+            <StatCard label="Total Housing Units" value={fn(snapshot.total_housing_units)} icon={Building2} />
+            <StatCard label="Owner-Occupied" value={fpct(snapshot.owner_occupied_pct)} subtitle={snapshot.renter_occupied_pct != null ? `Renter: ${fpct(snapshot.renter_occupied_pct)}` : undefined} icon={Home} />
+            {ext.hud_fmr && (
+              <>
+                <StatCard label="HUD FMR (Studio)" value={ext.hud_fmr.studio != null ? `$${fn(ext.hud_fmr.studio)}/mo` : "—"} icon={DollarSign} />
+                <StatCard label="HUD FMR (1BR)" value={ext.hud_fmr.one_br != null ? `$${fn(ext.hud_fmr.one_br)}/mo` : "—"} icon={DollarSign} />
+                <StatCard label="HUD FMR (2BR)" value={ext.hud_fmr.two_br != null ? `$${fn(ext.hud_fmr.two_br)}/mo` : "—"} icon={DollarSign} />
+                <StatCard label="HUD FMR (3BR)" value={ext.hud_fmr.three_br != null ? `$${fn(ext.hud_fmr.three_br)}/mo` : "—"} icon={DollarSign} />
+              </>
+            )}
+          </div>
+          {ext.building_permits && ext.building_permits.length > 0 && (
+            <div className="mt-4">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Building Permits (Annual)</div>
+              <div className="grid grid-cols-3 gap-2">
+                {ext.building_permits.slice(0, 3).map((p: AnyData) => (
+                  <div key={p.year} className="border border-border/40 rounded-lg bg-muted/10 p-2.5 text-center">
+                    <div className="text-[10px] text-muted-foreground">{p.year}</div>
+                    <div className="text-sm font-semibold">{fn(p.total_units)}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      SF: {fn(p.single_family)} · MF: {fn(p.multi_family)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {/* ── Employment & Economy ───────────────────────────────────── */}
+      {(snapshot || ext.avg_weekly_wage != null) && (
+        <Panel title="Employment & Economy" icon={<Briefcase className="h-4 w-4 text-primary" />}>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+            {snapshot && <StatCard label="Labor Force" value={fn(snapshot.labor_force)} icon={Briefcase} />}
+            {snapshot && <StatCard label="Total Employed" value={fn(snapshot.total_employed)} icon={Briefcase} />}
+            {snapshot && <StatCard label="Unemployment Rate" value={fpct(snapshot.unemployment_rate)} icon={Briefcase} />}
+            {ext.avg_weekly_wage != null && (
+              <StatCard label="Avg Weekly Wage" value={fc(ext.avg_weekly_wage)} subtitle={ext.bls_year ? `BLS ${ext.bls_year}Q${ext.bls_quarter}` : undefined} icon={DollarSign} />
+            )}
+            {ext.total_establishments != null && (
+              <StatCard label="Establishments" value={fn(ext.total_establishments)} icon={Building2} />
+            )}
+          </div>
+          {snapshot?.top_industries && snapshot.top_industries.length > 0 && (
+            <div className="mt-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Top Industries by Employment</div>
+              <IndustryBar industries={snapshot.top_industries} />
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {/* ── Top Employers ──────────────────────────────────────────── */}
+      {ext.top_employers && ext.top_employers.length > 0 && ext.top_employers[0]?.distance_mi != null && (
+        <Panel title={`Top Employers (${ext.employers_count ?? ext.top_employers.length})`} icon={<Building2 className="h-4 w-4 text-primary" />}>
+          <div className="space-y-1.5">
+            {ext.top_employers.slice(0, 15).map((emp: AnyData, i: number) => (
+              <div key={i} className="flex items-center gap-3 text-xs py-1 border-b border-border/20 last:border-0">
+                <span className="font-medium text-foreground/90 flex-1">{emp.name}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/30 text-muted-foreground">{emp.type}</span>
+                {emp.distance_mi != null && <span className="text-muted-foreground w-14 text-right">{emp.distance_mi} mi</span>}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {/* ── Commute Analysis ───────────────────────────────────────── */}
+      {ext.commute_destinations && ext.commute_destinations.length > 0 && (
+        <Panel title="Commute Analysis" icon={<MapPin className="h-4 w-4 text-primary" />}>
+          <div className="space-y-1.5">
+            {ext.commute_destinations.map((d: AnyData, i: number) => (
+              <div key={i} className="flex items-center gap-3 text-xs py-1.5 border-b border-border/20 last:border-0">
+                <span className="font-medium text-foreground/90 flex-1 min-w-0 truncate">{d.name}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/30 text-muted-foreground flex-shrink-0">{d.type}</span>
+                <span className="text-muted-foreground flex-shrink-0 w-16 text-right">{d.drive_text || "—"}</span>
+                {d.transit_text && <span className="text-muted-foreground/60 flex-shrink-0 w-20 text-right text-[10px]">Transit: {d.transit_text}</span>}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {/* ── Schools ────────────────────────────────────────────────── */}
+      {ext.schools && ext.schools.length > 0 && (
+        <Panel title={`Schools (${ext.schools_count ?? ext.schools.length})`} icon={<GraduationCap className="h-4 w-4 text-primary" />}>
+          <div className="space-y-1.5">
+            {ext.schools.slice(0, 15).map((s: AnyData, i: number) => (
+              <div key={i} className="flex items-center gap-3 text-xs py-1 border-b border-border/20 last:border-0">
+                <span className="font-medium text-foreground/90 flex-1">{s.name}</span>
+                {s.rating != null && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${s.rating >= 7 ? "bg-emerald-500/10 text-emerald-400" : s.rating >= 4 ? "bg-amber-500/10 text-amber-400" : "bg-red-500/10 text-red-400"}`}>
+                    {s.rating}/10
+                  </span>
+                )}
+                {s.distance_mi != null && <span className="text-muted-foreground w-14 text-right">{s.distance_mi} mi</span>}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {/* ── Amenities / Google Places ──────────────────────────────── */}
+      {ext.google_places_summary && Object.keys(ext.google_places_summary).length > 0 ? (
+        <Panel title={`Nearby Amenities (${ext.amenities_total ?? 0})`} icon={<MapPin className="h-4 w-4 text-primary" />}>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+            {Object.entries(ext.google_places_summary).map(([cat, info]: [string, unknown]) => {
+              const s = info as AnyData;
+              return (
+                <div key={cat} className="border border-border/40 rounded-lg bg-muted/10 p-2.5">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{cat}</div>
+                  <div className="text-sm font-semibold mt-0.5">{s.count}</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {s.avg_rating != null && <span>{s.avg_rating} avg rating · </span>}
+                    {s.nearest_mi != null && <span>{s.nearest_mi} mi nearest</span>}
+                  </div>
+                  {s.top_rated && s.top_rated.length > 0 && (
+                    <div className="mt-1 text-[10px] text-muted-foreground/70">
+                      {s.top_rated.map((p: AnyData) => `${p.name} (${p.rating}★)`).join(", ")}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      ) : ext.amenities_summary && Object.keys(ext.amenities_summary).length > 0 ? (
+        <Panel title={`Nearby Amenities (${ext.amenities_total ?? 0})`} icon={<MapPin className="h-4 w-4 text-primary" />}>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            {Object.entries(ext.amenities_summary).map(([cat, info]: [string, unknown]) => {
+              const s = info as AnyData;
+              return (
+                <div key={cat} className="border border-border/40 rounded-lg bg-muted/10 p-2.5">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{cat}</div>
+                  <div className="text-sm font-semibold mt-0.5">{s.count}</div>
+                  {s.nearest_mi != null && <div className="text-[10px] text-muted-foreground">{s.nearest_mi} mi nearest</div>}
+                  {s.notable && s.notable.length > 0 && <div className="mt-1 text-[10px] text-muted-foreground/70 truncate">{s.notable.join(", ")}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      ) : null}
+
+      {/* ── Migration ──────────────────────────────────────────────── */}
+      {ext.migration && (
+        <Panel title="Migration & Mobility" icon={<TrendingUp className="h-4 w-4 text-primary" />} defaultOpen={false}>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <StatCard label="Mobility Rate" value={fpct(ext.migration.mobility_rate_pct)} subtitle="% moved in past year" icon={TrendingUp} />
+            <StatCard label="Domestic Inflow" value={fn(ext.migration.inflow_domestic)} subtitle="From other counties/states" icon={TrendingUp} />
+            <StatCard label="Same House" value={fpct(ext.migration.same_house_pct)} icon={Home} />
+            <StatCard label="Within County" value={fn(ext.migration.moved_within_county)} icon={MapPin} />
+            <StatCard label="From Other State" value={fn(ext.migration.moved_from_other_state)} icon={MapPin} />
+            <StatCard label="From Abroad" value={fn(ext.migration.moved_from_abroad)} icon={MapPin} />
+          </div>
+        </Panel>
+      )}
+
+      {/* ── Growth Projections (editable) ──────────────────────────── */}
+      <Panel
+        title="Growth Projections & Pipeline"
+        icon={<TrendingUp className="h-4 w-4 text-primary" />}
+        action={dirty ? (
+          <Button size="sm" variant="default" onClick={onSaveProjections} disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            <span className="ml-1.5">Save</span>
+          </Button>
+        ) : null}
+      >
+        <p className="text-xs text-muted-foreground mb-3">
+          Enter projections from market reports, CoStar, ESRI, or your own analysis. These will be included in investment packages.
+        </p>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <InlineField label="Population Growth (5yr)" value={projections.population_growth_5yr_pct} onChange={(v) => onUpdateProjection("population_growth_5yr_pct", v)} suffix="%" />
+          <InlineField label="Job Growth (5yr)" value={projections.job_growth_5yr_pct} onChange={(v) => onUpdateProjection("job_growth_5yr_pct", v)} suffix="%" />
+          <InlineField label="Home Value Growth (5yr)" value={projections.home_value_growth_5yr_pct} onChange={(v) => onUpdateProjection("home_value_growth_5yr_pct", v)} suffix="%" />
+          <InlineField label="Rent Growth (5yr)" value={projections.rent_growth_5yr_pct} onChange={(v) => onUpdateProjection("rent_growth_5yr_pct", v)} suffix="%" />
+          <InlineField label="New Units Pipeline" value={projections.new_units_pipeline} onChange={(v) => onUpdateProjection("new_units_pipeline", v)} suffix="units" />
+        </div>
+        <div className="mt-3">
+          <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Notes / Sources</label>
+          <textarea
+            value={projections.notes ?? ""}
+            onChange={(e) => { setProjections((prev) => ({ ...prev, notes: e.target.value || null })); setDirty(true); }}
+            placeholder="E.g., CoStar Q4 2024 submarket report, ESRI demographic forecast…"
+            rows={2}
+            className="w-full px-3 py-2 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none resize-none focus:border-primary/40"
+          />
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+// ── Score Card (for Walk/Transit/Bike) ───────────────────────────────────────
+
+function ScoreCard({ label, score, description }: { label: string; score: number | null; description: string | null }) {
+  if (score == null) return null;
+  const color = score >= 70 ? "text-emerald-400" : score >= 50 ? "text-amber-400" : "text-red-400";
+  const bg = score >= 70 ? "bg-emerald-500/10" : score >= 50 ? "bg-amber-500/10" : "bg-red-500/10";
+  return (
+    <div className="border border-border/40 rounded-lg bg-muted/10 p-3.5 text-center">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${color}`}>{score}</div>
+      {description && <div className="text-[10px] text-muted-foreground mt-1">{description}</div>}
+    </div>
+  );
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function LocationIntelligence({
@@ -862,254 +1200,19 @@ export default function LocationIntelligence({
       )}
 
       {/* ── No data state ─────────────────────────────────────────────── */}
-      {!snapshot ? (
+      {!snapshot && !currentData ? (
         <div className="border border-dashed border-border/40 rounded-xl bg-card/40 py-16 text-center">
           <BarChart3 className="h-10 w-10 mx-auto mb-3 text-muted-foreground/40" />
           <p className="text-sm text-muted-foreground">
             No location data for {selectedRadius}-mile radius yet.
           </p>
           <p className="text-xs text-muted-foreground/70 mt-1 max-w-md mx-auto">
-            Click &quot;Pull Census Data&quot; to automatically fetch population,
-            demographics, income, housing, and employment data from the US Census
-            Bureau, or manually enter data below.
+            Use the Data Sources panel above to fetch demographics, employment,
+            housing, amenities, and more.
           </p>
-          <Button
-            size="sm"
-            variant="outline"
-            className="mt-4"
-            onClick={handleFetchCensus}
-            disabled={fetching}
-          >
-            {fetching ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-            ) : (
-              <Download className="h-3.5 w-3.5 mr-1.5" />
-            )}
-            Pull Census Data
-          </Button>
         </div>
       ) : (
-        <>
-          {/* ── Population & Demographics ──────────────────────────────── */}
-          <Panel
-            title="Population & Demographics"
-            icon={<Users className="h-4 w-4 text-primary" />}
-          >
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <StatCard
-                label="Population"
-                value={fn(snapshot.total_population)}
-                trend={snapshot.population_growth_pct}
-                trendLabel="% yr"
-                icon={Users}
-              />
-              <StatCard
-                label="Median Age"
-                value={fn(snapshot.median_age, 1)}
-                icon={Users}
-              />
-              <StatCard
-                label="Avg Household Size"
-                value={fn(snapshot.avg_household_size, 1)}
-                icon={Home}
-              />
-              <StatCard
-                label="Family Households"
-                value={fpct(snapshot.family_households_pct)}
-                icon={Users}
-              />
-              <StatCard
-                label="Median HH Income"
-                value={fc(snapshot.median_household_income)}
-                icon={DollarSign}
-              />
-              <StatCard
-                label="Per Capita Income"
-                value={fc(snapshot.per_capita_income)}
-                icon={DollarSign}
-              />
-              <StatCard
-                label="Poverty Rate"
-                value={fpct(snapshot.poverty_rate)}
-                icon={DollarSign}
-              />
-              <StatCard
-                label="Bachelor's Degree+"
-                value={fpct(snapshot.bachelors_degree_pct)}
-                icon={GraduationCap}
-              />
-            </div>
-          </Panel>
-
-          {/* ── Housing Market ─────────────────────────────────────────── */}
-          <Panel
-            title="Housing Market"
-            icon={<Home className="h-4 w-4 text-primary" />}
-          >
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <StatCard
-                label="Median Home Value"
-                value={fc(snapshot.median_home_value)}
-                trend={snapshot.home_value_growth_pct}
-                trendLabel="% yr"
-                icon={Home}
-              />
-              <StatCard
-                label="Median Rent"
-                value={
-                  snapshot.median_gross_rent != null
-                    ? `$${fn(snapshot.median_gross_rent)}/mo`
-                    : "—"
-                }
-                trend={snapshot.rent_growth_pct}
-                trendLabel="% yr"
-                icon={DollarSign}
-              />
-              <StatCard
-                label="Total Housing Units"
-                value={fn(snapshot.total_housing_units)}
-                icon={Building2}
-              />
-              <StatCard
-                label="Owner-Occupied"
-                value={fpct(snapshot.owner_occupied_pct)}
-                subtitle={
-                  snapshot.renter_occupied_pct != null
-                    ? `Renter: ${fpct(snapshot.renter_occupied_pct)}`
-                    : undefined
-                }
-                icon={Home}
-              />
-            </div>
-          </Panel>
-
-          {/* ── Employment & Economy ───────────────────────────────────── */}
-          <Panel
-            title="Employment & Economy"
-            icon={<Briefcase className="h-4 w-4 text-primary" />}
-          >
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-              <StatCard
-                label="Labor Force"
-                value={fn(snapshot.labor_force)}
-                icon={Briefcase}
-              />
-              <StatCard
-                label="Total Employed"
-                value={fn(snapshot.total_employed)}
-                icon={Briefcase}
-              />
-              <StatCard
-                label="Unemployment Rate"
-                value={fpct(snapshot.unemployment_rate)}
-                icon={Briefcase}
-              />
-              {(snapshot as unknown as Record<string, unknown>).avg_weekly_wage != null && (
-                <StatCard
-                  label="Avg Weekly Wage"
-                  value={fc((snapshot as unknown as Record<string, unknown>).avg_weekly_wage as number)}
-                  subtitle={(snapshot as unknown as Record<string, unknown>).bls_year
-                    ? `BLS ${(snapshot as unknown as Record<string, unknown>).bls_year}Q${(snapshot as unknown as Record<string, unknown>).bls_quarter}`
-                    : undefined}
-                  icon={DollarSign}
-                />
-              )}
-              {(snapshot as unknown as Record<string, unknown>).total_establishments != null && (
-                <StatCard
-                  label="Establishments"
-                  value={fn((snapshot as unknown as Record<string, unknown>).total_establishments as number)}
-                  icon={Building2}
-                />
-              )}
-            </div>
-
-            {/* Industry breakdown */}
-            <div className="mt-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
-                Top Industries by Employment
-              </div>
-              <IndustryBar industries={snapshot.top_industries || []} />
-            </div>
-          </Panel>
-
-          {/* ── Growth Projections (editable) ──────────────────────────── */}
-          <Panel
-            title="Growth Projections & Pipeline"
-            icon={<TrendingUp className="h-4 w-4 text-primary" />}
-            action={
-              dirty ? (
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={handleSaveProjections}
-                  disabled={saving}
-                >
-                  {saving ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Save className="h-3.5 w-3.5" />
-                  )}
-                  <span className="ml-1.5">Save</span>
-                </Button>
-              ) : null
-            }
-          >
-            <p className="text-xs text-muted-foreground mb-3">
-              Enter projections from market reports, CoStar, ESRI, or your own
-              analysis. These will be included in investment packages.
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <InlineField
-                label="Population Growth (5yr)"
-                value={projections.population_growth_5yr_pct}
-                onChange={(v) => updateProjection("population_growth_5yr_pct", v)}
-                suffix="%"
-              />
-              <InlineField
-                label="Job Growth (5yr)"
-                value={projections.job_growth_5yr_pct}
-                onChange={(v) => updateProjection("job_growth_5yr_pct", v)}
-                suffix="%"
-              />
-              <InlineField
-                label="Home Value Growth (5yr)"
-                value={projections.home_value_growth_5yr_pct}
-                onChange={(v) => updateProjection("home_value_growth_5yr_pct", v)}
-                suffix="%"
-              />
-              <InlineField
-                label="Rent Growth (5yr)"
-                value={projections.rent_growth_5yr_pct}
-                onChange={(v) => updateProjection("rent_growth_5yr_pct", v)}
-                suffix="%"
-              />
-              <InlineField
-                label="New Units Pipeline"
-                value={projections.new_units_pipeline}
-                onChange={(v) => updateProjection("new_units_pipeline", v)}
-                suffix="units"
-              />
-            </div>
-            <div className="mt-3">
-              <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
-                Notes / Sources
-              </label>
-              <textarea
-                value={projections.notes ?? ""}
-                onChange={(e) => {
-                  setProjections((prev) => ({
-                    ...prev,
-                    notes: e.target.value || null,
-                  }));
-                  setDirty(true);
-                }}
-                placeholder="E.g., CoStar Q4 2024 submarket report, ESRI demographic forecast, local economic development authority data…"
-                rows={2}
-                className="w-full px-3 py-2 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none resize-none focus:border-primary/40"
-              />
-            </div>
-          </Panel>
-        </>
+        <DataPanels snapshot={snapshot} currentData={currentData} projections={projections} dirty={dirty} saving={saving} onSaveProjections={handleSaveProjections} onUpdateProjection={updateProjection} setProjections={setProjections} setDirty={setDirty} />
       )}
 
       {/* ── Paste Report Modal ─────────────────────────────────────── */}
