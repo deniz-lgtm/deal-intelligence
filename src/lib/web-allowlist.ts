@@ -33,6 +33,11 @@ const ALLOWED_HOSTS = [
   "hazards.fema.gov",
   "irs.gov",
   "bea.gov",
+  "walkscore.com",
+  "api.walkscore.com",
+  "greatschools.org",
+  "gs-api.greatschools.org",
+  "overpass-api.de",
   // Research / aggregated public data
   "zillow.com/research", // Zillow Research CSVs only (not listings)
   "redfin.com/news/data-center", // Redfin Data Center CSVs only

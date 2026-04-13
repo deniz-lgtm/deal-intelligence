@@ -235,14 +235,19 @@ interface Props {
 
 const DATA_SOURCES = [
   { id: "census", label: "Census ACS", description: "Demographics, income, housing, education", icon: Users, free: true },
+  { id: "diversity", label: "Diversity & Age", description: "Race/ethnicity, age distribution, languages", icon: Users, free: true },
   { id: "bls_qcew", label: "BLS Employment", description: "Quarterly jobs, wages, establishments", icon: Briefcase, free: true },
   { id: "bls_laus", label: "BLS Unemployment", description: "Monthly unemployment rate (most current)", icon: Briefcase, free: true },
-  { id: "hpi", label: "FHFA House Prices", description: "State-level home price appreciation trends", icon: Wallet, free: true, needsKey: "FRED_API_KEY" },
+  { id: "employers", label: "Top Employers", description: "Major employers, hospitals, universities nearby", icon: Building2, free: true },
+  { id: "hpi", label: "FHFA House Prices", description: "State-level home price appreciation trends", icon: Wallet, free: true },
   { id: "permits", label: "Building Permits", description: "Annual new construction permits (supply pipeline)", icon: Building2, free: true },
-  { id: "fmr", label: "HUD Fair Market Rents", description: "Official rent benchmarks by bedroom count", icon: Home, free: true, needsKey: "HUD_API_TOKEN" },
+  { id: "fmr", label: "HUD Fair Market Rents", description: "Official rent benchmarks by bedroom count", icon: Home, free: true },
   { id: "population", label: "Population Estimates", description: "Annual county population (more current than ACS)", icon: Users, free: true },
   { id: "migration", label: "Migration Flows", description: "Inflow/outflow — where people are moving", icon: TrendingUp, free: true },
   { id: "flood", label: "FEMA Flood Zone", description: "Flood risk + auto-populates Site & Zoning", icon: MapPin, free: true },
+  { id: "walkscore", label: "Walk Score", description: "Walk, transit, and bike scores", icon: MapPin, free: true },
+  { id: "schools", label: "Schools", description: "Nearby schools with ratings (GreatSchools)", icon: GraduationCap, free: true },
+  { id: "amenities", label: "Amenities", description: "Restaurants, shopping, groceries, parks, gyms", icon: MapPin, free: true },
 ] as const;
 
 type DataSourceId = typeof DATA_SOURCES[number]["id"];
@@ -302,6 +307,11 @@ function DataSourceWizard({
         case "population": url = `/api/deals/${dealId}/location-intelligence/fetch-population`; break;
         case "migration": url = `/api/deals/${dealId}/location-intelligence/fetch-migration`; break;
         case "flood": url = `/api/deals/${dealId}/location-intelligence/fetch-flood`; break;
+        case "walkscore": url = `/api/deals/${dealId}/location-intelligence/fetch-walkscore`; break;
+        case "schools": url = `/api/deals/${dealId}/location-intelligence/fetch-schools`; break;
+        case "amenities": url = `/api/deals/${dealId}/location-intelligence/fetch-amenities`; break;
+        case "employers": url = `/api/deals/${dealId}/location-intelligence/fetch-employers`; break;
+        case "diversity": url = `/api/deals/${dealId}/location-intelligence/fetch-diversity`; break;
       }
       if (url) {
         const res = await fetch(url, {
@@ -740,6 +750,16 @@ export default function LocationIntelligence({
 
   return (
     <div className="space-y-5">
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <div>
+        <h1 className="text-xl font-display font-semibold">Location Intelligence</h1>
+        <p className="text-xs text-muted-foreground mt-1">
+          Demographics, housing, employment, amenities, and schools within
+          a configurable radius. Pull free data from Census, BLS, HUD, and FEMA,
+          or paste from paid reports.
+        </p>
+      </div>
+
       {/* ── Radius Selector + Actions ──────────────────────────────────── */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-2">

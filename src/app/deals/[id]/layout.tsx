@@ -34,6 +34,7 @@ import {
   ClipboardCheck,
   FileWarning,
   Layers,
+  Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
@@ -71,7 +72,8 @@ const BASE_NAV_GROUPS: NavGroup[] = [
       { href: "/site-zoning", label: "Site & Zoning", icon: MapPin },
       { href: "/programming", label: "Programming", icon: Layers },
       { href: "/underwriting", label: "Underwriting", icon: Calculator },
-      { href: "/comps", label: "Comps & Market", icon: BarChart3 },
+      { href: "/comps", label: "Comps", icon: BarChart3 },
+      { href: "/location", label: "Location Intel", icon: Globe },
     ],
   },
   {
