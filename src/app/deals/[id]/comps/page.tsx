@@ -20,6 +20,9 @@ import {
   Map as MapIcon,
   Table as TableIcon,
   BarChart3,
+  Upload,
+  Image as ImageIcon,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -1888,6 +1891,52 @@ function EmptyState({
 
 // ── Paste modal ───────────────────────────────────────────────────────────
 
+interface CompAttachment {
+  name: string;
+  mediaType:
+    | "image/png"
+    | "image/jpeg"
+    | "image/webp"
+    | "image/gif"
+    | "application/pdf";
+  /** base64-encoded payload (no data: prefix) */
+  data: string;
+  /** Local preview URL for images; null for PDFs. */
+  previewUrl: string | null;
+  /** Original byte size for the size badge. */
+  size: number;
+}
+
+const SUPPORTED_ATTACHMENT_TYPES: Array<CompAttachment["mediaType"]> = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "application/pdf",
+];
+
+// Total cap for all attachments per request — keeps Claude payloads under the
+// vision request limits and avoids accidentally uploading a giant PDF.
+const MAX_ATTACHMENTS_BYTES = 20 * 1024 * 1024;
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("File read returned non-string"));
+        return;
+      }
+      // result looks like "data:<mime>;base64,<data>"
+      const idx = result.indexOf(",");
+      resolve(idx >= 0 ? result.slice(idx + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error("File read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function PasteCompModal({
   dealId,
   compType,
@@ -1901,13 +1950,111 @@ function PasteCompModal({
 }) {
   const [text, setText] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
+  const [attachments, setAttachments] = useState<CompAttachment[]>([]);
   const [extracting, setExtracting] = useState(false);
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
   const [saving, setSaving] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+
+  // Revoke object URLs on unmount / when attachments are removed so we don't
+  // leak browser memory across multiple paste sessions.
+  useEffect(() => {
+    return () => {
+      for (const a of attachments) {
+        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
+      }
+    };
+    // We only want this to run on unmount. Per-attachment URLs are revoked in
+    // removeAttachment().
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function ingestFiles(files: FileList | File[]) {
+    const incoming = Array.from(files);
+    if (incoming.length === 0) return;
+
+    const currentBytes = attachments.reduce((s, a) => s + a.size, 0);
+    let runningBytes = currentBytes;
+    const next: CompAttachment[] = [];
+
+    for (const file of incoming) {
+      const mediaType = file.type as CompAttachment["mediaType"];
+      if (!SUPPORTED_ATTACHMENT_TYPES.includes(mediaType)) {
+        toast.error(`Skipped ${file.name}: unsupported file type (${file.type || "unknown"})`);
+        continue;
+      }
+      if (runningBytes + file.size > MAX_ATTACHMENTS_BYTES) {
+        toast.error(
+          `Skipped ${file.name}: total attachments would exceed ${Math.round(
+            MAX_ATTACHMENTS_BYTES / (1024 * 1024)
+          )}MB`
+        );
+        continue;
+      }
+      try {
+        const data = await readFileAsBase64(file);
+        const previewUrl = mediaType.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : null;
+        next.push({
+          name: file.name,
+          mediaType,
+          data,
+          previewUrl,
+          size: file.size,
+        });
+        runningBytes += file.size;
+      } catch (err) {
+        console.error("Failed to read", file.name, err);
+        toast.error(`Failed to read ${file.name}`);
+      }
+    }
+
+    if (next.length > 0) setAttachments((prev) => [...prev, ...next]);
+  }
+
+  function removeAttachment(idx: number) {
+    setAttachments((prev) => {
+      const out = [...prev];
+      const [removed] = out.splice(idx, 1);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return out;
+    });
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragActive(false);
+    if (e.dataTransfer?.files) {
+      void ingestFiles(e.dataTransfer.files);
+    }
+  }
+
+  // Capture screenshots that the user pastes from the clipboard directly into
+  // the modal (Cmd/Ctrl+V after a screenshot). React onPaste on the wrapper.
+  function handlePasteEvent(e: React.ClipboardEvent<HTMLDivElement>) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.kind === "file") {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      void ingestFiles(files);
+    }
+  }
 
   async function handleExtract() {
-    if (text.trim().length < 20) {
-      toast.error("Paste at least a few lines of listing detail");
+    const trimmed = text.trim();
+    const url = sourceUrl.trim();
+    if (trimmed.length < 20 && attachments.length === 0 && !url) {
+      toast.error(
+        "Add at least one of: a source URL, listing text (20+ chars), or a screenshot/PDF"
+      );
       return;
     }
     setExtracting(true);
@@ -1917,8 +2064,12 @@ function PasteCompModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pasted_text: text,
-          source_url: sourceUrl || undefined,
+          source_url: url || undefined,
           expected_type: compType,
+          attachments: attachments.map((a) => ({
+            media_type: a.mediaType,
+            data: a.data,
+          })),
         }),
       });
       const json = await res.json();
@@ -1985,30 +2136,130 @@ function PasteCompModal({
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-4" onPaste={handlePasteEvent}>
           {!draft ? (
             <>
+              {/* Source URL — primary field. We don't auto-fetch broker sites
+                  (see src/lib/web-allowlist.ts) but the slug + path give Claude
+                  a strong hint about the property name and city. */}
               <div>
                 <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
-                  Source URL (reference only — not fetched)
+                  Source URL
                 </label>
                 <input
                   type="text"
                   value={sourceUrl}
                   onChange={(e) => setSourceUrl(e.target.value)}
-                  placeholder="https://www.crexi.com/properties/..."
+                  placeholder="https://www.zillow.com/apartments/..."
                   className="w-full px-3 py-2 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none focus:border-primary/40"
                 />
+                <p className="text-[10px] text-muted-foreground/80 mt-1">
+                  Reference only — broker sites block server-side fetches. Drop a
+                  screenshot below for the best extraction.
+                </p>
               </div>
+
+              {/* Attachments drop zone */}
               <div>
                 <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
-                  Pasted Listing Content
+                  Screenshots / Images / PDF
+                </label>
+                <div
+                  onDragEnter={(e) => {
+                    e.preventDefault();
+                    setDragActive(true);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragActive(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    setDragActive(false);
+                  }}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-lg px-4 py-6 text-center transition-colors ${
+                    dragActive
+                      ? "border-primary/60 bg-primary/5"
+                      : "border-border/40 bg-muted/10 hover:bg-muted/20"
+                  }`}
+                >
+                  <Upload className="h-5 w-5 mx-auto mb-2 text-muted-foreground/70" />
+                  <p className="text-xs text-muted-foreground">
+                    Drag screenshots / images / PDFs here, paste from clipboard
+                    (Cmd/Ctrl+V), or
+                  </p>
+                  <label className="inline-block mt-2 text-xs text-primary hover:underline cursor-pointer">
+                    browse files
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files) void ingestFiles(e.target.files);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                  <p className="text-[10px] text-muted-foreground/70 mt-2">
+                    PNG, JPEG, WEBP, GIF, or PDF — up to 20MB total
+                  </p>
+                </div>
+
+                {attachments.length > 0 && (
+                  <div className="mt-2 grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {attachments.map((att, i) => (
+                      <div
+                        key={i}
+                        className="relative group border border-border/40 rounded-md overflow-hidden bg-muted/20 aspect-[4/3] flex items-center justify-center"
+                      >
+                        {att.previewUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={att.previewUrl}
+                            alt={att.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center text-muted-foreground p-2">
+                            <FileText className="h-6 w-6 mb-1" />
+                            <span className="text-[10px] truncate max-w-full">
+                              PDF
+                            </span>
+                          </div>
+                        )}
+                        <button
+                          onClick={() => removeAttachment(i)}
+                          className="absolute top-1 right-1 bg-background/80 hover:bg-background border border-border/40 rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Remove"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                        <div className="absolute bottom-0 inset-x-0 bg-background/80 px-1.5 py-0.5 text-[10px] truncate flex items-center gap-1">
+                          {att.previewUrl ? (
+                            <ImageIcon className="h-2.5 w-2.5 flex-shrink-0" />
+                          ) : (
+                            <FileText className="h-2.5 w-2.5 flex-shrink-0" />
+                          )}
+                          <span className="truncate">{att.name}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Optional pasted text — supplements the URL + screenshots. */}
+              <div>
+                <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+                  Pasted Listing Text (optional)
                 </label>
                 <textarea
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  placeholder="Paste property name, address, price, cap rate, units, SF, year built, etc…"
-                  rows={12}
+                  placeholder="Optional — paste any additional listing text Claude should consider (e.g. the unit-mix table, broker notes, recent renovations)…"
+                  rows={6}
                   className="w-full px-3 py-2 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none resize-y focus:border-primary/40 font-mono"
                 />
               </div>
