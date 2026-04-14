@@ -20,7 +20,6 @@ import {
   Map as MapIcon,
   Table as TableIcon,
   BarChart3,
-  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -213,7 +212,6 @@ export default function CompsPage({ params }: { params: { id: string } }) {
   // Snapshot of the full underwriting blob — we PUT it back unchanged except
   // for the rent_comps fields so we don't clobber other underwriting state.
   const matrixUwSnapshot = useRef<Record<string, unknown> | null>(null);
-  const [matrixGenerating, setMatrixGenerating] = useState(false);
   const [matrixSaving, setMatrixSaving] = useState(false);
   const [matrixDirty, setMatrixDirty] = useState(false);
 
@@ -592,66 +590,6 @@ export default function CompsPage({ params }: { params: { id: string } }) {
     const nextComps = [...matrixComps, newComp];
     const nextSel = [...matrixSelectedIds, nextComps.length - 1];
     patchMatrix({ comps: nextComps, selectedIds: nextSel });
-  }
-
-  async function aiEstimateMatrix() {
-    if (
-      !confirm(
-        "AI Estimate produces synthetic comps from Claude's training data — they are NOT real listings.\n\nFor real comps, click 'Search Zillow' to open Zillow rentals in your own browser session and paste the listings back. Continue with synthetic estimates anyway?"
-      )
-    ) {
-      return;
-    }
-    setMatrixGenerating(true);
-    try {
-      const res = await fetch(`/api/deals/${params.id}/rent-comps`, {
-        method: "POST",
-      });
-      const json = await res.json();
-      if (!res.ok || !Array.isArray(json.data)) {
-        toast.error(json.error || "Failed to generate comps");
-        return;
-      }
-      const generated: MatrixRentComp[] = json.data;
-      const offset = matrixComps.length;
-      const nextComps = [...matrixComps, ...generated];
-      const nextSel = [
-        ...matrixSelectedIds,
-        ...generated.map((_, i) => offset + i),
-      ];
-      patchMatrix({ comps: nextComps, selectedIds: nextSel });
-      toast.success(
-        `${generated.length} AI-estimated comps added — verify or replace with real Zillow pulls before relying on them.`
-      );
-    } catch {
-      toast.error("Failed to generate comps");
-    } finally {
-      setMatrixGenerating(false);
-    }
-  }
-
-  function searchZillow() {
-    // Compose an address string and use Zillow's standard rentals search URL.
-    // The user's own browser fetches the page (their session, their ToS), in
-    // line with src/lib/web-allowlist.ts which forbids server-side scraping
-    // of broker sites. We never fetch this URL ourselves.
-    const addressParts = [
-      subject?.address,
-      subject?.city,
-      subject?.state,
-    ].filter(Boolean);
-    if (addressParts.length === 0) {
-      toast.error("Add an address to the deal first.");
-      return;
-    }
-    const query = encodeURIComponent(addressParts.join(", "));
-    const url = `https://www.zillow.com/homes/for_rent/${query}_rb/`;
-    window.open(url, "_blank", "noopener,noreferrer");
-    toast.message(
-      radiusMiles
-        ? `Zillow opened — pan/zoom to roughly ${radiusMiles}mi around the subject, then copy listings back into "Paste Listing".`
-        : "Zillow opened in a new tab. Copy the listings you want and paste them back via 'Paste Listing'."
-    );
   }
 
   function applyMarketRents() {
@@ -1150,9 +1088,8 @@ export default function CompsPage({ params }: { params: { id: string } }) {
               allTypes={matrixAllTypes}
               hasUnitGroups={matrixUnitGroups.length > 0}
               onAdd={addMatrixComp}
-              onAiEstimate={aiEstimateMatrix}
-              onSearchZillow={searchZillow}
               onPaste={() => openPaste("rent")}
+              onUploadReport={() => setDocExtractOpen(true)}
               onApplyMarketRents={applyMarketRents}
               onToggleSelected={toggleMatrixSelected}
               onDelete={deleteMatrixComp}
@@ -1161,8 +1098,6 @@ export default function CompsPage({ params }: { params: { id: string } }) {
               onAddUnitType={addMatrixUnitType}
               onRemoveUnitType={removeMatrixUnitType}
               onRenameUnitType={renameMatrixUnitType}
-              generating={matrixGenerating}
-              hasAddress={!!subject?.address}
             />
           </Section>
 
@@ -1375,9 +1310,8 @@ function RentCompsMatrix({
   allTypes,
   hasUnitGroups,
   onAdd,
-  onAiEstimate,
-  onSearchZillow,
   onPaste,
+  onUploadReport,
   onApplyMarketRents,
   onToggleSelected,
   onDelete,
@@ -1386,8 +1320,6 @@ function RentCompsMatrix({
   onAddUnitType,
   onRemoveUnitType,
   onRenameUnitType,
-  generating,
-  hasAddress,
 }: {
   isMF: boolean;
   isStudent: boolean;
@@ -1396,9 +1328,8 @@ function RentCompsMatrix({
   allTypes: string[];
   hasUnitGroups: boolean;
   onAdd: () => void;
-  onAiEstimate: () => void;
-  onSearchZillow: () => void;
   onPaste: () => void;
+  onUploadReport: () => void;
   onApplyMarketRents: () => void;
   onToggleSelected: (idx: number) => void;
   onDelete: (idx: number) => void;
@@ -1412,50 +1343,29 @@ function RentCompsMatrix({
   onAddUnitType: () => void;
   onRemoveUnitType: (t: string) => void;
   onRenameUnitType: (oldT: string, newT: string) => void;
-  generating: boolean;
-  hasAddress: boolean;
 }) {
   const selectedSet = new Set(selectedIds);
 
   return (
     <div className="space-y-3">
-      {/* Toolbar */}
+      {/* Toolbar — comps come from user-pulled sources only:
+            • Paste Listing  → user-copied listing text from CoStar / LoopNet /
+              Crexi / Zillow (their own browser session, their own ToS)
+            • Upload Report  → user-uploaded broker comp report / market study
+              gets parsed into structured rows
+            • Add Comp       → manual entry */}
       <div className="flex items-center gap-2 flex-wrap">
-        <Button
-          variant="default"
-          size="sm"
-          onClick={onSearchZillow}
-          disabled={!hasAddress}
-          title={
-            hasAddress
-              ? "Open Zillow rentals in a new tab and paste real listings back"
-              : "Add an address to the deal first"
-          }
-        >
-          <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-          Search Zillow
-        </Button>
-        <Button variant="outline" size="sm" onClick={onPaste}>
+        <Button variant="default" size="sm" onClick={onPaste}>
           <ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />
           Paste Listing
+        </Button>
+        <Button variant="outline" size="sm" onClick={onUploadReport}>
+          <FileSearch className="h-3.5 w-3.5 mr-1.5" />
+          Upload Report
         </Button>
         <Button variant="outline" size="sm" onClick={onAdd}>
           <Plus className="h-3.5 w-3.5 mr-1.5" />
           Add Comp
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onAiEstimate}
-          disabled={generating}
-          title="AI-generated synthetic comps from Claude's training data — clearly labeled as estimates, NOT real listings"
-        >
-          {generating ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-          ) : (
-            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-          )}
-          AI Estimate (Synthetic)
         </Button>
         <div className="flex-1" />
         {comps.length > 0 && selectedSet.size > 0 && (
@@ -1484,9 +1394,9 @@ function RentCompsMatrix({
       {comps.length === 0 ? (
         <div className="text-center py-10">
           <div className="text-xs text-muted-foreground mb-3 max-w-md mx-auto">
-            No rent comps yet. Click <em>Search Zillow</em> to pull real
-            listings from your own browser session, paste a listing in
-            directly, or sketch synthetic estimates with AI.
+            No rent comps yet. Paste a listing you copied from CoStar /
+            LoopNet / Crexi / Zillow, upload a broker comp report, or add
+            one manually.
           </div>
         </div>
       ) : isMF ? (
