@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { locationIntelligenceQueries, dealQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { assertAllowedFetchUrl } from "@/lib/web-allowlist";
+import { buildAmiTables } from "@/lib/ami-calc";
 
 // ── HUD Income Limits / Area Median Income (AMI) ─────────────────────────────
 //
@@ -56,32 +57,6 @@ interface AmiData {
     ami_100: { studio: number; one_br: number; two_br: number; three_br: number };
     ami_120: { studio: number; one_br: number; two_br: number; three_br: number };
   };
-}
-
-// HH size assumptions for rent calc: studio=1, 1BR=1.5, 2BR=3, 3BR=4.5
-const HH_SIZE_FOR_UNIT: Record<string, number> = {
-  studio: 1,
-  one_br: 1.5,
-  two_br: 3,
-  three_br: 4.5,
-};
-
-function computeMaxRent(incomeLimits: number[], unitType: string): number {
-  const hhSize = HH_SIZE_FOR_UNIT[unitType] || 1;
-  // Interpolate between household sizes (HUD uses 1-8 person limits)
-  const lowerIdx = Math.max(0, Math.floor(hhSize) - 1);
-  const upperIdx = Math.min(7, Math.ceil(hhSize) - 1);
-  const frac = hhSize - Math.floor(hhSize);
-
-  let incomeLimit: number;
-  if (lowerIdx === upperIdx || !incomeLimits[upperIdx]) {
-    incomeLimit = incomeLimits[lowerIdx] || 0;
-  } else {
-    incomeLimit = incomeLimits[lowerIdx] * (1 - frac) + incomeLimits[upperIdx] * frac;
-  }
-
-  // Max rent = 30% of monthly income (standard HUD formula)
-  return Math.round((incomeLimit * 0.30) / 12);
 }
 
 export async function POST(
@@ -140,57 +115,36 @@ export async function POST(
 
         const medianIncome = Number(d.median_income) || 0;
 
-        // HUD provides income limits by household size (il50_p1 through il50_p8)
-        const getHHLimits = (prefix: string): number[] => {
+        // HUD's Income Limits API nests the per-HH-size fields under
+        // `very_low`, `extremely_low`, and `low` objects (e.g.
+        // d.very_low.il50_p1). Older or alternate payloads flatten these onto
+        // the root. Accept either format.
+        const getHHLimits = (prefix: string, nestedKey: string): number[] => {
+          const nested = d[nestedKey] as Record<string, unknown> | undefined;
           const limits: number[] = [];
           for (let p = 1; p <= 8; p++) {
-            limits.push(Number(d[`${prefix}_p${p}`]) || 0);
+            const key = `${prefix}_p${p}`;
+            const raw = nested?.[key] ?? d[key];
+            limits.push(Number(raw) || 0);
           }
           return limits;
         };
 
-        const veryLow50 = getHHLimits("il50");   // 50% AMI (Very Low Income)
-        const extremeLow30 = getHHLimits("il30"); // 30% AMI (Extremely Low)
-        const low80 = getHHLimits("il80");        // 80% AMI (Low Income)
-
-        // Compute 60% AMI = 50% × 1.2 (standard LIHTC derivation)
-        const sixtyPct = veryLow50.map((v) => Math.round(v * 1.2));
-
-        // Compute 100% AMI from median (HUD adjusts by HH size using a formula,
-        // but a reasonable approximation: scale the 50% limits × 2)
-        const median100 = veryLow50.map((v) => Math.round(v * 2));
-
-        // Compute 120% AMI
-        const moderate120 = median100.map((v) => Math.round(v * 1.2));
-
-        // Max rents at each level
-        const computeRents = (limits: number[]) => ({
-          studio: computeMaxRent(limits, "studio"),
-          one_br: computeMaxRent(limits, "one_br"),
-          two_br: computeMaxRent(limits, "two_br"),
-          three_br: computeMaxRent(limits, "three_br"),
+        // buildAmiTables applies HUD standard family-size adjustments and falls
+        // back to deriving from MFI when the HUD response omits per-HH limits
+        // (common for non-metro counties).
+        const tables = buildAmiTables(medianIncome, {
+          very_low_50: getHHLimits("il50", "very_low"),
+          extremely_low_30: getHHLimits("il30", "extremely_low"),
+          low_80: getHHLimits("il80", "low"),
         });
 
         amiResult = {
           year,
           area_name: d.area_name || d.county_name || `County ${fips.state}${fips.county}`,
           median_family_income: medianIncome,
-          income_limits: {
-            extremely_low_30: extremeLow30,
-            very_low_50: veryLow50,
-            sixty_pct: sixtyPct,
-            low_80: low80,
-            median_100: median100,
-            moderate_120: moderate120,
-          },
-          max_rents: {
-            ami_30: computeRents(extremeLow30),
-            ami_50: computeRents(veryLow50),
-            ami_60: computeRents(sixtyPct),
-            ami_80: computeRents(low80),
-            ami_100: computeRents(median100),
-            ami_120: computeRents(moderate120),
-          },
+          income_limits: tables.income_limits,
+          max_rents: tables.max_rents,
         };
         break;
       } catch (err) {
