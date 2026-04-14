@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import DealNotes from "@/components/DealNotes";
 import { UnderwritingCoPilot } from "@/components/UnderwritingCoPilot";
+import AffordabilityPlanner from "@/components/AffordabilityPlanner";
+import AmiReference from "@/components/AmiReference";
 import type {
   DevBudgetLineItem, ParkingConfig, ParkingEntry, ParkingType,
   LeaseUpConfig, ConstructionLoanConfig, ConstructionDrawPeriod,
@@ -2477,6 +2479,30 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
+      {/* ═══ Affordability (multifamily / student housing) ═══ */}
+      {isMF && (
+        <AffordabilityPlanner
+          dealId={params.id}
+          totalUnits={m.totalUnits || 0}
+          avgMarketRent={(() => {
+            // Weighted average market rent per unit/month across unit groups
+            const totalUnits = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
+            if (totalUnits === 0) return 0;
+            if (isSH) {
+              // student housing: rent is per-bed monthly; convert to per-unit
+              const totalRentPerMonth = d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed, 0);
+              return totalRentPerMonth / totalUnits;
+            }
+            // multifamily / mixed-use residential
+            const totalRentPerMonth = d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * (g.market_rent_per_unit || 0), 0);
+            return totalRentPerMonth / totalUnits;
+          })()}
+          currentTaxes={d.taxes_annual || 0}
+          initialConfig={d.affordability_config}
+          onConfigChange={(cfg) => set("affordability_config", cfg as UWData["affordability_config"])}
+        />
+      )}
+
       <Section title={isGroundUp ? "Development Budget" : "Capital Expenditures"} icon={<Hammer className="h-4 w-4 text-orange-400" />} open={isGroundUp}>
         <div className="mt-3 overflow-x-auto">
           {isGroundUp ? (
@@ -3578,6 +3604,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         <h3 className="font-semibold text-sm mb-3">Deal Notes</h3>
         <DealNotes dealId={params.id} compact />
       </div>
+
+      {/* AMI reference from Location Intel — quick lookup while underwriting */}
+      {isMF && <AmiReference dealId={params.id} />}
 
       <div className="flex justify-end">
         <Button onClick={save} disabled={saving} size="lg">

@@ -44,6 +44,7 @@ import {
   INVESTMENT_THESIS_LABELS,
 } from "@/lib/types";
 import { calc, getDefaultsForPropertyType, type UWData } from "@/lib/underwriting-calc";
+import AmiReference from "@/components/AmiReference";
 
 const STATUS_BADGE_VARIANT: Record<DealStatus, "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "issue"> = {
   sourcing: "secondary",
@@ -641,6 +642,11 @@ export default function DealOverviewPage({
               <DealNotes dealId={params.id} />
             </div>
           </div>
+
+          {/* AMI reference — quick lookup for multifamily deals */}
+          {["multifamily", "student_housing"].includes(deal.property_type || "") && (
+            <AmiReference dealId={params.id} />
+          )}
         </div>
 
         {/* RIGHT COLUMN: Diligence + Docs + Quick Access + Business Plan */}

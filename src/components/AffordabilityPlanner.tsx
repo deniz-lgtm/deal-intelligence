@@ -68,6 +68,7 @@ interface Props {
   avgMarketRent: number;      // weighted average market rent per unit/month
   currentTaxes: number;       // current taxes_annual from UW
   onConfigChange: (config: AffordabilityConfig) => void;
+  initialConfig?: Partial<AffordabilityConfig> | null;
 }
 
 export default function AffordabilityPlanner({
@@ -76,22 +77,23 @@ export default function AffordabilityPlanner({
   avgMarketRent,
   currentTaxes,
   onConfigChange,
+  initialConfig,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [loadingAmi, setLoadingAmi] = useState(false);
   const [ami, setAmi] = useState<AmiData | null>(null);
   const [config, setConfig] = useState<AffordabilityConfig>({
-    enabled: false,
-    tiers: [],
-    total_units: totalUnits,
-    market_rate_units: totalUnits,
-    density_bonus_pct: 0,
-    density_bonus_source: "",
-    tax_exemption_enabled: false,
-    tax_exemption_pct: 0,
-    tax_exemption_years: 0,
-    tax_exemption_type: "",
-    notes: "",
+    enabled: initialConfig?.enabled ?? false,
+    tiers: initialConfig?.tiers ?? [],
+    total_units: initialConfig?.total_units ?? totalUnits,
+    market_rate_units: initialConfig?.market_rate_units ?? totalUnits,
+    density_bonus_pct: initialConfig?.density_bonus_pct ?? 0,
+    density_bonus_source: initialConfig?.density_bonus_source ?? "",
+    tax_exemption_enabled: initialConfig?.tax_exemption_enabled ?? false,
+    tax_exemption_pct: initialConfig?.tax_exemption_pct ?? 0,
+    tax_exemption_years: initialConfig?.tax_exemption_years ?? 0,
+    tax_exemption_type: initialConfig?.tax_exemption_type ?? "",
+    notes: initialConfig?.notes ?? "",
   });
 
   // Update total units when prop changes

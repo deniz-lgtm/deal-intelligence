@@ -462,6 +462,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           return totalRent / totalUnits;
         })()}
         currentTaxes={taxesAnnual}
+        initialConfig={affordabilityConfig}
         onConfigChange={(cfg) => { setAffordabilityConfig(cfg); setDirty(true); }}
       />
 
