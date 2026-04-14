@@ -3,18 +3,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { dealQueries, dealNoteQueries, omAnalysisQueries, underwritingQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
+import { parseJsonObject } from "@/lib/parse-json";
 
-const MODEL = "claude-sonnet-4-5";
-
-function parseJson<T>(raw: string, fallback: T): T {
-  try {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) return fallback;
-    return JSON.parse(match[0]) as T;
-  } catch {
-    return fallback;
-  }
-}
+const MODEL = "claude-sonnet-4-6";
 
 interface OpexEstimate {
   vacancy_rate: number;
@@ -160,17 +151,23 @@ Rules:
 - If in-place expenses are available, use them as a floor/reference but adjust for pro forma (stabilized) assumptions
 - Do NOT return null values — estimate every category even if small`;
 
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25_000);
+    let raw = "{}";
+    try {
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const response = await client.messages.create(
+        { model: MODEL, max_tokens: 1024, messages: [{ role: "user", content: prompt }] },
+        { signal: controller.signal }
+      );
+      raw = response.content[0].type === "text" ? response.content[0].text : "{}";
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
-    const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
-    const estimated = parseJson<OpexEstimate>(raw, FALLBACK);
+    const { value: estimated, usedFallback } = parseJsonObject<OpexEstimate>(raw, FALLBACK);
 
-    return NextResponse.json({ data: estimated });
+    return NextResponse.json({ data: estimated, used_fallback: usedFallback });
   } catch (error) {
     console.error("POST /api/deals/[id]/opex-estimate error:", error);
     return NextResponse.json({ error: "OpEx estimation failed" }, { status: 500 });

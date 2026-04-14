@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getPool,
   dealQueries,
   dealNoteQueries,
   underwritingQueries,
@@ -16,7 +15,7 @@ import type { ChecklistItem, DealNote, BusinessPlan } from "@/lib/types";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 import { formatLocationIntelContext } from "@/lib/location-intel-context";
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 let _client: Anthropic | null = null;
 function getClient() {
   if (!_client) _client = new Anthropic();
@@ -96,14 +95,18 @@ export async function POST(
       locationContext
     );
 
-    const response = await getClient().messages.create({
-      model: MODEL,
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const raw =
-      response.content[0].type === "text" ? response.content[0].text : "{}";
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25_000);
+    let raw = "{}";
+    try {
+      const response = await getClient().messages.create(
+        { model: MODEL, max_tokens: 1024, messages: [{ role: "user", content: prompt }] },
+        { signal: controller.signal }
+      );
+      raw = response.content[0].type === "text" ? response.content[0].text : "{}";
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     // Parse JSON from response — be lenient
     let parsed: { deal_score: number; score_reasoning: string };
@@ -119,13 +122,6 @@ export async function POST(
 
     const score = Math.max(1, Math.min(10, Math.round(parsed.deal_score ?? 5)));
     const reasoning = parsed.score_reasoning ?? "";
-
-    // Ensure columns exist (self-healing migration)
-    const pool = getPool();
-    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER").catch((e: Error) => console.warn("ALTER uw_score:", e.message));
-    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT").catch((e: Error) => console.warn("ALTER uw_score_reasoning:", e.message));
-    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER").catch((e: Error) => console.warn("ALTER final_score:", e.message));
-    await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT").catch((e: Error) => console.warn("ALTER final_score_reasoning:", e.message));
 
     // Store on the deal
     const updateField =
@@ -247,8 +243,18 @@ function buildScorePrompt(
       0
     );
     const proformaGPR = groups.reduce((s: number, g: any) => {
-      const rent = g.market_rent_per_unit || g.market_rent_per_bed * (g.beds_per_unit || 1) || 0;
-      return s + rent * (g.unit_count || 0) * 12;
+      const units = g.unit_count || 0;
+      if (g.market_rent_per_unit) {
+        // Multifamily: monthly $/unit → annual
+        return s + g.market_rent_per_unit * units * 12;
+      } else if (g.market_rent_per_bed) {
+        // Student housing: monthly $/bed × beds → annual
+        return s + g.market_rent_per_bed * (g.beds_per_unit || 1) * units * 12;
+      } else if (g.market_rent_per_sf && g.sf_per_unit) {
+        // Commercial: annual $/SF × SF/unit × units (already annual)
+        return s + g.market_rent_per_sf * g.sf_per_unit * units;
+      }
+      return s;
     }, 0);
     const vacancyRate = uw.vacancy_rate || 5;
     const proformaEGI = proformaGPR * (1 - vacancyRate / 100);
@@ -283,14 +289,28 @@ function buildScorePrompt(
       dscr = annualDebt > 0 ? proformaNOI / annualDebt : 0;
       const yr1Debt = uw.acq_io_years > 0 ? loanAmount * rate : annualDebt;
       cashOnCash = equity > 0 ? ((proformaNOI - yr1Debt) / equity) * 100 : 0;
-      // Simplified equity multiple
+      // Equity multiple: year-by-year cash flows + exit proceeds
       const holdYears = uw.hold_period_years || 5;
       const exitCap = uw.exit_cap_rate || 0;
+      const rentGrowth = (uw.rent_growth_pct || 3) / 100;
       if (exitCap > 0 && equity > 0) {
-        const exitValue = proformaNOI / (exitCap / 100);
-        const exitEquity = exitValue - loanAmount;
-        const totalCF = (proformaNOI - yr1Debt) * holdYears + exitEquity;
-        equityMultiple = totalCF / equity;
+        // Terminal NOI grows at rent growth over hold period
+        const terminalNOI = proformaNOI * Math.pow(1 + rentGrowth, holdYears);
+        const exitValue = terminalNOI / (exitCap / 100);
+        // Remaining loan balance at exit
+        const remainingBal = amort > 0
+          ? loanAmount * (Math.pow(1 + rate / 12, amort * 12) - Math.pow(1 + rate / 12, holdYears * 12))
+                         / (Math.pow(1 + rate / 12, amort * 12) - 1)
+          : loanAmount; // IO-only: no paydown
+        const exitEquity = exitValue - Math.max(0, remainingBal);
+        // Sum year-by-year cash flows with rent growth
+        let totalCF = 0;
+        for (let yr = 1; yr <= holdYears; yr++) {
+          const yrNOI = proformaNOI * Math.pow(1 + rentGrowth, yr);
+          const ds = yr <= (uw.acq_io_years || 0) ? loanAmount * rate : annualDebt;
+          totalCF += yrNOI - ds;
+        }
+        equityMultiple = (totalCF + exitEquity) / equity;
       }
     }
 

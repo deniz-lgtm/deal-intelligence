@@ -398,9 +398,49 @@ function defaultRedevelopment(): RedevelopmentConfig {
 function ipOr(ip: number, _pf: number): number { return ip || 0; }
 
 function annualPayment(principal: number, rate: number, years: number): number {
-  if (principal <= 0 || rate === 0) return principal > 0 ? principal / years : 0;
+  if (principal <= 0) return 0;
+  if (years <= 0) return 0;       // IO / bullet loan — no amortizing payment
+  if (rate === 0) return principal / years;  // 0% interest: straight principal paydown
   const r = rate / 100 / 12, n = years * 12;
   return (principal * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1)) * 12;
+}
+
+/**
+ * Remaining loan balance after `yearsPaid` years of a fully-amortizing loan.
+ * Returns `principal` for IO / bullet loans (amortYears <= 0).
+ */
+function remainingBalance(principal: number, annualRate: number, amortYears: number, yearsPaid: number): number {
+  if (principal <= 0) return 0;
+  if (amortYears <= 0 || annualRate === 0) return principal; // IO: no paydown
+  const r = annualRate / 100 / 12;
+  const n = amortYears * 12;
+  const p = Math.min(yearsPaid * 12, n); // can't pay beyond term
+  return principal * (Math.pow(1 + r, n) - Math.pow(1 + r, p)) / (Math.pow(1 + r, n) - 1);
+}
+
+/**
+ * Newton-Raphson XIRR (assumes end-of-year cash flows at integer year offsets).
+ * `cashFlows[0]` is the initial equity outflow (negative), subsequent entries are
+ * annual cash flows plus exit proceeds at the final year.
+ * Returns the annual rate as a percentage, or 0 if it cannot converge.
+ */
+function xirr(cashFlows: number[]): number {
+  if (cashFlows.length < 2) return 0;
+  let rate = 0.1;
+  for (let i = 0; i < 200; i++) {
+    let npv = 0, dNpv = 0;
+    for (let j = 0; j < cashFlows.length; j++) {
+      const denom = Math.pow(1 + rate, j);
+      npv  += cashFlows[j] / denom;
+      dNpv -= j * cashFlows[j] / (denom * (1 + rate));
+    }
+    if (Math.abs(dNpv) < 1e-12) break;
+    const delta = npv / dNpv;
+    rate -= delta;
+    if (Math.abs(delta) < 1e-8) break;
+  }
+  if (!isFinite(rate) || rate <= -1) return 0;
+  return rate * 100;
 }
 
 function effectiveUnits(g: UnitGroup): number {
@@ -472,8 +512,9 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const proformaEGI = proformaGPR - proformaVacancyLoss;
 
   // ── Operating Expenses ──────────────────────────────────────────────────────
-  const mgmtFee = egi * (d.management_fee_pct / 100);
-  const proformaMgmtFee = proformaEGI * (d.management_fee_pct / 100);
+  // Management fee applies to all collected revenue including other income (RUBS, parking, laundry)
+  const mgmtFee = (egi + totalOtherIncome) * (d.management_fee_pct / 100);
+  const proformaMgmtFee = (proformaEGI + totalOtherIncome) * (d.management_fee_pct / 100);
   const inPlaceMgmtFee = d.ip_mgmt_annual; // Hard-coded dollar amount, not derived from %
   const customOpex = d.custom_opex || [];
   const customPfTotal = customOpex.reduce((s, r) => s + (r.pf_annual || 0), 0);
@@ -506,9 +547,14 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   let reimbursements = 0;
   let ipReimbursements = 0;
   if (mode === "commercial" && totalSF > 0) {
+    // Only occupied SF pays CAM — apply occupancy factor to each group's share
+    const occupancyFactor = 1 - (d.vacancy_rate / 100);
+    const ipOccFactor = 1 - (ipVacRate / 100);
     for (const g of d.unit_groups) {
-      const share = (effectiveUnits(g) * g.sf_per_unit) / totalSF;
-      const ipShare = ipTotalSF > 0 ? (g.unit_count * g.sf_per_unit) / ipTotalSF : 0;
+      const occupiedSF = effectiveUnits(g) * g.sf_per_unit * occupancyFactor;
+      const share = occupiedSF / totalSF;
+      const ipOccupiedSF = g.unit_count * g.sf_per_unit * ipOccFactor;
+      const ipShare = ipTotalSF > 0 ? ipOccupiedSF / ipTotalSF : 0;
       if (g.lease_type === "NNN" || g.lease_type === "MG" || g.lease_type === "Modified Gross") {
         reimbursements += camPool * share;
         ipReimbursements += ipCamPool * ipShare;
@@ -652,9 +698,11 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const dscr = acqDebt > 0 ? proformaNOI / acqDebt : 0;
 
   // ── Refinance ───────────────────────────────────────────────────────────────
-  let refiProceeds = 0, refiDebt = 0;
+  let refiProceeds = 0, refiDebt = 0, refiLoan = 0;
   if (d.has_refi && d.has_financing && d.exit_cap_rate > 0) {
-    const refiLoan = (proformaNOI / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100);
+    // Size refi against NOI projected to the refi year (not year-0 stabilized NOI)
+    const noiAtRefi = proformaNOI * Math.pow(1 + rg, d.refi_year || 3);
+    refiLoan = (noiAtRefi / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100);
     refiProceeds = refiLoan - acqLoan;
     refiDebt = annualPayment(refiLoan, d.refi_rate, d.refi_amort_years);
   }
@@ -753,9 +801,19 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   // ── Exit & Returns (uses terminal-year NOI with growth) ──────────────────────
   const holdYrs = d.hold_period_years || 5;
-  const terminalNOI = proformaNOI * Math.pow(1 + rg, holdYrs);  // NOI at exit year (rent growth on revenue side)
+  // Terminal NOI: grow revenue and expenses separately at their respective rates
+  const terminalRevenue = proformaEffectiveRevenue * Math.pow(1 + rg, holdYrs);
+  const terminalMgmt    = (proformaEGI + totalOtherIncome) * Math.pow(1 + rg, holdYrs) * (d.management_fee_pct / 100);
+  const terminalFixed   = fixedOpEx * Math.pow(1 + eg, holdYrs);
+  const terminalLC      = leasingCommissions * Math.pow(1 + rg, holdYrs);
+  const terminalNOI     = terminalRevenue - terminalMgmt - terminalFixed - terminalLC;
   const exitValue = d.exit_cap_rate > 0 ? terminalNOI / (d.exit_cap_rate / 100) : 0;
-  const exitLoanBalance = d.has_refi ? (terminalNOI / (d.exit_cap_rate / 100)) * (d.refi_ltv / 100) : acqLoan;
+  // Exit loan balance = remaining principal of the loan in force at exit (not a fresh refi)
+  const exitLoanBalance = d.has_refi && d.has_financing
+    ? remainingBalance(refiLoan, d.refi_rate, d.refi_amort_years, holdYrs - (d.refi_year || 3))
+    : d.has_financing
+    ? remainingBalance(acqLoan, d.acq_interest_rate, d.acq_amort_years, holdYrs)
+    : 0;
   const exitEquity = exitValue - exitLoanBalance;
 
   // Equity multiple: sum actual per-year cash flows from DCF (handles IO, amort, refi, and growth)
@@ -765,8 +823,15 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     if (yr <= 5) {
       totalCashFlows += yearlyDCF[yr - 1].cashFlow;
     } else {
-      // Extrapolate beyond year 5 using same growth pattern
-      const yrNOI = proformaNOI * Math.pow(1 + rg, yr) - (fixedOpEx * Math.pow(1 + eg, yr)) - (proformaEGI * Math.pow(1 + rg, yr) * (d.management_fee_pct / 100));
+      // Extrapolate beyond year 5: grow revenue and expenses separately from their year-0 bases
+      const yrGPR    = proformaGPR * Math.pow(1 + rg, yr);
+      const yrEGI    = yrGPR * (1 - d.vacancy_rate / 100);
+      const yrOther  = totalOtherIncome * Math.pow(1 + rg, yr);
+      const yrReimb  = reimbursements * Math.pow(1 + rg, yr);
+      const yrMgmt   = (yrEGI + yrOther) * (d.management_fee_pct / 100);
+      const yrFixed  = fixedOpEx * Math.pow(1 + eg, yr);
+      const yrLC     = leasingCommissions * Math.pow(1 + rg, yr);
+      const yrNOI    = (yrEGI + yrOther + yrReimb) - yrMgmt - yrFixed - yrLC;
       let ds = 0;
       if (d.has_financing) {
         if (d.has_refi && yr > d.refi_year) ds = refiDebt;
@@ -827,13 +892,19 @@ function NumInput({ label, value, onChange, prefix, suffix, decimals = 0, classN
 }) {
   const fmt = (v: number) => v === 0 ? "" : v.toLocaleString("en-US", { maximumFractionDigits: decimals });
   const [raw, setRaw] = useState(fmt(value));
-  useEffect(() => { setRaw(fmt(value)); }, [value]);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    // Only sync from parent when the input is not focused (don't clobber in-progress edits)
+    if (document.activeElement !== inputRef.current) {
+      setRaw(fmt(value));
+    }
+  }, [value]);
   return (
     <div className={className}>
       <label className="block text-xs font-medium text-muted-foreground mb-1">{label}</label>
       <div className="flex items-center border rounded-md bg-background overflow-hidden">
         {prefix && <span className="px-2 text-sm text-muted-foreground bg-muted border-r">{prefix}</span>}
-        <input type="text" inputMode="decimal" value={raw}
+        <input ref={inputRef} type="text" inputMode="decimal" value={raw}
           onChange={(e) => setRaw(e.target.value)}
           onBlur={() => { const v = parseFloat(raw.replace(/,/g, "")) || 0; onChange(v); setRaw(fmt(v)); }}
           className="flex-1 px-2 py-1.5 text-sm outline-none bg-transparent text-blue-300" placeholder="0" />
@@ -849,11 +920,17 @@ function CellInput({ value, onChange, decimals = 0, prefix, suffix, align = "rig
   const v0 = value ?? 0;
   const fmt = (v: number) => !v ? "" : v.toLocaleString("en-US", { maximumFractionDigits: decimals });
   const [raw, setRaw] = useState(fmt(v0));
-  useEffect(() => { setRaw(fmt(v0)); }, [v0]);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    // Only sync from parent when the input is not focused (don't clobber in-progress edits)
+    if (document.activeElement !== inputRef.current) {
+      setRaw(fmt(v0));
+    }
+  }, [v0]);
   return (
     <div className={`flex items-center ${className}`}>
       {prefix && <span className="text-xs text-muted-foreground mr-0.5 shrink-0">{prefix}</span>}
-      <input type="text" inputMode="decimal" value={raw}
+      <input ref={inputRef} type="text" inputMode="decimal" value={raw}
         onChange={e => setRaw(e.target.value)}
         onBlur={() => { const v = parseFloat(raw.replace(/,/g, "")) || 0; onChange(v); setRaw(fmt(v)); }}
         className={`w-full bg-transparent text-sm outline-none tabular-nums text-blue-300 ${align === "right" ? "text-right" : "text-left"}`}
@@ -963,7 +1040,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [showScenarioWizard, setShowScenarioWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardType, setWizardType] = useState<ScenarioType>("custom");
-  const [wizardMetric, setWizardMetric] = useState<"em" | "coc" | "irr_proxy">("em");
+  const [wizardMetric, setWizardMetric] = useState<"em" | "coc" | "irr">("em");
   const [wizardTarget, setWizardTarget] = useState<number>(0);
   const [wizardResult, setWizardResult] = useState<{ value: number; label: string; scenarioOverrides: Partial<UWData> } | null>(null);
   const [wizardSolving, setWizardSolving] = useState(false);
@@ -1315,14 +1392,17 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     ? { ...data, ...activeScenario.overrides, scenarios: data.scenarios }
     : data;
 
-  const solveScenario = useCallback((type: ScenarioType, metric: "em" | "coc" | "irr_proxy", target: number) => {
+  const solveScenario = useCallback((type: ScenarioType, metric: "em" | "coc" | "irr", target: number) => {
     // Bisection goal-seek: find the input value that makes the metric match target
     const getMetric = (d: UWData) => {
       const r = calc(d, calcMode);
       if (metric === "em") return r.em;
       if (metric === "coc") return r.coc;
-      // irr_proxy ≈ annualized EM
-      return r.em > 0 && d.hold_period_years > 0 ? (Math.pow(r.em, 1 / d.hold_period_years) - 1) * 100 : 0;
+      // True XIRR using DCF cash flows
+      if (r.equity <= 0 || r.yearlyDCF.length === 0) return 0;
+      return xirr([-r.equity, ...r.yearlyDCF.map((yr, i) =>
+        i === r.yearlyDCF.length - 1 ? yr.cashFlow + r.exitEquity : yr.cashFlow
+      )]);
     };
 
     if (type === "land_residual") {
@@ -1666,7 +1746,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <div className="bg-card p-3">
             <p className="text-xs text-muted-foreground mb-1">Equity Multiple</p>
             <p className="text-lg font-bold tabular-nums">{m.em > 0 ? `${m.em.toFixed(2)}x` : "—"}</p>
-            <p className="text-xs text-muted-foreground">{d.hold_period_years}yr hold</p>
+            {(() => {
+              const irrVal = m.equity > 0 && m.yearlyDCF.length > 0
+                ? xirr([-m.equity, ...m.yearlyDCF.map((yr, i) =>
+                    i === m.yearlyDCF.length - 1 ? yr.cashFlow + m.exitEquity : yr.cashFlow
+                  )])
+                : 0;
+              return irrVal > 0
+                ? <p className="text-xs text-muted-foreground">IRR {irrVal.toFixed(1)}% · {d.hold_period_years}yr hold</p>
+                : <p className="text-xs text-muted-foreground">{d.hold_period_years}yr hold</p>;
+            })()}
           </div>
           {/* Debt */}
           <div className="bg-card p-3">
@@ -3835,7 +3924,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       {([
                         { key: "em" as const, label: "Equity Multiple", suffix: "x", bpVal: businessPlan?.target_equity_multiple_min },
                         { key: "coc" as const, label: "Cash-on-Cash", suffix: "%", bpVal: undefined },
-                        { key: "irr_proxy" as const, label: "IRR (approx)", suffix: "%", bpVal: businessPlan?.target_irr_min },
+                        { key: "irr" as const, label: "IRR", suffix: "%", bpVal: businessPlan?.target_irr_min },
                       ]).map(opt => (
                         <button
                           key={opt.key}
@@ -3866,7 +3955,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           Use plan min ({businessPlan.target_equity_multiple_min}x)
                         </button>
                       )}
-                      {businessPlan && wizardMetric === "irr_proxy" && businessPlan.target_irr_min && (
+                      {businessPlan && wizardMetric === "irr" && businessPlan.target_irr_min && (
                         <button
                           className="ml-2 text-primary hover:underline"
                           onClick={() => setWizardTarget(businessPlan.target_irr_min!)}
@@ -3991,7 +4080,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           }
         });
         const computed = columns.map(c => ({ ...c, m: calc(c.data, calcMode) }));
-        const irrProxy = (em: number, years: number) => em > 0 && years > 0 ? (Math.pow(em, 1 / years) - 1) * 100 : 0;
+        const calcXirr = (m: ReturnType<typeof calc>, eq: number) => {
+          if (eq <= 0 || m.yearlyDCF.length === 0) return 0;
+          const flows: number[] = [-eq, ...m.yearlyDCF.map((yr, i) =>
+            i === m.yearlyDCF.length - 1 ? yr.cashFlow + m.exitEquity : yr.cashFlow
+          )];
+          return xirr(flows);
+        };
         const rows: Array<{ label: string; values: string[]; highlight?: boolean }> = [
           { label: "Purchase Price", values: computed.map(c => fc(c.data.purchase_price)) },
           { label: "Total Investment", values: computed.map(c => fc(c.m.totalCost)) },
@@ -4002,7 +4097,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           { label: "Cash-on-Cash", values: computed.map(c => c.m.coc !== 0 ? `${c.m.coc.toFixed(2)}%` : "—") },
           { label: "DSCR", values: computed.map(c => c.m.dscr > 0 ? `${c.m.dscr.toFixed(2)}x` : "—") },
           { label: "Equity Multiple", values: computed.map(c => c.m.em > 0 ? `${c.m.em.toFixed(2)}x` : "—"), highlight: true },
-          { label: "IRR (approx)", values: computed.map(c => { const v = irrProxy(c.m.em, c.data.hold_period_years); return v > 0 ? `${v.toFixed(2)}%` : "—"; }), highlight: true },
+          { label: "IRR", values: computed.map(c => { const v = calcXirr(c.m, c.m.equity); return v > 0 ? `${v.toFixed(2)}%` : "—"; }), highlight: true },
           { label: "Exit Value", values: computed.map(c => fc(c.m.exitValue)) },
           { label: "Exit Cap Rate", values: computed.map(c => c.data.exit_cap_rate > 0 ? `${c.data.exit_cap_rate.toFixed(2)}%` : "—") },
           { label: "Hold Period", values: computed.map(c => `${c.data.hold_period_years}yr`) },

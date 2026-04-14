@@ -3,18 +3,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { dealQueries, underwritingQueries, omAnalysisQueries, dealNoteQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
+import { parseJsonObject } from "@/lib/parse-json";
 
-const MODEL = "claude-sonnet-4-5";
-
-function parseJson<T>(raw: string, fallback: T): T {
-  try {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) return fallback;
-    return JSON.parse(match[0]) as T;
-  } catch {
-    return fallback;
-  }
-}
+const MODEL = "claude-sonnet-4-6";
 
 interface LoanSizeResult {
   acq_pp_ltv: number;
@@ -157,14 +148,20 @@ Rules:
 - exit_cap_rate: as percentage (6.5 = 6.5%), typically going-in + 25-75 bps
 - All rates as percentages (7.5 = 7.5%, not 0.075)`;
 
-    const response = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create({
-      model: MODEL,
-      max_tokens: 1500,
-      messages: [{ role: "user", content: prompt }],
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25_000);
+    let raw = "{}";
+    try {
+      const response = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create(
+        { model: MODEL, max_tokens: 1500, messages: [{ role: "user", content: prompt }] },
+        { signal: controller.signal }
+      );
+      raw = response.content[0].type === "text" ? response.content[0].text : "{}";
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
-    const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
-    const suggested = parseJson<LoanSizeResult>(raw, FALLBACK);
+    const { value: suggested, usedFallback } = parseJsonObject<LoanSizeResult>(raw, FALLBACK);
 
     // Compute blended LTC for reference
     const ppLoan = (purchasePrice + closingCosts) * ((suggested.acq_pp_ltv || 70) / 100);
@@ -176,6 +173,7 @@ Rules:
         ...suggested,
         blended_ltc: Math.round(blendedLtc * 10) / 10,
       },
+      used_fallback: usedFallback,
     });
   } catch (error) {
     console.error("POST /api/deals/[id]/loan-size error:", error);

@@ -4,7 +4,7 @@ import { CONCISE_STYLE } from "./ai-style";
 import { getSetting } from "./admin-helpers";
 import { aiPromptQueries } from "./db";
 
-const DEFAULT_MODEL = "claude-sonnet-4-5";
+const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 /**
  * Returns the Claude model the admin has configured (or the default).

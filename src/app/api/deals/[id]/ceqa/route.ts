@@ -13,10 +13,6 @@ export async function GET(
     if (accessError) return accessError;
 
     const pool = getPool();
-    try {
-      await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS ceqa_data JSONB");
-    } catch { /* column may already exist */ }
-
     const res = await pool.query("SELECT ceqa_data FROM deals WHERE id = $1", [params.id]);
     return NextResponse.json({ data: res.rows[0]?.ceqa_data || null });
   } catch (error) {
@@ -36,10 +32,6 @@ export async function PUT(
     if (accessError) return accessError;
 
     const pool = getPool();
-    try {
-      await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS ceqa_data JSONB");
-    } catch { /* column may already exist */ }
-
     const body = await req.json();
     await pool.query(
       "UPDATE deals SET ceqa_data = $1, updated_at = NOW() WHERE id = $2",

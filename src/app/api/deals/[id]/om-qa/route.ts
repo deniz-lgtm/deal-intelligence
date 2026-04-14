@@ -99,7 +99,7 @@ export async function POST(
       score_reasoning: analysis.score_reasoning ?? "",
       summary: analysis.summary ?? "",
       recommendations: (analysis.recommendations as string[]) ?? [],
-      model_used: analysis.model_used ?? "claude-sonnet-4-5",
+      model_used: analysis.model_used ?? "claude-sonnet-4-6",
       tokens_used: analysis.tokens_used ?? 0,
       cost_estimate: analysis.cost_estimate ?? 0,
       processing_ms: analysis.processing_ms ?? 0,
@@ -119,7 +119,7 @@ export async function POST(
       deal_id: params.id,
       question,
       answer,
-      model_used: "claude-sonnet-4-5",
+      model_used: "claude-sonnet-4-6",
       tokens_used: tokensUsed,
       cost_estimate: costEstimate,
     });

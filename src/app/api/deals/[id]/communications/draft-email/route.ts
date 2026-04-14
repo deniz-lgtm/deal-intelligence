@@ -171,7 +171,7 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences):
 
     const client = getClient();
     const response = await client.messages.create({
-      model: "claude-sonnet-4-5",
+      model: "claude-sonnet-4-6",
       max_tokens: 1500,
       messages: [{ role: "user", content: prompt }],
     });

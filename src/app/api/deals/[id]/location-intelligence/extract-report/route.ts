@@ -11,7 +11,7 @@ import type { DemographicSnapshot } from "@/lib/types";
 // Matrix, etc.) and Claude extracts structured demographic data. This lets
 // users bring in sub-mile-radius data that free Census APIs can't provide.
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });

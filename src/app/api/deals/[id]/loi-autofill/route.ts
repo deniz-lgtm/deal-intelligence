@@ -10,7 +10,7 @@ import type { LOIData, UnderwritingData } from "@/lib/types";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 function parseJson<T>(raw: string, fallback: T): T {

@@ -4,7 +4,7 @@ import { dealQueries, dealNoteQueries, omAnalysisQueries, underwritingQueries } 
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 
 function parseJsonArray(raw: string): unknown[] {
   try {
@@ -83,35 +83,38 @@ export async function POST(
     const isGroundUp = deal.investment_strategy === "ground_up";
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25_000);
 
-    if (isGroundUp) {
-      const prompt = buildGroundUpPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
-      const response = await client.messages.create({
-        model: MODEL,
-        max_tokens: 500,
-        messages: [{ role: "user", content: prompt }],
-      });
-      const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
-      const parsed = parseJsonObject(raw);
-      return NextResponse.json({
-        hard_cost_per_sf: parsed?.hard_cost_per_sf ?? 150,
-        soft_cost_pct: parsed?.soft_cost_pct ?? 25,
-        basis: parsed?.basis ?? "",
-        strategy: "ground_up",
-      });
+    try {
+      if (isGroundUp) {
+        const prompt = buildGroundUpPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
+        const response = await client.messages.create(
+          { model: MODEL, max_tokens: 500, messages: [{ role: "user", content: prompt }] },
+          { signal: controller.signal }
+        );
+        const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
+        const parsed = parseJsonObject(raw);
+        return NextResponse.json({
+          hard_cost_per_sf: parsed?.hard_cost_per_sf ?? 150,
+          soft_cost_pct: parsed?.soft_cost_pct ?? 25,
+          basis: parsed?.basis ?? "",
+          strategy: "ground_up",
+        });
+      }
+
+      const prompt = buildValueAddPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
+      const response = await client.messages.create(
+        { model: MODEL, max_tokens: 1500, messages: [{ role: "user", content: prompt }] },
+        { signal: controller.signal }
+      );
+      const raw = response.content[0].type === "text" ? response.content[0].text : "[]";
+      const estimates = parseJsonArray(raw);
+
+      return NextResponse.json({ data: estimates, strategy: deal.investment_strategy || "value_add" });
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    const prompt = buildValueAddPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 1500,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const raw = response.content[0].type === "text" ? response.content[0].text : "[]";
-    const estimates = parseJsonArray(raw);
-
-    return NextResponse.json({ data: estimates, strategy: deal.investment_strategy || "value_add" });
   } catch (error) {
     console.error("POST /api/deals/[id]/capex-estimate error:", error);
     return NextResponse.json({ error: "Estimation failed" }, { status: 500 });

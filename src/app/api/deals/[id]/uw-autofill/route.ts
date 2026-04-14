@@ -5,7 +5,7 @@ import { dealQueries, omAnalysisQueries, getPool } from "@/lib/db";
 import { pdfToImages, imageContentBlocks } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 
 function parseJson<T>(raw: string, fallback: T): T {
   try {
@@ -256,13 +256,18 @@ Respond with ONLY the JSON object, no explanation.`;
     }
     messageContent.push({ type: "text", text: prompt });
 
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 2048,
-      messages: [{ role: "user", content: messageContent }],
-    });
-
-    const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000); // PDF extraction can be slower
+    let raw = "{}";
+    try {
+      const response = await client.messages.create(
+        { model: MODEL, max_tokens: 2048, messages: [{ role: "user", content: messageContent }] },
+        { signal: controller.signal }
+      );
+      raw = response.content[0].type === "text" ? response.content[0].text : "{}";
+    } finally {
+      clearTimeout(timeoutId);
+    }
     const extracted = parseJson<AutofillResult>(raw, {
       purchase_price: null,
       unit_groups: [],

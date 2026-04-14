@@ -3,7 +3,7 @@ import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, che
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 let _client: Anthropic | null = null;
 function getClient() {
   if (!_client) _client = new Anthropic();

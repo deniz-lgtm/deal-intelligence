@@ -4,12 +4,12 @@ import { requireAdmin } from "@/lib/auth";
 import { getSetting, setSetting, recordAudit } from "@/lib/admin-helpers";
 import { clearAiConfigCache } from "@/lib/claude";
 
-const DEFAULT_MODEL = "claude-sonnet-4-5";
+const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 const AVAILABLE_MODELS = [
   "claude-opus-4-6",
   "claude-sonnet-4-6",
-  "claude-sonnet-4-5",
+  "claude-sonnet-4-6",
   "claude-haiku-4-5-20251001",
 ];
 

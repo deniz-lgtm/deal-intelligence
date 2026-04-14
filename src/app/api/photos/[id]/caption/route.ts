@@ -4,7 +4,7 @@ import type { Photo, Deal } from "@/lib/types";
 import fs from "fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 
 export async function POST(
   _req: Request,

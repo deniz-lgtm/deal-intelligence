@@ -6,7 +6,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { CONCISE_STYLE } from "./ai-style";
 
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-4-6";
 
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -485,7 +485,7 @@ export async function extractOmFull(pdfText: string, dealContext?: string, pdfBu
 
   const processingMs = Date.now() - startMs;
 
-  // Cost estimate: claude-sonnet-4-5 pricing (~$3/M input, $15/M output — approximate)
+  // Cost estimate: claude-sonnet-4-6 pricing (~$3/M input, $15/M output — approximate)
   const costEstimate = (totalTokens / 1_000_000) * 9;
 
   return {

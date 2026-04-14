@@ -14,11 +14,6 @@ export async function GET(
     if (accessError) return accessError;
 
     const pool = getPool();
-    // Ensure column exists (idempotent)
-    try {
-      await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS predev_settings JSONB");
-    } catch {}
-
     const res = await pool.query("SELECT predev_settings FROM deals WHERE id = $1", [params.id]);
     const settings = res.rows[0]?.predev_settings || {
       total_budget: null,
@@ -42,10 +37,6 @@ export async function PATCH(
     if (accessError) return accessError;
 
     const pool = getPool();
-    try {
-      await pool.query("ALTER TABLE deals ADD COLUMN IF NOT EXISTS predev_settings JSONB");
-    } catch {}
-
     const body = await req.json();
     await pool.query(
       "UPDATE deals SET predev_settings = $1, updated_at = NOW() WHERE id = $2",

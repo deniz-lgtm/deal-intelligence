@@ -27,10 +27,7 @@ async function ensureDevPhasesTable() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  // Idempotent column adds for existing tables
-  await pool.query("ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS duration_days INTEGER").catch(() => {});
-  await pool.query("ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS predecessor_id TEXT").catch(() => {});
-  await pool.query("ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS lag_days INTEGER NOT NULL DEFAULT 0").catch(() => {});
+  // Note: column additions are handled by the startup migration in src/lib/db.ts
 }
 
 async function recomputeSchedule(dealId: string) {
