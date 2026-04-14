@@ -521,9 +521,18 @@ export interface ExtractedCompDraft {
   notes: string | null;
 }
 
-const COMP_EXTRACTION_PROMPT = `You are a commercial real estate analyst extracting a single comparable property from unstructured listing text that an analyst pasted in. The analyst already viewed the source themselves.
+const COMP_EXTRACTION_PROMPT = `You are a commercial real estate analyst extracting a single comparable property from listing material an analyst has supplied (pasted text, screenshots, and/or a source URL slug). The analyst already viewed the source themselves.
 
 Decide whether this is a SALE comp (a transaction or asking-price listing for acquisition) or a RENT comp (a rental listing or lease comp). Extract whatever structured fields you can find. Use null for anything not clearly stated. Do NOT fabricate values.
+
+If the listing covers a single building with multiple available units (typical of apartment / multifamily rental listings — e.g. Zillow's "Available units" table on an apartment community page, or a CoStar rent-roll snippet), produce ONE comp for the BUILDING:
+  - Use the building / community name as 'name'.
+  - Average the per-unit base rents into 'rent_per_unit' (monthly).
+  - In 'notes', list the per-unit breakdown: e.g. "Units listed: Studio 455sf $2,395; 1BR/1ba 581sf $2,595; 1BR/1ba 583sf $2,795. 14 units available across 3 floor plans."
+  - 'units' = total unit count if visible (use the building's stated unit count, not just the available-unit count if both are shown).
+  - Mark confidence proportional to how clearly the building-level fields are visible.
+
+If the input includes a source URL, treat its slug as a hint about the property name and city — but only as a hint; the on-screen / pasted content takes precedence.
 
 Return ONLY a single JSON object with exactly these fields (null for unknown):
 
@@ -550,7 +559,7 @@ Return ONLY a single JSON object with exactly these fields (null for unknown):
   "lease_type": "NNN | MG | Gross | Modified Gross | null",
   "distance_mi": null,
   "confidence": 0.85,
-  "notes": "Any useful qualitative context from the listing (tenants, amenities, recent renovations, etc.)"
+  "notes": "Any useful qualitative context from the listing (tenants, amenities, recent renovations, per-unit rent breakdown, etc.)"
 }
 
 Rules:
@@ -563,27 +572,69 @@ Rules:
 - confidence is your honest 0-1 estimate of how well the listing supported your extraction.
 - Respond with ONLY the JSON object. No markdown fences, no explanation.`;
 
+export interface ExtractCompImage {
+  /** "image/png" | "image/jpeg" | "image/webp" | "image/gif" — Claude vision media types */
+  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  /** Raw base64 data (no data: URL prefix) */
+  data: string;
+}
+
 export async function extractCompFromText(
   pastedText: string,
-  opts: { expectedType?: "sale" | "rent"; sourceUrl?: string } = {}
+  opts: {
+    expectedType?: "sale" | "rent";
+    sourceUrl?: string;
+    images?: ExtractCompImage[];
+  } = {}
 ): Promise<ExtractedCompDraft | null> {
-  if (!pastedText || pastedText.trim().length < 20) return null;
+  const trimmedText = (pastedText || "").trim();
+  const images = opts.images ?? [];
+
+  // Need at least one of: 20+ chars of text, a source URL, or one image.
+  if (trimmedText.length < 20 && images.length === 0 && !opts.sourceUrl) {
+    return null;
+  }
 
   try {
     const header = opts.expectedType
       ? `The analyst indicated this should be a ${opts.expectedType.toUpperCase()} comp.\n`
       : "";
     const sourceLine = opts.sourceUrl
-      ? `Source URL (reference only, do not attempt to access): ${opts.sourceUrl}\n`
+      ? `Source URL (reference only — analyst pulled this in their own browser; do not attempt to access): ${opts.sourceUrl}\n`
       : "";
+    const textBlock = trimmedText
+      ? `\nPASTED LISTING TEXT:\n"""\n${trimmedText.slice(0, 12000)}\n"""\n`
+      : "";
+    const imageNote =
+      images.length > 0
+        ? `\nThe analyst attached ${images.length} screenshot${
+            images.length === 1 ? "" : "s"
+          } / image${images.length === 1 ? "" : "s"} of the listing — extract data from them as the primary source of truth.\n`
+        : "";
 
-    const userContent =
-      `${header}${sourceLine}PASTED LISTING TEXT:\n"""\n${pastedText.slice(0, 12000)}\n"""\n\n${COMP_EXTRACTION_PROMPT}`;
+    const userText = `${header}${sourceLine}${textBlock}${imageNote}\n${COMP_EXTRACTION_PROMPT}`;
+
+    // Build a multi-modal content array: images first (better for visual
+    // grounding), then the text/instructions.
+    const content: Anthropic.ContentBlockParam[] = [
+      ...images.map(
+        (img) =>
+          ({
+            type: "image" as const,
+            source: {
+              type: "base64" as const,
+              media_type: img.mediaType,
+              data: img.data,
+            },
+          } satisfies Anthropic.ImageBlockParam)
+      ),
+      { type: "text", text: userText },
+    ];
 
     const response = await getClient().messages.create({
       model: await getActiveModel(),
       max_tokens: 1024,
-      messages: [{ role: "user", content: userContent }],
+      messages: [{ role: "user", content }],
     });
 
     const raw =
