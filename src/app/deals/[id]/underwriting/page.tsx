@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import DealNotes from "@/components/DealNotes";
 import { UnderwritingCoPilot } from "@/components/UnderwritingCoPilot";
-import AffordabilityPlanner from "@/components/AffordabilityPlanner";
+import AffordabilityPlanner, { type AffordabilityConfig } from "@/components/AffordabilityPlanner";
 import AmiReference from "@/components/AmiReference";
 import type {
   DevBudgetLineItem, ParkingConfig, ParkingEntry, ParkingType,
@@ -178,15 +178,10 @@ interface UWData {
   // AI estimate narratives
   opex_narrative: string;
   loan_narrative: string;
-  // Affordability config (set from Programming page)
-  affordability_config: {
-    enabled: boolean;
-    tiers: Array<{ ami_pct: number; units_pct: number; units_count: number }>;
-    tax_exemption_enabled: boolean;
-    tax_exemption_pct: number;
-    tax_exemption_years: number;
-    tax_exemption_type: string;
-  } | null;
+  // Affordability config (set from Programming page or the in-page
+  // AffordabilityPlanner). The shape is owned by AffordabilityPlanner — see
+  // src/components/AffordabilityPlanner.tsx.
+  affordability_config: AffordabilityConfig | null;
 }
 
 const DEFAULT: UWData = {

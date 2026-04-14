@@ -2,6 +2,7 @@ import type {
   DevBudgetLineItem, ParkingConfig, LeaseUpConfig, ConstructionLoanConfig,
   MixedUseConfig, RedevelopmentConfig,
 } from "@/lib/types";
+import type { AffordabilityConfig } from "@/components/AffordabilityPlanner";
 
 export type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 
@@ -125,14 +126,7 @@ export interface UWData {
   site_info: any;
   opex_narrative: string;
   loan_narrative: string;
-  affordability_config: {
-    enabled: boolean;
-    tiers: Array<{ ami_pct: number; units_pct: number; units_count: number }>;
-    tax_exemption_enabled: boolean;
-    tax_exemption_pct: number;
-    tax_exemption_years: number;
-    tax_exemption_type: string;
-  } | null;
+  affordability_config: AffordabilityConfig | null;
 }
 
 export const DEFAULT: UWData = {

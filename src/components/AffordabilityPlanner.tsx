@@ -11,7 +11,7 @@ import { toast } from "sonner";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-interface AmiTier {
+export interface AmiTier {
   id: string;
   ami_pct: number;           // e.g., 60 for 60% AMI
   units_pct: number;         // % of total units at this tier
@@ -22,7 +22,7 @@ interface AmiTier {
   max_rent_3br: number;
 }
 
-interface AffordabilityConfig {
+export interface AffordabilityConfig {
   enabled: boolean;
   tiers: AmiTier[];
   total_units: number;
