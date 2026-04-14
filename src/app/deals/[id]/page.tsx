@@ -43,6 +43,7 @@ import {
   STAGE_GATES,
   INVESTMENT_THESIS_LABELS,
 } from "@/lib/types";
+import { calc, getDefaultsForPropertyType, type UWData } from "@/lib/underwriting-calc";
 
 const STATUS_BADGE_VARIANT: Record<DealStatus, "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "issue"> = {
   sourcing: "secondary",
@@ -924,105 +925,45 @@ interface FinancialHighlights {
   equityMultiple: number | null;
 }
 
-function computeHighlights(uw: UnderwritingData | null, deal: Deal): FinancialHighlights | null {
-  if (!uw) return null;
+function computeHighlights(rawUw: any | null, deal: Deal): FinancialHighlights | null {
+  if (!rawUw) return null;
 
-  const price = uw.purchase_price || deal.asking_price;
-  if (!price) return null;
+  try {
+    // Parse if string, and merge with defaults to ensure all fields exist
+    const parsed = typeof rawUw.data === "string" ? JSON.parse(rawUw.data) : rawUw;
+    const typeDefaults = getDefaultsForPropertyType(deal.property_type);
+    const uw = { ...typeDefaults, ...parsed } as UWData;
 
-  const isCommercial = !["multifamily", "student_housing"].includes(deal.property_type || "");
-  const groups = uw.unit_groups || [];
-  const totalUnits = groups.reduce((s, g) => s + (g.unit_count || 0), 0);
+    // Determine property type for calc
+    const mode: "commercial" | "multifamily" | "student_housing" =
+      deal.property_type === "multifamily" ? "multifamily" :
+      deal.property_type === "student_housing" ? "student_housing" :
+      "commercial";
 
-  // Compute gross potential rent
-  let annualGPR = 0;
-  for (const g of groups) {
-    if (isCommercial) {
-      const sf = (g.sf_per_unit || 0) * (g.unit_count || 0);
-      annualGPR += sf * (g.market_rent_per_sf || g.current_rent_per_sf || 0);
-    } else {
-      const beds = (g.beds_per_unit || 1) * (g.unit_count || 0);
-      annualGPR += beds * (g.market_rent_per_bed || g.current_rent_per_bed || 0) * 12;
-    }
-  }
+    // Call the full calc function
+    const metrics = calc(uw, mode);
 
-  const vacancy = uw.vacancy_rate || 5;
-  const egi = annualGPR * (1 - vacancy / 100);
-
-  // OpEx
-  const mgmt = egi * (uw.management_fee_pct || 0) / 100;
-  const opex = mgmt + (uw.taxes_annual || 0) + (uw.insurance_annual || 0)
-    + (uw.repairs_per_unit_annual || 0) * totalUnits
-    + (uw.utilities_annual || 0) + (uw.other_expenses_annual || 0);
-
-  const noi = egi - opex;
-  const capRate = price > 0 ? (noi / price) * 100 : null;
-
-  // Price per unit/SF
-  let pricePerUnit: number | null = null;
-  let pricePerUnitLabel = "Price / Unit";
-  if (isCommercial) {
-    const totalSF = groups.reduce((s, g) => s + (g.sf_per_unit || 0) * (g.unit_count || 0), 0);
-    if (totalSF > 0) {
-      pricePerUnit = price / totalSF;
+    // Determine label for price per unit
+    let pricePerUnitLabel = "Price / Unit";
+    if (mode === "commercial") {
       pricePerUnitLabel = "Price / SF";
-    }
-  } else if (totalUnits > 0) {
-    pricePerUnit = price / totalUnits;
-    pricePerUnitLabel = deal.property_type === "student_housing" ? "Price / Bed" : "Price / Unit";
-  }
-
-  // Debt service
-  let annualDebtService: number | null = null;
-  if (uw.has_financing && uw.loan_to_value > 0 && uw.interest_rate > 0) {
-    const loanAmt = price * (uw.loan_to_value / 100);
-    const closingCosts = price * ((uw.closing_costs_pct || 2) / 100);
-    const r = uw.interest_rate / 100 / 12;
-    const n = (uw.amortization_years || 30) * 12;
-    const monthlyPayment = uw.io_period_years && uw.io_period_years > 0
-      ? loanAmt * r  // IO period
-      : loanAmt * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
-    annualDebtService = monthlyPayment * 12;
-
-    const equity = price + closingCosts - loanAmt;
-    const cashFlow = noi - annualDebtService;
-
-    const cashOnCash = equity > 0 ? (cashFlow / equity) * 100 : null;
-    const dscr = annualDebtService > 0 ? noi / annualDebtService : null;
-
-    // Simple equity multiple: (cumulative CF + exit equity) / initial equity
-    const holdYears = uw.hold_period_years || 5;
-    const exitCap = uw.exit_cap_rate || 0;
-    let equityMultiple: number | null = null;
-    if (exitCap > 0 && equity > 0) {
-      const exitValue = noi / (exitCap / 100);
-      // Rough loan balance (simplified — assume IO for simplicity)
-      const exitEquity = exitValue - loanAmt;
-      const totalCF = cashFlow * holdYears + exitEquity;
-      equityMultiple = totalCF / equity;
+    } else if (mode === "student_housing") {
+      pricePerUnitLabel = "Price / Bed";
     }
 
     return {
-      capRate: capRate && capRate > 0 ? capRate : null,
-      noi: noi > 0 ? noi : null,
-      pricePerUnit,
+      capRate: metrics.proformaCapRate > 0 ? metrics.proformaCapRate : null,
+      noi: metrics.proformaNOI > 0 ? metrics.proformaNOI : null,
+      pricePerUnit: metrics.pricePerUnit > 0 ? metrics.pricePerUnit : null,
       pricePerUnitLabel,
-      cashOnCash: cashOnCash && cashOnCash !== 0 ? cashOnCash : null,
-      dscr: dscr && dscr > 0 ? dscr : null,
-      equityMultiple: equityMultiple && equityMultiple > 0 ? equityMultiple : null,
+      cashOnCash: metrics.coc && metrics.coc !== 0 ? metrics.coc : null,
+      dscr: metrics.dscr && metrics.dscr > 0 ? metrics.dscr : null,
+      equityMultiple: metrics.em && metrics.em > 0 ? metrics.em : null,
     };
+  } catch (e) {
+    console.error("Error computing highlights:", e);
+    return null;
   }
-
-  // No financing — just return property-level metrics
-  return {
-    capRate: capRate && capRate > 0 ? capRate : null,
-    noi: noi > 0 ? noi : null,
-    pricePerUnit,
-    pricePerUnitLabel,
-    cashOnCash: null,
-    dscr: null,
-    equityMultiple: null,
-  };
 }
 
 function MetricCard({
