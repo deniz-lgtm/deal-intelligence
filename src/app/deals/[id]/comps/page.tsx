@@ -187,7 +187,7 @@ export default function CompsPage({ params }: { params: { id: string } }) {
     }
   }, [params.id]);
 
-  async function handleGeocodeSubject() {
+  const handleGeocodeSubject = useCallback(async (silent = false) => {
     setGeocodingSubject(true);
     try {
       const res = await fetch(`/api/deals/${params.id}/geocode`, {
@@ -195,15 +195,23 @@ export default function CompsPage({ params }: { params: { id: string } }) {
       });
       const json = await res.json();
       if (!res.ok) {
-        toast.error(json.error || "Failed to geocode subject deal");
+        if (!silent) toast.error(json.error || "Failed to geocode subject deal");
         return;
       }
-      toast.success("Subject deal geocoded");
+      if (!silent) toast.success("Subject deal geocoded");
       loadData();
     } finally {
       setGeocodingSubject(false);
     }
-  }
+  }, [params.id, loadData]);
+
+  // Auto-geocode on load if subject has an address but no coords
+  useEffect(() => {
+    if (subject && subject.address && (!subject.lat || !subject.lng) && !geocodingSubject) {
+      handleGeocodeSubject(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subject?.address, subject?.lat, subject?.lng]);
 
   async function handleGeocodeMissing() {
     setGeocodingMissing(true);
@@ -538,25 +546,19 @@ export default function CompsPage({ params }: { params: { id: string } }) {
       {!subject?.lat || !subject?.lng ? (
         <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/10 border border-border/30 text-xs">
           <div className="flex items-center gap-2 text-muted-foreground">
-            <MapPinned className="h-3.5 w-3.5 flex-shrink-0" />
+            {geocodingSubject ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0" />
+            ) : (
+              <MapPinned className="h-3.5 w-3.5 flex-shrink-0" />
+            )}
             <span>
-              Geocode this deal to show distance-from-subject for comps and
-              unlock the radius filter.
+              {geocodingSubject
+                ? "Geocoding property address…"
+                : subject?.address
+                ? "Unable to geocode this address — verify it's correct on the deal overview."
+                : "Add an address to the deal to unlock distance-based comp filtering."}
             </span>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleGeocodeSubject}
-            disabled={geocodingSubject || !subject?.address}
-          >
-            {geocodingSubject ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-            ) : (
-              <MapPinned className="h-3.5 w-3.5 mr-1.5" />
-            )}
-            Geocode Subject
-          </Button>
         </div>
       ) : (
         <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs">

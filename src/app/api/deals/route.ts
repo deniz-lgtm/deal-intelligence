@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { dealQueries, checklistQueries, checklistTemplateQueries } from "@/lib/db";
 import { DILIGENCE_CHECKLIST_TEMPLATE } from "@/lib/types";
 import { requireAuth, requirePermission, syncCurrentUser } from "@/lib/auth";
+import { geocodeAddress, buildCompAddress } from "@/lib/geocode";
 
 export async function GET() {
   const { userId, errorResponse } = await requireAuth();
@@ -77,6 +78,27 @@ export async function POST(req: NextRequest) {
       source_document_ids: null,
     }));
     await checklistQueries.bulkUpsert(checklistItems);
+
+    // Auto-geocode the deal address so downstream features (comps radius,
+    // location intelligence, AMI lookups) work without manual intervention.
+    // Non-fatal — if geocoding fails, the deal still gets created.
+    try {
+      const address = buildCompAddress({
+        address: deal.address,
+        city: deal.city,
+        state: deal.state,
+      });
+      if (address) {
+        const result = await geocodeAddress(address);
+        if (result) {
+          await dealQueries.update(id, { lat: result.lat, lng: result.lng });
+          deal.lat = result.lat;
+          deal.lng = result.lng;
+        }
+      }
+    } catch (err) {
+      console.warn("Auto-geocode failed for deal", id, err);
+    }
 
     return NextResponse.json({ data: deal }, { status: 201 });
   } catch (error) {

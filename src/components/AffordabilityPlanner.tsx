@@ -121,10 +121,11 @@ export default function AffordabilityPlanner({
     setLoadingAmi(false);
   }, [dealId]);
 
-  // Auto-fetch AMI on open if not loaded
+  // Auto-fetch AMI on mount so presets work immediately without user action
   useEffect(() => {
-    if (open && !ami) fetchAmi();
-  }, [open, ami, fetchAmi]);
+    if (!ami) fetchAmi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Recompute when tiers change
   function updateConfig(newConfig: Partial<AffordabilityConfig>) {
@@ -218,9 +219,11 @@ export default function AffordabilityPlanner({
   const revenueImpact = marketGPR - blendedGPR;
   const revenueImpactPct = marketGPR > 0 ? (revenueImpact / marketGPR) * 100 : 0;
 
-  // Tax savings
-  const taxSavings = config.tax_exemption_enabled
-    ? currentTaxes * (config.tax_exemption_pct / 100)
+  // Tax savings — pro-rata by unit count
+  // Example: 100 units total, 20 affordable, $100k total taxes, 100% exemption
+  //          → (20/100) × $100k × 100% = $20k savings
+  const taxSavings = config.tax_exemption_enabled && totalUnits > 0
+    ? (affordableUnits / totalUnits) * currentTaxes * (config.tax_exemption_pct / 100)
     : 0;
 
   return (
@@ -249,11 +252,16 @@ export default function AffordabilityPlanner({
                 <span className="text-muted-foreground"> — {ami.area_name}, FY{ami.year}</span>
               </span>
             </div>
+          ) : loadingAmi ? (
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/10 border border-border/30 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0" />
+              <span>Loading AMI data from HUD…</span>
+            </div>
           ) : (
-            <Button size="sm" variant="outline" onClick={fetchAmi} disabled={loadingAmi}>
-              {loadingAmi ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <DollarSign className="h-3.5 w-3.5 mr-1.5" />}
-              Load AMI Data
-            </Button>
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs text-amber-400">
+              <DollarSign className="h-3.5 w-3.5 flex-shrink-0" />
+              <span>Unable to load AMI data. Verify the property address is geocoded.</span>
+            </div>
           )}
 
           {/* Quick presets */}
@@ -424,7 +432,9 @@ export default function AffordabilityPlanner({
                   <div className="border border-border/40 rounded-lg bg-muted/10 p-2.5">
                     <div className="text-[10px] text-muted-foreground">Tax Savings</div>
                     <div className="text-sm font-semibold text-emerald-400">+{fc(taxSavings)}/yr</div>
-                    <div className="text-[10px] text-muted-foreground">{config.tax_exemption_years}yr term</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {affordableUnits}/{totalUnits} units × {config.tax_exemption_pct}%
+                    </div>
                   </div>
                 )}
               </div>

@@ -984,7 +984,17 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   };
   const isSH = deal?.property_type === "student_housing";
   const isMixedUseWithRes = deal?.property_type === "mixed_use" && (data.mixed_use?.components || []).some(c => c.component_type === "residential");
-  const isMF = deal?.property_type === "multifamily" || isSH || isMixedUseWithRes;
+  // Detect residential development on a land deal by checking if the massing
+  // scenario has residential use or if existing unit_groups are bed/rent-per-unit shaped.
+  const detectionScenario = (data.building_program?.scenarios || []).find((s: { id: string }) => s.id === data.building_program?.active_scenario_id);
+  const massingHasResidential = detectionScenario?.floors?.some((f: { use_type: string }) => f.use_type === "residential");
+  const unitGroupsLookResidential = (data.unit_groups || []).some((g: { market_rent_per_unit?: number; current_rent_per_unit?: number; beds_per_unit?: number }) =>
+    (g.market_rent_per_unit ?? 0) > 0 || (g.current_rent_per_unit ?? 0) > 0 || (g.beds_per_unit ?? 0) > 0
+  );
+  const isLandDevResidential = (deal?.property_type === "land" || deal?.property_type === "other") &&
+    (data.development_mode || deal?.investment_strategy === "ground_up") &&
+    (massingHasResidential || unitGroupsLookResidential);
+  const isMF = deal?.property_type === "multifamily" || isSH || isMixedUseWithRes || isLandDevResidential;
   const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
   const isGroundUp = deal?.investment_strategy === "ground_up";
 
@@ -2276,28 +2286,33 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           const pctUsed = d.max_nrsf > 0 ? (allocatedNRSF / d.max_nrsf) * 100 : 0;
           const barColor = pctUsed > 100 ? "bg-red-500" : pctUsed > 90 ? "bg-amber-500" : "bg-emerald-500";
           return (
-            <div className="mt-3 mb-4 p-4 border border-border/40 rounded-lg bg-muted/20">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">NRSF Budget</h4>
-                <div className="flex items-center gap-3 text-xs tabular-nums">
-                  <span className="text-muted-foreground">Allocated: <span className="font-semibold text-foreground">{fn(allocatedNRSF)}</span></span>
-                  <span className="text-muted-foreground">of <span className="font-semibold">{fn(d.max_nrsf)}</span> NRSF</span>
-                  <span className={`font-semibold ${remainingNRSF < 0 ? "text-red-400" : "text-emerald-400"}`}>
-                    {remainingNRSF >= 0 ? `${fn(remainingNRSF)} remaining` : `${fn(Math.abs(remainingNRSF))} over budget`}
-                  </span>
+            <div className="mt-3 mb-4 p-4 border border-primary/30 rounded-lg bg-primary/5">
+              <div className="flex items-start justify-between mb-2 gap-4 flex-wrap">
+                <div>
+                  <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">NRSF Budget from Building Massing</h4>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Target NRSF must match the massing scenario from the Programming page. Adjust unit sizes or counts below to fit.</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Target (from Massing)</div>
+                  <div className="text-lg font-bold text-primary tabular-nums">{fn(d.max_nrsf)} <span className="text-xs text-muted-foreground">NRSF</span></div>
                 </div>
               </div>
-              <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-3 bg-muted rounded-full overflow-hidden relative">
                 <div className={`h-full ${barColor} transition-all duration-300 rounded-full`} style={{ width: `${Math.min(pctUsed, 100)}%` }} />
+                {/* 100% target marker */}
+                <div className="absolute top-0 bottom-0 w-0.5 bg-primary" style={{ left: "100%" }} />
               </div>
-              {pctUsed > 100 && (
-                <p className="text-xs text-red-400 mt-1.5">Unit SF allocations exceed maximum NRSF. Reduce unit sizes or counts.</p>
-              )}
+              <div className="flex items-center justify-between mt-1.5 text-xs tabular-nums">
+                <span className="text-muted-foreground">Allocated: <span className="font-semibold text-foreground">{fn(allocatedNRSF)}</span> NRSF ({pctUsed.toFixed(1)}%)</span>
+                <span className={`font-semibold ${remainingNRSF < 0 ? "text-red-400" : remainingNRSF === 0 ? "text-emerald-400" : "text-amber-400"}`}>
+                  {remainingNRSF > 0 ? `${fn(remainingNRSF)} NRSF remaining — add more units` : remainingNRSF === 0 ? "Perfect match with massing" : `${fn(Math.abs(remainingNRSF))} NRSF over budget — reduce units`}
+                </span>
+              </div>
               {d.max_gsf > 0 && (
-                <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
+                <div className="flex items-center gap-4 mt-2 pt-2 border-t border-border/30 text-[10px] text-muted-foreground">
                   <span>Max GSF: {fn(d.max_gsf)}</span>
                   <span>Efficiency: {d.efficiency_pct}%</span>
-                  <span>Max NRSF: {fn(d.max_nrsf)}</span>
+                  <span>→ Max NRSF: {fn(d.max_nrsf)}</span>
                 </div>
               )}
             </div>
@@ -2543,18 +2558,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <Plus className="h-4 w-4 mr-2" /> Add Row
             </Button>
           </div>
-          {/* Other Income + Parking Revenue */}
+          {/* Parking Revenue (other income items managed below in dedicated section) */}
           <div className="mt-4 border-t pt-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Other Income</h4>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-              <NumInput label="RUBS / Unit / Month" value={d.rubs_per_unit_monthly} onChange={v => set("rubs_per_unit_monthly", v)} prefix="$" decimals={0} />
-              <NumInput label="Laundry / Month (total)" value={d.laundry_monthly} onChange={v => set("laundry_monthly", v)} prefix="$" decimals={0} />
-              <div className="p-3 bg-muted/50 rounded-lg">
-                <p className="text-xs text-muted-foreground mb-1">Total Other Income</p>
-                <p className="text-sm font-semibold">{fc(m.totalOtherIncome)}<span className="text-muted-foreground/60 text-xs">/yr</span></p>
-              </div>
-            </div>
-
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Parking Revenue</h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
               <NumInput label="Reserved Spaces" value={d.parking_reserved_spaces} onChange={v => set("parking_reserved_spaces", v)} decimals={0} />

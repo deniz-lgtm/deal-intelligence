@@ -123,16 +123,90 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       const uwJson = await uwRes.json();
       const current = uwJson.data?.data ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data) : {};
 
+      // Split unit groups by affordability tiers if configured.
+      // The existing unit_groups represent the market-rate mix (e.g., Studio, 1BR, 2BR, 3BR).
+      // For each affordability tier, clone those unit types proportionally with the AMI rent.
+      let nextUnitGroups = current.unit_groups || [];
+      if (affordabilityConfig?.enabled && affordabilityConfig.tiers?.length > 0 && nextUnitGroups.length > 0) {
+        const totalCurrentUnits = nextUnitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
+        const totalAffordable = affordabilityConfig.tiers.reduce((s: number, t: any) => s + (t.units_count || 0), 0);
+        const marketUnits = Math.max(0, totalCurrentUnits - totalAffordable);
+
+        // Start with market-rate groups, scaled down proportionally
+        const marketRatio = totalCurrentUnits > 0 ? marketUnits / totalCurrentUnits : 0;
+        const marketGroups = nextUnitGroups
+          .filter((g: any) => !g.is_affordable)  // exclude existing affordable groups
+          .map((g: any) => ({
+            ...g,
+            id: g.id || uuidv4(),
+            label: g.label?.replace(/\s*\(Market\)|\s*\(Affordable.*\)/gi, "").trim() + " (Market)",
+            unit_count: Math.round((g.unit_count || 0) * marketRatio),
+            is_affordable: false,
+          }))
+          .filter((g: any) => g.unit_count > 0);
+
+        // Create affordable groups from tiers, allocating across same unit types proportionally
+        const marketTypeAllocations = nextUnitGroups.filter((g: any) => !g.is_affordable).map((g: any) => ({
+          baseGroup: g,
+          ratio: totalCurrentUnits > 0 ? (g.unit_count || 0) / totalCurrentUnits : 0,
+        }));
+
+        const affordableGroups: any[] = [];
+        for (const tier of affordabilityConfig.tiers) {
+          for (const { baseGroup, ratio } of marketTypeAllocations) {
+            const unitsForThisType = Math.round((tier.units_count || 0) * ratio);
+            if (unitsForThisType <= 0) continue;
+
+            // Determine rent from AMI based on bedroom count
+            const bedrooms = baseGroup.bedrooms || 0;
+            const amiRent =
+              bedrooms === 0 ? tier.max_rent_studio
+              : bedrooms === 1 ? tier.max_rent_1br
+              : bedrooms === 2 ? tier.max_rent_2br
+              : tier.max_rent_3br;
+
+            affordableGroups.push({
+              ...baseGroup,
+              id: uuidv4(),
+              label: `${baseGroup.label?.replace(/\s*\(Market\)|\s*\(Affordable.*\)/gi, "").trim()} (Affordable ${tier.ami_pct}% AMI)`,
+              unit_count: unitsForThisType,
+              market_rent_per_unit: amiRent,
+              current_rent_per_unit: amiRent,
+              is_affordable: true,
+              ami_pct: tier.ami_pct,
+            });
+          }
+        }
+
+        nextUnitGroups = [...marketGroups, ...affordableGroups];
+      }
+
+      // Pro-rata tax exemption: (affordable_units / total_units) × taxes × exemption_pct
+      let adjustedTaxes = current.taxes_annual;
+      if (
+        affordabilityConfig?.tax_exemption_enabled &&
+        affordabilityConfig.tax_exemption_pct > 0 &&
+        current.taxes_annual > 0
+      ) {
+        const totalUnits = nextUnitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
+        const affordableUnits = nextUnitGroups.reduce(
+          (s: number, g: any) => s + (g.is_affordable ? (g.unit_count || 0) : 0),
+          0
+        );
+        if (totalUnits > 0) {
+          const reductionFraction = (affordableUnits / totalUnits) * (affordabilityConfig.tax_exemption_pct / 100);
+          adjustedTaxes = Math.round(current.taxes_annual * (1 - reductionFraction));
+        }
+      }
+
       const merged = {
         ...current,
         building_program: buildingProgram,
         other_income_items: otherIncomeItems,
         commercial_tenants: commercialTenants,
         affordability_config: affordabilityConfig,
-        // Apply tax exemption to taxes if configured
-        ...(affordabilityConfig?.tax_exemption_enabled && affordabilityConfig.tax_exemption_pct > 0 && current.taxes_annual > 0
-          ? { taxes_annual: Math.round(current.taxes_annual * (1 - affordabilityConfig.tax_exemption_pct / 100)) }
-          : {}),
+        unit_groups: nextUnitGroups,
+        ...(adjustedTaxes !== current.taxes_annual ? { taxes_annual: adjustedTaxes } : {}),
       };
 
       await fetch("/api/underwriting", {
