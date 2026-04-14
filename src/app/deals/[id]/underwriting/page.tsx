@@ -81,6 +81,34 @@ interface Scenario {
   overrides: Partial<UWData>;
 }
 
+// Target-return metrics available to the scenario goal-seek wizard.
+// Each maps 1:1 to a field returned by calc(). They all share the property
+// that a higher purchase_price / lower rents / higher exit cap DECREASES them,
+// so the existing bisection logic in solveScenario works uniformly.
+type WizardMetric = "em" | "coc" | "stabilizedCoC" | "irr" | "dscr" | "stabilizedDSCR" | "capRate" | "yoc";
+
+interface WizardMetricMeta {
+  key: WizardMetric;
+  label: string;
+  suffix: "x" | "%";
+  // Which scenario types this metric is meaningful for. exit_cap only affects
+  // exit-dependent metrics (em / irr); the rest are unchanged by exit cap.
+  scenarios: ScenarioType[];
+  // Pull a default target from the deal's business plan if one is set
+  bpKey?: "target_equity_multiple_min" | "target_irr_min";
+}
+
+const WIZARD_METRICS: WizardMetricMeta[] = [
+  { key: "em", label: "Equity Multiple", suffix: "x", scenarios: ["land_residual", "rent_target", "exit_cap"], bpKey: "target_equity_multiple_min" },
+  { key: "irr", label: "IRR", suffix: "%", scenarios: ["land_residual", "rent_target", "exit_cap"], bpKey: "target_irr_min" },
+  { key: "coc", label: "Cash-on-Cash (Yr 1)", suffix: "%", scenarios: ["land_residual", "rent_target"] },
+  { key: "stabilizedCoC", label: "Stabilized CoC", suffix: "%", scenarios: ["land_residual", "rent_target"] },
+  { key: "dscr", label: "DSCR", suffix: "x", scenarios: ["land_residual", "rent_target"] },
+  { key: "stabilizedDSCR", label: "Stabilized DSCR", suffix: "x", scenarios: ["land_residual", "rent_target"] },
+  { key: "capRate", label: "Cap Rate (Proforma)", suffix: "%", scenarios: ["land_residual", "rent_target"] },
+  { key: "yoc", label: "Yield on Cost", suffix: "%", scenarios: ["land_residual", "rent_target"] },
+];
+
 const SCENARIO_TYPES: Array<{ type: ScenarioType; label: string; description: string; icon: string }> = [
   { type: "land_residual", label: "Max Purchase Price", description: "Find the maximum purchase price to hit your return targets", icon: "🏷️" },
   { type: "rent_target", label: "Required Rents", description: "Find the minimum rents needed to hit your return targets", icon: "📈" },
@@ -1044,7 +1072,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [showScenarioWizard, setShowScenarioWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardType, setWizardType] = useState<ScenarioType>("custom");
-  const [wizardMetric, setWizardMetric] = useState<"em" | "coc" | "irr">("em");
+  const [wizardMetric, setWizardMetric] = useState<WizardMetric>("em");
   const [wizardTarget, setWizardTarget] = useState<number>(0);
   const [wizardResult, setWizardResult] = useState<{ value: number; label: string; scenarioOverrides: Partial<UWData> } | null>(null);
   const [wizardSolving, setWizardSolving] = useState(false);
@@ -1391,17 +1419,26 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     ? { ...data, ...activeScenario.overrides, scenarios: data.scenarios }
     : data;
 
-  const solveScenario = useCallback((type: ScenarioType, metric: "em" | "coc" | "irr", target: number) => {
+  const solveScenario = useCallback((type: ScenarioType, metric: WizardMetric, target: number) => {
     // Bisection goal-seek: find the input value that makes the metric match target
     const getMetric = (d: UWData) => {
       const r = calc(d, calcMode);
-      if (metric === "em") return r.em;
-      if (metric === "coc") return r.coc;
-      // True XIRR using DCF cash flows
-      if (r.equity <= 0 || r.yearlyDCF.length === 0) return 0;
-      return xirr([-r.equity, ...r.yearlyDCF.map((yr, i) =>
-        i === r.yearlyDCF.length - 1 ? yr.cashFlow + r.exitEquity : yr.cashFlow
-      )]);
+      switch (metric) {
+        case "em": return r.em;
+        case "coc": return r.coc;
+        case "stabilizedCoC": return r.stabilizedCoC;
+        case "dscr": return r.dscr;
+        case "stabilizedDSCR": return r.stabilizedDSCR;
+        case "capRate": return r.proformaCapRate;
+        case "yoc": return r.yoc;
+        case "irr": {
+          // True XIRR using DCF cash flows
+          if (r.equity <= 0 || r.yearlyDCF.length === 0) return 0;
+          return xirr([-r.equity, ...r.yearlyDCF.map((yr, i) =>
+            i === r.yearlyDCF.length - 1 ? yr.cashFlow + r.exitEquity : yr.cashFlow
+          )]);
+        }
+      }
     };
 
     if (type === "land_residual") {
@@ -3660,51 +3697,47 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   ))}
                 </div>
               )}
-              {wizardStep === 1 && (
+              {wizardStep === 1 && (() => {
+                // Filter metrics that are meaningful for the chosen scenario type.
+                const availableMetrics = WIZARD_METRICS.filter(m => m.scenarios.includes(wizardType));
+                const activeMeta = availableMetrics.find(m => m.key === wizardMetric) || availableMetrics[0];
+                const suffix = activeMeta.suffix;
+                return (
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-2">Target Return Metric</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {([
-                        { key: "em" as const, label: "Equity Multiple", suffix: "x", bpVal: businessPlan?.target_equity_multiple_min },
-                        { key: "coc" as const, label: "Cash-on-Cash", suffix: "%", bpVal: undefined },
-                        { key: "irr" as const, label: "IRR", suffix: "%", bpVal: businessPlan?.target_irr_min },
-                      ]).map(opt => (
-                        <button
-                          key={opt.key}
-                          onClick={() => {
-                            setWizardMetric(opt.key);
-                            if (opt.bpVal) setWizardTarget(opt.bpVal);
-                          }}
-                          className={`p-3 rounded-lg border text-center transition-colors ${
-                            wizardMetric === opt.key ? "border-primary bg-primary/5" : "hover:bg-muted/50"
-                          }`}
-                        >
-                          <p className="text-xs font-medium">{opt.label}</p>
-                          {opt.bpVal && (
-                            <p className="text-[10px] text-primary mt-1">Plan: {opt.bpVal}{opt.suffix}</p>
-                          )}
-                        </button>
-                      ))}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {availableMetrics.map(opt => {
+                        const bpVal = opt.bpKey ? businessPlan?.[opt.bpKey] : undefined;
+                        return (
+                          <button
+                            key={opt.key}
+                            onClick={() => {
+                              setWizardMetric(opt.key);
+                              if (bpVal) setWizardTarget(bpVal);
+                            }}
+                            className={`p-3 rounded-lg border text-center transition-colors ${
+                              wizardMetric === opt.key ? "border-primary bg-primary/5" : "hover:bg-muted/50"
+                            }`}
+                          >
+                            <p className="text-xs font-medium">{opt.label}</p>
+                            {bpVal != null && (
+                              <p className="text-[10px] text-primary mt-1">Plan: {bpVal}{opt.suffix}</p>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-2">
                       Target Value
-                      {businessPlan && wizardMetric === "em" && businessPlan.target_equity_multiple_min && (
+                      {businessPlan && activeMeta.bpKey && businessPlan[activeMeta.bpKey] != null && (
                         <button
                           className="ml-2 text-primary hover:underline"
-                          onClick={() => setWizardTarget(businessPlan.target_equity_multiple_min!)}
+                          onClick={() => setWizardTarget(businessPlan[activeMeta.bpKey!]!)}
                         >
-                          Use plan min ({businessPlan.target_equity_multiple_min}x)
-                        </button>
-                      )}
-                      {businessPlan && wizardMetric === "irr" && businessPlan.target_irr_min && (
-                        <button
-                          className="ml-2 text-primary hover:underline"
-                          onClick={() => setWizardTarget(businessPlan.target_irr_min!)}
-                        >
-                          Use plan min ({businessPlan.target_irr_min}%)
+                          Use plan min ({businessPlan[activeMeta.bpKey]}{suffix})
                         </button>
                       )}
                     </label>
@@ -3718,7 +3751,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                         placeholder="0"
                       />
                       <span className="px-2 text-sm text-muted-foreground bg-muted border-l">
-                        {wizardMetric === "em" ? "x" : "%"}
+                        {suffix}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-2">
@@ -3734,7 +3767,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     </Button>
                   </div>
                 </div>
-              )}
+                );
+              })()}
               {wizardStep === 2 && (
                 <div className="space-y-4">
                   {wizardSolving ? (
