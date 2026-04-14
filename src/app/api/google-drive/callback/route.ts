@@ -3,14 +3,17 @@ import { exchangeCodeForTokens, getUserInfo, getRedirectUri } from "@/lib/google
 import { getPool } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
-  const { searchParams, origin } = new URL(req.url);
+  const { searchParams } = new URL(req.url);
   const code = searchParams.get("code");
   const state = searchParams.get("state") || "";
 
-  if (!code) return NextResponse.redirect(`${origin}/?error=no_code`);
+  // Derive public origin from the registered redirect URI (not from req.url which is internal on Railway)
+  const redirectUri = getRedirectUri();
+  const publicOrigin = redirectUri.replace(/\/api\/google-drive\/callback\/?$/, "");
+
+  if (!code) return NextResponse.redirect(`${publicOrigin}/?error=no_code`);
 
   try {
-    const redirectUri = getRedirectUri();
     const tokens = await exchangeCodeForTokens(code, redirectUri);
     const userInfo = await getUserInfo(tokens.access_token);
 
@@ -36,17 +39,17 @@ export async function GET(req: NextRequest) {
       [tokens.access_token, tokens.refresh_token, userInfo.email, userInfo.name]
     );
 
-    // Route user back
+    // Route user back to public origin
     const [key, value] = state.split(":");
     if (key === "return" && value === "inbox") {
-      return NextResponse.redirect(`${origin}/inbox?gdrive=connected`);
+      return NextResponse.redirect(`${publicOrigin}/inbox?gdrive=connected`);
     }
     if (key === "deal_id" && value) {
-      return NextResponse.redirect(`${origin}/deals/${value}/documents?gdrive=connected`);
+      return NextResponse.redirect(`${publicOrigin}/deals/${value}/documents?gdrive=connected`);
     }
-    return NextResponse.redirect(`${origin}/?gdrive=connected`);
+    return NextResponse.redirect(`${publicOrigin}/?gdrive=connected`);
   } catch (error) {
     console.error("Google Drive callback error:", error);
-    return NextResponse.redirect(`${origin}/?error=gdrive_auth_failed`);
+    return NextResponse.redirect(`${publicOrigin}/?error=gdrive_auth_failed`);
   }
 }
