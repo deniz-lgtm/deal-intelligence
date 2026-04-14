@@ -43,6 +43,7 @@ import {
   STAGE_GATES,
   INVESTMENT_THESIS_LABELS,
 } from "@/lib/types";
+import { calc, getDefaultsForPropertyType, type UWData } from "@/lib/underwriting-calc";
 
 const STATUS_BADGE_VARIANT: Record<DealStatus, "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "issue"> = {
   sourcing: "secondary",
@@ -482,11 +483,13 @@ export default function DealOverviewPage({
 
       {/* ═══ KEY METRICS STRIP ═══ */}
       {highlights ? (
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-px bg-border rounded-xl overflow-hidden border border-border/60">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-px bg-border rounded-xl overflow-hidden border border-border/60">
           {[
             { label: "Cap Rate", value: highlights.capRate != null ? `${highlights.capRate.toFixed(2)}%` : null, color: "text-amber-400" },
             { label: "NOI", value: highlights.noi != null ? formatCurrency(highlights.noi) : null, color: "text-emerald-400" },
             { label: highlights.pricePerUnitLabel, value: highlights.pricePerUnit != null ? formatCurrency(highlights.pricePerUnit) : null, color: "text-blue-400" },
+            { label: "GRM", value: highlights.grm != null ? `${highlights.grm.toFixed(2)}x` : null, color: "text-pink-400" },
+            { label: "Yield on Cost", value: highlights.yoc != null ? `${highlights.yoc.toFixed(2)}%` : null, color: "text-teal-400" },
             { label: "Cash-on-Cash", value: highlights.cashOnCash != null ? `${highlights.cashOnCash.toFixed(2)}%` : null, color: "text-purple-400" },
             { label: "DSCR", value: highlights.dscr != null ? `${highlights.dscr.toFixed(2)}x` : null, color: "text-cyan-400" },
             { label: "Equity Multiple", value: highlights.equityMultiple != null ? `${highlights.equityMultiple.toFixed(2)}x` : null, color: "text-orange-400" },
@@ -922,107 +925,54 @@ interface FinancialHighlights {
   cashOnCash: number | null;
   dscr: number | null;
   equityMultiple: number | null;
+  grm: number | null;
+  yoc: number | null;
 }
 
-function computeHighlights(uw: UnderwritingData | null, deal: Deal): FinancialHighlights | null {
-  if (!uw) return null;
+function computeHighlights(rawUw: any | null, deal: Deal): FinancialHighlights | null {
+  if (!rawUw) return null;
 
-  const price = uw.purchase_price || deal.asking_price;
-  if (!price) return null;
+  try {
+    // Parse if string, and merge with defaults to ensure all fields exist
+    const parsed = typeof rawUw.data === "string" ? JSON.parse(rawUw.data) : rawUw;
+    const typeDefaults = getDefaultsForPropertyType(deal.property_type);
+    const uw = { ...typeDefaults, ...parsed } as UWData;
 
-  const isCommercial = !["multifamily", "student_housing"].includes(deal.property_type || "");
-  const groups = uw.unit_groups || [];
-  const totalUnits = groups.reduce((s, g) => s + (g.unit_count || 0), 0);
+    // Determine property type for calc
+    const mode: "commercial" | "multifamily" | "student_housing" =
+      deal.property_type === "multifamily" ? "multifamily" :
+      deal.property_type === "student_housing" ? "student_housing" :
+      "commercial";
 
-  // Compute gross potential rent
-  let annualGPR = 0;
-  for (const g of groups) {
-    if (isCommercial) {
-      const sf = (g.sf_per_unit || 0) * (g.unit_count || 0);
-      annualGPR += sf * (g.market_rent_per_sf || g.current_rent_per_sf || 0);
-    } else {
-      const beds = (g.beds_per_unit || 1) * (g.unit_count || 0);
-      annualGPR += beds * (g.market_rent_per_bed || g.current_rent_per_bed || 0) * 12;
-    }
-  }
+    // Call the full calc function
+    const metrics = calc(uw, mode);
 
-  const vacancy = uw.vacancy_rate || 5;
-  const egi = annualGPR * (1 - vacancy / 100);
-
-  // OpEx
-  const mgmt = egi * (uw.management_fee_pct || 0) / 100;
-  const opex = mgmt + (uw.taxes_annual || 0) + (uw.insurance_annual || 0)
-    + (uw.repairs_per_unit_annual || 0) * totalUnits
-    + (uw.utilities_annual || 0) + (uw.other_expenses_annual || 0);
-
-  const noi = egi - opex;
-  const capRate = price > 0 ? (noi / price) * 100 : null;
-
-  // Price per unit/SF
-  let pricePerUnit: number | null = null;
-  let pricePerUnitLabel = "Price / Unit";
-  if (isCommercial) {
-    const totalSF = groups.reduce((s, g) => s + (g.sf_per_unit || 0) * (g.unit_count || 0), 0);
-    if (totalSF > 0) {
-      pricePerUnit = price / totalSF;
-      pricePerUnitLabel = "Price / SF";
-    }
-  } else if (totalUnits > 0) {
-    pricePerUnit = price / totalUnits;
-    pricePerUnitLabel = deal.property_type === "student_housing" ? "Price / Bed" : "Price / Unit";
-  }
-
-  // Debt service
-  let annualDebtService: number | null = null;
-  if (uw.has_financing && uw.loan_to_value > 0 && uw.interest_rate > 0) {
-    const loanAmt = price * (uw.loan_to_value / 100);
-    const closingCosts = price * ((uw.closing_costs_pct || 2) / 100);
-    const r = uw.interest_rate / 100 / 12;
-    const n = (uw.amortization_years || 30) * 12;
-    const monthlyPayment = uw.io_period_years && uw.io_period_years > 0
-      ? loanAmt * r  // IO period
-      : loanAmt * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
-    annualDebtService = monthlyPayment * 12;
-
-    const equity = price + closingCosts - loanAmt;
-    const cashFlow = noi - annualDebtService;
-
-    const cashOnCash = equity > 0 ? (cashFlow / equity) * 100 : null;
-    const dscr = annualDebtService > 0 ? noi / annualDebtService : null;
-
-    // Simple equity multiple: (cumulative CF + exit equity) / initial equity
-    const holdYears = uw.hold_period_years || 5;
-    const exitCap = uw.exit_cap_rate || 0;
-    let equityMultiple: number | null = null;
-    if (exitCap > 0 && equity > 0) {
-      const exitValue = noi / (exitCap / 100);
-      // Rough loan balance (simplified — assume IO for simplicity)
-      const exitEquity = exitValue - loanAmt;
-      const totalCF = cashFlow * holdYears + exitEquity;
-      equityMultiple = totalCF / equity;
+    // Use sale price (exit) per unit/SF/bed since we're showing deal returns
+    let pricePerUnitLabel = "Sale Price / Unit";
+    let pricePerUnit: number | null = metrics.exitPricePerUnit > 0 ? metrics.exitPricePerUnit : null;
+    if (mode === "commercial") {
+      pricePerUnitLabel = "Sale Price / SF";
+      pricePerUnit = metrics.exitPricePerSF > 0 ? metrics.exitPricePerSF : null;
+    } else if (mode === "student_housing") {
+      pricePerUnitLabel = "Sale Price / Bed";
+      pricePerUnit = metrics.exitPricePerBed > 0 ? metrics.exitPricePerBed : null;
     }
 
     return {
-      capRate: capRate && capRate > 0 ? capRate : null,
-      noi: noi > 0 ? noi : null,
+      capRate: metrics.proformaCapRate > 0 ? metrics.proformaCapRate : null,
+      noi: metrics.proformaNOI > 0 ? metrics.proformaNOI : null,
       pricePerUnit,
       pricePerUnitLabel,
-      cashOnCash: cashOnCash && cashOnCash !== 0 ? cashOnCash : null,
-      dscr: dscr && dscr > 0 ? dscr : null,
-      equityMultiple: equityMultiple && equityMultiple > 0 ? equityMultiple : null,
+      cashOnCash: metrics.coc && metrics.coc !== 0 ? metrics.coc : null,
+      dscr: metrics.dscr && metrics.dscr > 0 ? metrics.dscr : null,
+      equityMultiple: metrics.em && metrics.em > 0 ? metrics.em : null,
+      grm: metrics.proformaGRM && metrics.proformaGRM > 0 ? metrics.proformaGRM : null,
+      yoc: metrics.yoc && metrics.yoc > 0 ? metrics.yoc : null,
     };
+  } catch (e) {
+    console.error("Error computing highlights:", e);
+    return null;
   }
-
-  // No financing — just return property-level metrics
-  return {
-    capRate: capRate && capRate > 0 ? capRate : null,
-    noi: noi > 0 ? noi : null,
-    pricePerUnit,
-    pricePerUnitLabel,
-    cashOnCash: null,
-    dscr: null,
-    equityMultiple: null,
-  };
 }
 
 function MetricCard({

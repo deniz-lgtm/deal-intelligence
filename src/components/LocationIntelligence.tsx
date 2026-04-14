@@ -34,6 +34,7 @@ import type {
   LocationRadiusMiles,
 } from "@/lib/types";
 import { LOCATION_RADIUS_OPTIONS } from "@/lib/types";
+import { buildAmiTables } from "@/lib/ami-calc";
 
 const LocationMapBuilder = dynamic(
   () => import("@/components/LocationMapBuilder"),
@@ -613,7 +614,34 @@ function DataPanels({
       )}
 
       {/* ── AMI / Income Limits (Affordability) ──────────────────── */}
-      {ext.ami && (
+      {ext.ami && (() => {
+        // Back-fill missing/empty limits & rents using HUD standard
+        // calculations so legacy stored data (or non-metro HUD responses)
+        // still render a populated table.
+        const storedLimits = (ext.ami.income_limits || {}) as Record<string, number[] | undefined>;
+        const storedRents = (ext.ami.max_rents || {}) as Record<string, Record<string, number> | undefined>;
+        const mfi = Number(ext.ami.median_family_income) || 0;
+        const allZero = (arr?: number[]) => !arr || arr.length === 0 || arr.every((v) => !v);
+        const needsBackfill = mfi > 0 && (
+          allZero(storedLimits.very_low_50) ||
+          allZero(storedLimits.extremely_low_30) ||
+          allZero(storedLimits.low_80) ||
+          !storedRents.ami_50
+        );
+        const derived = needsBackfill
+          ? buildAmiTables(mfi, {
+              very_low_50: storedLimits.very_low_50,
+              extremely_low_30: storedLimits.extremely_low_30,
+              low_80: storedLimits.low_80,
+            })
+          : null;
+        const incomeLimitsView: Record<string, number[] | undefined> = derived
+          ? derived.income_limits as unknown as Record<string, number[] | undefined>
+          : storedLimits;
+        const maxRentsView: Record<string, Record<string, number> | undefined> = derived
+          ? derived.max_rents as unknown as Record<string, Record<string, number> | undefined>
+          : storedRents;
+        return (
         <Panel title={`Area Median Income — FY${ext.ami.year}`} icon={<DollarSign className="h-4 w-4 text-primary" />}>
           <div className="space-y-4">
             <div className="flex items-center gap-4">
@@ -650,7 +678,7 @@ function DataPanels({
                       { level: "100% AMI", key: "ami_100", color: "text-foreground/80" },
                       { level: "120% AMI", key: "ami_120", color: "text-primary" },
                     ].map((row) => {
-                      const rents = ext.ami.max_rents?.[row.key] as Record<string, number> | undefined;
+                      const rents = maxRentsView[row.key];
                       if (!rents) return null;
                       return (
                         <tr key={row.key} className="border-b border-border/20 last:border-0">
@@ -689,7 +717,7 @@ function DataPanels({
                       { level: "60%", key: "sixty_pct" },
                       { level: "80%", key: "low_80" },
                     ].map((row) => {
-                      const limits = ext.ami.income_limits?.[row.key] as number[] | undefined;
+                      const limits = incomeLimitsView[row.key];
                       if (!limits) return null;
                       return (
                         <tr key={row.key} className="border-b border-border/20 last:border-0">
@@ -705,11 +733,13 @@ function DataPanels({
               </div>
               <div className="text-[10px] text-muted-foreground/60 mt-1.5">
                 Source: HUD FY{ext.ami.year} Income Limits for {ext.ami.area_name}. Max rents = 30% of income / 12. Utility allowances not deducted.
+                {derived && " Limits derived from MFI using HUD's standard family-size adjustment factors (70/80/90/100/108/116/124/132%)."}
               </div>
             </div>
           </div>
         </Panel>
-      )}
+        );
+      })()}
 
       {/* ── Employment & Economy ───────────────────────────────────── */}
       {(snapshot || ext.avg_weekly_wage != null) && (
