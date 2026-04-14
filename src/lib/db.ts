@@ -1420,13 +1420,30 @@ export const dealQueries = {
   /**
    * Returns auto-ingested deals that haven't been marked reviewed yet,
    * newest first. Used by the /inbox page.
+   *
+   * The LEFT JOIN on `om_analyses` surfaces the latest analysis state
+   * (when one exists) so the inbox UI can decide whether to render the
+   * "pick business plan + property type + investment strategy + Start
+   * Analysis" card or the "Review" card for a deal whose analysis is
+   * already processing or complete.
    */
   getPendingInboxItems: async (limit = 50) => {
     const pool = getPool();
     const res = await pool.query(
-      `SELECT d.*, u.data AS underwriting_data
+      `SELECT d.*,
+              u.data                AS underwriting_data,
+              oa.id                 AS analysis_id,
+              oa.status             AS analysis_status,
+              oa.deal_score         AS analysis_deal_score
        FROM deals d
        LEFT JOIN underwriting u ON u.deal_id = d.id
+       LEFT JOIN LATERAL (
+         SELECT id, status, deal_score
+         FROM om_analyses
+         WHERE deal_id = d.id
+         ORDER BY created_at DESC
+         LIMIT 1
+       ) oa ON TRUE
        WHERE d.auto_ingested = true
          AND d.inbox_reviewed_at IS NULL
        ORDER BY d.created_at DESC

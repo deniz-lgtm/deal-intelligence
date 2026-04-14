@@ -12,7 +12,8 @@ export const maxDuration = 300;
  * POST /api/inbox/poll
  *
  * Runs one polling pass over the configured Dropbox folder and ingests
- * any new files as draft deals in the sourcing stage. Idempotent — runs
+ * any new files as draft deals in the `screening` stage, kicking off a
+ * full OM analysis in the background for each one. Idempotent — runs
  * are deduped by Dropbox path against deals.ingested_from_path.
  */
 export async function POST() {
@@ -21,7 +22,7 @@ export async function POST() {
   await syncCurrentUser(userId);
 
   try {
-    const result = await pollDropboxInbox();
+    const result = await pollDropboxInbox(userId);
 
     // Helper type guard — PollError has a `kind` string field
     if ("kind" in result) {

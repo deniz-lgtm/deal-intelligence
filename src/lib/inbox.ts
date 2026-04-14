@@ -9,18 +9,24 @@
 //      - Download the file
 //      - Upload to blob storage
 //      - Extract PDF text
-//      - Run stage-1 OM extraction (property_details + financial_metrics —
-//        cheap, skips red flags + scoring which are expensive)
+//      - Run stage-1 OM extraction synchronously so the inbox card has a
+//        real name / address / price immediately
 //      - Create a deal in the `sourcing` stage with the extracted fields,
-//        auto_ingested=true, ingested_from_path=the Dropbox path
+//        auto_ingested=true, ingested_from_path=the Dropbox path. The
+//        default business plan (if any) is attached as a starting
+//        suggestion — the user can change it from the inbox card.
 //      - Create a document row linked to the deal
 //   4. Update dropbox_accounts.last_polled_at
 //   5. Return a summary for the UI
 //
-// This runs stage-1 extraction ONLY — red flags, deal score, and
-// recommendations are skipped to keep token cost low on auto-ingest. The
-// user can trigger the full analysis by clicking into the deal and using
-// the existing /om-analysis page (which calls extractOmFull).
+// The full OM analysis (red flags, deal score, summary, recommendations)
+// does NOT run here. The inbox page shows extracted property info plus
+// three required inputs — business plan, property type, investment
+// strategy — and a "Start Analysis" button. Clicking it hits
+// POST /api/inbox/items/[id]/start which calls `startInboxAnalysis` below
+// to persist the user's selections, transition the deal to `screening`,
+// create the om_analyses row, and kick off the full 4-stage pipeline in
+// the background.
 
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
@@ -28,6 +34,9 @@ import {
   dealQueries,
   documentQueries,
   dropboxQueries,
+  omAnalysisQueries,
+  businessPlanQueries,
+  type BusinessPlanRow,
 } from "./db";
 import {
   listFolder,
@@ -37,8 +46,8 @@ import {
   guessMimeType,
   DropboxEntry,
 } from "./dropbox";
-import { uploadBlob } from "./blob-storage";
-import { extractMetrics } from "./om-extraction";
+import { uploadBlob, readFile as readBlob } from "./blob-storage";
+import { extractMetrics, extractOmFull } from "./om-extraction";
 
 export interface IngestedItem {
   id: string;
@@ -106,8 +115,14 @@ function parseAddress(
 /**
  * Runs one polling pass. Safe to call repeatedly — dedupes against
  * deals.ingested_from_path so re-running on the same folder is a no-op.
+ *
+ * `userId` (when provided) is used to look up the user's default business
+ * plan, which is passed as `deal_context` to the background OM analysis so
+ * red flags + scoring are calibrated to the investor's strategy.
  */
-export async function pollDropboxInbox(): Promise<PollResult | PollError> {
+export async function pollDropboxInbox(
+  userId?: string
+): Promise<PollResult | PollError> {
   const account = await dropboxQueries.get();
   if (!account) {
     return { kind: "not_connected", message: "Dropbox is not connected." };
@@ -119,6 +134,15 @@ export async function pollDropboxInbox(): Promise<PollResult | PollError> {
       message:
         "No watched folder is configured. Pick a Dropbox folder from the Inbox settings.",
     };
+  }
+
+  // Load the default business plan once per poll (best-effort) so each
+  // background analysis can be calibrated to the user's strategy.
+  let defaultPlan: BusinessPlanRow | null = null;
+  try {
+    defaultPlan = await businessPlanQueries.getDefault(userId);
+  } catch (err) {
+    console.warn("Inbox poll: failed to load default business plan:", err);
   }
 
   // List folder contents — refresh the token on 401
@@ -172,7 +196,7 @@ export async function pollDropboxInbox(): Promise<PollResult | PollError> {
     }
 
     try {
-      const ingested = await ingestSingleFile(entry, accessToken);
+      const ingested = await ingestSingleFile(entry, accessToken, defaultPlan);
       if (ingested) {
         result.ingested++;
         result.new_items.push(ingested);
@@ -193,13 +217,55 @@ export async function pollDropboxInbox(): Promise<PollResult | PollError> {
 }
 
 /**
- * Download a single Dropbox file, upload to blob storage, run stage-1 OM
- * extraction, and create a new deal + document for it. Throws on any
- * unrecoverable error; the caller captures it in the PollResult.
+ * Build the `deal_context` string for an OM analysis from a business
+ * plan. Mirrors the format used by the manual "new deal" flow so the
+ * auto-ingested deals get the same strategy-aware analysis quality.
+ */
+function buildDealContext(plan: BusinessPlanRow | null): string | undefined {
+  if (!plan) return undefined;
+  const parts: string[] = [`BASE BUSINESS PLAN — ${plan.name}:`];
+  if ((plan.investment_theses || []).length > 0) {
+    parts.push(
+      `Investment Thesis: ${plan.investment_theses
+        .map((t) => t.replace(/_/g, " "))
+        .join(", ")}`
+    );
+  }
+  if ((plan.target_markets || []).length > 0) {
+    parts.push(`Target Markets: ${plan.target_markets.join(", ")}`);
+  }
+  if ((plan.property_types || []).length > 0) {
+    parts.push(`Property Types: ${plan.property_types.join(", ")}`);
+  }
+  if (plan.target_irr_min != null || plan.target_irr_max != null) {
+    parts.push(
+      `Target IRR: ${plan.target_irr_min ?? "?"}% – ${plan.target_irr_max ?? "?"}%`
+    );
+  }
+  if (plan.hold_period_min != null || plan.hold_period_max != null) {
+    parts.push(
+      `Hold Period: ${plan.hold_period_min ?? "?"}–${plan.hold_period_max ?? "?"} years`
+    );
+  }
+  if (plan.description?.trim()) {
+    parts.push(`Strategy Notes: ${plan.description.trim()}`);
+  }
+  return parts.length > 1 ? parts.join("\n") : undefined;
+}
+
+/**
+ * Download a single Dropbox file, upload to blob storage, run stage-1
+ * OM extraction for the inbox card display, and create the deal +
+ * document rows in `sourcing` state. Does NOT start the full analysis
+ * — that waits for the user to confirm business plan + property type
+ * + investment strategy from the inbox card and click Start Analysis.
+ * Throws on any unrecoverable error; the caller captures it in the
+ * PollResult.
  */
 async function ingestSingleFile(
   entry: DropboxEntry,
-  accessToken: string
+  accessToken: string,
+  defaultPlan: BusinessPlanRow | null
 ): Promise<IngestedItem | null> {
   // Download
   const { buffer, metadata } = await downloadFile(
@@ -221,15 +287,18 @@ async function ingestSingleFile(
   const mimeType = guessMimeType(metadata.name);
   const fileUrl = await uploadBlob(blobPath, buffer, mimeType);
 
-  // Extract PDF text (used by stage-1 extractor as a fallback)
+  // Extract PDF text (used by stage-1 extractor as a fallback + stored on
+  // the document row so the OM Q&A feature works without re-parsing).
   const contentText = await extractPdfText(buffer, mimeType);
 
-  // Stage-1 OM extraction: property_details + financial_metrics only
-  // (skips red flags, deal score, and recommendations). Works for PDFs via
-  // image fallback inside extractMetrics().
-  let extracted: Awaited<ReturnType<typeof extractMetrics>> | null = null;
+  // Stage-1 OM extraction: property_details + financial_metrics. We run
+  // this synchronously so the inbox card has a real name / address / price
+  // the moment the poll returns. The heavier stages 2-4 (red flags, score,
+  // summary, recommendations) run in the background below and don't block
+  // the poll.
+  let stage1: Awaited<ReturnType<typeof extractMetrics>> | null = null;
   try {
-    extracted = await extractMetrics(
+    stage1 = await extractMetrics(
       contentText,
       mimeType === "application/pdf" ? buffer : undefined
     );
@@ -241,11 +310,15 @@ async function ingestSingleFile(
   }
 
   // Build the deal payload from the extraction output (with sensible
-  // fallbacks when a field is missing).
+  // fallbacks when a field is missing). We prefer the street address
+  // as the deal name — it's the most useful identifier at a glance in
+  // the inbox — and only fall back to the extracted property name or
+  // filename when no address is available.
+  const addressParts = parseAddress(stage1?.property_details.address ?? null);
   const derivedName =
-    extracted?.property_details.name ||
+    addressParts.street ||
+    stage1?.property_details.name ||
     metadata.name.replace(ext, "").slice(0, 200);
-  const addressParts = parseAddress(extracted?.property_details.address ?? null);
 
   const dealPayload: Record<string, unknown> = {
     id: dealId,
@@ -254,17 +327,25 @@ async function ingestSingleFile(
     city: addressParts.city,
     state: addressParts.state,
     zip: addressParts.zip,
-    property_type: extracted?.property_details.property_type || "other",
+    property_type: stage1?.property_details.property_type || "other",
+    // Land the deal in `sourcing` — analysis hasn't started yet. The
+    // inbox card will ask the user to confirm business plan + property
+    // type + investment strategy, then clicking Start Analysis
+    // transitions the deal to `screening` and kicks off the full OM
+    // analysis. See POST /api/inbox/items/[id]/start.
     status: "sourcing",
     starred: false,
-    asking_price: extracted?.financial_metrics.asking_price ?? null,
-    square_footage: extracted?.property_details.sf ?? null,
-    units: extracted?.property_details.unit_count ?? null,
-    year_built: extracted?.property_details.year_built ?? null,
+    asking_price: stage1?.financial_metrics.asking_price ?? null,
+    square_footage: stage1?.property_details.sf ?? null,
+    units: stage1?.property_details.unit_count ?? null,
+    year_built: stage1?.property_details.year_built ?? null,
     notes: `Auto-ingested from Dropbox (${entry.path_display})`,
     loi_executed: false,
     psa_executed: false,
   };
+  if (defaultPlan?.id) {
+    dealPayload.business_plan_id = defaultPlan.id;
+  }
 
   await dealQueries.create(dealPayload);
 
@@ -274,7 +355,8 @@ async function ingestSingleFile(
     ingested_from_path: entry.path_display,
   });
 
-  // Create the linked document record
+  // Create the linked document record. The OM stays categorized as
+  // "om" so it's easy to find from Start Analysis later.
   const docBaseName = metadata.name.replace(ext, "").slice(0, 200);
   await documentQueries.create({
     id: docId,
@@ -290,11 +372,226 @@ async function ingestSingleFile(
     ai_tags: null,
   });
 
+  // NOTE: We deliberately do NOT create an om_analyses row or kick off
+  // the full 4-stage pipeline here. Analysis only starts after the user
+  // confirms business plan + property type + investment strategy from
+  // the inbox card (POST /api/inbox/items/[id]/start).
+
   return {
     id: dealId,
     name: derivedName,
-    address: extracted?.property_details.address ?? null,
-    asking_price: extracted?.financial_metrics.asking_price ?? null,
+    address: stage1?.property_details.address ?? null,
+    asking_price: stage1?.financial_metrics.asking_price ?? null,
     source_path: entry.path_display,
   };
+}
+
+export interface StartInboxAnalysisInput {
+  dealId: string;
+  businessPlanId: string;
+  propertyType: string;
+  investmentStrategy: string;
+}
+
+export interface StartInboxAnalysisResult {
+  analysisId: string;
+}
+
+/**
+ * Called when the user confirms business plan + property type +
+ * investment strategy on an inbox card and clicks Start Analysis.
+ *
+ *   1. Validate the deal is an auto-ingested inbox item
+ *   2. Locate the OM document for the deal
+ *   3. Persist the user's selections on the deal and transition it to
+ *      `screening` (initial review)
+ *   4. Create an om_analyses row with status='processing'
+ *   5. Kick off the full 4-stage analysis in the background, using the
+ *      selected business plan as `deal_context` so red flags + scoring
+ *      are calibrated to the investor's strategy
+ *
+ * Returns the analysis id so the caller can redirect the user to the
+ * OM analysis page where the processing state is shown live.
+ */
+export async function startInboxAnalysis(
+  input: StartInboxAnalysisInput
+): Promise<StartInboxAnalysisResult> {
+  const { dealId, businessPlanId, propertyType, investmentStrategy } = input;
+
+  const deal = await dealQueries.getById(dealId);
+  if (!deal) throw new Error("Deal not found");
+  if (!deal.auto_ingested) {
+    throw new Error("Deal is not an auto-ingested inbox item");
+  }
+
+  // Locate the OM document (inbox ingest always creates one with
+  // category='om', but we fall back to any document on the deal if
+  // something's off).
+  const docs = await documentQueries.getByDealId(dealId);
+  const omDoc =
+    docs.find((d: Record<string, unknown>) => d.category === "om") ||
+    docs[0];
+  if (!omDoc) {
+    throw new Error("No OM document found for this inbox item");
+  }
+
+  // Load the business plan for deal_context. We require a plan for
+  // inbox-analysis-start because the whole point of the confirmation
+  // step is to calibrate analysis to the strategy.
+  const plan = await businessPlanQueries.getById(businessPlanId);
+  if (!plan) throw new Error("Business plan not found");
+
+  // Persist the user's selections on the deal and move it to screening.
+  await dealQueries.update(dealId, {
+    business_plan_id: businessPlanId,
+    property_type: propertyType,
+    investment_strategy: investmentStrategy,
+    status: "screening",
+  });
+
+  // Create the analysis row upfront so the om-analysis page can render
+  // a live processing state the moment the user lands there.
+  const analysisRow = await omAnalysisQueries.create(
+    dealId,
+    omDoc.id as string
+  );
+
+  // Kick off stages 1–4 in the background so the HTTP response is
+  // snappy. Matches the pattern used by /api/deals/[id]/om-init.
+  runBackgroundFullAnalysis({
+    analysisId: analysisRow.id,
+    dealId,
+    documentId: omDoc.id as string,
+    filePath: omDoc.file_path as string,
+    pdfText: (omDoc.content_text as string | null) ?? "",
+    mimeType: (omDoc.mime_type as string | null) ?? "application/pdf",
+    dealContext: buildDealContext(plan),
+  }).catch((err) => console.error("startInboxAnalysis BG failed:", err));
+
+  return { analysisId: analysisRow.id };
+}
+
+/**
+ * Runs the full 4-stage OM pipeline and persists results on the
+ * om_analyses row + relevant deal fields. Matches the post-ingest
+ * logic in /api/deals/[id]/om-init so inbox-ingested deals end up
+ * looking identical to manually-uploaded ones.
+ */
+async function runBackgroundFullAnalysis(args: {
+  analysisId: string;
+  dealId: string;
+  documentId: string;
+  filePath: string;
+  pdfText: string;
+  mimeType: string;
+  dealContext: string | undefined;
+}): Promise<void> {
+  const {
+    analysisId,
+    dealId,
+    documentId,
+    filePath,
+    pdfText,
+    mimeType,
+    dealContext,
+  } = args;
+
+  try {
+    // Reload the PDF buffer from blob storage. extractOmFull's stage-1
+    // prefers the native PDF document block over extracted text.
+    let pdfBuffer: Buffer | undefined = undefined;
+    if (mimeType === "application/pdf") {
+      const buf = await readBlob(filePath);
+      if (buf) pdfBuffer = buf;
+    }
+
+    const full = await extractOmFull(pdfText, dealContext, pdfBuffer);
+
+    await omAnalysisQueries.setResult(analysisId, {
+      document_id: documentId,
+      status: "complete",
+      deal_context: dealContext ?? null,
+      property_name: full.property_details.name,
+      address: full.property_details.address,
+      property_type: full.property_details.property_type,
+      year_built: full.property_details.year_built,
+      sf: full.property_details.sf,
+      unit_count: full.property_details.unit_count,
+      asking_price: full.financial_metrics.asking_price,
+      noi: full.financial_metrics.noi,
+      cap_rate: full.financial_metrics.cap_rate,
+      grm: full.financial_metrics.grm,
+      cash_on_cash: full.financial_metrics.cash_on_cash,
+      irr: full.financial_metrics.irr,
+      equity_multiple: full.financial_metrics.equity_multiple,
+      dscr: full.financial_metrics.dscr,
+      vacancy_rate: full.financial_metrics.vacancy_rate,
+      expense_ratio: full.financial_metrics.expense_ratio,
+      price_per_sf: full.financial_metrics.price_per_sf,
+      price_per_unit: full.financial_metrics.price_per_unit,
+      rent_growth: full.assumptions.rent_growth,
+      hold_period: full.assumptions.hold_period,
+      leverage: full.assumptions.leverage,
+      exit_cap_rate: full.assumptions.exit_cap_rate,
+      deal_score: full.deal_score,
+      score_reasoning: full.score_reasoning,
+      summary: full.summary,
+      recommendations: full.recommendations,
+      red_flags: full.red_flags,
+      model_used: full.model_used,
+      tokens_used: full.tokens_used,
+      cost_estimate: full.cost_estimate,
+      processing_ms: full.processing_ms,
+    });
+
+    // Update the deal with anything stage-1 didn't already fill in. We
+    // only overwrite missing values — the user may have touched the deal
+    // between creation and BG completion.
+    const dealUpdates: Record<string, unknown> = {
+      om_score: full.deal_score,
+      om_extracted: {
+        asking_price: full.financial_metrics.asking_price ?? undefined,
+        sf: full.property_details.sf ?? undefined,
+        units: full.property_details.unit_count ?? undefined,
+        cap_rate: full.financial_metrics.cap_rate ?? undefined,
+        year_built: full.property_details.year_built ?? undefined,
+        noi: full.financial_metrics.noi ?? undefined,
+        occupancy:
+          full.financial_metrics.vacancy_rate != null
+            ? 1 - full.financial_metrics.vacancy_rate
+            : undefined,
+        address: full.property_details.address ?? undefined,
+      },
+    };
+    await dealQueries.update(dealId, dealUpdates);
+
+    // Update the document's AI summary now that we have one
+    const redFlagCount = full.red_flags.length;
+    const criticalCount = full.red_flags.filter(
+      (f) => f.severity === "critical"
+    ).length;
+    const aiSummary = `Offering Memorandum — Deal Score: ${full.deal_score}/10. ${
+      redFlagCount > 0
+        ? `${redFlagCount} red flag(s)${criticalCount > 0 ? `, ${criticalCount} critical` : ""}.`
+        : "No red flags detected."
+    } ${full.summary ? full.summary.slice(0, 200) : ""}`;
+    try {
+      // ai_tags is JSONB; serialize like documentQueries.create does.
+      await documentQueries.update(documentId, {
+        ai_summary: aiSummary,
+        ai_tags: JSON.stringify(["offering-memorandum", "om", "financial"]),
+      });
+    } catch (err) {
+      console.warn("Inbox: failed to update document ai_summary:", err);
+    }
+  } catch (err) {
+    console.error("Inbox: runBackgroundFullAnalysis failed:", err);
+    await omAnalysisQueries
+      .updateStatus(
+        analysisId,
+        "error",
+        err instanceof Error ? err.message : "Unknown error"
+      )
+      .catch(() => {});
+  }
 }
