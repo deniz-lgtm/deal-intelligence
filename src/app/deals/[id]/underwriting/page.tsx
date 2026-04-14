@@ -697,6 +697,10 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   // DSCR always uses amortizing debt service (worst-case obligation)
   const dscr = acqDebt > 0 ? proformaNOI / acqDebt : 0;
 
+  // ── Year-by-Year DCF growth rates ────────────────────────────────────────────
+  const rg = (d.rent_growth_pct || 0) / 100;
+  const eg = (d.expense_growth_pct || 0) / 100;
+
   // ── Refinance ───────────────────────────────────────────────────────────────
   let refiProceeds = 0, refiDebt = 0, refiLoan = 0;
   if (d.has_refi && d.has_financing && d.exit_cap_rate > 0) {
@@ -718,8 +722,6 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const stabilizedDSCR = stabilizedDebtAmort > 0 ? proformaNOI / stabilizedDebtAmort : 0;
 
   // ── Year-by-Year DCF ─────────────────────────────────────────────────────────
-  const rg = (d.rent_growth_pct || 0) / 100;
-  const eg = (d.expense_growth_pct || 0) / 100;
   const yearlyDCF: DCFYear[] = [];
 
   // Lease-up ramp for ground-up: Year 1 gets partial income
