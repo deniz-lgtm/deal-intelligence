@@ -62,13 +62,43 @@ const fpct = (n: number) => n.toFixed(1) + "%";
 
 // ── Component ────────────────────────────────────────────────────────────────
 
+// Loose shape of whatever's been previously stored on the deal's underwriting
+// record. Historically this was saved with a smaller tier schema (no id / max
+// rent fields), so we accept a lax shape here and hydrate below.
+interface InitialConfigLoose {
+  enabled?: boolean;
+  tiers?: Array<Partial<AmiTier> & { ami_pct?: number; units_pct?: number; units_count?: number }>;
+  total_units?: number;
+  market_rate_units?: number;
+  density_bonus_pct?: number;
+  density_bonus_source?: string;
+  tax_exemption_enabled?: boolean;
+  tax_exemption_pct?: number;
+  tax_exemption_years?: number;
+  tax_exemption_type?: string;
+  notes?: string;
+}
+
 interface Props {
   dealId: string;
   totalUnits: number;
   avgMarketRent: number;      // weighted average market rent per unit/month
   currentTaxes: number;       // current taxes_annual from UW
   onConfigChange: (config: AffordabilityConfig) => void;
-  initialConfig?: Partial<AffordabilityConfig> | null;
+  initialConfig?: InitialConfigLoose | null;
+}
+
+function hydrateTiers(tiers: InitialConfigLoose["tiers"] = []): AmiTier[] {
+  return tiers.map((t) => ({
+    id: t.id ?? uuidv4(),
+    ami_pct: t.ami_pct ?? 60,
+    units_pct: t.units_pct ?? 0,
+    units_count: t.units_count ?? 0,
+    max_rent_studio: t.max_rent_studio ?? 0,
+    max_rent_1br: t.max_rent_1br ?? 0,
+    max_rent_2br: t.max_rent_2br ?? 0,
+    max_rent_3br: t.max_rent_3br ?? 0,
+  }));
 }
 
 export default function AffordabilityPlanner({
@@ -84,7 +114,7 @@ export default function AffordabilityPlanner({
   const [ami, setAmi] = useState<AmiData | null>(null);
   const [config, setConfig] = useState<AffordabilityConfig>({
     enabled: initialConfig?.enabled ?? false,
-    tiers: initialConfig?.tiers ?? [],
+    tiers: hydrateTiers(initialConfig?.tiers),
     total_units: initialConfig?.total_units ?? totalUnits,
     market_rate_units: initialConfig?.market_rate_units ?? totalUnits,
     density_bonus_pct: initialConfig?.density_bonus_pct ?? 0,
