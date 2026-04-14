@@ -483,11 +483,13 @@ export default function DealOverviewPage({
 
       {/* ═══ KEY METRICS STRIP ═══ */}
       {highlights ? (
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-px bg-border rounded-xl overflow-hidden border border-border/60">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-px bg-border rounded-xl overflow-hidden border border-border/60">
           {[
             { label: "Cap Rate", value: highlights.capRate != null ? `${highlights.capRate.toFixed(2)}%` : null, color: "text-amber-400" },
             { label: "NOI", value: highlights.noi != null ? formatCurrency(highlights.noi) : null, color: "text-emerald-400" },
             { label: highlights.pricePerUnitLabel, value: highlights.pricePerUnit != null ? formatCurrency(highlights.pricePerUnit) : null, color: "text-blue-400" },
+            { label: "GRM", value: highlights.grm != null ? `${highlights.grm.toFixed(2)}x` : null, color: "text-pink-400" },
+            { label: "Yield on Cost", value: highlights.yoc != null ? `${highlights.yoc.toFixed(2)}%` : null, color: "text-teal-400" },
             { label: "Cash-on-Cash", value: highlights.cashOnCash != null ? `${highlights.cashOnCash.toFixed(2)}%` : null, color: "text-purple-400" },
             { label: "DSCR", value: highlights.dscr != null ? `${highlights.dscr.toFixed(2)}x` : null, color: "text-cyan-400" },
             { label: "Equity Multiple", value: highlights.equityMultiple != null ? `${highlights.equityMultiple.toFixed(2)}x` : null, color: "text-orange-400" },
@@ -923,6 +925,8 @@ interface FinancialHighlights {
   cashOnCash: number | null;
   dscr: number | null;
   equityMultiple: number | null;
+  grm: number | null;
+  yoc: number | null;
 }
 
 function computeHighlights(rawUw: any | null, deal: Deal): FinancialHighlights | null {
@@ -943,22 +947,27 @@ function computeHighlights(rawUw: any | null, deal: Deal): FinancialHighlights |
     // Call the full calc function
     const metrics = calc(uw, mode);
 
-    // Determine label for price per unit
-    let pricePerUnitLabel = "Price / Unit";
+    // Use sale price (exit) per unit/SF/bed since we're showing deal returns
+    let pricePerUnitLabel = "Sale Price / Unit";
+    let pricePerUnit: number | null = metrics.exitPricePerUnit > 0 ? metrics.exitPricePerUnit : null;
     if (mode === "commercial") {
-      pricePerUnitLabel = "Price / SF";
+      pricePerUnitLabel = "Sale Price / SF";
+      pricePerUnit = metrics.exitPricePerSF > 0 ? metrics.exitPricePerSF : null;
     } else if (mode === "student_housing") {
-      pricePerUnitLabel = "Price / Bed";
+      pricePerUnitLabel = "Sale Price / Bed";
+      pricePerUnit = metrics.exitPricePerBed > 0 ? metrics.exitPricePerBed : null;
     }
 
     return {
       capRate: metrics.proformaCapRate > 0 ? metrics.proformaCapRate : null,
       noi: metrics.proformaNOI > 0 ? metrics.proformaNOI : null,
-      pricePerUnit: metrics.pricePerUnit > 0 ? metrics.pricePerUnit : null,
+      pricePerUnit,
       pricePerUnitLabel,
       cashOnCash: metrics.coc && metrics.coc !== 0 ? metrics.coc : null,
       dscr: metrics.dscr && metrics.dscr > 0 ? metrics.dscr : null,
       equityMultiple: metrics.em && metrics.em > 0 ? metrics.em : null,
+      grm: metrics.proformaGRM && metrics.proformaGRM > 0 ? metrics.proformaGRM : null,
+      yoc: metrics.yoc && metrics.yoc > 0 ? metrics.yoc : null,
     };
   } catch (e) {
     console.error("Error computing highlights:", e);
