@@ -14,11 +14,14 @@ import {
   Save,
   AlertCircle,
   Cloud,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/AppShell";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
+import type { BusinessPlan, InvestmentThesis, PropertyType } from "@/lib/types";
+import { INVESTMENT_THESIS_LABELS } from "@/lib/types";
 
 // AI Deal Sourcing inbox. Polls a watched Dropbox folder on demand and
 // auto-creates draft deals for any new OM files it finds. Each card shows
@@ -33,6 +36,8 @@ interface InboxItem {
   city: string | null;
   state: string | null;
   property_type: string | null;
+  investment_strategy: string | null;
+  business_plan_id: string | null;
   asking_price: number | null;
   units: number | null;
   square_footage: number | null;
@@ -40,7 +45,31 @@ interface InboxItem {
   created_at: string;
   ingested_from_path: string | null;
   notes: string | null;
+  // Surfaced by the inbox query — present only if analysis has been started
+  analysis_id: string | null;
+  analysis_status: "pending" | "processing" | "complete" | "error" | null;
+  analysis_deal_score: number | null;
 }
+
+const PROPERTY_TYPE_OPTIONS: { value: PropertyType; label: string }[] = [
+  { value: "multifamily", label: "Multifamily" },
+  { value: "student_housing", label: "Student Housing" },
+  { value: "industrial", label: "Industrial" },
+  { value: "office", label: "Office" },
+  { value: "retail", label: "Retail" },
+  { value: "mixed_use", label: "Mixed Use" },
+  { value: "land", label: "Land" },
+  { value: "hospitality", label: "Hospitality" },
+  { value: "other", label: "Other" },
+];
+
+const INVESTMENT_STRATEGY_OPTIONS: { value: InvestmentThesis; label: string }[] = [
+  { value: "value_add", label: INVESTMENT_THESIS_LABELS.value_add },
+  { value: "ground_up", label: INVESTMENT_THESIS_LABELS.ground_up },
+  { value: "core", label: INVESTMENT_THESIS_LABELS.core },
+  { value: "core_plus", label: INVESTMENT_THESIS_LABELS.core_plus },
+  { value: "opportunistic", label: INVESTMENT_THESIS_LABELS.opportunistic },
+];
 
 interface InboxSettings {
   connected: boolean;
@@ -54,6 +83,7 @@ interface InboxSettings {
 export default function InboxPage() {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [settings, setSettings] = useState<InboxSettings | null>(null);
+  const [plans, setPlans] = useState<BusinessPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [polling, setPolling] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -84,9 +114,21 @@ export default function InboxPage() {
     }
   }, []);
 
+  const loadPlans = useCallback(async () => {
+    try {
+      const res = await fetch("/api/business-plans");
+      const json = await res.json();
+      setPlans(json.data || []);
+    } catch {
+      // Non-fatal — the Start Analysis card will show a prompt to create one.
+    }
+  }, []);
+
   useEffect(() => {
-    Promise.all([loadItems(), loadSettings()]).finally(() => setLoading(false));
-  }, [loadItems, loadSettings]);
+    Promise.all([loadItems(), loadSettings(), loadPlans()]).finally(() =>
+      setLoading(false)
+    );
+  }, [loadItems, loadSettings, loadPlans]);
 
   async function handlePoll(opts: { silent?: boolean } = {}) {
     setPolling(true);
@@ -357,6 +399,8 @@ export default function InboxPage() {
                 <InboxCard
                   key={item.id}
                   item={item}
+                  plans={plans}
+                  onAnalysisStarted={() => loadItems()}
                   onOpen={(id) => handleReview(id, false)}
                   onDismiss={(id) => handleReview(id, true)}
                 />
@@ -373,14 +417,20 @@ export default function InboxPage() {
 
 function InboxCard({
   item,
+  plans,
+  onAnalysisStarted,
   onOpen,
   onDismiss,
 }: {
   item: InboxItem;
+  plans: BusinessPlan[];
+  onAnalysisStarted: () => void;
   onOpen: (id: string) => void;
   onDismiss: (id: string) => void;
 }) {
   const loc = [item.city, item.state].filter(Boolean).join(", ");
+  const analysisStarted = item.analysis_status != null;
+
   return (
     <div className="border border-border/40 rounded-xl bg-card p-4 hover:border-border/70 transition-colors">
       <div className="flex items-start justify-between gap-4">
@@ -389,9 +439,7 @@ function InboxCard({
             <div className="font-medium text-foreground truncate">
               {item.name || "Untitled OM"}
             </div>
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium uppercase tracking-wide">
-              New
-            </span>
+            <StatusBadge status={item.analysis_status} />
           </div>
           <div className="text-xs text-muted-foreground truncate">
             {item.address ? `${item.address}${loc ? ", " + loc : ""}` : loc || "—"}
@@ -427,9 +475,6 @@ function InboxCard({
                 </span>
               </span>
             )}
-            {item.property_type && (
-              <span className="capitalize">{item.property_type}</span>
-            )}
           </div>
           {item.ingested_from_path && (
             <div className="mt-1.5 text-[10px] text-muted-foreground/70 truncate font-mono">
@@ -438,12 +483,17 @@ function InboxCard({
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <Link href={`/deals/${item.id}/om-analysis`} onClick={() => onOpen(item.id)}>
-            <Button size="sm" variant="outline">
-              <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-              Review
-            </Button>
-          </Link>
+          {analysisStarted ? (
+            <Link
+              href={`/deals/${item.id}/om-analysis`}
+              onClick={() => onOpen(item.id)}
+            >
+              <Button size="sm" variant="outline">
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                Review
+              </Button>
+            </Link>
+          ) : null}
           <button
             onClick={() => onDismiss(item.id)}
             className="p-2 text-muted-foreground hover:text-red-400 transition-colors"
@@ -453,6 +503,205 @@ function InboxCard({
           </button>
         </div>
       </div>
+
+      {!analysisStarted && (
+        <StartAnalysisPanel
+          item={item}
+          plans={plans}
+          onStarted={onAnalysisStarted}
+        />
+      )}
+    </div>
+  );
+}
+
+function StatusBadge({
+  status,
+}: {
+  status: InboxItem["analysis_status"];
+}) {
+  if (status == null) {
+    return (
+      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium uppercase tracking-wide">
+        New
+      </span>
+    );
+  }
+  if (status === "processing" || status === "pending") {
+    return (
+      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 font-medium uppercase tracking-wide inline-flex items-center gap-1">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+        Analyzing
+      </span>
+    );
+  }
+  if (status === "complete") {
+    return (
+      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 font-medium uppercase tracking-wide">
+        Ready
+      </span>
+    );
+  }
+  return (
+    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-300 font-medium uppercase tracking-wide">
+      Error
+    </span>
+  );
+}
+
+function StartAnalysisPanel({
+  item,
+  plans,
+  onStarted,
+}: {
+  item: InboxItem;
+  plans: BusinessPlan[];
+  onStarted: () => void;
+}) {
+  // Prefill from whatever stage-1 extraction or ingest suggested.
+  const [businessPlanId, setBusinessPlanId] = useState<string>(
+    item.business_plan_id || plans.find((p) => p.is_default)?.id || ""
+  );
+  const [propertyType, setPropertyType] = useState<string>(
+    item.property_type || ""
+  );
+  const [investmentStrategy, setInvestmentStrategy] = useState<string>(
+    item.investment_strategy || ""
+  );
+  const [starting, setStarting] = useState(false);
+
+  // Re-sync when plans arrive after initial render.
+  useEffect(() => {
+    if (!businessPlanId) {
+      const def = plans.find((p) => p.is_default);
+      if (def) setBusinessPlanId(def.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plans.length]);
+
+  const canStart =
+    !!businessPlanId && !!propertyType && !!investmentStrategy && !starting;
+
+  async function handleStart() {
+    setStarting(true);
+    try {
+      const res = await fetch(`/api/inbox/items/${item.id}/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          business_plan_id: businessPlanId,
+          property_type: propertyType,
+          investment_strategy: investmentStrategy,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(json.error || "Failed to start analysis");
+        return;
+      }
+      toast.success("Analysis started — it'll appear here when ready");
+      onStarted();
+    } catch {
+      toast.error("Failed to start analysis");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 pt-4 border-t border-border/40 grid gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <DropdownField
+          label="Business Plan"
+          value={businessPlanId}
+          onChange={setBusinessPlanId}
+          placeholder={plans.length === 0 ? "No plans — create one" : "Select…"}
+          disabled={plans.length === 0}
+          options={plans.map((p) => ({
+            value: p.id,
+            label: p.name + (p.is_default ? " ★" : ""),
+          }))}
+        />
+        <DropdownField
+          label="Property Type"
+          value={propertyType}
+          onChange={setPropertyType}
+          placeholder="Select…"
+          options={PROPERTY_TYPE_OPTIONS.map((p) => ({
+            value: p.value,
+            label: p.label,
+          }))}
+        />
+        <DropdownField
+          label="Investment Strategy"
+          value={investmentStrategy}
+          onChange={setInvestmentStrategy}
+          placeholder="Select…"
+          options={INVESTMENT_STRATEGY_OPTIONS.map((s) => ({
+            value: s.value,
+            label: s.label,
+          }))}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        {plans.length === 0 ? (
+          <Link
+            href="/business-plans"
+            className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"
+          >
+            Create a business plan <ExternalLink className="h-3 w-3" />
+          </Link>
+        ) : (
+          <div className="text-[11px] text-muted-foreground">
+            Pick a plan, property type, and strategy to calibrate analysis.
+          </div>
+        )}
+        <Button size="sm" onClick={handleStart} disabled={!canStart}>
+          {starting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+          ) : (
+            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+          )}
+          Start Analysis
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function DropdownField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  options,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  options: { value: string; label: string }[];
+  disabled?: boolean;
+}) {
+  return (
+    <div>
+      <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+        {label}
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-border/40 bg-muted/20 outline-none focus:border-primary/40 disabled:opacity-50"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
