@@ -16,7 +16,8 @@ export async function GET() {
     const res = await pool.query("SELECT display_name, account_email FROM google_drive_accounts WHERE id = 'default'");
     if (res.rows.length === 0) return NextResponse.json({ data: { configured: true, connected: false } });
     return NextResponse.json({ data: { configured: true, connected: true, display_name: res.rows[0].display_name, email: res.rows[0].account_email } });
-  } catch {
-    return NextResponse.json({ data: { configured: false, connected: false } });
+  } catch (err) {
+    console.error("Google Drive status error:", err);
+    return NextResponse.json({ data: { configured: true, connected: false } });
   }
 }

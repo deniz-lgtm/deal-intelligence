@@ -31,13 +31,15 @@ export async function GET(req: NextRequest) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`);
 
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO google_drive_accounts (id, access_token, refresh_token, account_email, display_name)
        VALUES ('default', $1, $2, $3, $4)
        ON CONFLICT (id) DO UPDATE SET access_token = $1, refresh_token = COALESCE($2, google_drive_accounts.refresh_token),
-         account_email = $3, display_name = $4, updated_at = NOW()`,
+         account_email = $3, display_name = $4, updated_at = NOW()
+       RETURNING id`,
       [tokens.access_token, tokens.refresh_token, userInfo.email, userInfo.name]
     );
+    console.log("Google Drive account saved:", { email: userInfo.email, rows: result.rowCount });
 
     // Route user back to public origin
     const [key, value] = state.split(":");
