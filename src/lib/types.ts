@@ -1220,6 +1220,12 @@ export interface DevPhase {
   duration_days: number | null;
   predecessor_id: string | null;
   lag_days: number;
+  /**
+   * When set, this phase is a child task rendered under its parent phase
+   * (e.g. "Neighborhood Meeting" under "Entitlements & Permits"). Null /
+   * absent for top-level phases.
+   */
+  parent_phase_id: string | null;
   pct_complete: number;
   budget: number | null;
   status: DevPhaseStatus;

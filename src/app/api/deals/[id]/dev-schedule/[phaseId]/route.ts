@@ -61,11 +61,16 @@ export async function DELETE(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
-    // Clear predecessor links pointing to this phase before deleting
+    // Clear predecessor links + parent links pointing to this phase
+    // before deleting. Orphaned children float up to the top level so
+    // the analyst can decide whether to keep or remove them.
     const phases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
     for (const p of phases) {
       if (p.predecessor_id === params.phaseId) {
         await devPhaseQueries.update(p.id, { predecessor_id: null });
+      }
+      if (p.parent_phase_id === params.phaseId) {
+        await devPhaseQueries.update(p.id, { parent_phase_id: null });
       }
     }
 

@@ -74,7 +74,7 @@ export async function POST(
     if (accessError) return accessError;
 
     const body = await req.json();
-    const { phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, pct_complete, budget, status, notes, sort_order } = body;
+    const { phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, pct_complete, budget, status, notes, sort_order } = body;
 
     if (!label?.trim()) {
       return NextResponse.json({ error: "label is required" }, { status: 400 });
@@ -90,6 +90,7 @@ export async function POST(
       duration_days: duration_days ?? null,
       predecessor_id: predecessor_id || null,
       lag_days: lag_days ?? 0,
+      parent_phase_id: parent_phase_id || null,
       pct_complete: pct_complete ?? 0,
       budget: budget ?? null,
       status: status || "not_started",
