@@ -74,11 +74,13 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const [unitGroups, setUnitGroups] = useState<any[]>([]);
   const [affordabilityConfig, setAffordabilityConfig] = useState<any>(null);
   const [taxesAnnual, setTaxesAnnual] = useState(0);
-  // Footprint SF drawn on the Site & Zoning page site plan. Used to seed
-  // the active massing scenario's footprint_sf when the analyst hasn't set
-  // one yet, and to offer a manual sync button inside MassingSection. Zero
-  // means "no drawn site plan" — the typed-footprint workflow is preserved.
-  const [sitePlanFootprintSf, setSitePlanFootprintSf] = useState(0);
+  // Buildings drawn on the Site & Zoning page site plan. Each {id, label,
+  // area_sf} lets a massing scenario reference one specific building via
+  // site_plan_building_id. Empty array means no drawn site plan — the
+  // typed-footprint workflow is preserved.
+  const [sitePlanBuildings, setSitePlanBuildings] = useState<
+    Array<{ id: string; label: string; area_sf: number }>
+  >([]);
 
   // Load data
   useEffect(() => {
@@ -90,32 +92,60 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       setDeal(d);
       const uw = uwRes.data?.data ? (typeof uwRes.data.data === "string" ? JSON.parse(uwRes.data.data) : uwRes.data.data) : {};
 
-      // Site plan drawn on the Site & Zoning page. When present, we use it
-      // to seed a scenario's base footprint on first load — but only if the
-      // scenario has no typed footprint (preserving the old numeric workflow
-      // for analysts who prefer it). Stored alongside for the sync button.
-      const sitePlanFp = Math.round(Number(uw.site_plan?.building_area_sf) || 0);
-      setSitePlanFootprintSf(sitePlanFp);
+      // Site plan drawn on the Site & Zoning page. Extract the building
+      // list (handles both the new `buildings[]` shape and the legacy
+      // `{building_points, building_area_sf}` single-building shape for
+      // reading — writes always go through the site-zoning page which
+      // normalizes to the new shape).
+      const rawPlan = uw.site_plan as any;
+      let bList: Array<{ id: string; label: string; area_sf: number; points?: unknown }> = [];
+      if (rawPlan && Array.isArray(rawPlan.buildings) && rawPlan.buildings.length > 0) {
+        bList = rawPlan.buildings.map((b: any) => ({
+          id: b.id,
+          label: b.label,
+          area_sf: Math.round(Number(b.area_sf) || 0),
+        }));
+      } else if (
+        rawPlan &&
+        Array.isArray(rawPlan.building_points) &&
+        rawPlan.building_points.length >= 3
+      ) {
+        bList = [{
+          id: "legacy",
+          label: "Building 1",
+          area_sf: Math.round(Number(rawPlan.building_area_sf) || 0),
+        }];
+      }
+      setSitePlanBuildings(bList);
+
+      // Default seed footprint — the scenario's linked building if set,
+      // else the first building, else the legacy sum. Keeps existing
+      // behaviour (first-time hydration only when scenario is unsized).
+      const defaultSeedSf = bList[0]?.area_sf || 0;
 
       if (uw.building_program?.scenarios?.length > 0) {
         const prog = uw.building_program as BuildingProgram;
-        // If the active (or baseline) scenario hasn't been sized yet and we
-        // have a site plan footprint, hydrate the scenario silently so the
-        // Base Footprint input shows the drawn value on first render.
-        if (sitePlanFp > 0) {
-          const activeId = prog.active_scenario_id || prog.scenarios[0]?.id;
-          prog.scenarios = prog.scenarios.map(s =>
-            s.id === activeId && (!s.footprint_sf || s.footprint_sf === 0)
-              ? { ...s, footprint_sf: sitePlanFp }
-              : s
-          );
-        }
+        const activeId = prog.active_scenario_id || prog.scenarios[0]?.id;
+        prog.scenarios = prog.scenarios.map(s => {
+          if (s.id !== activeId) return s;
+          // If the scenario is linked to a specific building, prefer that
+          // building's current area; otherwise only seed when unsized.
+          const linkedB = s.site_plan_building_id
+            ? bList.find(b => b.id === s.site_plan_building_id)
+            : null;
+          if (linkedB) return { ...s, footprint_sf: linkedB.area_sf };
+          if ((!s.footprint_sf || s.footprint_sf === 0) && defaultSeedSf > 0) {
+            return { ...s, footprint_sf: defaultSeedSf };
+          }
+          return s;
+        });
         setBuildingProgram(prog);
-      } else if (sitePlanFp > 0) {
+      } else if (defaultSeedSf > 0) {
         // No saved program yet but we have a drawn footprint → start the
         // default Base Case scenario with it pre-filled.
         const fresh = newBuildingProgram();
-        fresh.scenarios[0].footprint_sf = sitePlanFp;
+        fresh.scenarios[0].footprint_sf = defaultSeedSf;
+        fresh.scenarios[0].site_plan_building_id = bList[0]?.id || null;
         setBuildingProgram(fresh);
       }
       if (uw.other_income_items?.length > 0) setOtherIncomeItems(uw.other_income_items);
@@ -548,7 +578,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           onChange={p => { setBuildingProgram(p); setDirty(true); }}
           zoning={zoningInputs}
           densityBonuses={densityBonuses}
-          sitePlanFootprintSf={sitePlanFootprintSf}
+          sitePlanBuildings={sitePlanBuildings}
           onPushBaseline={pushToUW}
           onPushScenario={pushToUW}
         />

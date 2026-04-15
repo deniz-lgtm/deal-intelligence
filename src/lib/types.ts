@@ -2084,6 +2084,10 @@ export interface MassingScenario {
   linked_uw_scenario_id: string | null;
   unit_mix: UnitMixEntry[];
   parking_sf_per_space: number;  // avg SF per parking stall (default 350; surface ~325, structured ~350, underground ~375)
+  // Optional link to a building drawn on the site plan. When set, the
+  // scenario's footprint_sf is sourced from that building's area_sf. When
+  // null, the scenario uses its own typed footprint (legacy behaviour).
+  site_plan_building_id?: string | null;
 }
 
 export interface BuildingProgram {
@@ -2091,17 +2095,28 @@ export interface BuildingProgram {
   active_scenario_id: string;
 }
 
-// ─── Site Plan (parcel + building footprint on satellite) ────────────────────
+// ─── Site Plan (parcel + building footprint(s) on satellite) ─────────────────
 //
 // Stored under underwriting.data.site_plan. Used by the Site & Zoning page to
-// let analysts trace the parcel, draw the building footprint, and preview
-// setbacks on a to-scale satellite map. The resulting building_area_sf is then
-// the source of truth for the active massing scenario's footprint_sf (the
-// Programming page reads this on hydrate; the old flat-number workflow still
-// works when site_plan is empty).
+// let analysts trace the parcel, draw one or more building footprints, and
+// preview setbacks on a to-scale satellite map. Each drawn building can be
+// linked to a Programming-page massing scenario via site_plan_building_id so
+// multi-phase / multi-structure projects get a per-building floor stack.
+//
+// Backwards compatibility: earlier versions stored a single building as
+// `building_points` / `building_area_sf`. Those fields are kept on the type
+// for read-time migration — the site-zoning page hydrates legacy data into
+// `buildings[0]` when loading. They are no longer written by the UI.
 export interface SitePlanPoint {
   lat: number;
   lng: number;
+}
+
+export interface SitePlanBuilding {
+  id: string;
+  label: string;          // "Building A", "Tower 1", etc.
+  points: SitePlanPoint[];
+  area_sf: number;
 }
 
 export interface SitePlan {
@@ -2115,9 +2130,11 @@ export interface SitePlan {
   parcel_points: SitePlanPoint[];
   parcel_area_sf: number;
 
-  // Building footprint polygon
-  building_points: SitePlanPoint[];
-  building_area_sf: number;
+  // Building footprint polygons — one per structure. Drawing a building
+  // appends a new entry here. The active_building_id drives which row is
+  // shown as selected in the sidebar and which polygon accepts vertex edits.
+  buildings: SitePlanBuilding[];
+  active_building_id: string | null;
 
   // Setback visualization
   show_setbacks: boolean;
@@ -2128,17 +2145,21 @@ export interface SitePlan {
   snap_grid_ft: number;       // grid spacing in ft; 0 = off
 
   updated_at: string;
+
+  // ── Legacy (read-only migration) ────────────────────────────────────────
+  building_points?: SitePlanPoint[];
+  building_area_sf?: number;
 }
 
 export const DEFAULT_SITE_PLAN: SitePlan = {
   center_lat: null,
   center_lng: null,
-  zoom: 19,
+  zoom: 20,
   map_style: "satellite",
   parcel_points: [],
   parcel_area_sf: 0,
-  building_points: [],
-  building_area_sf: 0,
+  buildings: [],
+  active_building_id: null,
   show_setbacks: true,
   snap_right_angle: true,
   snap_vertex: true,
