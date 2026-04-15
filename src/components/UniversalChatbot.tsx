@@ -510,10 +510,13 @@ function UWCoPilotPane({
           )}
           Analyze
         </Button>
-        {data && typeof data === "object" && "analysis" in data && (
+        {/* `data` is typed `unknown` here — JSX expression children
+            can't be `unknown`, so we gate behind a boolean coerce and
+            pull the analysis out inside the block. */}
+        {Boolean(data && typeof data === "object" && "analysis" in data) && (
           <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-2">
             <p className="text-xs text-foreground/90">
-              {(data as { analysis: string }).analysis}
+              {String((data as { analysis: unknown } | null)?.analysis ?? "")}
             </p>
           </div>
         )}
@@ -534,7 +537,7 @@ function UWCoPilotPane({
         )}
         Load Benchmarks
       </Button>
-      {data && typeof data === "object" && (
+      {Boolean(data && typeof data === "object") && (
         <div className="text-[10px] space-y-1 text-muted-foreground">
           <p>Benchmarks loaded (see full comparison in UW Co-Pilot sidebar)</p>
         </div>
