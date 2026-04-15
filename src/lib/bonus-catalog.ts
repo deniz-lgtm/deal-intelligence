@@ -220,3 +220,152 @@ export const DEFAULT_ENTITLEMENT_TASKS: Array<{
   { label: "City Council Hearing", duration_days: 30 },
   { label: "Building Permit Issuance", duration_days: 60 },
 ];
+
+/**
+ * Entitlement scenario presets — each one captures a typical approval
+ * pathway. The analyst picks one as the starting point, then edits /
+ * adds / removes tasks as their jurisdiction requires.
+ *
+ * Spotted bonus cards (SB 35, CCHS, SB 330) still merge program-specific
+ * filings on top of the selected scenario.
+ *
+ * Keep the `key` stable across releases so deep-link / future template
+ * features can reference a scenario by id.
+ */
+export interface EntitlementScenario {
+  key: string;
+  label: string;
+  description: string;
+  tasks: Array<{ label: string; duration_days: number }>;
+}
+
+export const ENTITLEMENT_SCENARIOS: EntitlementScenario[] = [
+  {
+    key: "by_right",
+    label: "By-Right (Ministerial)",
+    description:
+      "No discretionary review — administrative checks and the building permit. Project conforms to zoning; staff approves at counter.",
+    tasks: [
+      { label: "Zoning Verification Letter", duration_days: 14 },
+      { label: "Building Permit Submittal", duration_days: 30 },
+      { label: "Plan Check & Corrections", duration_days: 45 },
+      { label: "Building Permit Issuance", duration_days: 30 },
+    ],
+  },
+  {
+    key: "ministerial_streamlined",
+    label: "Streamlined Ministerial (SB 35 / CCHS)",
+    description:
+      "State / local streamlining — no hearings, objective standards, fixed clock. Requires program eligibility.",
+    tasks: [
+      { label: "Eligibility / Pre-Application Filing", duration_days: 14 },
+      { label: "Objective Standards Checklist", duration_days: 21 },
+      { label: "Ministerial Permit Application", duration_days: 30 },
+      { label: "Objective Design Review", duration_days: 60 },
+      { label: "Plan Check & Corrections", duration_days: 45 },
+      { label: "Building Permit Issuance", duration_days: 60 },
+    ],
+  },
+  {
+    key: "minor_discretionary",
+    label: "Minor Discretionary (Admin Use Permit)",
+    description:
+      "Administrative use permit or minor modification — staff-level decision with public notice but no hearing.",
+    tasks: [
+      { label: "Pre-Application Meeting", duration_days: 14 },
+      { label: "Use Permit Application", duration_days: 30 },
+      { label: "Public Notice Period", duration_days: 14 },
+      { label: "Design Review (Staff)", duration_days: 30 },
+      { label: "Administrative Decision", duration_days: 14 },
+      { label: "Appeal Window", duration_days: 14 },
+      { label: "Building Permit Submittal", duration_days: 30 },
+      { label: "Building Permit Issuance", duration_days: 45 },
+    ],
+  },
+  {
+    key: "major_discretionary",
+    label: "Major Discretionary (Full Review)",
+    description:
+      "Standard discretionary approval — pre-app, CEQA, DRB, Planning Commission, City Council. The default for most value-add / ground-up projects.",
+    tasks: DEFAULT_ENTITLEMENT_TASKS,
+  },
+  {
+    key: "rezone_gpa",
+    label: "Rezone / General Plan Amendment",
+    description:
+      "Requires legislative action — General Plan or zoning map change on top of the standard discretionary path. Longer timeline, higher risk.",
+    tasks: [
+      { label: "Pre-Application Meeting", duration_days: 21 },
+      { label: "Community / Neighborhood Outreach", duration_days: 60 },
+      { label: "Application: Rezone + GPA + Entitlements", duration_days: 45 },
+      { label: "Environmental Review (EIR likely)", duration_days: 180 },
+      { label: "Design Review Board", duration_days: 45 },
+      { label: "Planning Commission Hearing", duration_days: 45 },
+      { label: "City Council — First Reading", duration_days: 30 },
+      { label: "City Council — Second Reading / Adoption", duration_days: 30 },
+      { label: "Ordinance Effective Date", duration_days: 30 },
+      { label: "Building Permit Submittal", duration_days: 30 },
+      { label: "Building Permit Issuance", duration_days: 60 },
+    ],
+  },
+  {
+    key: "specific_plan",
+    label: "Specific Plan / Planned Development",
+    description:
+      "Master plan framework (SP / PD) approved first, individual permits follow. Best for phased or campus-scale projects.",
+    tasks: [
+      { label: "Pre-Application Meeting", duration_days: 21 },
+      { label: "Specific Plan Preparation", duration_days: 120 },
+      { label: "Community / Neighborhood Outreach", duration_days: 90 },
+      { label: "Environmental Review (Program EIR)", duration_days: 240 },
+      { label: "Specific Plan Adoption — Planning Commission", duration_days: 45 },
+      { label: "Specific Plan Adoption — City Council", duration_days: 45 },
+      { label: "Phase Implementation Permit", duration_days: 60 },
+      { label: "Building Permit Submittal", duration_days: 30 },
+      { label: "Building Permit Issuance", duration_days: 60 },
+    ],
+  },
+  {
+    key: "coastal_ca",
+    label: "Coastal (CA Coastal Commission)",
+    description:
+      "Within California's coastal zone — Coastal Development Permit layered on top of standard discretionary review. Adds significant calendar risk.",
+    tasks: [
+      { label: "Pre-Application Meeting", duration_days: 14 },
+      { label: "Community / Neighborhood Outreach", duration_days: 30 },
+      { label: "Project Application Submittal", duration_days: 30 },
+      { label: "Environmental Review (CEQA)", duration_days: 120 },
+      { label: "Coastal Development Permit Application", duration_days: 30 },
+      { label: "Coastal Commission Staff Review", duration_days: 60 },
+      { label: "Coastal Commission Hearing", duration_days: 60 },
+      { label: "Design Review Board", duration_days: 45 },
+      { label: "Planning Commission Hearing", duration_days: 30 },
+      { label: "City Council Hearing", duration_days: 30 },
+      { label: "Building Permit Issuance", duration_days: 60 },
+    ],
+  },
+  {
+    key: "historic_review",
+    label: "Historic / Preservation Review",
+    description:
+      "Project affects a historic resource or district — adds Historic Review Board / SHPO review on top of standard discretionary.",
+    tasks: [
+      { label: "Pre-Application Meeting", duration_days: 14 },
+      { label: "Historic Resources Assessment", duration_days: 45 },
+      { label: "Community / Neighborhood Outreach", duration_days: 30 },
+      { label: "Project Application Submittal", duration_days: 30 },
+      { label: "Environmental Review (CEQA)", duration_days: 120 },
+      { label: "Historic Review Board Hearing", duration_days: 45 },
+      { label: "SHPO Consultation (if federal nexus)", duration_days: 60 },
+      { label: "Design Review Board", duration_days: 45 },
+      { label: "Planning Commission Hearing", duration_days: 30 },
+      { label: "City Council Hearing", duration_days: 30 },
+      { label: "Building Permit Issuance", duration_days: 60 },
+    ],
+  },
+];
+
+/** Look up an entitlement scenario by its `key`. */
+export function findEntitlementScenario(key: string): EntitlementScenario | undefined {
+  return ENTITLEMENT_SCENARIOS.find((s) => s.key === key);
+}

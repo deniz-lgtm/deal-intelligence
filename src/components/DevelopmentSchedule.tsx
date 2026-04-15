@@ -41,7 +41,8 @@ import type {
   PreDevSettings,
 } from "@/lib/types";
 import {
-  DEFAULT_ENTITLEMENT_TASKS,
+  ENTITLEMENT_SCENARIOS,
+  findEntitlementScenario,
   findBonusCard,
 } from "@/lib/bonus-catalog";
 import { toast } from "sonner";
@@ -252,21 +253,32 @@ export default function DevelopmentSchedule({ dealId }: Props) {
   };
 
   /**
-   * Seed child tasks under the Entitlements & Permits parent. Sources:
-   *   1. DEFAULT_ENTITLEMENT_TASKS — common discretionary review tasks
-   *      (pre-app meeting, outreach, CEQA, DRB, PC, council, permit).
-   *   2. entitlement_tasks from each spotted bonus card on Site & Zoning
-   *      (SB 35 / CCHS / SB 330 bring program-specific filings).
+   * Seed child tasks under the Entitlements & Permits parent based on a
+   * chosen scenario (by-right, ministerial, major discretionary,
+   * rezone/GPA, specific plan, coastal, historic). Spotted bonus cards
+   * (SB 35 / CCHS / SB 330) still layer in program-specific filings on
+   * top of whatever scenario is picked.
    *
-   * Idempotent — we dedupe by label and skip any task that's already
-   * present as a child of the entitlements parent. Safe to re-click
-   * after spotting another bonus.
+   * Idempotent — dedupes by label (case-insensitive) and skips any task
+   * already present as a child of the entitlements parent. Re-click
+   * after spotting another bonus, no duplicates.
+   *
+   * @param scenarioKey — key from ENTITLEMENT_SCENARIOS; falls back to
+   *   major_discretionary if an unknown key is passed.
    */
-  const handleSeedEntitlementTasks = async (entitlementPhaseId: string) => {
+  const handleSeedEntitlementTasks = async (
+    entitlementPhaseId: string,
+    scenarioKey: string
+  ) => {
+    const scenario = findEntitlementScenario(scenarioKey);
+    if (!scenario) {
+      toast.error("Unknown scenario");
+      return;
+    }
     setSeedingEntitlements(true);
     try {
       // Pull the deal's currently-spotted bonuses from underwriting so we
-      // can look up each card's entitlement_tasks from the catalog.
+      // can merge each card's entitlement_tasks on top of the scenario.
       let spottedSources: string[] = [];
       try {
         const uwRes = await fetch(`/api/underwriting?deal_id=${dealId}`);
@@ -277,12 +289,12 @@ export default function DevelopmentSchedule({ dealId }: Props) {
           .map((b: { source?: string }) => b?.source)
           .filter((s: unknown): s is string => typeof s === "string" && s.length > 0);
       } catch {
-        /* Deal may have no underwriting yet — fall through to defaults */
+        /* Deal may have no underwriting yet — fall through to scenario only */
       }
 
-      // Build the task list: defaults first, then bonus-specific tasks.
+      // Build the task list: scenario tasks first, then bonus-specific.
       const toCreate: Array<{ label: string; duration_days: number }> = [
-        ...DEFAULT_ENTITLEMENT_TASKS,
+        ...scenario.tasks,
       ];
       for (const source of spottedSources) {
         const card = findBonusCard(source);
@@ -307,7 +319,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       });
 
       if (uniqueNew.length === 0) {
-        toast.message("All entitlement tasks already seeded");
+        toast.message("All tasks from this scenario are already seeded");
         return;
       }
 
@@ -333,14 +345,46 @@ export default function DevelopmentSchedule({ dealId }: Props) {
         if (res.ok) created++;
       }
       toast.success(
-        `Seeded ${created} entitlement task${created === 1 ? "" : "s"}${
-          spottedSources.length > 0 ? ` (incl. ${spottedSources.length} spotted program${spottedSources.length === 1 ? "" : "s"})` : ""
+        `Seeded ${created} task${created === 1 ? "" : "s"} for "${scenario.label}"${
+          spottedSources.length > 0 ? ` (+ ${spottedSources.length} bonus program${spottedSources.length === 1 ? "" : "s"})` : ""
         }`
       );
       loadAll();
     } catch (err) {
       console.error("Failed to seed entitlement tasks:", err);
       toast.error("Failed to seed entitlement tasks");
+    } finally {
+      setSeedingEntitlements(false);
+    }
+  };
+
+  /**
+   * Remove every child task under the entitlements parent. Useful when
+   * the user wants to switch scenarios cleanly — they can clear first,
+   * then seed the new scenario. Confirms once before bulk-deleting.
+   */
+  const handleClearEntitlementTasks = async (entitlementPhaseId: string) => {
+    const children = phases.filter((p) => p.parent_phase_id === entitlementPhaseId);
+    if (children.length === 0) {
+      toast.message("No tasks to clear");
+      return;
+    }
+    const ok = window.confirm(
+      `Delete all ${children.length} task${children.length === 1 ? "" : "s"} under Entitlements & Permits? (The parent phase stays.)`
+    );
+    if (!ok) return;
+    setSeedingEntitlements(true);
+    try {
+      await Promise.all(
+        children.map((c) =>
+          fetch(`/api/deals/${dealId}/dev-schedule/${c.id}`, { method: "DELETE" })
+        )
+      );
+      toast.success(`Cleared ${children.length} task${children.length === 1 ? "" : "s"}`);
+      loadAll();
+    } catch (err) {
+      console.error("Failed to clear entitlement tasks:", err);
+      toast.error("Failed to clear tasks");
     } finally {
       setSeedingEntitlements(false);
     }
@@ -707,11 +751,14 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                               {children.map((c) => renderRow(c, true))}
                             </div>
                           )}
-                          {/* Entitlement-phase toolbar — add a task or
-                              seed the standard set + any tasks contributed
-                              by spotted bonus cards. */}
+                          {/* Entitlement-phase toolbar — pick a scenario
+                              to seed the typical task list for that
+                              approval pathway, then add / edit / remove
+                              tasks as the jurisdiction requires. Spotted
+                              bonus cards layer program-specific filings
+                              on top of whatever scenario is chosen. */}
                           {isEntitlement && (
-                            <div className="flex items-center gap-1 pl-6 pb-1">
+                            <div className="flex items-start gap-1.5 pl-6 pb-1 flex-wrap">
                               <Button
                                 size="sm"
                                 variant="ghost"
@@ -720,24 +767,46 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                               >
                                 <Plus className="h-2.5 w-2.5 mr-1" /> Task
                               </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 text-2xs"
-                                onClick={() => handleSeedEntitlementTasks(p.id)}
-                                disabled={seedingEntitlements}
-                                title="Create the standard entitlement tasks (pre-app, CEQA, DRB, hearings, permit) plus any program-specific filings from bonuses spotted on Site & Zoning"
-                              >
-                                {seedingEntitlements ? (
-                                  <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
-                                ) : (
-                                  <Calendar className="h-2.5 w-2.5 mr-1" />
+                              <div className="flex items-center gap-1">
+                                <Calendar className="h-2.5 w-2.5 text-muted-foreground" />
+                                <select
+                                  value=""
+                                  disabled={seedingEntitlements}
+                                  onChange={(e) => {
+                                    const key = e.target.value;
+                                    if (!key) return;
+                                    handleSeedEntitlementTasks(p.id, key);
+                                    e.target.value = "";
+                                  }}
+                                  title="Seed a typical task list for the chosen approval pathway. Spotted bonus cards add their specific filings on top."
+                                  className="h-6 text-2xs bg-background border border-border/40 rounded px-1.5 outline-none hover:border-primary/40"
+                                >
+                                  <option value="">Seed scenario…</option>
+                                  {ENTITLEMENT_SCENARIOS.map((s) => (
+                                    <option key={s.key} value={s.key}>
+                                      {s.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                {seedingEntitlements && (
+                                  <Loader2 className="h-2.5 w-2.5 animate-spin text-muted-foreground" />
                                 )}
-                                Seed from Bonuses + Defaults
-                              </Button>
+                              </div>
+                              {children.length > 0 && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 text-2xs text-muted-foreground hover:text-red-400"
+                                  onClick={() => handleClearEntitlementTasks(p.id)}
+                                  disabled={seedingEntitlements}
+                                  title="Delete all child tasks so you can switch scenarios cleanly"
+                                >
+                                  <Trash2 className="h-2.5 w-2.5 mr-1" /> Clear tasks
+                                </Button>
+                              )}
                               {children.length === 0 && (
-                                <span className="text-2xs text-muted-foreground/70 ml-2">
-                                  No tasks yet — add one or seed the standard set.
+                                <span className="text-2xs text-muted-foreground/70 ml-1 self-center">
+                                  Pick a scenario to seed, or add a task manually.
                                 </span>
                               )}
                             </div>
