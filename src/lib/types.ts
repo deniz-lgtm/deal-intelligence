@@ -2167,11 +2167,28 @@ export interface SitePlanPoint {
   lng: number;
 }
 
+// A cutout is a labeled void inside a building — typically a Texas-
+// donut style courtyard. It's attached to the building, not the
+// massing, so it travels with the footprint. Cutouts are subtracted
+// from the floors above the podium in per-floor SF math; for now we
+// just store them + their computed area so the analyst can do the
+// math on the massing side.
+export interface SitePlanCutout {
+  id: string;
+  label: string;          // "Cutout 1" (editable)
+  points: SitePlanPoint[];
+  area_sf: number;
+}
+
 export interface SitePlanBuilding {
   id: string;
   label: string;          // "Building A", "Tower 1", etc.
   points: SitePlanPoint[];
   area_sf: number;
+  // Optional cutouts — courtyards / light wells / other voids.
+  // Rendered as holes in the building polygon. Kept optional so
+  // legacy buildings without this field continue to work.
+  cutouts?: SitePlanCutout[];
 }
 
 // A site-plan scenario — also the unit of "Massing" in the rest of the
@@ -2189,6 +2206,12 @@ export interface SitePlanScenario {
   buildings: SitePlanBuilding[];
   active_building_id: string | null;
   created_at: string;
+  // Optional frontage polyline (open, multi-segment) — used to feed
+  // linear-SF of frontage into dev-budget line items that price by
+  // curb cut / sidewalk / street improvements. Stored per massing so
+  // alternative massings can have different frontage treatments.
+  frontage_points?: SitePlanPoint[];
+  frontage_length_ft?: number;
 }
 
 export interface SitePlan {

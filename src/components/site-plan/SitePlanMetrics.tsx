@@ -13,14 +13,14 @@
 // to touch them here.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   AlertTriangle, Check, Ruler, Home, Trees, Info,
   Pencil, Trash2,
 } from "lucide-react";
 import type { SitePlan, SitePlanBuilding, SitePlanScenario } from "@/lib/types";
 import type { SitePlanSetbacks } from "./SitePlanGenerator";
-import { polygonAreaSf, polygonPerimeterFt, insetPolygon } from "./site-plan-utils";
+import { polygonAreaSf, insetPolygon } from "./site-plan-utils";
 
 interface Props {
   value: SitePlan;
@@ -53,16 +53,28 @@ export default function SitePlanMetrics({
   const activeBuildingId = activeScen?.active_building_id ?? null;
 
   const parcelAcres = parcelSF / 43560;
-  const parcelPerimeterFt = useMemo(
-    () => polygonPerimeterFt(parcelPoints),
-    [parcelPoints]
-  );
 
+  // Gross building footprint (sum of polygons, ignoring cutouts) —
+  // used for lot coverage since planning usually measures gross
+  // footprint. The "net of cutouts" figure is what drives Programming's
+  // Floor Plate SF after the podium; shown separately.
   const totalBuildingSf = useMemo(
     () => buildings.reduce((s, b) => s + (b.area_sf || 0), 0),
     [buildings]
   );
+  const totalCutoutSf = useMemo(
+    () =>
+      buildings.reduce(
+        (s, b) => s + (b.cutouts || []).reduce((cs, c) => cs + (c.area_sf || 0), 0),
+        0
+      ),
+    [buildings]
+  );
+  const totalFootprintNetOfCutoutsSf = Math.max(0, totalBuildingSf - totalCutoutSf);
   const lotCoveragePct = parcelSF > 0 ? (totalBuildingSf / parcelSF) * 100 : 0;
+  const openSpaceSf = Math.max(0, parcelSF - totalBuildingSf);
+
+  const frontageLengthFt = Math.round(activeScen?.frontage_length_ft || 0);
 
   // Setback envelope area (SF) — buildable area after applying the most
   // restrictive setback as a uniform inset. Informational only.
@@ -158,8 +170,8 @@ export default function SitePlanMetrics({
               const isActive = b.id === activeBuildingId;
               const isRenaming = renamingId === b.id;
               return (
+                <React.Fragment key={b.id}>
                 <div
-                  key={b.id}
                   className={`flex items-center gap-1.5 rounded-md px-2 py-1 border transition-colors ${
                     isActive
                       ? "bg-blue-500/10 border-blue-500/30"
@@ -222,6 +234,58 @@ export default function SitePlanMetrics({
                     <Trash2 className="h-3 w-3" />
                   </button>
                 </div>
+                {/* Per-building cutouts — inline editor for each hole
+                    (label + area + delete). Only renders when the
+                    building actually has cutouts so the row stays
+                    compact for simple footprints. */}
+                {(b.cutouts || []).map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-1.5 ml-6 mt-0.5 rounded-md px-2 py-1 border border-pink-500/20 bg-pink-500/5"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-pink-400/70 flex-shrink-0" />
+                    <input
+                      value={c.label}
+                      onChange={(e) => {
+                        const label = e.target.value;
+                        updateActiveScen((scen) => ({
+                          ...scen,
+                          buildings: scen.buildings.map((bb) =>
+                            bb.id === b.id
+                              ? {
+                                  ...bb,
+                                  cutouts: (bb.cutouts || []).map((cc) =>
+                                    cc.id === c.id ? { ...cc, label } : cc
+                                  ),
+                                }
+                              : bb
+                          ),
+                        }));
+                      }}
+                      className="flex-1 text-[11px] bg-transparent outline-none text-pink-200"
+                    />
+                    <span className="text-[10px] tabular-nums text-pink-300/80 flex-shrink-0">
+                      {c.area_sf.toLocaleString()} SF
+                    </span>
+                    <button
+                      onClick={() => {
+                        updateActiveScen((scen) => ({
+                          ...scen,
+                          buildings: scen.buildings.map((bb) =>
+                            bb.id === b.id
+                              ? { ...bb, cutouts: (bb.cutouts || []).filter((cc) => cc.id !== c.id) }
+                              : bb
+                          ),
+                        }));
+                      }}
+                      className="text-muted-foreground/60 hover:text-red-400 p-0.5"
+                      title="Delete cutout"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+                </React.Fragment>
               );
             })}
           </div>
@@ -296,15 +360,33 @@ export default function SitePlanMetrics({
         </div>
       )}
 
-      {/* Parcel geometry */}
+      {/* Site Summary — replaces the previous "Parcel Geometry" card.
+          Shows the SF numbers Programming + Dev Budget care about:
+          land SF / acres, total footprint SF (after cutouts), frontage
+          LSF, and the implied open-space SF (parcel − footprint). */}
       {hasParcel && (
         <div className="border border-border/40 rounded-lg p-3 bg-muted/10">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Parcel Geometry</div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Site Summary</div>
           <div className="grid grid-cols-2 gap-y-1 gap-x-3 text-xs">
-            <span className="text-muted-foreground">Vertices</span>
-            <span className="tabular-nums text-right">{parcelPoints.length}</span>
-            <span className="text-muted-foreground">Perimeter</span>
-            <span className="tabular-nums text-right">{fn(parcelPerimeterFt)} ft</span>
+            <span className="text-muted-foreground">Land SF</span>
+            <span className="tabular-nums text-right">{fn(parcelSF)} <span className="text-muted-foreground/70">({fn2(parcelAcres)} AC)</span></span>
+            <span className="text-muted-foreground">Floor Plate SF</span>
+            <span className="tabular-nums text-right">{fn(totalFootprintNetOfCutoutsSf)}</span>
+            {frontageLengthFt > 0 && (
+              <>
+                <span className="text-muted-foreground">Frontage LSF</span>
+                <span className="tabular-nums text-right">{fn(frontageLengthFt)} ft</span>
+              </>
+            )}
+            <span className="text-muted-foreground">Open Space SF</span>
+            <span className="tabular-nums text-right">
+              {fn(openSpaceSf)}
+              {parcelSF > 0 && (
+                <span className="text-muted-foreground/70 ml-1">
+                  ({((openSpaceSf / parcelSF) * 100).toFixed(0)}%)
+                </span>
+              )}
+            </span>
           </div>
           {parcelMismatchPct != null && Math.abs(parcelMismatchPct) > 5 && (
             <p className="text-[10px] text-amber-300 mt-2">

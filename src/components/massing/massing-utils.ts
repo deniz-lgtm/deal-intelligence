@@ -86,18 +86,22 @@ export interface ZoningInputs {
 }
 
 export function computeMassingSummary(scenario: MassingScenario, zoning: ZoningInputs): MassingSummary {
-  const aboveFloors = scenario.floors.filter(f => !f.is_below_grade);
-  const belowFloors = scenario.floors.filter(f => f.is_below_grade);
+  // Defensive: legacy scenario rows written before the Massings refactor
+  // sometimes lack a `floors` array. Missing floors just means empty
+  // stack — returning NaN would cascade into every summary tile.
+  const floors = Array.isArray(scenario.floors) ? scenario.floors : [];
+  const aboveFloors = floors.filter(f => !f.is_below_grade);
+  const belowFloors = floors.filter(f => f.is_below_grade);
 
-  const total_gsf = scenario.floors.reduce((s, f) => s + f.floor_plate_sf, 0);
-  const total_nrsf = scenario.floors.reduce((s, f) => s + Math.round(f.floor_plate_sf * (f.efficiency_pct / 100)), 0);
+  const total_gsf = floors.reduce((s, f) => s + f.floor_plate_sf, 0);
+  const total_nrsf = floors.reduce((s, f) => s + Math.round(f.floor_plate_sf * (f.efficiency_pct / 100)), 0);
   const total_height_ft = aboveFloors.reduce((s, f) => s + f.floor_to_floor_ft, 0);
   const total_below_grade_ft = belowFloors.reduce((s, f) => s + f.floor_to_floor_ft, 0);
-  const total_units = scenario.floors.reduce((s, f) => s + f.units_on_floor, 0);
+  const total_units = floors.reduce((s, f) => s + f.units_on_floor, 0);
 
   const gsf_by_use: Partial<Record<FloorUseType, number>> = {};
   const nrsf_by_use: Partial<Record<FloorUseType, number>> = {};
-  for (const f of scenario.floors) {
+  for (const f of floors) {
     // If floor has a secondary use, split SF between primary and secondary
     const primarySF = f.secondary_use && f.secondary_sf > 0 ? f.floor_plate_sf - f.secondary_sf : f.floor_plate_sf;
     gsf_by_use[f.use_type] = (gsf_by_use[f.use_type] || 0) + primarySF;
@@ -116,7 +120,7 @@ export function computeMassingSummary(scenario: MassingScenario, zoning: ZoningI
 
   const above_grade_gsf = aboveFloors.reduce((s, f) => s + f.floor_plate_sf, 0);
   const effective_far = zoning.land_sf > 0 ? above_grade_gsf / zoning.land_sf : 0;
-  const maxPlate = Math.max(...scenario.floors.map(f => f.floor_plate_sf), 0);
+  const maxPlate = Math.max(...floors.map(f => f.floor_plate_sf), 0);
   const effective_lot_coverage_pct = zoning.land_sf > 0 ? (maxPlate / zoning.land_sf) * 100 : 0;
 
   const bonusFar = 1 + (scenario.density_bonus_far_increase || 0);

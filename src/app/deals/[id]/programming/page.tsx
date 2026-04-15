@@ -239,11 +239,19 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
               );
             }
             if (match) {
+              // Guard against legacy scenarios missing fields the rest
+              // of Programming assumes. Without these defaults, the
+              // render path (computeMassingSummary / floor editor) can
+              // crash on old data — shows as "Application error" in
+              // prod. Normalize to newScenario-shaped defaults.
               synced.push({
+                ...newScenario(b.label),
                 ...match,
                 site_plan_scenario_id: m.id,
                 site_plan_building_id: b.id,
                 footprint_sf: b.area_sf, // always re-sync from the drawn area
+                floors: Array.isArray(match.floors) ? match.floors : [],
+                unit_mix: Array.isArray(match.unit_mix) ? match.unit_mix : [],
               });
             } else {
               const fresh = newScenario(b.label);
@@ -253,6 +261,21 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
               synced.push(fresh);
             }
           }
+        }
+      }
+
+      // Normalize any legacy rows that skipped the reconcile loop (no
+      // site plan, single-scenario holdovers) so computeMassingSummary
+      // and the floor editor never see undefined arrays.
+      for (let i = 0; i < synced.length; i++) {
+        const s = synced[i];
+        if (!Array.isArray(s.floors) || !Array.isArray(s.unit_mix)) {
+          synced[i] = {
+            ...newScenario(s.name || "Massing"),
+            ...s,
+            floors: Array.isArray(s.floors) ? s.floors : [],
+            unit_mix: Array.isArray(s.unit_mix) ? s.unit_mix : [],
+          };
         }
       }
 
