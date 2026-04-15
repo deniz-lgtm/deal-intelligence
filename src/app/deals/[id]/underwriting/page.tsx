@@ -2552,6 +2552,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             }
             return mix;
           })()}
+          mode="mix"
           onConfigChange={(cfg) => set("affordability_config", cfg as UWData["affordability_config"])}
         />
       )}

@@ -102,6 +102,92 @@ const DEFAULT_DEV: DevParams = {
   efficiency_pct: 100, max_gsf: 0, max_nrsf: 0,
 };
 
+// Catalog of well-known density / affordability bonus and incentive programs.
+// Clicking a card on the Site & Zoning page "spots" the program — appending
+// it to zoning.density_bonuses. The Programming page then reads those as
+// read-only spotted programs via AffordabilityPlanner's spottedBonuses prop.
+//
+// Keep the source names stable — the "already spotted?" check on the catalog
+// buttons compares by `source`.
+const BONUS_CATALOG: Array<{
+  source: string;
+  description: string;
+  additional_density: string;
+}> = [
+  {
+    source: "CA Density Bonus Law",
+    description:
+      "State density bonus for providing affordable units. Incentives scale with the % of units affordable and the AMI target.",
+    additional_density: "+20% to +50% units",
+  },
+  {
+    source: "SB 35 (CA)",
+    description:
+      "Streamlined ministerial approval when the project includes at least 10% (or 50%) affordable units in a jurisdiction behind its RHNA.",
+    additional_density: "By-right",
+  },
+  {
+    source: "CCHS (Citywide Commercial-Corridor Housing Services)",
+    description:
+      "Allows residential use by-right in qualifying commercial corridors, bypassing rezone timelines.",
+    additional_density: "By-right residential",
+  },
+  {
+    source: "LIHTC 9% (100% affordable)",
+    description:
+      "Competitive Low-Income Housing Tax Credit — roughly 70% of eligible basis over 10 years. Typically paired with an 100% affordable tier structure.",
+    additional_density: "Equity ~70% basis",
+  },
+  {
+    source: "LIHTC 4% (100% affordable)",
+    description:
+      "Non-competitive 4% LIHTC paired with tax-exempt bonds. ~30% of eligible basis over 10 years.",
+    additional_density: "Equity ~30% basis",
+  },
+  {
+    source: "421-a (NYC)",
+    description:
+      "NYC property tax exemption for new multifamily with affordable set-asides. Terms vary by option (A–G).",
+    additional_density: "Tax abatement 25–35 yrs",
+  },
+  {
+    source: "J-51 (NYC)",
+    description:
+      "NYC tax abatement + exemption for substantial rehab or conversion projects that add regulated affordable units.",
+    additional_density: "Tax abatement",
+  },
+  {
+    source: "Local Inclusionary Zoning",
+    description:
+      "Jurisdiction-specific inclusionary ordinance — typically 10%–20% of units at 50%–80% AMI with optional in-lieu fee.",
+    additional_density: "Varies by city",
+  },
+  {
+    source: "Opportunity Zone",
+    description:
+      "Federal OZ tax benefits: deferred capital-gains recognition + 10-year basis step-up on the replacement investment.",
+    additional_density: "Tax deferral",
+  },
+  {
+    source: "HUD 221(d)(4)",
+    description:
+      "FHA-insured construction/rehab loan — up to 40-year fixed-rate non-recourse financing for market-rate or affordable MF.",
+    additional_density: "Debt 83.3% LTV",
+  },
+  {
+    source: "PILOT Agreement",
+    description:
+      "Payment In Lieu Of Taxes — negotiated reduced property-tax payments for projects with affordable set-asides.",
+    additional_density: "Tax reduction",
+  },
+  {
+    source: "SB 330 (CA)",
+    description:
+      "Housing Crisis Act — caps approval timelines and locks in the rules in effect when a preliminary application is filed.",
+    additional_density: "Entitlement shield",
+  },
+];
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const fn = (n: number) => n ? Math.round(n).toLocaleString("en-US") : "0";
@@ -758,10 +844,75 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
               ))}
             </div>
           )}
+          {/* Catalog — click a card to spot that incentive to the project.
+              Adds it to density_bonuses (and shows up on Programming under
+              "Spotted Bonuses / Incentives" in the AffordabilityPlanner).
+              Everything here is a preset of public / well-known programs.
+              Analysts can still edit the row after adding it. */}
+          <div className="mt-3 mb-2">
+            <p className="text-[10px] text-muted-foreground/80 mb-2">
+              Click any program to spot it to this project — it carries through to Programming.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {BONUS_CATALOG.map((b) => {
+                const already = zoning.density_bonuses.some(
+                  (x) => x.source === b.source
+                );
+                return (
+                  <button
+                    key={b.source}
+                    type="button"
+                    onClick={() => {
+                      if (already) {
+                        updateZoning(
+                          "density_bonuses",
+                          zoning.density_bonuses.filter(
+                            (x) => x.source !== b.source
+                          )
+                        );
+                      } else {
+                        updateZoning("density_bonuses", [
+                          ...zoning.density_bonuses,
+                          {
+                            source: b.source,
+                            description: b.description,
+                            additional_density: b.additional_density,
+                          },
+                        ]);
+                      }
+                    }}
+                    className={`text-left p-2.5 rounded-lg border transition-colors ${
+                      already
+                        ? "bg-emerald-500/10 border-emerald-500/40 hover:bg-emerald-500/15"
+                        : "bg-muted/10 border-border/40 hover:border-primary/40 hover:bg-muted/20"
+                    }`}
+                    title={already ? "Click to remove" : "Click to spot this program to the project"}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-medium text-foreground">
+                        {b.source}
+                      </span>
+                      <span
+                        className={`text-[10px] whitespace-nowrap ${
+                          already ? "text-emerald-400" : "text-primary/70"
+                        }`}
+                      >
+                        {already ? "✓ Spotted" : b.additional_density}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
+                      {b.description}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <button
             onClick={() => updateZoning("density_bonuses", [...zoning.density_bonuses, { source: "", description: "", additional_density: "" }])}
             className="text-xs text-muted-foreground hover:text-foreground"
-          >+ Add density bonus</button>
+          >+ Add custom</button>
         </div>
 
         {/* Zone Change / Rezone */}
