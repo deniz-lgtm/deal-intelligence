@@ -2531,6 +2531,23 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           })()}
           currentTaxes={d.taxes_annual || 0}
           initialConfig={d.affordability_config}
+          buildingUnitMix={(() => {
+            // Bucket the building's unit groups into BR-type counts so the
+            // planner's match-building solver and AI optimizer know what's
+            // typical for this deal.
+            const mix = { studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0 };
+            for (const g of d.unit_groups) {
+              const count = effectiveUnits(g);
+              if (!count) continue;
+              const bd = g.bedrooms || 0;
+              if (bd === 0) mix.studio += count;
+              else if (bd === 1) mix.one_br += count;
+              else if (bd === 2) mix.two_br += count;
+              else if (bd === 3) mix.three_br += count;
+              else mix.four_br_plus += count;
+            }
+            return mix;
+          })()}
           onConfigChange={(cfg) => set("affordability_config", cfg as UWData["affordability_config"])}
         />
       )}
