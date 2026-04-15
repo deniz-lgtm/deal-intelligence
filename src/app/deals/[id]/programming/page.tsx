@@ -59,6 +59,28 @@ function NumInput({ label, value, onChange, prefix, suffix, decimals = 0 }: {
   );
 }
 
+// Compact read-only chip for the zoning / bonuses context strip.
+// `color` just picks a tint; content is opaque so we can stuff either
+// a zoning designation, a metric, or a density-bonus source into it.
+function ZoningChip({
+  children, color = "blue", title,
+}: { children: React.ReactNode; color?: "blue" | "emerald" | "slate"; title?: string }) {
+  const tint =
+    color === "emerald"
+      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
+      : color === "slate"
+      ? "bg-slate-500/10 border-slate-500/30 text-slate-200"
+      : "bg-blue-500/10 border-blue-500/30 text-blue-200";
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] ${tint}`}
+      title={title}
+    >
+      {children}
+    </span>
+  );
+}
+
 // ── Main Page ────────────────────────────────────────────────────────────────
 export default function ProgrammingPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true);
@@ -72,6 +94,14 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const [commercialTenants, setCommercialTenants] = useState<CommercialTenant[]>([]);
   const [zoningInputs, setZoningInputs] = useState<ZoningInputs>({ land_sf: 0, far: 0, lot_coverage_pct: 0, height_limit_ft: 0, height_limit_stories: 0 });
   const [densityBonuses, setDensityBonuses] = useState<Array<{ source: string; description: string; additional_density: string }>>([]);
+  // Read-only zoning context surfaced as chips on this page so analysts
+  // see the constraints driving the active massing without jumping back
+  // to Site & Zoning. Purely display — edits still go to that page.
+  const [zoningContext, setZoningContext] = useState<{
+    zoning_designation: string;
+    overlays: string[];
+    height_limits: Array<{ label: string; value: string }>;
+  }>({ zoning_designation: "", overlays: [], height_limits: [] });
   const [unitGroups, setUnitGroups] = useState<any[]>([]);
   const [affordabilityConfig, setAffordabilityConfig] = useState<any>(null);
   const [taxesAnnual, setTaxesAnnual] = useState(0);
@@ -285,6 +315,11 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           (b: any) => b?.enabled !== false
         )
       );
+      setZoningContext({
+        zoning_designation: uw.zoning_info?.zoning_designation || "",
+        overlays: Array.isArray(uw.zoning_info?.overlays) ? uw.zoning_info.overlays : [],
+        height_limits: Array.isArray(uw.zoning_info?.height_limits) ? uw.zoning_info.height_limits : [],
+      });
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [params.id]);
@@ -784,6 +819,67 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         </div>
       )}
 
+      {/* Read-only zoning + spotted-bonus chips. Keeps the constraints
+          driving the active massing visible without forcing the analyst
+          to flip back to Site & Zoning. Values are sourced from the
+          UW blob's zoning_info. A link-out at the end jumps back to
+          Site & Zoning if something needs changing. */}
+      {(zoningContext.zoning_designation ||
+        zoningContext.overlays.length > 0 ||
+        zoningContext.height_limits.length > 0 ||
+        zoningInputs.far > 0 ||
+        zoningInputs.lot_coverage_pct > 0 ||
+        densityBonuses.length > 0) && (
+        <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">
+            Zoning
+          </span>
+          {zoningContext.zoning_designation && (
+            <ZoningChip color="blue">{zoningContext.zoning_designation}</ZoningChip>
+          )}
+          {zoningInputs.far > 0 && (
+            <ZoningChip color="blue">FAR {zoningInputs.far}</ZoningChip>
+          )}
+          {zoningInputs.lot_coverage_pct > 0 && (
+            <ZoningChip color="blue">Coverage ≤ {zoningInputs.lot_coverage_pct}%</ZoningChip>
+          )}
+          {zoningContext.height_limits
+            .filter((h) => h.value?.trim())
+            .slice(0, 2)
+            .map((h, i) => (
+              <ZoningChip key={`hl-${i}`} color="blue" title={h.label}>
+                {h.value}
+              </ZoningChip>
+            ))}
+          {zoningContext.overlays.slice(0, 3).map((o, i) => (
+            <ZoningChip key={`ov-${i}`} color="slate">{o}</ZoningChip>
+          ))}
+          {densityBonuses.length > 0 && (
+            <>
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground mx-1">
+                Bonuses
+              </span>
+              {densityBonuses.map((b, i) => (
+                <ZoningChip
+                  key={`db-${i}`}
+                  color="emerald"
+                  title={b.description}
+                >
+                  {b.source}
+                  {b.additional_density ? ` · ${b.additional_density}` : ""}
+                </ZoningChip>
+              ))}
+            </>
+          )}
+          <a
+            href={`/deals/${params.id}/site-zoning`}
+            className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline decoration-dotted"
+          >
+            Edit on Site &amp; Zoning →
+          </a>
+        </div>
+      )}
+
       {/* Summary Bar — when in multi-building mode, the headline numbers
           show the WHOLE active massing (all buildings summed). The
           per-building MassingSection below shows the single-stack
@@ -901,6 +997,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         })()}
         mode="type"
         spottedBonuses={densityBonuses}
+        availableBuildings={currentMassing?.buildings.map((b) => ({ id: b.id, label: b.label })) || []}
         onConfigChange={(cfg) => { setAffordabilityConfig(cfg); setDirty(true); }}
       />
 
