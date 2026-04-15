@@ -2534,9 +2534,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           buildingUnitMix={(() => {
             // Bucket the building's unit groups into BR-type counts so the
             // planner's match-building solver and AI optimizer know what's
-            // typical for this deal.
+            // typical for this deal. Exclude any affordable rows (added by
+            // the programming-page split) so we're reasoning about the
+            // market-rate template, not a post-split mix that would feed
+            // back into itself.
             const mix = { studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0 };
             for (const g of d.unit_groups) {
+              if ((g as { is_affordable?: boolean }).is_affordable) continue;
               const count = effectiveUnits(g);
               if (!count) continue;
               const bd = g.bedrooms || 0;
