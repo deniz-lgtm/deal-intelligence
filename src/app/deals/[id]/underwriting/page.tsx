@@ -415,6 +415,96 @@ function defaultMixedUseConfig(): MixedUseConfig {
   return { enabled: false, total_gfa: 0, components: [], common_area_sf: 0 };
 }
 
+/**
+ * Seed `mixed_use.components` from the active massing scenario's
+ * `nrsf_by_use` when the config is empty — so the per-component inputs on
+ * the OpEx / Exit / Lease-Up sections have something to render for
+ * mixed-use deals without the analyst having to hand-build the list.
+ *
+ * Idempotent:
+ *   • Preserves existing components + their settings (only adds missing
+ *     component_types, never overwrites).
+ *   • No-op for non-mixed-use deals unless the scenario already has
+ *     multiple use types (e.g. commercial property_type with a residential
+ *     massing floor).
+ *   • Updates each preserved component's sf_allocation to the latest
+ *     nrsf_by_use so Programming changes carry through.
+ */
+function seedMixedUseFromProgram(
+  existing: MixedUseConfig | null | undefined,
+  buildingProgram: unknown,
+  propertyType: string | undefined
+): MixedUseConfig | null {
+  const bp = buildingProgram as {
+    scenarios?: Array<{ id: string; is_baseline?: boolean; floors?: unknown[] }>;
+    active_scenario_id?: string;
+  } | null | undefined;
+  if (!bp || !bp.scenarios || bp.scenarios.length === 0) return existing ?? null;
+
+  const activeScenario =
+    bp.scenarios.find((s) => s.is_baseline) ||
+    bp.scenarios.find((s) => s.id === bp.active_scenario_id) ||
+    bp.scenarios[0];
+  if (!activeScenario || !activeScenario.floors) return existing ?? null;
+
+  // Tally NRSF per use type from the floors directly (keeps this function
+  // dependency-free — we don't import massing-utils here).
+  const nrsfByUse: Record<string, number> = {};
+  let totalGsf = 0;
+  for (const fRaw of activeScenario.floors) {
+    const f = fRaw as {
+      use_type?: string;
+      secondary_use?: string;
+      floor_plate_sf?: number;
+      secondary_sf?: number;
+      efficiency_pct?: number;
+    };
+    const plate = Number(f.floor_plate_sf || 0);
+    totalGsf += plate;
+    const eff = Number(f.efficiency_pct || 80) / 100;
+    const secondarySf = Number(f.secondary_sf || 0);
+    const primarySf =
+      f.secondary_use && secondarySf > 0 ? plate - secondarySf : plate;
+    if (f.use_type) {
+      nrsfByUse[f.use_type] = (nrsfByUse[f.use_type] || 0) + Math.round(primarySf * eff);
+    }
+    if (f.secondary_use && secondarySf > 0) {
+      const secEff =
+        f.secondary_use === "retail" ? 0.95
+          : f.secondary_use === "office" ? 0.87
+          : f.secondary_use === "parking" ? 0.98
+          : 0.80;
+      nrsfByUse[f.secondary_use] =
+        (nrsfByUse[f.secondary_use] || 0) + Math.round(secondarySf * secEff);
+    }
+  }
+
+  const relevantTypes = (["residential", "retail", "office"] as MixedUseComponentType[])
+    .filter((t) => (nrsfByUse[t] || 0) > 0);
+
+  // Detection: is this a mixed-use deal? Either property_type says so or
+  // the massing has more than one revenue-producing use type.
+  const isMixed = propertyType === "mixed_use" || relevantTypes.length > 1;
+  if (!isMixed) return existing ?? null;
+
+  const base = existing ?? defaultMixedUseConfig();
+  const next: MixedUseConfig = { ...base, total_gfa: totalGsf, enabled: true };
+  // Preserve existing components but refresh sf_allocation + add any new
+  // use types that have appeared in the massing.
+  const byType = new Map(next.components.map((c) => [c.component_type, c]));
+  const updated: MixedUseComponent[] = [];
+  for (const t of relevantTypes) {
+    const existing_c = byType.get(t);
+    if (existing_c) {
+      updated.push({ ...existing_c, sf_allocation: nrsfByUse[t] || 0 });
+    } else {
+      updated.push({ ...newMixedUseComponent(t), sf_allocation: nrsfByUse[t] || 0 });
+    }
+  }
+  next.components = updated;
+  return next;
+}
+
 function defaultRedevelopment(): RedevelopmentConfig {
   return { enabled: false, existing_use: "", existing_sf: 0, existing_noi: 0, existing_occupancy_pct: 0, vacancy_period_months: 3, demolition_period_months: 3, construction_period_months: 18, demolition_items: [], is_phased: false, phase_1_label: "Phase 1 — Parking Lot", phase_1_sf: 0, phase_1_timeline_months: 18, phase_2_label: "Phase 2 — Main Building", phase_2_sf: 0, phase_2_timeline_months: 24, existing_parking_spaces: 0, parking_spaces_converted: 0, new_parking_spaces_built: 0 };
 }
@@ -1193,6 +1283,17 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             merged.efficiency_pct = EFFICIENCY_DEFAULTS[dr.data.property_type] ?? 100;
           }
         }
+        // Auto-seed mixed_use.components from the active massing scenario's
+        // nrsf_by_use when a mixed-use deal has no components yet. This is
+        // what powers the per-component inputs that now live in OpEx /
+        // Exit / Lease-Up sections (the unified Mixed-Use Section was
+        // removed). Idempotent: only runs when components is empty, so
+        // existing deals' settings are preserved.
+        merged.mixed_use = seedMixedUseFromProgram(
+          merged.mixed_use,
+          merged.building_program,
+          dr.data?.property_type
+        );
         setData(merged);
       }
       else if (dr.data?.asking_price) setData(p => ({ ...p, purchase_price: dr.data.asking_price }));
@@ -1896,120 +1997,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           /api/deals/[id]/investment-package/generate-all keeps working
           unchanged. */}
 
-      {/* ═══════════════════ MIXED-USE COMPONENTS ═══════════════════ */}
-      {(deal?.property_type === "mixed_use" || d.mixed_use?.enabled) && (
-      <Section title="Mixed-Use Components" icon={<Layers className="h-4 w-4 text-violet-400" />}>
-        <div className="mt-3">
-          {(() => {
-            const mx = d.mixed_use || defaultMixedUseConfig();
-            const setMX = (fn: (prev: MixedUseConfig) => MixedUseConfig) => setData(p => ({ ...p, mixed_use: fn(p.mixed_use || defaultMixedUseConfig()) }));
-            const allocatedSF = mx.components.reduce((s, c) => s + c.sf_allocation, 0) + mx.common_area_sf;
-            const unallocated = mx.total_gfa - allocatedSF;
+      {/* Mixed-Use Components used to live here as a unified editor.
+          Per-component inputs now live in their natural homes:
+            • OpEx allocation %          → Operating Assumptions section
+            • Cap rate per component     → Exit Analysis section
+            • LC / TI / free rent /
+              rent escalation            → Absorption / Lease-Up section
+          Data still lives in d.mixed_use.components (seeded from
+          building_program's nrsf_by_use when missing — see the load
+          effect below). */}
 
-            return (
-              <>
-                {/* Enable toggle + GFA */}
-                <div className="flex items-center gap-4 mb-4">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={mx.enabled} onChange={e => setMX(p => ({ ...p, enabled: e.target.checked }))} className="accent-primary" />
-                    Enable Mixed-Use Modeling
-                  </label>
-                </div>
-                {mx.enabled && (
-                  <>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Total GFA (from Programming)</label>
-                        <p className="text-sm font-semibold py-1.5 tabular-nums">{fn(d.max_gsf || mx.total_gfa)} SF</p>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Allocated</label>
-                        <p className="text-sm font-semibold py-1.5 tabular-nums">{fn(allocatedSF)} SF</p>
-                      </div>
-                    </div>
-
-                    {/* GFA allocation bar */}
-                    {mx.total_gfa > 0 && (
-                      <div className="mb-4">
-                        <div className="flex h-3 rounded-full overflow-hidden bg-muted/30 mb-1">
-                          {mx.components.map(c => (
-                            <div key={c.id} className={`${c.component_type === "residential" ? "bg-blue-500/70" : c.component_type === "retail" ? "bg-amber-500/70" : c.component_type === "office" ? "bg-purple-500/70" : "bg-zinc-500/70"}`}
-                              style={{ width: `${(c.sf_allocation / mx.total_gfa) * 100}%` }} title={`${c.label}: ${fn(c.sf_allocation)} SF`} />
-                          ))}
-                          {mx.common_area_sf > 0 && <div className="bg-zinc-600/50" style={{ width: `${(mx.common_area_sf / mx.total_gfa) * 100}%` }} title={`Common: ${fn(mx.common_area_sf)} SF`} />}
-                        </div>
-                        <div className="flex gap-3 text-xs text-muted-foreground">
-                          {mx.components.map(c => (
-                            <span key={c.id} className="flex items-center gap-1">
-                              <span className={`inline-block w-2 h-2 rounded-full ${c.component_type === "residential" ? "bg-blue-500" : c.component_type === "retail" ? "bg-amber-500" : c.component_type === "office" ? "bg-purple-500" : "bg-zinc-500"}`} />
-                              {c.label} ({((c.sf_allocation / mx.total_gfa) * 100).toFixed(0)}%)
-                            </span>
-                          ))}
-                          {mx.common_area_sf > 0 && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-zinc-600" />Common ({((mx.common_area_sf / mx.total_gfa) * 100).toFixed(0)}%)</span>}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Component cards */}
-                    {mx.components.map((comp, ci) => {
-                      const updComp = (upd: Partial<MixedUseComponent>) => setMX(p => ({ ...p, components: p.components.map(c => c.id === comp.id ? { ...c, ...upd } : c) }));
-                      const isRetail = comp.component_type === "retail" || comp.component_type === "office";
-                      return (
-                        <div key={comp.id} className="border rounded-md p-3 mb-3 bg-muted/5">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <span className={`w-3 h-3 rounded-full ${comp.component_type === "residential" ? "bg-blue-500" : comp.component_type === "retail" ? "bg-amber-500" : "bg-purple-500"}`} />
-                              <input type="text" value={comp.label} onChange={e => updComp({ label: e.target.value })} className="bg-transparent text-sm font-semibold outline-none" />
-                            </div>
-                            <button onClick={() => setMX(p => ({ ...p, components: p.components.filter(c => c.id !== comp.id) }))} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
-                          </div>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                            <div>
-                              <label className="block text-xs font-medium text-muted-foreground mb-1">SF (from Programming)</label>
-                              <p className="text-sm font-semibold py-1.5 tabular-nums">{fn(comp.sf_allocation)}</p>
-                            </div>
-                            <NumInput label="Cap Rate" value={comp.cap_rate} onChange={v => updComp({ cap_rate: v })} suffix="%" decimals={2} />
-                            <div>
-                              <label className="block text-xs font-medium text-muted-foreground mb-1">OpEx Mode</label>
-                              <select value={comp.opex_mode} onChange={e => updComp({ opex_mode: e.target.value as "own" | "shared" })} className="w-full bg-background text-foreground border rounded-md px-2 py-1.5 text-sm outline-none">
-                                <option value="shared">Shared (% allocation)</option>
-                                <option value="own">Own OpEx</option>
-                              </select>
-                            </div>
-                            {comp.opex_mode === "shared" && <NumInput label="OpEx Allocation" value={comp.opex_allocation_pct} onChange={v => updComp({ opex_allocation_pct: v })} suffix="%" decimals={1} />}
-                          </div>
-                          {/* Retail-specific fields */}
-                          {isRetail && (
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 border-t pt-3">
-                              <NumInput label="TI Allowance ($/SF)" value={comp.ti_allowance_per_sf} onChange={v => updComp({ ti_allowance_per_sf: v })} prefix="$" decimals={2} />
-                              <NumInput label="Leasing Commission" value={comp.leasing_commission_pct} onChange={v => updComp({ leasing_commission_pct: v })} suffix="%" decimals={1} />
-                              <NumInput label="Free Rent (months)" value={comp.free_rent_months} onChange={v => updComp({ free_rent_months: v })} decimals={1} />
-                              <NumInput label="Rent Escalation" value={comp.rent_escalation_pct} onChange={v => updComp({ rent_escalation_pct: v })} suffix="%" decimals={1} />
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Add component */}
-                    <div className="flex gap-2">
-                      {(["residential", "retail", "office"] as MixedUseComponentType[])
-                        .filter(t => !mx.components.some(c => c.component_type === t && t === "residential"))
-                        .map(t => (
-                          <Button key={t} variant="outline" size="sm" onClick={() => setMX(p => ({ ...p, components: [...p.components, newMixedUseComponent(t)] }))}>
-                            <Plus className="h-3.5 w-3.5 mr-1" /> {MIXED_USE_COMPONENT_LABELS[t]}
-                          </Button>
-                        ))
-                      }
-                    </div>
-                  </>
-                )}
-              </>
-            );
-          })()}
-        </div>
-      </Section>
-      )}
 
       {/* ═══════════════════ REDEVELOPMENT OVERLAY ═══════════════════ */}
       <Section title="Redevelopment Overlay" icon={<Building2 className="h-4 w-4 text-rose-400" />} open={false}>
@@ -3433,14 +3430,83 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </div>
             </div>
           )}
+
+          {/* Per-component OpEx allocation (formerly on the Mixed-Use
+              Section). Shows "shared % of building OpEx" per product type
+              so the analyst can model e.g. residential carrying 70% and
+              retail carrying 30%. Only the % is surfaced here — the
+              shared/own toggle stays on the data model for future use. */}
+          {d.mixed_use?.enabled && (d.mixed_use?.components?.length ?? 0) > 0 && (
+            <div className="mt-4 border-t pt-3">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                Per-Component OpEx Allocation
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {(d.mixed_use?.components || []).map((comp) => {
+                  const updComp = (upd: Partial<MixedUseComponent>) =>
+                    setData(p => ({
+                      ...p,
+                      mixed_use: {
+                        ...(p.mixed_use || defaultMixedUseConfig()),
+                        components: (p.mixed_use?.components || []).map(c =>
+                          c.id === comp.id ? { ...c, ...upd } : c
+                        ),
+                      },
+                    }));
+                  return (
+                    <div key={comp.id} className="space-y-1">
+                      <NumInput
+                        label={`${comp.label} OpEx Share`}
+                        value={comp.opex_allocation_pct}
+                        onChange={v => updComp({ opex_allocation_pct: v })}
+                        suffix="%"
+                        decimals={1}
+                      />
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="radio"
+                            name={`opex-mode-${comp.id}`}
+                            checked={comp.opex_mode === "shared"}
+                            onChange={() => updComp({ opex_mode: "shared" })}
+                            className="accent-primary"
+                          />
+                          Shared
+                        </label>
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="radio"
+                            name={`opex-mode-${comp.id}`}
+                            checked={comp.opex_mode === "own"}
+                            onChange={() => updComp({ opex_mode: "own" })}
+                            className="accent-primary"
+                          />
+                          Own OpEx
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-muted-foreground/70 mt-2">
+                Shared = component carries a % of the building-wide OpEx above.
+                Own OpEx = component tracks its own expenses (model separately).
+              </p>
+            </div>
+          )}
         </div>
       </Section>
 
-      {/* ═══════════════════ ABSORPTION / LEASE-UP ═══════════════════ */}
-      {isGroundUp && (
+      {/* ═══════════════════ ABSORPTION / LEASE-UP ═══════════════════
+          Shown for ground-up (residential absorption) OR any deal with
+          commercial components that need per-component leasing terms
+          (TI / LC / free rent / escalation). */}
+      {(isGroundUp || (d.mixed_use?.enabled && (d.mixed_use?.components || []).some(
+        c => c.component_type === "retail" || c.component_type === "office"
+      ))) && (
       <Section title="Absorption / Lease-Up" icon={<ArrowDownUp className="h-4 w-4 text-green-400" />}>
         <div className="mt-3">
-          {(() => {
+          {isGroundUp && (() => {
             const lu = d.lease_up || defaultLeaseUp();
             const setLU = (upd: Partial<LeaseUpConfig>) => setData(p => ({ ...p, lease_up: { ...(p.lease_up || defaultLeaseUp()), ...upd } }));
             const monthsToStab = lu.absorption_units_per_month > 0 ? Math.ceil((m.totalUnits * (lu.stabilization_occupancy_pct / 100)) / lu.absorption_units_per_month) : 0;
@@ -3478,6 +3544,79 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </>
             );
           })()}
+
+          {/* Per-component leasing terms (formerly on the Mixed-Use
+              Section). Only retail/office get TI / LC / free rent /
+              escalation — residential uses the Absorption block above. */}
+          {d.mixed_use?.enabled && (d.mixed_use?.components || []).some(
+            c => c.component_type === "retail" || c.component_type === "office"
+          ) && (
+            <div className="mt-4 border-t pt-4">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                Per-Component Leasing Terms (Retail / Office)
+              </div>
+              <div className="space-y-3">
+                {(d.mixed_use?.components || [])
+                  .filter(c => c.component_type === "retail" || c.component_type === "office")
+                  .map((comp) => {
+                    const updComp = (upd: Partial<MixedUseComponent>) =>
+                      setData(p => ({
+                        ...p,
+                        mixed_use: {
+                          ...(p.mixed_use || defaultMixedUseConfig()),
+                          components: (p.mixed_use?.components || []).map(c =>
+                            c.id === comp.id ? { ...c, ...upd } : c
+                          ),
+                        },
+                      }));
+                    return (
+                      <div key={comp.id} className="border rounded-md p-3 bg-muted/5">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              comp.component_type === "retail" ? "bg-amber-500" : "bg-purple-500"
+                            }`}
+                          />
+                          <span className="text-sm font-medium">{comp.label}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            ({fn(comp.sf_allocation)} SF)
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <NumInput
+                            label="TI Allowance ($/SF)"
+                            value={comp.ti_allowance_per_sf}
+                            onChange={v => updComp({ ti_allowance_per_sf: v })}
+                            prefix="$"
+                            decimals={2}
+                          />
+                          <NumInput
+                            label="Leasing Commission"
+                            value={comp.leasing_commission_pct}
+                            onChange={v => updComp({ leasing_commission_pct: v })}
+                            suffix="%"
+                            decimals={1}
+                          />
+                          <NumInput
+                            label="Free Rent (months)"
+                            value={comp.free_rent_months}
+                            onChange={v => updComp({ free_rent_months: v })}
+                            decimals={1}
+                          />
+                          <NumInput
+                            label="Rent Escalation"
+                            value={comp.rent_escalation_pct}
+                            onChange={v => updComp({ rent_escalation_pct: v })}
+                            suffix="%"
+                            decimals={1}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
         </div>
       </Section>
       )}
@@ -3613,6 +3752,42 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <p className="text-sm font-semibold">{fc(m.exitEquity)}</p>
           </div>
         </div>
+
+        {/* Per-component cap rates (formerly on the Mixed-Use Section). The
+            primary "Exit Cap Rate" above still drives the single-property
+            valuation; per-component rates let analysts track different
+            yields by use type for their own memos / waterfalls. */}
+        {d.mixed_use?.enabled && (d.mixed_use?.components?.length ?? 0) > 0 && (
+          <div className="mt-4 border-t pt-3">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+              Per-Component Cap Rates
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {(d.mixed_use?.components || []).map((comp) => {
+                const updComp = (upd: Partial<MixedUseComponent>) =>
+                  setData(p => ({
+                    ...p,
+                    mixed_use: {
+                      ...(p.mixed_use || defaultMixedUseConfig()),
+                      components: (p.mixed_use?.components || []).map(c =>
+                        c.id === comp.id ? { ...c, ...upd } : c
+                      ),
+                    },
+                  }));
+                return (
+                  <NumInput
+                    key={comp.id}
+                    label={`${comp.label} Cap Rate`}
+                    value={comp.cap_rate}
+                    onChange={v => updComp({ cap_rate: v })}
+                    suffix="%"
+                    decimals={2}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
       </Section>
 
       <div className="border rounded-xl bg-card overflow-hidden">
