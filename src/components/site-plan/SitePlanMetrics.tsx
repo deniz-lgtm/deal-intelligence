@@ -15,8 +15,8 @@
 
 import { useMemo, useState } from "react";
 import {
-  AlertTriangle, Check, Ruler, Home, Trees, ArrowRight, Info,
-  Pencil, Trash2, Plus,
+  AlertTriangle, Check, Ruler, Home, Trees, Info,
+  Pencil, Trash2,
 } from "lucide-react";
 import type { SitePlan, SitePlanBuilding, SitePlanScenario } from "@/lib/types";
 import type { SitePlanSetbacks } from "./SitePlanGenerator";
@@ -32,12 +32,6 @@ interface Props {
   // Land SF from the site-info section — lets us flag when the drawn parcel
   // disagrees with the typed land acreage.
   expectedLandSf?: number | null;
-  // Push-to-programming handler. When present the "Push to Programming"
-  // card renders; it's wired by the host to write the chosen footprint
-  // into the active massing scenario and navigate / toast.
-  onPushToProgramming?: (footprintSf: number, building: SitePlanBuilding | null) => void;
-  // Optional label shown beside the push button (e.g., current scenario name)
-  pushTargetLabel?: string;
 }
 
 const fn = (n: number) => (n || n === 0 ? Math.round(n).toLocaleString("en-US") : "—");
@@ -45,7 +39,6 @@ const fn2 = (n: number) => (n || n === 0 ? n.toLocaleString("en-US", { maximumFr
 
 export default function SitePlanMetrics({
   value, onChange, setbacks, zoningLotCoveragePct, expectedLandSf,
-  onPushToProgramming, pushTargetLabel,
 }: Props) {
   // The metrics sidebar always reflects the currently active scenario.
   // Scenario switches happen via the top-level scenario tab bar rendered
@@ -103,24 +96,6 @@ export default function SitePlanMetrics({
   // Inline rename state (one label editor at a time)
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-
-  // Push selector — which building to push to Programming. Defaults to the
-  // active building, else the first, else "total".
-  const [pushTarget, setPushTarget] = useState<string>("");
-  const effectiveTarget =
-    pushTarget ||
-    (activeBuildingId && buildings.some((b) => b.id === activeBuildingId)
-      ? activeBuildingId
-      : buildings[0]?.id || "total");
-
-  const pushSf =
-    effectiveTarget === "total"
-      ? totalBuildingSf
-      : buildings.find(b => b.id === effectiveTarget)?.area_sf || 0;
-  const pushBuilding =
-    effectiveTarget === "total"
-      ? null
-      : buildings.find(b => b.id === effectiveTarget) || null;
 
   // Mutation helpers — every write funnels through updateActiveScen so
   // only the active scenario's copy of the buildings list changes. Other
@@ -341,46 +316,10 @@ export default function SitePlanMetrics({
         </div>
       )}
 
-      {/* Push to Programming */}
-      {hasBuildings && onPushToProgramming && (
-        <div className="border border-primary/30 bg-primary/5 rounded-lg p-3">
-          <div className="text-[10px] uppercase tracking-wide text-primary/80 mb-2">
-            Push to Programming
-          </div>
-          {/* Target selector — one row per building + "Total" when there's more than one. */}
-          {buildings.length > 1 && (
-            <select
-              value={effectiveTarget}
-              onChange={(e) => setPushTarget(e.target.value)}
-              className="w-full mb-2 text-xs bg-background text-foreground border border-border/60 rounded px-2 py-1 outline-none"
-            >
-              {buildings.map((b) => (
-                <option key={b.id} value={b.id} className="bg-background text-foreground">
-                  {b.label} — {b.area_sf.toLocaleString()} SF
-                </option>
-              ))}
-              <option value="total" className="bg-background text-foreground">
-                Total of all buildings — {totalBuildingSf.toLocaleString()} SF
-              </option>
-            </select>
-          )}
-          <button
-            onClick={() => onPushToProgramming(pushSf, pushBuilding)}
-            disabled={pushSf <= 0}
-            className="w-full flex items-center justify-between gap-2 rounded-md bg-primary/10 hover:bg-primary/20 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-2 group transition-colors"
-          >
-            <div className="text-left">
-              <div className="text-xs font-medium text-primary">
-                Replace base footprint · {fn(pushSf)} SF
-              </div>
-              {pushTargetLabel && (
-                <div className="text-[10px] text-muted-foreground mt-0.5">→ {pushTargetLabel}</div>
-              )}
-            </div>
-            <ArrowRight className="h-4 w-4 text-primary group-hover:translate-x-0.5 transition-transform flex-shrink-0" />
-          </button>
-        </div>
-      )}
+      {/* The Site Plan auto-syncs with Programming (each massing's
+          buildings appear there as their own tabs), so there's no
+          explicit "push" button here anymore — analysts just navigate
+          to Programming and edit. */}
     </div>
   );
 }

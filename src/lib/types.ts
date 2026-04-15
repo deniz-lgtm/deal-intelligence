@@ -2132,6 +2132,17 @@ export interface MassingScenario {
   // scenario's footprint_sf is sourced from that building's area_sf. When
   // null, the scenario uses its own typed footprint (legacy behaviour).
   site_plan_building_id?: string | null;
+  // Optional link to the site-plan scenario (Massing) this stack
+  // belongs to. Combined with site_plan_building_id this uniquely
+  // identifies a (massing, building) pair: one MassingScenario per
+  // building per massing. Lets Programming render
+  // tabs(massing) > tabs(building) > one floor stack per cell.
+  site_plan_scenario_id?: string | null;
+  // Label of the AI-generated template that produced the current floor
+  // stack ("Podium 5-over-1", etc). Cleared when the user manually
+  // re-orders or re-edits floors. Used to decorate the AI Generate
+  // button with the most-recently-used preset name.
+  ai_template_label?: string | null;
 }
 
 export interface BuildingProgram {
@@ -2163,10 +2174,12 @@ export interface SitePlanBuilding {
   area_sf: number;
 }
 
-// A site-plan scenario is one full drawing variation — its own parcel
-// polygon, its own buildings list. Lets analysts explore alternatives
-// ("As-of-right", "With density bonus", "Max build") on the same site
-// without losing previous work.
+// A site-plan scenario — also the unit of "Massing" in the rest of the
+// app. Each one owns its own parcel polygon + buildings list. The user-
+// visible label everywhere is "Massing N" (Site Plan, Programming, and
+// Underwriting all align on this term so analysts see one concept end-
+// to-end). The interface is still named SitePlanScenario in code to
+// keep the legacy field name compatible.
 export interface SitePlanScenario {
   id: string;
   name: string;

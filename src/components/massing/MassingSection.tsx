@@ -3,7 +3,7 @@
 import React, { useState, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
-  Plus, Star, Copy, Trash2, ChevronDown, Layers, AlertTriangle, Check, MoreVertical,
+  Plus, Trash2, ChevronDown, AlertTriangle, Check, Sparkles, Lock,
 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { BuildingFloor, BuildingProgram, MassingScenario, FloorUseType, UnitMixEntry } from "@/lib/types";
 import {
-  newFloor, newScenario, newBuildingProgram, computeMassingSummary, autoLabelFloors, seedUnitMix,
+  newFloor, computeMassingSummary, autoLabelFloors, seedUnitMix,
   quickStackPodium5over1, quickStackMidRise3over2, quickStackHighRise, quickStackGardenStyle, quickStackAutoFromZoning,
 } from "./massing-utils";
 import type { ZoningInputs } from "./massing-utils";
@@ -27,30 +27,26 @@ interface DensityBonusOption {
   additional_density: string;
 }
 
-interface SitePlanBuildingLite {
-  id: string;
-  label: string;
-  area_sf: number;
-}
-
 interface Props {
   program: BuildingProgram;
   onChange: (program: BuildingProgram) => void;
   zoning: ZoningInputs;
   densityBonuses?: DensityBonusOption[];
-  // Buildings drawn on the Site & Zoning page site plan. When present, a
-  // dropdown next to the Base Footprint input lets the analyst pick which
-  // building this scenario represents; its area_sf then flows into
-  // footprint_sf. Backwards compatible: when absent/empty the input
-  // behaves exactly as before (typed footprint only).
-  sitePlanBuildings?: SitePlanBuildingLite[];
-  onPushBaseline: (scenario: MassingScenario) => void;
-  onPushScenario: (scenario: MassingScenario) => void;
+  // When true, the Base Footprint input is shown read-only (sourced from
+  // the Site Plan). Programming sets this whenever the active scenario
+  // is linked to a site-plan building; analysts must edit the footprint
+  // there, not here.
+  footprintReadOnly?: boolean;
+  // Optional building label shown next to the read-only footprint input
+  // so the analyst sees "Building 2 · 12,500 SF (from Site Plan)" rather
+  // than just a number with no context.
+  activeBuildingLabel?: string | null;
 }
 
-export default function MassingSection({ program, onChange, zoning, densityBonuses = [], sitePlanBuildings = [], onPushBaseline, onPushScenario }: Props) {
+export default function MassingSection({
+  program, onChange, zoning, densityBonuses = [], footprintReadOnly = false, activeBuildingLabel = null,
+}: Props) {
   const [quickStackOpen, setQuickStackOpen] = useState(false);
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -70,7 +66,13 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
   }, [program, onChange]);
 
   const updateActiveFloors = useCallback((floors: BuildingFloor[]) => {
-    updateScenario(activeScenario.id, s => ({ ...s, floors: autoLabelFloors(floors) }));
+    // Manual floor edits supersede the AI template, so clear the badge.
+    // Re-applying a preset will set it again.
+    updateScenario(activeScenario.id, s => ({
+      ...s,
+      floors: autoLabelFloors(floors),
+      ai_template_label: null,
+    }));
   }, [activeScenario.id, updateScenario]);
 
   const updateFloor = useCallback((floorId: string, updates: Partial<BuildingFloor>) => {
@@ -96,50 +98,21 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
     updateActiveFloors(reordered);
   }, [activeScenario.floors, updateActiveFloors]);
 
-  const applyQuickStack = useCallback((floors: BuildingFloor[]) => {
+  const applyQuickStack = useCallback((floors: BuildingFloor[], templateLabel: string) => {
     const fp = Math.max(...floors.map(f => f.floor_plate_sf), 0);
     updateScenario(activeScenario.id, s => ({
       ...s,
       floors: floors.map((f, i) => ({ ...f, sort_order: i })),
       footprint_sf: fp,
+      ai_template_label: templateLabel,
     }));
     setQuickStackOpen(false);
-    toast.success("Quick stack applied");
+    toast.success(`AI generated: ${templateLabel}`);
   }, [activeScenario.id, updateScenario]);
 
-  const addScenario = useCallback(() => {
-    const s = newScenario(`Scenario ${program.scenarios.length + 1}`);
-    onChange({ ...program, scenarios: [...program.scenarios, s], active_scenario_id: s.id });
-  }, [program, onChange]);
-
-  const duplicateScenario = useCallback((id: string) => {
-    const source = program.scenarios.find(s => s.id === id);
-    if (!source) return;
-    const dup: MassingScenario = {
-      ...JSON.parse(JSON.stringify(source)),
-      id: uuidv4(), name: `${source.name} (copy)`, is_baseline: false, linked_uw_scenario_id: null,
-      created_at: new Date().toISOString(),
-      floors: source.floors.map(f => ({ ...f, id: uuidv4() })),
-    };
-    onChange({ ...program, scenarios: [...program.scenarios, dup], active_scenario_id: dup.id });
-    setMenuOpenId(null);
-  }, [program, onChange]);
-
-  const deleteScenario = useCallback((id: string) => {
-    if (program.scenarios.length <= 1) { toast.error("Must have at least one scenario"); return; }
-    const remaining = program.scenarios.filter(s => s.id !== id);
-    onChange({ ...program, scenarios: remaining, active_scenario_id: remaining[0].id });
-    setMenuOpenId(null);
-  }, [program, onChange]);
-
-  const setBaseline = useCallback((id: string) => {
-    const updated = program.scenarios.map(s => ({ ...s, is_baseline: s.id === id }));
-    onChange({ ...program, scenarios: updated });
-    const scenario = updated.find(s => s.id === id)!;
-    onPushBaseline(scenario);
-    toast.success(`"${scenario.name}" set as baseline — pushed to underwriting`);
-    setMenuOpenId(null);
-  }, [program, onChange, onPushBaseline]);
+  // Scenario add / duplicate / delete / baseline live on the page now
+  // (driven by site_plan.scenarios). MassingSection only edits the
+  // active row.
 
   // Display above-grade floors top-down (highest floor first in list, ground floor last = closest to grade)
   const aboveFloors = activeScenario.floors.filter(f => !f.is_below_grade).sort((a, b) => b.sort_order - a.sort_order);
@@ -147,67 +120,53 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
 
   return (
     <div className="space-y-4">
-      {/* ── Scenario Tabs ── */}
+      {/* ── Toolbar ──
+          Massing/building selection is handled at the page level (driven
+          by the site plan), so this row is just the AI Generate
+          control. The yellow accent flags it as the "press me next" CTA
+          for empty scenarios. */}
       <div className="flex items-center gap-1 flex-wrap">
-        {program.scenarios.map(s => (
-          <div key={s.id} className="relative">
-            <button
-              onClick={() => onChange({ ...program, active_scenario_id: s.id })}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${s.id === activeScenario.id ? "bg-primary/20 text-primary border border-primary/30" : "bg-muted/30 text-muted-foreground hover:bg-muted/50"}`}
-            >
-              {s.is_baseline && <Star className="h-3 w-3 fill-primary text-primary" />}
-              {s.name}
-            </button>
-            <button
-              onClick={() => setMenuOpenId(menuOpenId === s.id ? null : s.id)}
-              className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-muted flex items-center justify-center opacity-0 group-hover:opacity-100 hover:opacity-100"
-              style={{ opacity: menuOpenId === s.id ? 1 : undefined }}
-            >
-              <MoreVertical className="h-2.5 w-2.5" />
-            </button>
-            {menuOpenId === s.id && (
-              <div className="absolute top-8 left-0 z-50 bg-card border rounded-md shadow-lg py-1 min-w-[160px]">
-                <button onClick={() => setBaseline(s.id)} className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center gap-2">
-                  <Star className="h-3 w-3" /> Set as Baseline
-                </button>
-                <button onClick={() => { onPushScenario(s); setMenuOpenId(null); }} className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center gap-2">
-                  <Layers className="h-3 w-3" /> Push to UW as Scenario
-                </button>
-                <button onClick={() => duplicateScenario(s.id)} className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 flex items-center gap-2">
-                  <Copy className="h-3 w-3" /> Duplicate
-                </button>
-                <button onClick={() => { const name = prompt("Rename scenario:", s.name); if (name) updateScenario(s.id, sc => ({ ...sc, name })); setMenuOpenId(null); }} className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50">
-                  Rename
-                </button>
-                {program.scenarios.length > 1 && (
-                  <button onClick={() => deleteScenario(s.id)} className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted/50 text-red-400 flex items-center gap-2">
-                    <Trash2 className="h-3 w-3" /> Delete
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-        <Button variant="ghost" size="sm" onClick={addScenario} className="text-xs h-7">
-          <Plus className="h-3 w-3 mr-1" /> New
-        </Button>
-        <div className="relative ml-1">
-          <Button variant="outline" size="sm" onClick={() => setQuickStackOpen(!quickStackOpen)} className="text-xs h-7">
-            Quick Stack <ChevronDown className="h-3 w-3 ml-1" />
+        <div className="relative ml-0">
+          {/* AI Generate dropdown — yellow-accented to flag it as the
+              "press me next" call-to-action when a scenario has just
+              been created. After a preset is applied the button shows
+              "AI: <template>" so the analyst sees what produced the
+              current stack. Manual floor edits clear the badge so the
+              label only shows when the AI output is still authoritative. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setQuickStackOpen(!quickStackOpen)}
+            className="text-xs h-7 border-amber-500/50 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20 hover:border-amber-500/70"
+          >
+            <Sparkles className="h-3 w-3 mr-1" />
+            {activeScenario.ai_template_label
+              ? `AI: ${activeScenario.ai_template_label}`
+              : "AI Generate"}
+            <ChevronDown className="h-3 w-3 ml-1" />
           </Button>
           {quickStackOpen && (
-            <div className="absolute top-8 left-0 z-50 bg-card border rounded-md shadow-lg py-1 min-w-[240px]">
+            <div className="absolute top-8 left-0 z-50 bg-card border rounded-md shadow-lg py-1 min-w-[260px]">
               {[
-                { label: "Podium Residential (5 over 1)", fn: () => quickStackPodium5over1(zoning.land_sf, zoning.lot_coverage_pct || 50) },
-                { label: "Mid-Rise (3 over 2)", fn: () => quickStackMidRise3over2(zoning.land_sf, zoning.lot_coverage_pct || 50) },
+                { label: "Podium 5-over-1", fn: () => quickStackPodium5over1(zoning.land_sf, zoning.lot_coverage_pct || 50) },
+                { label: "Mid-Rise 3-over-2", fn: () => quickStackMidRise3over2(zoning.land_sf, zoning.lot_coverage_pct || 50) },
                 { label: "High-Rise Mixed Use", fn: () => quickStackHighRise(zoning.land_sf, zoning.lot_coverage_pct || 50) },
                 { label: "Garden-Style Walk-Up", fn: () => quickStackGardenStyle(zoning.land_sf, zoning.lot_coverage_pct || 50) },
                 { label: "Auto from Zoning", fn: () => quickStackAutoFromZoning(zoning.land_sf, zoning.far, zoning.lot_coverage_pct || 50, zoning.height_limit_ft) },
-              ].map(preset => (
-                <button key={preset.label} onClick={() => applyQuickStack(preset.fn())} className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50">
-                  {preset.label}
-                </button>
-              ))}
+              ].map(preset => {
+                const isCurrent = preset.label === activeScenario.ai_template_label;
+                return (
+                  <button
+                    key={preset.label}
+                    onClick={() => applyQuickStack(preset.fn(), preset.label)}
+                    className={`w-full text-left px-3 py-2 text-xs hover:bg-muted/50 ${
+                      isCurrent ? "text-amber-300 bg-amber-500/5" : ""
+                    }`}
+                  >
+                    {preset.label}{isCurrent ? "  ·  current" : ""}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -235,6 +194,130 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
         )}
       </div>
 
+      {/* ── Unit Mix Allocation ── (moved above the floor editor so the
+          analyst sets the residential program first; the floor editor's
+          per-floor unit counts auto-distribute from the mix totals) */}
+      {summary.total_units > 0 || (summary.nrsf_by_use.residential || 0) > 0 ? (() => {
+        const mix = activeScenario.unit_mix || [];
+        const resNRSF = summary.nrsf_by_use.residential || 0;
+        const totalAllocPct = mix.reduce((s, m) => s + m.allocation_pct, 0);
+        const weightedAvgSF = mix.length > 0
+          ? mix.reduce((s, m) => s + m.avg_sf * (m.allocation_pct / 100), 0)
+          : 0;
+        const totalUnitsFromMix = weightedAvgSF > 0 ? Math.floor(resNRSF / weightedAvgSF) : 0;
+
+        const updMix = (id: string, upd: Partial<UnitMixEntry>) => {
+          updateScenario(activeScenario.id, s => ({
+            ...s,
+            unit_mix: (s.unit_mix || []).map(m => m.id === id ? { ...m, ...upd } : m),
+          }));
+        };
+        const addMixType = () => {
+          updateScenario(activeScenario.id, s => ({
+            ...s,
+            unit_mix: [...(s.unit_mix || []), { id: uuidv4(), type_label: "New Type", allocation_pct: 0, avg_sf: 600 }],
+          }));
+        };
+        const delMixType = (id: string) => {
+          updateScenario(activeScenario.id, s => ({
+            ...s,
+            unit_mix: (s.unit_mix || []).filter(m => m.id !== id),
+          }));
+        };
+
+        return (
+          <div className="border border-border/40 rounded-lg p-3 bg-muted/5">
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Unit Mix Allocation</h4>
+            <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse mb-2 min-w-[480px]">
+              <thead>
+                <tr className="bg-muted/30 border-b">
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Unit Type</th>
+                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Allocation</th>
+                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Avg SF</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">Units</th>
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Total SF</th>
+                  <th className="w-[24px]" />
+                </tr>
+              </thead>
+              <tbody>
+                {mix.map(m => {
+                  const unitCount = totalUnitsFromMix > 0 ? Math.round(totalUnitsFromMix * (m.allocation_pct / 100)) : 0;
+                  const totalSF = unitCount * m.avg_sf;
+                  return (
+                    <tr key={m.id} className="border-b hover:bg-muted/10 group">
+                      <td className="px-2 py-1.5">
+                        <input type="text" value={m.type_label} onChange={e => updMix(m.id, { type_label: e.target.value })} className="bg-transparent text-xs outline-none w-full font-medium" />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center justify-center border rounded bg-background overflow-hidden w-[70px] mx-auto">
+                          <input type="text" inputMode="decimal" value={m.allocation_pct || ""}
+                            onChange={e => updMix(m.id, { allocation_pct: parseFloat(e.target.value) || 0 })}
+                            className="w-full px-1.5 py-1 text-xs outline-none bg-transparent text-blue-300 tabular-nums text-center" placeholder="0" />
+                          <span className="px-1 text-xs text-muted-foreground bg-muted border-l">%</span>
+                        </div>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex items-center justify-center border rounded bg-background overflow-hidden w-[70px] mx-auto">
+                          <input type="text" inputMode="decimal" value={m.avg_sf || ""}
+                            onChange={e => updMix(m.id, { avg_sf: parseFloat(e.target.value) || 0 })}
+                            className="w-full px-1.5 py-1 text-xs outline-none bg-transparent text-blue-300 tabular-nums text-center" placeholder="0" />
+                        </div>
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">{unitCount}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{totalSF.toLocaleString()}</td>
+                      <td className="px-1 py-1.5">
+                        <button onClick={() => delMixType(m.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t bg-muted/20 font-semibold text-xs">
+                  <td className="px-2 py-1.5">Total</td>
+                  <td className={`px-2 py-1.5 text-center tabular-nums ${Math.abs(totalAllocPct - 100) > 0.1 ? "text-red-400" : "text-emerald-400"}`}>{totalAllocPct.toFixed(0)}%</td>
+                  <td className="px-2 py-1.5 text-center tabular-nums text-muted-foreground">{weightedAvgSF > 0 ? Math.round(weightedAvgSF) : "—"}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{totalUnitsFromMix}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fn(resNRSF)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+            </div>
+            {Math.abs(totalAllocPct - 100) > 0.1 && <p className="text-xs text-red-400 mb-1">Allocation must equal 100% (currently {totalAllocPct.toFixed(0)}%)</p>}
+            <div className="flex gap-2 flex-wrap">
+              <Button variant="ghost" size="sm" className="text-xs" onClick={addMixType}>
+                <Plus className="h-3 w-3 mr-1" /> Add Unit Type
+              </Button>
+              {mix.length === 0 && (
+                <Button variant="ghost" size="sm" className="text-xs" onClick={() => updateScenario(activeScenario.id, s => ({ ...s, unit_mix: seedUnitMix() }))}>
+                  Seed Default Mix
+                </Button>
+              )}
+              {totalUnitsFromMix > 0 && (
+                <Button variant="outline" size="sm" className="text-xs" onClick={() => {
+                  const resFloors = activeScenario.floors.filter(f => !f.is_below_grade && f.use_type === "residential");
+                  if (resFloors.length === 0) return;
+                  const unitsPerFloor = Math.floor(totalUnitsFromMix / resFloors.length);
+                  const remainder = totalUnitsFromMix - unitsPerFloor * resFloors.length;
+                  const updatedFloors = activeScenario.floors.map(f => {
+                    if (f.use_type !== "residential" || f.is_below_grade) return f;
+                    const idx = resFloors.findIndex(rf => rf.id === f.id);
+                    return { ...f, units_on_floor: unitsPerFloor + (idx < remainder ? 1 : 0) };
+                  });
+                  updateActiveFloors(updatedFloors);
+                  toast.success(`Distributed ${totalUnitsFromMix} units across ${resFloors.length} floors`);
+                }}>
+                  Auto-distribute {totalUnitsFromMix} units to floors
+                </Button>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Units computed from residential NRSF ({fn(resNRSF)} SF) ÷ weighted avg unit size ({Math.round(weightedAvgSF)} SF)</p>
+          </div>
+        );
+      })() : null}
+
       {/* ── Split Layout: Editor + Section Cut ── */}
       <div className="flex flex-col lg:flex-row gap-4">
         {/* LEFT — Floor Editor */}
@@ -242,72 +325,42 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
           {/* Footprint + Density Bonus */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <div>
-              {/* Base footprint with optional site-plan building link. When
-                  the site plan has drawn buildings, a dropdown above the SF
-                  input lets the scenario represent a specific structure —
-                  selecting one snaps the footprint to that building's area
-                  and records the link via site_plan_building_id so the
-                  hydration path can keep them in sync on reload. */}
               <label className="block text-xs font-medium text-muted-foreground mb-1 flex items-center justify-between gap-2">
                 <span>Base Footprint (SF)</span>
-                {sitePlanBuildings.length > 0 && activeScenario.site_plan_building_id && (() => {
-                  const linked = sitePlanBuildings.find(b => b.id === activeScenario.site_plan_building_id);
-                  if (!linked) return null;
-                  const matches = Math.abs(linked.area_sf - (activeScenario.footprint_sf || 0)) < 1;
-                  return (
-                    <span
-                      className={`text-[9px] font-semibold tracking-wide uppercase ${matches ? "text-emerald-400" : "text-amber-400"}`}
-                      title={`Linked to ${linked.label} (${linked.area_sf.toLocaleString()} SF) on the site plan`}
-                    >
-                      {matches ? `· ${linked.label}` : `· ${linked.label} differs`}
-                    </span>
-                  );
-                })()}
-              </label>
-              {sitePlanBuildings.length > 0 && (
-                <select
-                  value={activeScenario.site_plan_building_id || ""}
-                  onChange={e => {
-                    const id = e.target.value || null;
-                    const linked = id ? sitePlanBuildings.find(b => b.id === id) : null;
-                    updateScenario(activeScenario.id, s => ({
-                      ...s,
-                      site_plan_building_id: id,
-                      footprint_sf: linked ? linked.area_sf : s.footprint_sf,
-                    }));
-                  }}
-                  className="w-full mb-1 border rounded-md px-2 py-1 text-xs bg-background text-foreground outline-none"
-                  title="Link this scenario to a building drawn on the site plan"
-                >
-                  <option value="" className="bg-background text-foreground">No site plan link (typed below)</option>
-                  {sitePlanBuildings.map(b => (
-                    <option key={b.id} value={b.id} className="bg-background text-foreground">
-                      {b.label} — {b.area_sf.toLocaleString()} SF
-                    </option>
-                  ))}
-                </select>
-              )}
-              <input type="text" inputMode="decimal"
-                value={activeScenario.footprint_sf || ""}
-                onChange={e => updateScenario(activeScenario.id, s => ({ ...s, footprint_sf: parseFloat(e.target.value.replace(/,/g, "")) || 0 }))}
-                className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none tabular-nums"
-                placeholder="0" />
-              {activeScenario.site_plan_building_id && (() => {
-                const linked = sitePlanBuildings.find(b => b.id === activeScenario.site_plan_building_id);
-                if (!linked || Math.abs(linked.area_sf - (activeScenario.footprint_sf || 0)) < 1) return null;
-                return (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      updateScenario(activeScenario.id, s => ({ ...s, footprint_sf: linked.area_sf }))
-                    }
-                    className="mt-1 text-[10px] text-primary hover:underline"
-                    title={`Reset the footprint to match ${linked.label}`}
+                {footprintReadOnly && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[9px] font-semibold tracking-wide uppercase text-amber-300"
+                    title="Footprint is sourced from the Site Plan — go to Site & Zoning to resize the building."
                   >
-                    Use {linked.label} ({linked.area_sf.toLocaleString()} SF)
-                  </button>
-                );
-              })()}
+                    <Lock className="h-2.5 w-2.5" /> from Site Plan
+                  </span>
+                )}
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={activeScenario.footprint_sf || ""}
+                onChange={(e) => {
+                  if (footprintReadOnly) return;
+                  updateScenario(activeScenario.id, (s) => ({
+                    ...s,
+                    footprint_sf: parseFloat(e.target.value.replace(/,/g, "")) || 0,
+                  }));
+                }}
+                readOnly={footprintReadOnly}
+                disabled={footprintReadOnly}
+                className={`w-full border rounded-md px-2 py-1.5 text-sm outline-none tabular-nums ${
+                  footprintReadOnly
+                    ? "bg-muted/30 text-muted-foreground cursor-not-allowed"
+                    : "bg-background"
+                }`}
+                placeholder="0"
+              />
+              {footprintReadOnly && activeBuildingLabel && (
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  {activeBuildingLabel} · edit the footprint on the Site Plan
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Parking SF / Space</label>
@@ -448,138 +501,10 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
         </div>
       </div>
 
-      {/* ── Unit Mix Allocation ── */}
-      {summary.total_units > 0 || (summary.nrsf_by_use.residential || 0) > 0 ? (() => {
-        const mix = activeScenario.unit_mix || [];
-        const resNRSF = summary.nrsf_by_use.residential || 0;
-        const totalAllocPct = mix.reduce((s, m) => s + m.allocation_pct, 0);
-        const weightedAvgSF = mix.length > 0
-          ? mix.reduce((s, m) => s + m.avg_sf * (m.allocation_pct / 100), 0)
-          : 0;
-        const totalUnitsFromMix = weightedAvgSF > 0 ? Math.floor(resNRSF / weightedAvgSF) : 0;
-
-        const updMix = (id: string, upd: Partial<UnitMixEntry>) => {
-          updateScenario(activeScenario.id, s => ({
-            ...s,
-            unit_mix: (s.unit_mix || []).map(m => m.id === id ? { ...m, ...upd } : m),
-          }));
-        };
-        const addMixType = () => {
-          updateScenario(activeScenario.id, s => ({
-            ...s,
-            unit_mix: [...(s.unit_mix || []), { id: uuidv4(), type_label: "New Type", allocation_pct: 0, avg_sf: 600 }],
-          }));
-        };
-        const delMixType = (id: string) => {
-          updateScenario(activeScenario.id, s => ({
-            ...s,
-            unit_mix: (s.unit_mix || []).filter(m => m.id !== id),
-          }));
-        };
-
-        return (
-          <div className="mt-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Unit Mix Allocation</h4>
-            <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse mb-2 min-w-[480px]">
-              <thead>
-                <tr className="bg-muted/30 border-b">
-                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Unit Type</th>
-                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Allocation</th>
-                  <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Avg SF</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]">Units</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Total SF</th>
-                  <th className="w-[24px]" />
-                </tr>
-              </thead>
-              <tbody>
-                {mix.map(m => {
-                  const unitCount = totalUnitsFromMix > 0 ? Math.round(totalUnitsFromMix * (m.allocation_pct / 100)) : 0;
-                  const totalSF = unitCount * m.avg_sf;
-                  return (
-                    <tr key={m.id} className="border-b hover:bg-muted/10 group">
-                      <td className="px-2 py-1.5">
-                        <input type="text" value={m.type_label} onChange={e => updMix(m.id, { type_label: e.target.value })} className="bg-transparent text-xs outline-none w-full font-medium" />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <div className="flex items-center justify-center border rounded bg-background overflow-hidden w-[70px] mx-auto">
-                          <input type="text" inputMode="decimal" value={m.allocation_pct || ""}
-                            onChange={e => updMix(m.id, { allocation_pct: parseFloat(e.target.value) || 0 })}
-                            className="w-full px-1.5 py-1 text-xs outline-none bg-transparent text-blue-300 tabular-nums text-center" placeholder="0" />
-                          <span className="px-1 text-xs text-muted-foreground bg-muted border-l">%</span>
-                        </div>
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <div className="flex items-center justify-center border rounded bg-background overflow-hidden w-[70px] mx-auto">
-                          <input type="text" inputMode="decimal" value={m.avg_sf || ""}
-                            onChange={e => updMix(m.id, { avg_sf: parseFloat(e.target.value) || 0 })}
-                            className="w-full px-1.5 py-1 text-xs outline-none bg-transparent text-blue-300 tabular-nums text-center" placeholder="0" />
-                        </div>
-                      </td>
-                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">{unitCount}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{totalSF.toLocaleString()}</td>
-                      <td className="px-1 py-1.5">
-                        <button onClick={() => delMixType(m.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3 w-3" /></button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="border-t bg-muted/20 font-semibold text-xs">
-                  <td className="px-2 py-1.5">Total</td>
-                  <td className={`px-2 py-1.5 text-center tabular-nums ${Math.abs(totalAllocPct - 100) > 0.1 ? "text-red-400" : "text-emerald-400"}`}>{totalAllocPct.toFixed(0)}%</td>
-                  <td className="px-2 py-1.5 text-center tabular-nums text-muted-foreground">{weightedAvgSF > 0 ? Math.round(weightedAvgSF) : "—"}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{totalUnitsFromMix}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fn(resNRSF)}</td>
-                  <td />
-                </tr>
-              </tfoot>
-            </table>
-            </div>
-            {Math.abs(totalAllocPct - 100) > 0.1 && <p className="text-xs text-red-400 mb-1">Allocation must equal 100% (currently {totalAllocPct.toFixed(0)}%)</p>}
-            <div className="flex gap-2 flex-wrap">
-              <Button variant="ghost" size="sm" className="text-xs" onClick={addMixType}>
-                <Plus className="h-3 w-3 mr-1" /> Add Unit Type
-              </Button>
-              {mix.length === 0 && (
-                <Button variant="ghost" size="sm" className="text-xs" onClick={() => updateScenario(activeScenario.id, s => ({ ...s, unit_mix: seedUnitMix() }))}>
-                  Seed Default Mix
-                </Button>
-              )}
-              {totalUnitsFromMix > 0 && (
-                <Button variant="outline" size="sm" className="text-xs" onClick={() => {
-                  const resFloors = activeScenario.floors.filter(f => !f.is_below_grade && f.use_type === "residential");
-                  if (resFloors.length === 0) return;
-                  const unitsPerFloor = Math.floor(totalUnitsFromMix / resFloors.length);
-                  const remainder = totalUnitsFromMix - unitsPerFloor * resFloors.length;
-                  const updatedFloors = activeScenario.floors.map(f => {
-                    if (f.use_type !== "residential" || f.is_below_grade) return f;
-                    const idx = resFloors.findIndex(rf => rf.id === f.id);
-                    return { ...f, units_on_floor: unitsPerFloor + (idx < remainder ? 1 : 0) };
-                  });
-                  updateActiveFloors(updatedFloors);
-                  toast.success(`Distributed ${totalUnitsFromMix} units across ${resFloors.length} floors`);
-                }}>
-                  Auto-distribute {totalUnitsFromMix} units to floors
-                </Button>
-              )}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1">Units computed from residential NRSF ({fn(resNRSF)} SF) ÷ weighted avg unit size ({Math.round(weightedAvgSF)} SF)</p>
-          </div>
-        );
-      })() : null}
-
-      {/* ── Action Buttons ── */}
-      <div className="flex gap-2 pt-2">
-        <Button variant="outline" size="sm" onClick={() => setBaseline(activeScenario.id)}>
-          <Star className="h-3.5 w-3.5 mr-2" />
-          {activeScenario.is_baseline ? "Baseline (active)" : "Set as Baseline"}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => onPushScenario(activeScenario)}>
-          <Layers className="h-3.5 w-3.5 mr-2" /> Push to UW as Scenario
-        </Button>
-      </div>
+      {/* The "Push <Massing> to UW" button now lives in the page header
+          (Programming pushes the whole massing — all building stacks —
+          and snapshots it as a UW Scenario in one action). No per-stack
+          push button here anymore. */}
     </div>
   );
 }
