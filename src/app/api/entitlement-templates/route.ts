@@ -16,7 +16,9 @@ export async function GET() {
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const rows = await entitlementTemplateQueries.getByUserId(userId);
+    // Returns both the user's own templates and any shared by teammates
+    // — each row carries an `is_owner` flag so the UI gates edit/delete.
+    const rows = await entitlementTemplateQueries.getVisibleToUser(userId);
     return NextResponse.json({ data: rows });
   } catch (error) {
     console.error("GET /api/entitlement-templates error:", error);
@@ -32,6 +34,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const tasks = Array.isArray(body.tasks) ? body.tasks : [];
+    const shared = body.shared === true;
     if (!name) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
@@ -39,7 +42,8 @@ export async function POST(req: NextRequest) {
       uuidv4(),
       userId,
       name,
-      tasks
+      tasks,
+      shared
     );
     return NextResponse.json({ data: row });
   } catch (error) {

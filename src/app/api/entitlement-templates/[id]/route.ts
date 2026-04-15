@@ -20,7 +20,7 @@ export async function PATCH(
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
     const body = await req.json();
-    const updates: { name?: string; tasks?: unknown } = {};
+    const updates: { name?: string; tasks?: unknown; shared?: boolean } = {};
     if (typeof body.name === "string") {
       const name = body.name.trim();
       if (!name) {
@@ -31,7 +31,10 @@ export async function PATCH(
     if (Array.isArray(body.tasks)) {
       updates.tasks = body.tasks;
     }
-    if (!updates.name && !updates.tasks) {
+    if (typeof body.shared === "boolean") {
+      updates.shared = body.shared;
+    }
+    if (updates.name == null && updates.tasks == null && updates.shared == null) {
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
     }
     const row = await entitlementTemplateQueries.update(params.id, userId, updates);
