@@ -34,6 +34,17 @@ export interface BonusCardEffects {
     type: string;    // "lihtc" | "welfare_exemption" | "local_abatement" | "pilot" | "421a" | "other"
   };
   density_bonus_pct?: number; // informational headline only
+  /**
+   * Entitlement-pathway programs (SB 35, CCHS, SB 330, etc.) usually
+   * come with specific filings / reviews the analyst needs to track
+   * during the entitlement phase. When a card is spotted and the
+   * analyst clicks "Seed Entitlement Tasks" on the Development
+   * Schedule, these become child phases of "Entitlements & Permits".
+   */
+  entitlement_tasks?: Array<{
+    label: string;
+    duration_days?: number;
+  }>;
   applySummary?: string;
 }
 
@@ -64,6 +75,13 @@ export const BONUS_CATALOG: BonusCard[] = [
     effects: {
       affordability_tier: { ami_pct: 80, units_pct: 10 },
       applySummary: "Adds 10% @ 80% AMI tier",
+      entitlement_tasks: [
+        { label: "SB 35 Eligibility Letter", duration_days: 14 },
+        { label: "Preliminary Application (SB 330 lock-in)", duration_days: 14 },
+        { label: "SB 35 Ministerial Filing", duration_days: 30 },
+        { label: "Objective Design Review", duration_days: 60 },
+        { label: "Ministerial Permit Issuance", duration_days: 90 },
+      ],
     },
   },
   {
@@ -71,7 +89,15 @@ export const BONUS_CATALOG: BonusCard[] = [
     description:
       "Allows residential use by-right in qualifying commercial corridors, bypassing rezone timelines.",
     additional_density: "By-right residential",
-    // No auto-applied effects — entitlement pathway only.
+    effects: {
+      entitlement_tasks: [
+        { label: "CCHS Eligibility Verification", duration_days: 14 },
+        { label: "CCHS Ministerial Filing", duration_days: 30 },
+        { label: "Planning Department Objective Review", duration_days: 60 },
+        { label: "Ministerial Permit Issuance", duration_days: 60 },
+      ],
+      applySummary: "Adds 4 CCHS entitlement tasks",
+    },
   },
   {
     source: "LIHTC 9% (100% affordable)",
@@ -156,7 +182,14 @@ export const BONUS_CATALOG: BonusCard[] = [
     description:
       "Housing Crisis Act — caps approval timelines and locks in the rules in effect when a preliminary application is filed.",
     additional_density: "Entitlement shield",
-    // Entitlement pathway — no auto-applied effects.
+    effects: {
+      entitlement_tasks: [
+        { label: "SB 330 Preliminary Application", duration_days: 14 },
+        { label: "Vesting Lock-In Confirmation", duration_days: 30 },
+        { label: "Discretionary Review (max 5 hearings)", duration_days: 120 },
+      ],
+      applySummary: "Adds 3 SB 330 entitlement tasks",
+    },
   },
 ];
 
@@ -164,3 +197,26 @@ export const BONUS_CATALOG: BonusCard[] = [
 export function findBonusCard(source: string): BonusCard | undefined {
   return BONUS_CATALOG.find((b) => b.source === source);
 }
+
+/**
+ * Default entitlement tasks that apply to just about any discretionary
+ * ground-up approval regardless of which programs are spotted. The
+ * "Seed Entitlement Tasks" button seeds these alongside whatever the
+ * spotted bonuses contribute.
+ *
+ * Durations are conservative placeholders — analysts should tailor them
+ * to their jurisdiction after seeding.
+ */
+export const DEFAULT_ENTITLEMENT_TASKS: Array<{
+  label: string;
+  duration_days: number;
+}> = [
+  { label: "Pre-Application Meeting", duration_days: 14 },
+  { label: "Community / Neighborhood Outreach", duration_days: 30 },
+  { label: "Project Application Submittal", duration_days: 30 },
+  { label: "Environmental Review (CEQA/NEPA)", duration_days: 120 },
+  { label: "Design Review Board", duration_days: 45 },
+  { label: "Planning Commission Hearing", duration_days: 30 },
+  { label: "City Council Hearing", duration_days: 30 },
+  { label: "Building Permit Issuance", duration_days: 60 },
+];

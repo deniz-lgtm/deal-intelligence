@@ -40,6 +40,11 @@ import type {
   PreDevCostStatus,
   PreDevSettings,
 } from "@/lib/types";
+import {
+  DEFAULT_ENTITLEMENT_TASKS,
+  findBonusCard,
+} from "@/lib/bonus-catalog";
+import { toast } from "sonner";
 
 interface Props {
   dealId: string;
@@ -73,7 +78,12 @@ export default function DevelopmentSchedule({ dealId }: Props) {
     pct_complete: 0,
     status: "not_started" as DevPhaseStatus,
     notes: "",
+    // When set, the phase being created is a child task rendered under
+    // its parent phase (e.g. "Neighborhood Meeting" under "Entitlements
+    // & Permits"). Empty string = top-level phase.
+    parent_phase_id: "",
   });
+  const [seedingEntitlements, setSeedingEntitlements] = useState(false);
 
   // Cost dialog
   const [costDialogOpen, setCostDialogOpen] = useState(false);
@@ -141,12 +151,34 @@ export default function DevelopmentSchedule({ dealId }: Props) {
 
   // ── Phase CRUD ──
   const resetPhaseForm = () => {
-    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "" });
+    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "", parent_phase_id: "" });
   };
 
   const openCreatePhase = () => {
     setEditingPhase(null);
     resetPhaseForm();
+    setPhaseDialogOpen(true);
+  };
+
+  /**
+   * Open the phase dialog in "new task under parent X" mode — used by
+   * the "+ Task" button on nested phases like Entitlements & Permits.
+   * The new phase inherits the parent_phase_id so it renders as a
+   * child task.
+   */
+  const openCreateChildPhase = (parentPhaseId: string) => {
+    setEditingPhase(null);
+    setPhaseForm({
+      label: "",
+      duration_days: 30,
+      predecessor_id: "",
+      lag_days: 0,
+      start_date: "",
+      pct_complete: 0,
+      status: "not_started",
+      notes: "",
+      parent_phase_id: parentPhaseId,
+    });
     setPhaseDialogOpen(true);
   };
 
@@ -161,6 +193,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       pct_complete: p.pct_complete,
       status: p.status,
       notes: p.notes || "",
+      parent_phase_id: p.parent_phase_id || "",
     });
     setPhaseDialogOpen(true);
   };
@@ -174,6 +207,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       duration_days: phaseForm.duration_days,
       predecessor_id: phaseForm.predecessor_id || null,
       lag_days: phaseForm.lag_days,
+      parent_phase_id: phaseForm.parent_phase_id || null,
       start_date: hasPredecessor ? null : (phaseForm.start_date || null),
       pct_complete: phaseForm.pct_complete,
       status: phaseForm.status,
@@ -214,6 +248,101 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       loadAll();
     } catch (err) {
       console.error("Failed to delete phase:", err);
+    }
+  };
+
+  /**
+   * Seed child tasks under the Entitlements & Permits parent. Sources:
+   *   1. DEFAULT_ENTITLEMENT_TASKS — common discretionary review tasks
+   *      (pre-app meeting, outreach, CEQA, DRB, PC, council, permit).
+   *   2. entitlement_tasks from each spotted bonus card on Site & Zoning
+   *      (SB 35 / CCHS / SB 330 bring program-specific filings).
+   *
+   * Idempotent — we dedupe by label and skip any task that's already
+   * present as a child of the entitlements parent. Safe to re-click
+   * after spotting another bonus.
+   */
+  const handleSeedEntitlementTasks = async (entitlementPhaseId: string) => {
+    setSeedingEntitlements(true);
+    try {
+      // Pull the deal's currently-spotted bonuses from underwriting so we
+      // can look up each card's entitlement_tasks from the catalog.
+      let spottedSources: string[] = [];
+      try {
+        const uwRes = await fetch(`/api/underwriting?deal_id=${dealId}`);
+        const uwJson = await uwRes.json();
+        const raw = uwJson.data?.data;
+        const parsed = raw == null ? null : typeof raw === "string" ? JSON.parse(raw) : raw;
+        spottedSources = (parsed?.zoning_info?.density_bonuses || [])
+          .map((b: { source?: string }) => b?.source)
+          .filter((s: unknown): s is string => typeof s === "string" && s.length > 0);
+      } catch {
+        /* Deal may have no underwriting yet — fall through to defaults */
+      }
+
+      // Build the task list: defaults first, then bonus-specific tasks.
+      const toCreate: Array<{ label: string; duration_days: number }> = [
+        ...DEFAULT_ENTITLEMENT_TASKS,
+      ];
+      for (const source of spottedSources) {
+        const card = findBonusCard(source);
+        for (const t of card?.effects?.entitlement_tasks ?? []) {
+          toCreate.push({ label: t.label, duration_days: t.duration_days ?? 30 });
+        }
+      }
+
+      // Dedupe by label (case-insensitive); skip any label that's already
+      // a child task of the entitlements parent.
+      const existingLabels = new Set(
+        phases
+          .filter((p) => p.parent_phase_id === entitlementPhaseId)
+          .map((p) => p.label.trim().toLowerCase())
+      );
+      const seen = new Set<string>();
+      const uniqueNew = toCreate.filter((t) => {
+        const key = t.label.trim().toLowerCase();
+        if (existingLabels.has(key) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      if (uniqueNew.length === 0) {
+        toast.message("All entitlement tasks already seeded");
+        return;
+      }
+
+      // Sort order picks up from after the last existing task in the
+      // entitlements parent so new items land at the bottom of the group.
+      const baseSort = phases
+        .filter((p) => p.parent_phase_id === entitlementPhaseId)
+        .reduce((max, p) => Math.max(max, p.sort_order), 0);
+
+      let created = 0;
+      for (let i = 0; i < uniqueNew.length; i++) {
+        const t = uniqueNew[i];
+        const res = await fetch(`/api/deals/${dealId}/dev-schedule`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: t.label,
+            duration_days: t.duration_days,
+            parent_phase_id: entitlementPhaseId,
+            sort_order: baseSort + i + 1,
+          }),
+        });
+        if (res.ok) created++;
+      }
+      toast.success(
+        `Seeded ${created} entitlement task${created === 1 ? "" : "s"}${
+          spottedSources.length > 0 ? ` (incl. ${spottedSources.length} spotted program${spottedSources.length === 1 ? "" : "s"})` : ""
+        }`
+      );
+      loadAll();
+    } catch (err) {
+      console.error("Failed to seed entitlement tasks:", err);
+      toast.error("Failed to seed entitlement tasks");
+    } finally {
+      setSeedingEntitlements(false);
     }
   };
 
@@ -478,81 +607,145 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                   </div>
                 )}
 
-                {/* Gantt rows */}
+                {/* Gantt rows — roots render at top level with any child
+                    tasks (parent_phase_id set) nested below, indented. */}
                 <div className="space-y-1.5">
-                  {phases.map((p) => {
-                    const cfg = DEV_PHASE_STATUS_CONFIG[p.status];
-                    const barStyle = getBarStyle(p.start_date, p.end_date);
-                    const predLabel = p.predecessor_id
-                      ? phases.find((x) => x.id === p.predecessor_id)?.label
-                      : null;
-                    const isCritical = criticalPhaseIds.has(p.id);
-                    const delayed = isDelayed(p);
-                    return (
-                      <div key={p.id} className="group">
-                        <div className="grid grid-cols-12 gap-2 items-center">
-                          {/* Label */}
-                          <button
-                            onClick={() => openEditPhase(p)}
-                            className={cn(
-                              "col-span-3 text-left text-xs hover:text-primary truncate flex items-center gap-1",
-                              delayed && "text-red-400"
-                            )}
-                          >
-                            {isCritical && (
-                              <span title="Critical path"><AlertTriangle className="h-2.5 w-2.5 text-red-400 flex-shrink-0" /></span>
-                            )}
-                            {!isCritical && !p.predecessor_id && (
-                              <span className="text-2xs text-amber-400" title="Anchor phase">⚓</span>
-                            )}
-                            <span className="truncate">{p.label}</span>
-                            {p.duration_days && (
-                              <span className="text-2xs text-muted-foreground flex-shrink-0">{p.duration_days}d</span>
-                            )}
-                          </button>
-                          {/* Bar */}
-                          <div className="col-span-7 relative h-5 bg-muted/30 rounded">
-                            {/* Today marker */}
-                            {showToday && (
-                              <div
-                                className="absolute top-0 h-full w-px bg-red-500/50 z-10"
-                                style={{ left: `${todayPct}%` }}
-                              />
-                            )}
-                            <div
+                  {(() => {
+                    const rootPhases = phases.filter((p) => !p.parent_phase_id);
+                    const childrenByParent = new Map<string, DevPhase[]>();
+                    for (const p of phases) {
+                      if (!p.parent_phase_id) continue;
+                      const list = childrenByParent.get(p.parent_phase_id) || [];
+                      list.push(p);
+                      childrenByParent.set(p.parent_phase_id, list);
+                    }
+
+                    const renderRow = (p: DevPhase, isChild: boolean) => {
+                      const cfg = DEV_PHASE_STATUS_CONFIG[p.status];
+                      const barStyle = getBarStyle(p.start_date, p.end_date);
+                      const predLabel = p.predecessor_id
+                        ? phases.find((x) => x.id === p.predecessor_id)?.label
+                        : null;
+                      const isCritical = criticalPhaseIds.has(p.id);
+                      const delayed = isDelayed(p);
+                      return (
+                        <div key={p.id} className="group">
+                          <div className="grid grid-cols-12 gap-2 items-center">
+                            {/* Label */}
+                            <button
+                              onClick={() => openEditPhase(p)}
                               className={cn(
-                                "absolute top-0 h-full rounded",
-                                delayed ? "bg-red-500/30 ring-1 ring-red-500/40" :
-                                isCritical ? "ring-1 ring-red-500/30 " + cfg.bg :
-                                cfg.bg
+                                "col-span-3 text-left text-xs hover:text-primary truncate flex items-center gap-1",
+                                delayed && "text-red-400",
+                                isChild && "pl-4 text-muted-foreground"
                               )}
-                              style={barStyle}
-                              title={`${p.label}: ${p.start_date || "?"} → ${p.end_date || "?"} (${p.pct_complete}%)${predLabel ? ` | After: ${predLabel}` : ""}${isCritical ? " [CRITICAL PATH]" : ""}${delayed ? " [DELAYED]" : ""}`}
                             >
-                              {p.pct_complete > 0 && (
+                              {isChild && <span className="text-muted-foreground/50">└</span>}
+                              {!isChild && isCritical && (
+                                <span title="Critical path"><AlertTriangle className="h-2.5 w-2.5 text-red-400 flex-shrink-0" /></span>
+                              )}
+                              {!isChild && !isCritical && !p.predecessor_id && (
+                                <span className="text-2xs text-amber-400" title="Anchor phase">⚓</span>
+                              )}
+                              <span className="truncate">{p.label}</span>
+                              {p.duration_days && (
+                                <span className="text-2xs text-muted-foreground flex-shrink-0">{p.duration_days}d</span>
+                              )}
+                            </button>
+                            {/* Bar */}
+                            <div className={cn("col-span-7 relative rounded", isChild ? "h-3 bg-muted/20" : "h-5 bg-muted/30")}>
+                              {showToday && (
                                 <div
-                                  className="absolute top-0 left-0 h-full bg-emerald-500/40 rounded"
-                                  style={{ width: `${p.pct_complete}%` }}
+                                  className="absolute top-0 h-full w-px bg-red-500/50 z-10"
+                                  style={{ left: `${todayPct}%` }}
                                 />
                               )}
+                              <div
+                                className={cn(
+                                  "absolute top-0 h-full rounded",
+                                  delayed ? "bg-red-500/30 ring-1 ring-red-500/40" :
+                                  isCritical ? "ring-1 ring-red-500/30 " + cfg.bg :
+                                  isChild ? "bg-primary/30" :
+                                  cfg.bg
+                                )}
+                                style={barStyle}
+                                title={`${p.label}: ${p.start_date || "?"} → ${p.end_date || "?"} (${p.pct_complete}%)${predLabel ? ` | After: ${predLabel}` : ""}${isCritical ? " [CRITICAL PATH]" : ""}${delayed ? " [DELAYED]" : ""}`}
+                              >
+                                {p.pct_complete > 0 && (
+                                  <div
+                                    className="absolute top-0 left-0 h-full bg-emerald-500/40 rounded"
+                                    style={{ width: `${p.pct_complete}%` }}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                            {/* Status + actions */}
+                            <div className="col-span-2 flex items-center justify-end gap-1">
+                              <Badge variant="secondary" className={cn("text-2xs", delayed ? "text-red-400 bg-red-500/10" : cfg.color)}>
+                                {p.pct_complete}%
+                              </Badge>
+                              <button
+                                onClick={() => handleDeletePhase(p.id)}
+                                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
                             </div>
                           </div>
-                          {/* Status + actions */}
-                          <div className="col-span-2 flex items-center justify-end gap-1">
-                            <Badge variant="secondary" className={cn("text-2xs", delayed ? "text-red-400 bg-red-500/10" : cfg.color)}>
-                              {p.pct_complete}%
-                            </Badge>
-                            <button
-                              onClick={() => handleDeletePhase(p.id)}
-                              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    };
+
+                    return rootPhases.map((p) => {
+                      const children = childrenByParent.get(p.id) || [];
+                      const isEntitlement = p.phase_key === "entitlements";
+                      return (
+                        <div key={p.id} className="space-y-1">
+                          {renderRow(p, false)}
+                          {children.length > 0 && (
+                            <div className="space-y-1">
+                              {children.map((c) => renderRow(c, true))}
+                            </div>
+                          )}
+                          {/* Entitlement-phase toolbar — add a task or
+                              seed the standard set + any tasks contributed
+                              by spotted bonus cards. */}
+                          {isEntitlement && (
+                            <div className="flex items-center gap-1 pl-6 pb-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 text-2xs"
+                                onClick={() => openCreateChildPhase(p.id)}
+                              >
+                                <Plus className="h-2.5 w-2.5 mr-1" /> Task
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 text-2xs"
+                                onClick={() => handleSeedEntitlementTasks(p.id)}
+                                disabled={seedingEntitlements}
+                                title="Create the standard entitlement tasks (pre-app, CEQA, DRB, hearings, permit) plus any program-specific filings from bonuses spotted on Site & Zoning"
+                              >
+                                {seedingEntitlements ? (
+                                  <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
+                                ) : (
+                                  <Calendar className="h-2.5 w-2.5 mr-1" />
+                                )}
+                                Seed from Bonuses + Defaults
+                              </Button>
+                              {children.length === 0 && (
+                                <span className="text-2xs text-muted-foreground/70 ml-2">
+                                  No tasks yet — add one or seed the standard set.
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
                 <div className="text-2xs text-muted-foreground pt-1">
                   ⚓ = anchor phase (manually set start date) · linked phases auto-shift when their predecessor moves
