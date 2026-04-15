@@ -13,7 +13,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import DealNotes from "@/components/DealNotes";
-import { UnderwritingCoPilot } from "@/components/UnderwritingCoPilot";
+import { useSetPageContext } from "@/lib/page-context";
 import AffordabilityPlanner, { type AffordabilityConfig } from "@/components/AffordabilityPlanner";
 import AmiReference from "@/components/AmiReference";
 import { splitUnitGroupsByAffordability } from "@/lib/affordability-split";
@@ -1701,6 +1701,25 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const baselineM = activeScenario ? calc(data, calcMode) : m;
   // d = display data — use this for all input bindings so scenarios work
   const d = effectiveData;
+
+  // Publish this page's context to the universal chatbot
+  useSetPageContext(
+    {
+      dealId: params.id,
+      dealName: deal?.name || null,
+      route: "underwriting",
+      screenSummary: `Underwriting — Purchase: $${(d.purchase_price || 0).toLocaleString()}, Vacancy: ${d.vacancy_rate || 0}%, Exit Cap: ${d.exit_cap_rate || 0}%, Hold: ${d.hold_period_years || 0}y`,
+      underwriting: {
+        uwData: d as unknown as Record<string, unknown>,
+        metrics: m as unknown as Record<string, unknown>,
+        onApplyPatch: (patch) => {
+          setData((prev) => ({ ...prev, ...(patch as Partial<typeof d>) }));
+          toast.success("Applied to model — remember to Save");
+        },
+      },
+    },
+    [params.id, deal?.name, d.purchase_price, d.vacancy_rate, d.exit_cap_rate, d.hold_period_years]
+  );
 
   return (
     <div className={`flex gap-4 ${docViewerOpen ? "" : ""}`}>
@@ -4552,18 +4571,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       )}
 
-      {/* ── Underwriting Co-Pilot (floating sidebar) ── */}
-      <UnderwritingCoPilot
-        dealId={params.id}
-        uwData={d as unknown as Record<string, unknown>}
-        metrics={m as unknown as Record<string, unknown>}
-        onApplyPatch={(patch) => {
-          // Merge the patch into the underwriting state. Numeric fields are
-          // assigned directly; unknown fields are ignored by React/TS.
-          setData((prev) => ({ ...prev, ...(patch as Partial<UWData>) }));
-          toast.success("Applied to model — remember to Save");
-        }}
-      />
+      {/* ── UW Co-Pilot is now in the universal chatbot widget ── */}
     </div>
   );
 }
