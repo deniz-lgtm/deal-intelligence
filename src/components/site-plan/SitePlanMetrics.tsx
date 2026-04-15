@@ -18,7 +18,7 @@ import {
   AlertTriangle, Check, Ruler, Home, Trees, ArrowRight, Info,
   Pencil, Trash2, Plus,
 } from "lucide-react";
-import type { SitePlan, SitePlanBuilding } from "@/lib/types";
+import type { SitePlan, SitePlanBuilding, SitePlanScenario } from "@/lib/types";
 import type { SitePlanSetbacks } from "./SitePlanGenerator";
 import { polygonAreaSf, polygonPerimeterFt, insetPolygon } from "./site-plan-utils";
 
@@ -47,14 +47,24 @@ export default function SitePlanMetrics({
   value, onChange, setbacks, zoningLotCoveragePct, expectedLandSf,
   onPushToProgramming, pushTargetLabel,
 }: Props) {
-  const parcelSF = value.parcel_area_sf;
+  // The metrics sidebar always reflects the currently active scenario.
+  // Scenario switches happen via the top-level scenario tab bar rendered
+  // by the host page; all this component sees is a new `value` with a
+  // different `active_scenario_id`, and everything downstream recomputes.
+  const activeScen = (value.scenarios || []).find(
+    (s) => s.id === value.active_scenario_id
+  ) || null;
+  const parcelPoints = activeScen?.parcel_points || [];
+  const parcelSF = activeScen?.parcel_area_sf || 0;
+  const buildings = activeScen?.buildings || [];
+  const activeBuildingId = activeScen?.active_building_id ?? null;
+
   const parcelAcres = parcelSF / 43560;
   const parcelPerimeterFt = useMemo(
-    () => polygonPerimeterFt(value.parcel_points),
-    [value.parcel_points]
+    () => polygonPerimeterFt(parcelPoints),
+    [parcelPoints]
   );
 
-  const buildings = value.buildings || [];
   const totalBuildingSf = useMemo(
     () => buildings.reduce((s, b) => s + (b.area_sf || 0), 0),
     [buildings]
@@ -72,10 +82,10 @@ export default function SitePlanMetrics({
   }, [setbacks]);
 
   const envelopeSF = useMemo(() => {
-    if (maxSetbackFt <= 0 || value.parcel_points.length < 3) return 0;
-    const ring = insetPolygon(value.parcel_points, maxSetbackFt);
+    if (maxSetbackFt <= 0 || parcelPoints.length < 3) return 0;
+    const ring = insetPolygon(parcelPoints, maxSetbackFt);
     return Math.round(polygonAreaSf(ring));
-  }, [value.parcel_points, maxSetbackFt]);
+  }, [parcelPoints, maxSetbackFt]);
 
   // Compliance flags
   const coverageCompliant =
@@ -87,7 +97,7 @@ export default function SitePlanMetrics({
       ? ((parcelSF - expectedLandSf) / expectedLandSf) * 100
       : null;
 
-  const hasParcel = value.parcel_points.length >= 3;
+  const hasParcel = parcelPoints.length >= 3;
   const hasBuildings = buildings.length > 0;
 
   // Inline rename state (one label editor at a time)
@@ -99,8 +109,8 @@ export default function SitePlanMetrics({
   const [pushTarget, setPushTarget] = useState<string>("");
   const effectiveTarget =
     pushTarget ||
-    (value.active_building_id && buildings.some(b => b.id === value.active_building_id)
-      ? value.active_building_id
+    (activeBuildingId && buildings.some((b) => b.id === activeBuildingId)
+      ? activeBuildingId
       : buildings[0]?.id || "total");
 
   const pushSf =
@@ -112,24 +122,34 @@ export default function SitePlanMetrics({
       ? null
       : buildings.find(b => b.id === effectiveTarget) || null;
 
-  // Mutation helpers
+  // Mutation helpers — every write funnels through updateActiveScen so
+  // only the active scenario's copy of the buildings list changes. Other
+  // scenarios are untouched.
+  const updateActiveScen = (
+    mutator: (scen: SitePlanScenario) => SitePlanScenario
+  ) => {
+    if (!activeScen) return;
+    const next = (value.scenarios || []).map((s) =>
+      s.id === activeScen.id ? mutator(s) : s
+    );
+    onChange({ ...value, scenarios: next, updated_at: new Date().toISOString() });
+  };
+
   const setActive = (id: string | null) =>
-    onChange({ ...value, active_building_id: id, updated_at: new Date().toISOString() });
+    updateActiveScen((scen) => ({ ...scen, active_building_id: id }));
 
   const renameBuilding = (id: string, label: string) =>
-    onChange({
-      ...value,
-      buildings: buildings.map(b => (b.id === id ? { ...b, label } : b)),
-      updated_at: new Date().toISOString(),
-    });
+    updateActiveScen((scen) => ({
+      ...scen,
+      buildings: scen.buildings.map((b) => (b.id === id ? { ...b, label } : b)),
+    }));
 
   const deleteBuilding = (id: string) =>
-    onChange({
-      ...value,
-      buildings: buildings.filter(b => b.id !== id),
-      active_building_id: value.active_building_id === id ? null : value.active_building_id,
-      updated_at: new Date().toISOString(),
-    });
+    updateActiveScen((scen) => ({
+      ...scen,
+      buildings: scen.buildings.filter((b) => b.id !== id),
+      active_building_id: scen.active_building_id === id ? null : scen.active_building_id,
+    }));
 
   return (
     <div className="space-y-3">
@@ -160,7 +180,7 @@ export default function SitePlanMetrics({
           </div>
           <div className="space-y-1">
             {buildings.map((b) => {
-              const isActive = b.id === value.active_building_id;
+              const isActive = b.id === activeBuildingId;
               const isRenaming = renamingId === b.id;
               return (
                 <div
@@ -307,7 +327,7 @@ export default function SitePlanMetrics({
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Parcel Geometry</div>
           <div className="grid grid-cols-2 gap-y-1 gap-x-3 text-xs">
             <span className="text-muted-foreground">Vertices</span>
-            <span className="tabular-nums text-right">{value.parcel_points.length}</span>
+            <span className="tabular-nums text-right">{parcelPoints.length}</span>
             <span className="text-muted-foreground">Perimeter</span>
             <span className="tabular-nums text-right">{fn(parcelPerimeterFt)} ft</span>
           </div>

@@ -7,12 +7,18 @@ import {
   Loader2, MapPin, Sparkles, RefreshCw, Download, Save,
   Building2, Ruler, Trees, ChevronDown, ChevronRight, FileText,
   Map as MapIcon, ExternalLink, CalendarClock, Wand2,
+  Pencil, Copy, Trash2, Bookmark,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { BONUS_CATALOG } from "@/lib/bonus-catalog";
-import type { SitePlan as SitePlanType } from "@/lib/types";
-import { DEFAULT_SITE_PLAN } from "@/lib/types";
+import type {
+  SitePlan as SitePlanType,
+  SitePlanScenario as SitePlanScenarioType,
+  SitePlanBuilding as SitePlanBuildingType,
+  SitePlanPoint as SitePlanPointType,
+} from "@/lib/types";
+import { DEFAULT_SITE_PLAN, newSitePlanScenario } from "@/lib/types";
 import SitePlanMetrics from "@/components/site-plan/SitePlanMetrics";
 
 // SitePlanGenerator is client-only (leaflet touches window on import).
@@ -291,6 +297,88 @@ function SelectInput({ label, value, onChange, options, className = "" }: {
   );
 }
 
+// Single scenario tab — doubles as a clickable switcher and carries inline
+// rename / duplicate / delete affordances. Rename is edit-in-place: click
+// the label to enter edit mode, Enter / blur commits, Esc cancels.
+function ScenarioTab({
+  scenario, isActive, canDelete, onSelect, onRename, onDelete, onDuplicate,
+}: {
+  scenario: SitePlanScenarioType;
+  isActive: boolean;
+  canDelete: boolean;
+  onSelect: () => void;
+  onRename: (name: string) => void;
+  onDelete: () => void;
+  onDuplicate: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(scenario.name);
+  useEffect(() => { setDraft(scenario.name); }, [scenario.name]);
+
+  return (
+    <div
+      className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] transition-colors ${
+        isActive
+          ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
+          : "bg-muted/10 border-border/40 text-muted-foreground hover:text-foreground hover:border-border"
+      }`}
+    >
+      {editing ? (
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            if (draft.trim()) onRename(draft.trim());
+            setEditing(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              if (draft.trim()) onRename(draft.trim());
+              setEditing(false);
+            } else if (e.key === "Escape") {
+              setDraft(scenario.name);
+              setEditing(false);
+            }
+          }}
+          className="w-28 bg-transparent outline-none border-b border-border/60 text-[11px]"
+        />
+      ) : (
+        <button onClick={onSelect} className="font-medium">
+          {scenario.name}
+        </button>
+      )}
+      {isActive && !editing && (
+        <>
+          <button
+            onClick={() => setEditing(true)}
+            title="Rename scenario"
+            className="ml-1 text-muted-foreground/70 hover:text-foreground"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button
+            onClick={onDuplicate}
+            title="Duplicate scenario"
+            className="text-muted-foreground/70 hover:text-foreground"
+          >
+            <Copy className="h-3 w-3" />
+          </button>
+          {canDelete && (
+            <button
+              onClick={onDelete}
+              title="Delete scenario"
+              className="text-muted-foreground/70 hover:text-red-400"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function CheckboxGroup({ label, options, selected, onChange }: {
   label: string; options: string[]; selected: string[]; onChange: (v: string[]) => void;
 }) {
@@ -399,40 +487,85 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       setDevParams(dp);
 
       // Hydrate the drawn site plan if the analyst has previously traced it.
-      // Backwards compatible on two axes:
-      // 1. Older UW blobs may have no site_plan key at all — fall through
-      //    to the default (empty polygons, no center).
-      // 2. The initial release stored a single building as
-      //    { building_points, building_area_sf }. If we see that shape and
-      //    there's no `buildings` array yet, migrate it into
-      //    buildings: [{ id, label: "Building 1", ... }]. The legacy keys
-      //    are dropped from state so re-saves write the new shape only.
+      // Migration handles three shapes in order:
+      //   1. Current: `{ scenarios: [...], active_scenario_id }` — use as-is.
+      //   2. Multi-building (flat): `{ buildings, parcel_points, ... }` →
+      //      wrap into scenarios: [{ name: "Base Case", ... }].
+      //   3. Initial release: `{ building_points, building_area_sf,
+      //      parcel_points }` single-building → migrate buildings[0] into
+      //      a wrapped Base Case scenario.
+      // All legacy top-level fields are dropped from state after migration
+      // so re-saves only write the new scenarios[] shape.
       if (uw?.site_plan) {
         const raw = uw.site_plan as any;
-        let buildings = Array.isArray(raw.buildings) ? raw.buildings : [];
-        let activeId = raw.active_building_id ?? null;
-        if (
-          buildings.length === 0 &&
-          Array.isArray(raw.building_points) &&
-          raw.building_points.length >= 3
-        ) {
-          const migratedId =
-            (crypto as any)?.randomUUID?.() ||
-            `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-          buildings = [{
-            id: migratedId,
-            label: "Building 1",
-            points: raw.building_points,
-            area_sf: Math.round(raw.building_area_sf || 0),
-          }];
-          activeId = migratedId;
+        let scenarios: SitePlanScenarioType[] = Array.isArray(raw.scenarios)
+          ? raw.scenarios
+          : [];
+        let activeScenarioId: string | null = raw.active_scenario_id ?? null;
+
+        if (scenarios.length === 0) {
+          // Flatten legacy shapes into a single "Base Case" scenario.
+          let buildings: SitePlanBuildingType[] = Array.isArray(raw.buildings) ? raw.buildings : [];
+          let activeBuildingId: string | null = raw.active_building_id ?? null;
+          const parcelPoints: SitePlanPointType[] = Array.isArray(raw.parcel_points) ? raw.parcel_points : [];
+          const parcelAreaSf: number = Number(raw.parcel_area_sf) || 0;
+          if (
+            buildings.length === 0 &&
+            Array.isArray(raw.building_points) &&
+            raw.building_points.length >= 3
+          ) {
+            const migratedId =
+              (crypto as any)?.randomUUID?.() ||
+              `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            buildings = [{
+              id: migratedId,
+              label: "Building 1",
+              points: raw.building_points,
+              area_sf: Math.round(raw.building_area_sf || 0),
+            }];
+            activeBuildingId = migratedId;
+          }
+          if (parcelPoints.length > 0 || buildings.length > 0) {
+            const baseScen = newSitePlanScenario("Base Case");
+            baseScen.parcel_points = parcelPoints;
+            baseScen.parcel_area_sf = parcelAreaSf;
+            baseScen.buildings = buildings;
+            baseScen.active_building_id = activeBuildingId;
+            scenarios = [baseScen];
+            activeScenarioId = baseScen.id;
+          }
         }
-        const { building_points: _bp, building_area_sf: _ba, ...rest } = raw;
+
+        // Ensure there's always at least one scenario so the tab bar has
+        // something to anchor; also ensure active_scenario_id points to
+        // something valid.
+        if (scenarios.length === 0) {
+          const s = newSitePlanScenario("Base Case");
+          scenarios = [s];
+          activeScenarioId = s.id;
+        }
+        if (!activeScenarioId || !scenarios.some((s) => s.id === activeScenarioId)) {
+          activeScenarioId = scenarios[0].id;
+        }
+
+        // Strip the legacy top-level fields from the destructured rest so
+        // we don't persist them again on subsequent saves.
+        const {
+          building_points: _bp,
+          building_area_sf: _ba,
+          parcel_points: _pp,
+          parcel_area_sf: _pa,
+          buildings: _bldgs,
+          active_building_id: _abid,
+          scenarios: _scen,
+          active_scenario_id: _asid,
+          ...rest
+        } = raw;
         setSitePlan({
           ...DEFAULT_SITE_PLAN,
           ...rest,
-          buildings,
-          active_building_id: activeId,
+          scenarios,
+          active_scenario_id: activeScenarioId,
         });
       }
 
@@ -683,10 +816,8 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   const updateSitePlan = useCallback((next: SitePlanType) => {
     setSitePlan(prev => {
       const contentChanged =
-        prev.parcel_points !== next.parcel_points ||
-        prev.buildings !== next.buildings ||
-        prev.active_building_id !== next.active_building_id ||
-        prev.parcel_area_sf !== next.parcel_area_sf ||
+        prev.scenarios !== next.scenarios ||
+        prev.active_scenario_id !== next.active_scenario_id ||
         prev.show_setbacks !== next.show_setbacks ||
         prev.snap_right_angle !== next.snap_right_angle ||
         prev.snap_vertex !== next.snap_vertex ||
@@ -747,6 +878,91 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     },
     [params.id]
   );
+
+  // Snapshot the current programming state as a named Underwriting
+  // Scenario the analyst can reload later. Stored under
+  // underwriting.data.uw_scenarios[]. We snapshot the fields that drive
+  // the numbers that differ between alternatives (building_program +
+  // unit_groups + revenue lists) and a thin summary object for the
+  // Saved Scenarios list on the Underwriting page to display without
+  // recomputing. The live state is unchanged after save.
+  const saveAsUwScenario = useCallback(async () => {
+    const defaultName =
+      sitePlan.scenarios?.find((s) => s.id === sitePlan.active_scenario_id)?.name ||
+      `Scenario ${new Date().toLocaleDateString()}`;
+    const name = window.prompt("Save as Underwriting Scenario — name:", defaultName);
+    if (!name?.trim()) return;
+    try {
+      const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+      const uwJson = await uwRes.json();
+      const current = uwJson.data?.data
+        ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
+        : {};
+      // Build a quick summary from what we have in memory right now (the
+      // building_program has per-scenario floors; summing across linked
+      // scenarios matches the "Project Totals" strip on Programming).
+      const bp = current.building_program as any;
+      let summary: {
+        total_gsf?: number;
+        total_nrsf?: number;
+        total_units?: number;
+        total_parking_spaces_est?: number;
+        buildings_count?: number;
+      } = {};
+      if (bp?.scenarios?.length) {
+        summary = bp.scenarios.reduce(
+          (acc: any, s: any) => {
+            const gsf = (s.floors || []).reduce((x: number, f: any) => x + (f.floor_plate_sf || 0), 0);
+            const nrsf = (s.floors || []).reduce(
+              (x: number, f: any) => x + Math.round((f.floor_plate_sf || 0) * ((f.efficiency_pct || 0) / 100)),
+              0
+            );
+            const units = (s.floors || []).reduce((x: number, f: any) => x + (f.units_on_floor || 0), 0);
+            const parkingSf = (s.floors || []).reduce(
+              (x: number, f: any) => x + (f.use_type === "parking" ? f.floor_plate_sf : 0),
+              0
+            );
+            return {
+              total_gsf: (acc.total_gsf || 0) + gsf,
+              total_nrsf: (acc.total_nrsf || 0) + nrsf,
+              total_units: (acc.total_units || 0) + units,
+              total_parking_spaces_est:
+                (acc.total_parking_spaces_est || 0) +
+                Math.floor(parkingSf / (s.parking_sf_per_space || 350)),
+              buildings_count: (acc.buildings_count || 0) + (s.site_plan_building_id ? 1 : 0),
+            };
+          },
+          {}
+        );
+      }
+      const snapshot = {
+        id:
+          (typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
+            ? (crypto as any).randomUUID()
+            : `uws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+        name: name.trim(),
+        created_at: new Date().toISOString(),
+        site_plan_scenario_id: sitePlan.active_scenario_id,
+        building_program: current.building_program || null,
+        unit_groups: current.unit_groups || [],
+        other_income_items: current.other_income_items || [],
+        commercial_tenants: current.commercial_tenants || [],
+        summary,
+      };
+      const existing = Array.isArray(current.uw_scenarios) ? current.uw_scenarios : [];
+      await fetch("/api/underwriting", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deal_id: params.id,
+          data: { ...current, uw_scenarios: [...existing, snapshot] },
+        }),
+      });
+      toast.success(`Saved as Underwriting Scenario: "${name.trim()}"`);
+    } catch {
+      toast.error("Failed to save UW scenario");
+    }
+  }, [params.id, sitePlan.scenarios, sitePlan.active_scenario_id]);
 
   const updateDev = (k: keyof DevParams, v: number) => {
     setDevParams(prev => {
@@ -1497,8 +1713,107 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 )}
                 Save now
               </Button>
+              <Button
+                size="sm"
+                onClick={saveAsUwScenario}
+                className="bg-primary hover:bg-primary/90"
+                title="Snapshot the current programming state as a named Underwriting Scenario"
+              >
+                <Bookmark className="h-3.5 w-3.5 mr-1.5" />
+                Save as UW Scenario
+              </Button>
             </div>
           </div>
+
+          {/* Scenario tab bar — one tab per site-plan scenario. Analysts
+              create scenarios to compare alternatives on the same site
+              (as-of-right vs with bonus vs max build). The active tab
+              owns the parcel + buildings the generator draws. Inline
+              rename, duplicate (copies the parcel + buildings into a
+              new scenario), and delete live inline on each tab. */}
+          <div className="flex items-center gap-1 flex-wrap mb-3 pb-2 border-b border-border/40">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
+              Scenario
+            </span>
+            {(sitePlan.scenarios || []).map((s) => {
+              const isActive = s.id === sitePlan.active_scenario_id;
+              return (
+                <ScenarioTab
+                  key={s.id}
+                  scenario={s}
+                  isActive={isActive}
+                  canDelete={(sitePlan.scenarios || []).length > 1}
+                  onSelect={() =>
+                    updateSitePlan({
+                      ...sitePlan,
+                      active_scenario_id: s.id,
+                      updated_at: new Date().toISOString(),
+                    })
+                  }
+                  onRename={(name) =>
+                    updateSitePlan({
+                      ...sitePlan,
+                      scenarios: (sitePlan.scenarios || []).map((x) =>
+                        x.id === s.id ? { ...x, name } : x
+                      ),
+                      updated_at: new Date().toISOString(),
+                    })
+                  }
+                  onDelete={() => {
+                    const remaining = (sitePlan.scenarios || []).filter((x) => x.id !== s.id);
+                    updateSitePlan({
+                      ...sitePlan,
+                      scenarios: remaining,
+                      active_scenario_id:
+                        isActive ? (remaining[0]?.id || null) : sitePlan.active_scenario_id,
+                      updated_at: new Date().toISOString(),
+                    });
+                  }}
+                  onDuplicate={() => {
+                    const copy = newSitePlanScenario(`${s.name} (copy)`);
+                    copy.parcel_points = s.parcel_points.map((p) => ({ ...p }));
+                    copy.parcel_area_sf = s.parcel_area_sf;
+                    copy.buildings = s.buildings.map((b) => ({
+                      ...b,
+                      id:
+                        (typeof crypto !== "undefined" &&
+                          typeof (crypto as any).randomUUID === "function"
+                            ? (crypto as any).randomUUID()
+                            : `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+                      points: b.points.map((p) => ({ ...p })),
+                    }));
+                    copy.active_building_id = null;
+                    updateSitePlan({
+                      ...sitePlan,
+                      scenarios: [...(sitePlan.scenarios || []), copy],
+                      active_scenario_id: copy.id,
+                      updated_at: new Date().toISOString(),
+                    });
+                  }}
+                />
+              );
+            })}
+            <button
+              onClick={() => {
+                // Seed "Scenario N" with the lowest unused integer.
+                const used = new Set((sitePlan.scenarios || []).map((x) => x.name));
+                let n = (sitePlan.scenarios || []).length + 1;
+                while (used.has(`Scenario ${n}`)) n++;
+                const s = newSitePlanScenario(`Scenario ${n}`);
+                updateSitePlan({
+                  ...sitePlan,
+                  scenarios: [...(sitePlan.scenarios || []), s],
+                  active_scenario_id: s.id,
+                  updated_at: new Date().toISOString(),
+                });
+              }}
+              className="px-2 py-1 text-[11px] rounded-md border border-dashed border-border/60 text-muted-foreground hover:text-foreground hover:border-border"
+              title="Add a new blank scenario"
+            >
+              + New scenario
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
             <SitePlanGenerator
               value={sitePlan}

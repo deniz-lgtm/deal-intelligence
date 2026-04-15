@@ -2125,34 +2125,54 @@ export interface SitePlanBuilding {
   area_sf: number;
 }
 
+// A site-plan scenario is one full drawing variation — its own parcel
+// polygon, its own buildings list. Lets analysts explore alternatives
+// ("As-of-right", "With density bonus", "Max build") on the same site
+// without losing previous work.
+export interface SitePlanScenario {
+  id: string;
+  name: string;
+  notes?: string;
+  parcel_points: SitePlanPoint[];
+  parcel_area_sf: number;
+  buildings: SitePlanBuilding[];
+  active_building_id: string | null;
+  created_at: string;
+}
+
 export interface SitePlan {
-  // Map view saved between sessions
+  // Map view saved between sessions (shared across scenarios)
   center_lat: number | null;
   center_lng: number | null;
   zoom: number;
   map_style: "satellite" | "streets" | "dark" | "light";
 
-  // Parcel boundary (closed polygon, CCW recommended but not required)
-  parcel_points: SitePlanPoint[];
-  parcel_area_sf: number;
+  // Scenarios — each owns its own parcel + buildings. The active one is
+  // what the generator draws; the others persist alongside for toggling.
+  scenarios: SitePlanScenario[];
+  active_scenario_id: string | null;
 
-  // Building footprint polygons — one per structure. Drawing a building
-  // appends a new entry here. The active_building_id drives which row is
-  // shown as selected in the sidebar and which polygon accepts vertex edits.
-  buildings: SitePlanBuilding[];
-  active_building_id: string | null;
-
-  // Setback visualization
+  // Setback visualization (shared across scenarios — they use the same
+  // zoning setback values)
   show_setbacks: boolean;
 
-  // Snapping options
-  snap_right_angle: boolean;  // 0/45/90/135° relative to previous edge
-  snap_vertex: boolean;       // snap to nearby existing vertices
-  snap_grid_ft: number;       // grid spacing in ft; 0 = off
+  // Snapping options (shared across scenarios)
+  snap_right_angle: boolean;
+  snap_vertex: boolean;
+  snap_grid_ft: number;
 
   updated_at: string;
 
   // ── Legacy (read-only migration) ────────────────────────────────────────
+  // Prior versions stored a single parcel + buildings list at the top
+  // level; even earlier ones used { building_points, building_area_sf }.
+  // The site-zoning page migrates these into scenarios[0] on load, and
+  // the UI never writes them again. Typing them as optional here keeps
+  // the JSON blob readable without a schema version bump.
+  parcel_points?: SitePlanPoint[];
+  parcel_area_sf?: number;
+  buildings?: SitePlanBuilding[];
+  active_building_id?: string | null;
   building_points?: SitePlanPoint[];
   building_area_sf?: number;
 }
@@ -2162,16 +2182,67 @@ export const DEFAULT_SITE_PLAN: SitePlan = {
   center_lng: null,
   zoom: 20,
   map_style: "satellite",
-  parcel_points: [],
-  parcel_area_sf: 0,
-  buildings: [],
-  active_building_id: null,
+  scenarios: [],
+  active_scenario_id: null,
   show_setbacks: true,
   snap_right_angle: true,
   snap_vertex: true,
   snap_grid_ft: 0,
   updated_at: "",
 };
+
+// ─── Saved Underwriting Scenarios ────────────────────────────────────────
+//
+// A UWScenario is a named snapshot of the key underwriting inputs at the
+// moment the analyst "pushes" it — meant for comparing alternatives
+// (e.g. "Base Case", "With 35% density bonus", "Hybrid tower") without
+// losing the current working set. Stored under
+// underwriting.data.uw_scenarios[] and loadable back into live state.
+//
+// We deliberately snapshot only the fields that drive the numbers the
+// analyst is comparing; we don't snapshot zoning/site info since those
+// usually don't vary between alternatives. Fields stored are opaque so
+// the shape stays flexible if the BuildingProgram schema evolves.
+export interface UWScenario {
+  id: string;
+  name: string;
+  notes?: string;
+  created_at: string;
+  // Foreign-key back to the site-plan scenario that was active when the
+  // snapshot was taken (null if no site plan was drawn).
+  site_plan_scenario_id: string | null;
+  // Opaque snapshots of the relevant state.
+  building_program: unknown;
+  unit_groups: unknown[];
+  other_income_items?: unknown[];
+  commercial_tenants?: unknown[];
+  // Lightweight display summary for the saved-scenarios list so we don't
+  // have to recompute it on every render. All optional since some of
+  // these may not apply to every project type.
+  summary?: {
+    total_gsf?: number;
+    total_nrsf?: number;
+    total_units?: number;
+    total_parking_spaces_est?: number;
+    buildings_count?: number;
+  };
+}
+
+// Factory for a fresh, empty scenario.
+export function newSitePlanScenario(name: string): SitePlanScenario {
+  return {
+    id:
+      (typeof crypto !== "undefined" && typeof (crypto as { randomUUID?: () => string }).randomUUID === "function"
+        ? (crypto as { randomUUID: () => string }).randomUUID()
+        : `sps-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+    name,
+    parcel_points: [],
+    parcel_area_sf: 0,
+    buildings: [],
+    active_building_id: null,
+    created_at: new Date().toISOString(),
+  };
+}
 
 export interface MassingSummary {
   total_gsf: number;

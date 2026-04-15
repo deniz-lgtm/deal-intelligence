@@ -22,6 +22,7 @@ import type {
   LeaseUpConfig, ConstructionLoanConfig, ConstructionDrawPeriod,
   MixedUseConfig, MixedUseComponent, MixedUseComponentType,
   RedevelopmentConfig,
+  UWScenario as UWScenarioType,
 } from "@/lib/types";
 import {
   DEFAULT_DEV_BUDGET_HARD, DEFAULT_DEV_BUDGET_SOFT,
@@ -1150,6 +1151,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   // site_plan_building_id tag (set by Programming's pushToUW). Empty
   // map (no site plan / all untagged) = flat table like before.
   const [sitePlanBuildingLabels, setSitePlanBuildingLabels] = useState<Record<string, string>>({});
+  // Saved Underwriting Scenarios — named snapshots the analyst took via
+  // "Save as UW Scenario" from the Site Plan section. We keep this as
+  // its own state (rather than inside `data`) so it's cheap to
+  // manipulate independently of the main underwriting form.
+  const [uwScenarios, setUwScenarios] = useState<UWScenarioType[]>([]);
   const [capexPreview, setCapexPreview] = useState<Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string; selected: boolean }> | null>(null);
   const [opexEstimating, setOpexEstimating] = useState(false);
   const [loanSizing, setLoanSizing] = useState(false);
@@ -1275,6 +1281,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           labels["legacy"] = "Building 1";
         }
         setSitePlanBuildingLabels(labels);
+
+        // Saved Underwriting Scenarios — named snapshots.
+        if (Array.isArray(parsed.uw_scenarios)) {
+          setUwScenarios(parsed.uw_scenarios as UWScenarioType[]);
+        }
 
         // Merge defaults into each unit_group and capex_item for backward compat
         if (Array.isArray(parsed.unit_groups)) {
@@ -1961,6 +1972,104 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         );
       })()}
+
+      {/* Saved Scenarios — named snapshots the analyst pushed from the
+          Site Plan page via "Save as UW Scenario". Renders only when at
+          least one is saved, so quiet for single-scenario deals.
+          Loading a scenario overwrites building_program / unit_groups /
+          revenue lists with the snapshot; it does NOT touch cost basis,
+          loan sizing, or other inputs that the analyst typically tunes
+          independently of building mix. */}
+      {uwScenarios.length > 0 && (
+        <Section title={`Saved Scenarios (${uwScenarios.length})`} icon={<Layers className="h-4 w-4 text-amber-400" />}>
+          <div className="space-y-2">
+            {uwScenarios.map((sc) => {
+              const s = sc.summary || {};
+              return (
+                <div
+                  key={sc.id}
+                  className="flex items-start gap-3 p-3 border border-border/40 rounded-lg bg-muted/5 hover:border-border/80 transition-colors"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-semibold">{sc.name}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(sc.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground tabular-nums">
+                      {s.total_gsf ? <span>{s.total_gsf.toLocaleString()} GSF</span> : null}
+                      {s.total_nrsf ? <span>{s.total_nrsf.toLocaleString()} NRSF</span> : null}
+                      {s.total_units ? <span>{s.total_units.toLocaleString()} units</span> : null}
+                      {s.total_parking_spaces_est ? <span>{s.total_parking_spaces_est.toLocaleString()} parking</span> : null}
+                      {s.buildings_count && s.buildings_count > 1 ? (
+                        <span>{s.buildings_count} buildings</span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        if (!window.confirm(
+                          `Load "${sc.name}"? This replaces the current building program and unit mix with the snapshot.`
+                        )) return;
+                        setData((p) => ({
+                          ...p,
+                          ...(sc.building_program ? { building_program: sc.building_program as any } : {}),
+                          unit_groups: Array.isArray(sc.unit_groups)
+                            ? (sc.unit_groups.map((g: any) => ({ ...newGroup(), ...g })) as UnitGroup[])
+                            : p.unit_groups,
+                          ...(Array.isArray(sc.other_income_items)
+                            ? { other_income_items: sc.other_income_items as any }
+                            : {}),
+                          ...(Array.isArray(sc.commercial_tenants)
+                            ? { commercial_tenants: sc.commercial_tenants as any }
+                            : {}),
+                        }));
+                        toast.success(`Loaded "${sc.name}"`);
+                      }}
+                      title="Replace current building program + unit mix with this snapshot"
+                    >
+                      Load
+                    </Button>
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`Delete scenario "${sc.name}"? This can't be undone.`)) return;
+                        const next = uwScenarios.filter((x) => x.id !== sc.id);
+                        setUwScenarios(next);
+                        try {
+                          const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+                          const uwJson = await uwRes.json();
+                          const current = uwJson.data?.data
+                            ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
+                            : {};
+                          await fetch("/api/underwriting", {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              deal_id: params.id,
+                              data: { ...current, uw_scenarios: next },
+                            }),
+                          });
+                          toast.success(`Deleted "${sc.name}"`);
+                        } catch {
+                          toast.error("Failed to delete scenario");
+                        }
+                      }}
+                      className="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground/60 hover:text-red-400 hover:bg-red-500/10"
+                      title="Delete scenario"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
 
       <Section title={isGroundUp ? "Development Cost Basis" : "Purchase & Cost Basis"} icon={<DollarSign className="h-4 w-4 text-green-400" />}>
         {isGroundUp ? (
