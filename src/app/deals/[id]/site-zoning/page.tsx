@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import {
   Loader2, MapPin, Sparkles, RefreshCw, Download, Save,
   Building2, Ruler, Trees, ChevronDown, ChevronRight, FileText,
-  Map as MapIcon,
+  Map as MapIcon, ExternalLink, CalendarClock, Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -30,11 +30,42 @@ const SitePlanGenerator = dynamic(
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface Setback { label: string; feet: number | null; }
-interface HeightLimit { label: string; value: string; }
-interface DensityBonus { source: string; description: string; additional_density: string; }
+
+// Height limits used to be a single free-text string ("4 stories / 55 ft").
+// They're now structured so analysts can enter feet and/or stories with an
+// explicit "and" / "or" connector ("40 ft OR 3 stories, whichever is less").
+// `value` is kept for backwards compatibility on load and regenerated on save.
+interface HeightLimit {
+  label: string;
+  feet: number | null;
+  stories: number | null;
+  connector: "and" | "or";
+  value?: string; // legacy / derived display string
+}
+
+type BonusApplicability = "applies" | "may_apply" | "not_applicable";
+
+interface DensityBonus {
+  source: string;
+  description: string;
+  additional_density: string;
+  // Allow an analyst to deactivate a spotted bonus without deleting the row.
+  // Defaults to true when missing so existing blobs keep working.
+  enabled?: boolean;
+}
+
+interface FutureLegislation {
+  source: string;          // e.g. "AB 1287 (CA)"
+  description: string;     // what it does
+  effective_date: string;  // free text, e.g. "Jan 2026" or "TBD"
+  impact: string;          // e.g. "+40% density bonus if very-low income"
+}
 
 interface ZoningInfo {
   zoning_designation: string;
+  // URL to the jurisdiction's zoning page that sourced this data. Rendered
+  // as a clickable link in the Zoning Information section header.
+  source_url: string;
   overlays: string[];
   permitted_uses: string[];
   setbacks: Setback[];
@@ -50,6 +81,12 @@ interface ZoningInfo {
   open_space_pct: number | null;       // % of lot
   open_space_sf: number | null;        // or fixed SF
   density_bonuses: DensityBonus[];
+  // Per-program applicability for the bonus catalog — grouping in the UI
+  // ("applies", "may apply", "n/a"). Keyed by BonusCard.source.
+  bonus_applicability: Record<string, BonusApplicability>;
+  // Upcoming legislation / general plan changes that could affect housing
+  // (bonuses & incentives, density, allowed uses).
+  future_legislation: FutureLegislation[];
   additional_notes: string;
   zone_change_needed: boolean;
   zone_change_from: string;
@@ -102,17 +139,22 @@ const DEFAULT_SITE_INFO: SiteInfo = {
 };
 
 const DEFAULT_ZONING: ZoningInfo = {
-  zoning_designation: "", overlays: [], permitted_uses: [],
+  zoning_designation: "",
+  source_url: "",
+  overlays: [], permitted_uses: [],
   setbacks: [
     { label: "Front", feet: null }, { label: "Side", feet: null },
     { label: "Rear", feet: null }, { label: "Corner Side", feet: null },
   ],
-  height_limits: [{ label: "Base Zoning", value: "" }],
+  height_limits: [{ label: "Base Zoning", feet: null, stories: null, connector: "and" }],
   lot_coverage_pct: null, far: null, parking_requirements: "",
   parking_ratio_residential: 0, parking_ratio_commercial: 0,
   parking_reduction_allowed: false, parking_reduction_notes: "",
   open_space_requirements: "", open_space_pct: null, open_space_sf: null,
-  density_bonuses: [], additional_notes: "",
+  density_bonuses: [],
+  bonus_applicability: {},
+  future_legislation: [],
+  additional_notes: "",
   zone_change_needed: false, zone_change_from: "", zone_change_to: "", zone_change_notes: "",
 };
 
@@ -126,16 +168,68 @@ const DEFAULT_DEV: DevParams = {
 const fn = (n: number) => n ? Math.round(n).toLocaleString("en-US") : "0";
 const fc = (n: number) => n ? "$" + Math.round(n).toLocaleString("en-US") : "$0";
 
-function Section({ title, icon, children, defaultOpen = true }: {
-  title: string; icon: React.ReactNode; children: React.ReactNode; defaultOpen?: boolean;
+// Build the legacy "X stories and/or Y ft" display string. Stored alongside
+// the structured fields so the Programming page's regex (which parses
+// `h.value` for "ft") keeps working without changes on old data.
+function heightLimitDisplay(h: HeightLimit): string {
+  const parts: string[] = [];
+  if (h.stories != null) parts.push(`${h.stories} stories`);
+  if (h.feet != null) parts.push(`${h.feet} ft`);
+  if (parts.length === 0) return h.value || "";
+  return parts.join(` ${h.connector || "and"} `);
+}
+
+// Upgrade legacy height_limit rows ({ label, value: "4 stories / 55 ft" })
+// into the new structured shape. Any row that already has numeric fields is
+// left alone.
+function migrateHeightLimit(h: any): HeightLimit {
+  if (!h || typeof h !== "object") {
+    return { label: "Base Zoning", feet: null, stories: null, connector: "and" };
+  }
+  if (typeof h.feet === "number" || typeof h.stories === "number" || h.feet === null || h.stories === null) {
+    if (h.feet !== undefined || h.stories !== undefined) {
+      return {
+        label: h.label || "",
+        feet: typeof h.feet === "number" ? h.feet : null,
+        stories: typeof h.stories === "number" ? h.stories : null,
+        connector: h.connector === "or" ? "or" : "and",
+      };
+    }
+  }
+  const val: string = typeof h.value === "string" ? h.value : "";
+  const storiesMatch = val.match(/(\d+(?:\.\d+)?)\s*stor/i);
+  const feetMatch = val.match(/(\d+(?:\.\d+)?)\s*(?:ft|feet|')/i);
+  const connector: "and" | "or" = /\bor\b/i.test(val) ? "or" : "and";
+  return {
+    label: h.label || "",
+    feet: feetMatch ? parseFloat(feetMatch[1]) : null,
+    stories: storiesMatch ? parseFloat(storiesMatch[1]) : null,
+    connector,
+  };
+}
+
+function Section({ title, icon, children, defaultOpen = true, headerRight }: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  // Optional trailing slot for a link or action in the section header (e.g.
+  // a "View source" external link on the Zoning Information section). Clicks
+  // in this slot are not bubbled, so they don't collapse the section.
+  headerRight?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-3 px-5 py-3.5 bg-muted/20 hover:bg-muted/30 transition-colors text-left">
-        {open ? <ChevronDown className="h-4 w-4 text-muted-foreground/60" /> : <ChevronRight className="h-4 w-4 text-muted-foreground/60" />}
-        <span className="flex items-center gap-2">{icon}<span className="font-semibold text-sm">{title}</span></span>
-      </button>
+      <div className="w-full flex items-center gap-3 px-5 py-3.5 bg-muted/20 hover:bg-muted/30 transition-colors">
+        <button onClick={() => setOpen(!open)} className="flex items-center gap-3 flex-1 text-left">
+          {open ? <ChevronDown className="h-4 w-4 text-muted-foreground/60" /> : <ChevronRight className="h-4 w-4 text-muted-foreground/60" />}
+          <span className="flex items-center gap-2">{icon}<span className="font-semibold text-sm">{title}</span></span>
+        </button>
+        {headerRight && (
+          <div onClick={(e) => e.stopPropagation()}>{headerRight}</div>
+        )}
+      </div>
       {open && <div className="px-5 py-4">{children}</div>}
     </div>
   );
@@ -235,6 +329,15 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   const [lastReportDate, setLastReportDate] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
 
+  // APN auto-fill state
+  const [apnLookup, setApnLookup] = useState<{
+    loading: boolean;
+    source_url: string | null;
+    confidence: "high" | "medium" | "low" | null;
+    notes: string;
+    attempted: boolean;
+  }>({ loading: false, source_url: null, confidence: null, notes: "", attempted: false });
+
   // ── Load data ──────────────────────────────────────────────────────────
   useEffect(() => {
     Promise.all([
@@ -278,8 +381,11 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           ? uw.zoning_info.setbacks
           : DEFAULT_ZONING.setbacks,
         height_limits: uw?.zoning_info?.height_limits?.length > 0
-          ? uw.zoning_info.height_limits
+          ? uw.zoning_info.height_limits.map(migrateHeightLimit)
           : DEFAULT_ZONING.height_limits,
+        bonus_applicability: uw?.zoning_info?.bonus_applicability || {},
+        future_legislation: uw?.zoning_info?.future_legislation || [],
+        source_url: uw?.zoning_info?.source_url || "",
       });
 
       const dp = {
@@ -338,10 +444,20 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         : {};
 
       const finalDev = recalcBuilding(siteInfo, devParams);
+      // Persist a legacy `value` string alongside each structured height
+      // limit so downstream consumers (Programming page's regex parser)
+      // keep working without needing a coordinated change.
+      const zoningForSave: ZoningInfo = {
+        ...zoning,
+        height_limits: zoning.height_limits.map(h => ({
+          ...h,
+          value: heightLimitDisplay(h),
+        })),
+      };
       const merged = {
         ...current,
         site_info: siteInfo,
-        zoning_info: zoning,
+        zoning_info: zoningForSave,
         dev_params: finalDev,
         site_plan: sitePlan,
         zoning_narrative: narrative,
@@ -396,14 +512,22 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       setZoning(prev => ({
         ...prev,
         zoning_designation: result.structured?.zoning_designation || prev.zoning_designation,
+        source_url: result.structured?.source_url || prev.source_url,
         overlays: result.structured?.overlays?.length > 0 ? result.structured.overlays : prev.overlays,
         permitted_uses: result.structured?.permitted_uses?.length > 0 ? result.structured.permitted_uses : prev.permitted_uses,
         lot_coverage_pct: result.structured?.lot_coverage_pct ?? prev.lot_coverage_pct,
         far: result.structured?.far ?? prev.far,
         parking_requirements: result.structured?.parking_requirements || prev.parking_requirements,
         density_bonuses: result.structured?.density_bonuses?.length > 0
-          ? result.structured.density_bonuses.map((b: any) => ({ source: b.source, description: b.description, additional_density: b.additional_density }))
+          ? result.structured.density_bonuses.map((b: any) => ({ source: b.source, description: b.description, additional_density: b.additional_density, enabled: true }))
           : prev.density_bonuses,
+        // AI's per-program applicability hints — merged over any manual overrides.
+        bonus_applicability: result.structured?.bonus_applicability
+          ? { ...prev.bonus_applicability, ...result.structured.bonus_applicability }
+          : prev.bonus_applicability,
+        future_legislation: result.structured?.future_legislation?.length > 0
+          ? result.structured.future_legislation
+          : prev.future_legislation,
         setbacks: result.structured?.setbacks
           ? [
               { label: "Front", feet: result.structured.setbacks.front ?? null },
@@ -411,8 +535,14 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
               { label: "Rear", feet: result.structured.setbacks.rear ?? null },
             ]
           : prev.setbacks,
-        height_limits: result.structured?.max_height_stories
-          ? [{ label: "Base Zoning", value: `${result.structured.max_height_stories} stories${result.structured.max_height_ft ? ` / ${result.structured.max_height_ft} ft` : ""}` }]
+        height_limits: (result.structured?.max_height_stories != null || result.structured?.max_height_ft != null)
+          ? [{
+              label: "Base Zoning",
+              stories: result.structured?.max_height_stories ?? null,
+              feet: result.structured?.max_height_ft ?? null,
+              // Most codes express height as "X feet OR Y stories, whichever is less".
+              connector: "or" as const,
+            }]
           : prev.height_limits,
       }));
 
@@ -519,6 +649,66 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     });
   };
 
+  // ── APN auto-lookup ───────────────────────────────────────────────────
+  // Calls the parcel-lookup endpoint, which uses Claude to suggest an APN
+  // based on the deal address. Only overwrites the APN field if the lookup
+  // returned a non-empty value — never clobbers an analyst's manual entry
+  // unless the user explicitly re-ran it.
+  const lookupApn = useCallback(async (opts: { overwrite: boolean }) => {
+    if (!deal?.address && !deal?.city) {
+      toast.error("Add a deal address first");
+      return;
+    }
+    setApnLookup(prev => ({ ...prev, loading: true }));
+    try {
+      const res = await fetch(`/api/deals/${params.id}/parcel-lookup`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) {
+        setApnLookup({ loading: false, source_url: null, confidence: "low", notes: json.error || "Lookup failed", attempted: true });
+        toast.error(json.error || "APN lookup failed");
+        return;
+      }
+      const { apn, source_url, confidence, notes } = json.data as {
+        apn: string | null;
+        source_url: string | null;
+        confidence: "high" | "medium" | "low";
+        notes: string;
+      };
+      setApnLookup({ loading: false, source_url, confidence, notes, attempted: true });
+      if (apn && (opts.overwrite || !siteInfo.parcel_id)) {
+        updateSite("parcel_id", apn);
+        toast.success(`APN auto-filled (${confidence} confidence)`);
+      } else if (!apn) {
+        // Low-confidence / not found — don't touch the field, just surface notes.
+        if (opts.overwrite) toast.info("Couldn't find a confident APN — check the county assessor");
+      } else {
+        // Lookup returned an APN but we already have one and the caller asked
+        // not to overwrite. Still expose the source URL so the analyst can
+        // cross-check manually.
+        toast.info("APN already set — source page linked below");
+      }
+    } catch {
+      setApnLookup({ loading: false, source_url: null, confidence: "low", notes: "Network error", attempted: true });
+      toast.error("APN lookup failed");
+    }
+  // siteInfo.parcel_id is intentionally excluded — lookupApn reads its current
+  // value via closure and callers pass opts.overwrite when they mean to.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.id, deal?.address, deal?.city]);
+
+  // Auto-trigger on first load when the deal has an address but no APN.
+  // Runs once per mount after the initial data has hydrated.
+  const [apnAutoTried, setApnAutoTried] = useState(false);
+  useEffect(() => {
+    if (loading || apnAutoTried) return;
+    if (!siteInfo.parcel_id && (deal?.address || deal?.city)) {
+      setApnAutoTried(true);
+      lookupApn({ overwrite: false });
+    } else if (deal) {
+      setApnAutoTried(true);
+    }
+  }, [loading, apnAutoTried, siteInfo.parcel_id, deal, lookupApn]);
+
   // ── Loading ────────────────────────────────────────────────────────────
   if (loading) {
     return <div className="flex items-center justify-center py-20"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
@@ -596,7 +786,48 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <FieldInput label="Land (Acres)" value={siteInfo.land_acres || ""} onChange={v => updateSite("land_acres", parseFloat(v) || 0)} type="number" suffix="AC" />
           <FieldInput label="Land (Square Feet)" value={siteInfo.land_sf || ""} onChange={v => updateSite("land_sf", parseFloat(v) || 0)} type="number" suffix="SF" />
-          <FieldInput label="Parcel ID / APN" value={siteInfo.parcel_id} onChange={v => updateSite("parcel_id", v)} placeholder="e.g. 123-456-789" />
+          {/* Parcel ID / APN — auto-populated from the deal address via the
+              parcel-lookup endpoint. The button re-runs the lookup and
+              overwrites any existing value. */}
+          <div>
+            <div className="flex items-baseline justify-between mb-1">
+              <label className="block text-[10px] text-muted-foreground uppercase tracking-wide">Parcel ID / APN</label>
+              <button
+                type="button"
+                onClick={() => lookupApn({ overwrite: true })}
+                disabled={apnLookup.loading || (!deal?.address && !deal?.city)}
+                className="inline-flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 disabled:text-muted-foreground/40 disabled:cursor-not-allowed"
+                title="Auto-fill APN from address"
+              >
+                {apnLookup.loading
+                  ? <><Loader2 className="h-3 w-3 animate-spin" /> Looking up…</>
+                  : <><Wand2 className="h-3 w-3" /> Auto-fill</>}
+              </button>
+            </div>
+            <div className="flex items-center border border-border/40 rounded-lg bg-muted/20 overflow-hidden">
+              <input
+                type="text"
+                value={siteInfo.parcel_id}
+                onChange={e => updateSite("parcel_id", e.target.value)}
+                placeholder="e.g. 123-456-789"
+                className="flex-1 px-3 py-1.5 text-sm bg-transparent outline-none"
+              />
+            </div>
+            {apnLookup.source_url ? (
+              <a
+                href={apnLookup.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 mt-1 text-[10px] text-primary hover:underline"
+              >
+                <ExternalLink className="h-3 w-3" /> County assessor page
+              </a>
+            ) : apnLookup.attempted && !apnLookup.loading && !siteInfo.parcel_id ? (
+              <p className="mt-1 text-[10px] text-muted-foreground/70">
+                {apnLookup.notes || "Couldn't auto-fill — check the county assessor site."}
+              </p>
+            ) : null}
+          </div>
           <SelectInput label="Flood Zone" value={siteInfo.flood_zone} onChange={v => updateSite("flood_zone", v)} options={[
             { value: "", label: "Select..." },
             { value: "Zone X", label: "Zone X (Minimal Risk)" },
@@ -651,11 +882,57 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       </Section>
 
       {/* ── Zoning Information ───────────────────────────────────────── */}
-      <Section title="Zoning Information" icon={<Building2 className="h-4 w-4 text-blue-400" />}>
+      <Section
+        title="Zoning Information"
+        icon={<Building2 className="h-4 w-4 text-blue-400" />}
+        headerRight={
+          zoning.source_url ? (
+            <a
+              href={zoning.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+              title="Open jurisdiction's zoning page"
+            >
+              <ExternalLink className="h-3 w-3" /> Source
+            </a>
+          ) : null
+        }
+      >
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <FieldInput label="Zoning Designation" value={zoning.zoning_designation} onChange={v => updateZoning("zoning_designation", v)} placeholder="e.g. M-1, PD-123" className="col-span-2" />
           <FieldInput label="FAR (Floor Area Ratio)" value={zoning.far ?? ""} onChange={v => updateZoning("far", parseFloat(v) || null)} type="number" />
           <FieldInput label="Max Lot Coverage" value={zoning.lot_coverage_pct ?? ""} onChange={v => updateZoning("lot_coverage_pct", parseFloat(v) || null)} type="number" suffix="%" />
+        </div>
+
+        {/* Source page URL — editable so analysts can paste or fix the link
+            the AI found. Rendered as a clickable "Source" chip in the
+            section header when set. */}
+        <div className="mt-4">
+          <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Jurisdiction Source Page (URL)</label>
+          <div className="flex items-center border border-border/40 rounded-lg bg-muted/20 overflow-hidden">
+            <input
+              type="url"
+              value={zoning.source_url}
+              onChange={e => updateZoning("source_url", e.target.value)}
+              placeholder="https://www.city.gov/planning/zoning"
+              className="flex-1 px-3 py-1.5 text-sm bg-transparent outline-none"
+            />
+            {zoning.source_url && (
+              <a
+                href={zoning.source_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2 py-1.5 text-xs text-primary bg-muted/30 border-l border-border/40 hover:bg-muted/50"
+                title="Open in new tab"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            )}
+          </div>
+          <p className="text-[10px] text-muted-foreground/70 mt-1">
+            Link to the actual jurisdiction&apos;s zoning page. Auto-populated by the AI Zoning Report.
+          </p>
         </div>
 
         {/* Overlays */}
@@ -735,12 +1012,17 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           >+ Add setback</button>
         </div>
 
-        {/* Height Limits Table */}
+        {/* Height Limits Table — feet / stories with "and"/"or" connector */}
         <div className="mt-4">
           <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Height Limits</label>
+          <p className="text-[10px] text-muted-foreground/70 mb-2">
+            Enter feet and/or stories. Use <span className="font-medium">&quot;or&quot;</span> when
+            the code allows either (&quot;whichever is less&quot;) and
+            <span className="font-medium"> &quot;and&quot;</span> when both apply simultaneously.
+          </p>
           <div className="space-y-2">
             {zoning.height_limits.map((h, i) => (
-              <div key={i} className="flex items-center gap-2">
+              <div key={i} className="flex items-center gap-2 flex-wrap">
                 <input
                   value={h.label}
                   onChange={e => {
@@ -751,22 +1033,58 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                   className="w-40 px-2 py-1 text-xs bg-muted/20 border border-border/40 rounded outline-none"
                   placeholder="e.g. Base Zoning"
                 />
-                <input
-                  value={h.value}
+                <div className="flex items-center gap-1 border border-border/40 rounded bg-muted/20 overflow-hidden">
+                  <input
+                    type="number"
+                    value={h.feet ?? ""}
+                    onChange={e => {
+                      const next = [...zoning.height_limits];
+                      const parsed = parseFloat(e.target.value);
+                      next[i] = { ...next[i], feet: isNaN(parsed) ? null : parsed };
+                      updateZoning("height_limits", next);
+                    }}
+                    className="w-20 px-2 py-1 text-xs bg-transparent outline-none text-right"
+                    placeholder="—"
+                  />
+                  <span className="px-1.5 text-[10px] text-muted-foreground bg-muted/40 border-l border-border/40 py-1">ft</span>
+                </div>
+                <select
+                  value={h.connector || "and"}
                   onChange={e => {
                     const next = [...zoning.height_limits];
-                    next[i] = { ...next[i], value: e.target.value };
+                    next[i] = { ...next[i], connector: e.target.value === "or" ? "or" : "and" };
                     updateZoning("height_limits", next);
                   }}
-                  className="flex-1 px-2 py-1 text-xs bg-muted/20 border border-border/40 rounded outline-none"
-                  placeholder="e.g. 4 stories / 55 ft"
-                />
-                <button onClick={() => updateZoning("height_limits", zoning.height_limits.filter((_, j) => j !== i))} className="text-muted-foreground/40 hover:text-red-400 text-xs">&times;</button>
+                  className="px-2 py-1 text-xs bg-background text-foreground border border-border/40 rounded outline-none focus:border-primary/40"
+                >
+                  <option value="and">and</option>
+                  <option value="or">or</option>
+                </select>
+                <div className="flex items-center gap-1 border border-border/40 rounded bg-muted/20 overflow-hidden">
+                  <input
+                    type="number"
+                    value={h.stories ?? ""}
+                    onChange={e => {
+                      const next = [...zoning.height_limits];
+                      const parsed = parseFloat(e.target.value);
+                      next[i] = { ...next[i], stories: isNaN(parsed) ? null : parsed };
+                      updateZoning("height_limits", next);
+                    }}
+                    className="w-20 px-2 py-1 text-xs bg-transparent outline-none text-right"
+                    placeholder="—"
+                  />
+                  <span className="px-1.5 text-[10px] text-muted-foreground bg-muted/40 border-l border-border/40 py-1">stories</span>
+                </div>
+                <button
+                  onClick={() => updateZoning("height_limits", zoning.height_limits.filter((_, j) => j !== i))}
+                  className="text-muted-foreground/40 hover:text-red-400 text-xs ml-auto"
+                  aria-label="Remove height limit"
+                >&times;</button>
               </div>
             ))}
           </div>
           <button
-            onClick={() => updateZoning("height_limits", [...zoning.height_limits, { label: "", value: "" }])}
+            onClick={() => updateZoning("height_limits", [...zoning.height_limits, { label: "", feet: null, stories: null, connector: "and" as const }])}
             className="mt-2 text-xs text-muted-foreground hover:text-foreground"
           >+ Add height limit</button>
         </div>
@@ -806,101 +1124,181 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
-        {/* Density Bonuses */}
+        {/* Density Bonuses — spotted rows (incl. the AI defaults) can be
+            toggled on/off, and the catalog below is grouped by applicability
+            so analysts can quickly see what's relevant. */}
         <div className="mt-4">
           <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Density Bonuses & Incentives</label>
           {zoning.density_bonuses.length > 0 && (
             <div className="space-y-2 mb-2">
-              {zoning.density_bonuses.map((b, i) => (
-                <div key={i} className="flex items-start gap-2 p-2.5 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
-                  <div className="flex-1 space-y-1">
-                    <input value={b.source} onChange={e => {
-                      const next = [...zoning.density_bonuses]; next[i] = { ...next[i], source: e.target.value }; updateZoning("density_bonuses", next);
-                    }} className="w-full text-xs font-medium bg-transparent outline-none" placeholder="Source / Legislation" />
-                    <input value={b.description} onChange={e => {
-                      const next = [...zoning.density_bonuses]; next[i] = { ...next[i], description: e.target.value }; updateZoning("density_bonuses", next);
-                    }} className="w-full text-xs text-muted-foreground bg-transparent outline-none" placeholder="Description" />
-                    <input value={b.additional_density} onChange={e => {
-                      const next = [...zoning.density_bonuses]; next[i] = { ...next[i], additional_density: e.target.value }; updateZoning("density_bonuses", next);
-                    }} className="w-full text-xs text-emerald-400 bg-transparent outline-none" placeholder="e.g. +35% FAR" />
-                  </div>
-                  <button onClick={() => updateZoning("density_bonuses", zoning.density_bonuses.filter((_, j) => j !== i))} className="text-muted-foreground/40 hover:text-red-400 text-xs mt-1">&times;</button>
-                </div>
-              ))}
-            </div>
-          )}
-          {/* Catalog — click a card to spot that incentive to the project.
-              Adds it to density_bonuses (and shows up on Programming under
-              "Spotted Bonuses / Incentives" in the AffordabilityPlanner).
-              Everything here is a preset of public / well-known programs.
-              Analysts can still edit the row after adding it. */}
-          <div className="mt-3 mb-2">
-            <p className="text-[10px] text-muted-foreground/80 mb-2">
-              Click any program to spot it to this project — it carries through to Programming.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-              {BONUS_CATALOG.map((b) => {
-                const already = zoning.density_bonuses.some(
-                  (x) => x.source === b.source
-                );
+              {zoning.density_bonuses.map((b, i) => {
+                const enabled = b.enabled !== false;
                 return (
-                  <button
-                    key={b.source}
-                    type="button"
-                    onClick={() => {
-                      if (already) {
-                        updateZoning(
-                          "density_bonuses",
-                          zoning.density_bonuses.filter(
-                            (x) => x.source !== b.source
-                          )
-                        );
-                      } else {
-                        updateZoning("density_bonuses", [
-                          ...zoning.density_bonuses,
-                          {
-                            source: b.source,
-                            description: b.description,
-                            additional_density: b.additional_density,
-                          },
-                        ]);
-                      }
-                    }}
-                    className={`text-left p-2.5 rounded-lg border transition-colors ${
-                      already
-                        ? "bg-emerald-500/10 border-emerald-500/40 hover:bg-emerald-500/15"
-                        : "bg-muted/10 border-border/40 hover:border-primary/40 hover:bg-muted/20"
+                  <div
+                    key={i}
+                    className={`flex items-start gap-2 p-2.5 rounded-lg border transition-colors ${
+                      enabled
+                        ? "bg-emerald-500/5 border-emerald-500/20"
+                        : "bg-muted/20 border-border/40 opacity-60"
                     }`}
-                    title={already ? "Click to remove" : "Click to spot this program to the project"}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="text-xs font-medium text-foreground">
-                        {b.source}
-                      </span>
-                      <span
-                        className={`text-[10px] whitespace-nowrap ${
-                          already ? "text-emerald-400" : "text-primary/70"
-                        }`}
-                      >
-                        {already ? "✓ Spotted" : b.additional_density}
-                      </span>
+                    {/* On/off toggle — "select to turn on or off" without
+                        deleting the row. AI-populated defaults are enabled by
+                        default; analysts can disable any row. */}
+                    <label
+                      className="flex items-center pt-1 cursor-pointer"
+                      title={enabled ? "Click to disable" : "Click to enable"}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={e => {
+                          const next = [...zoning.density_bonuses];
+                          next[i] = { ...next[i], enabled: e.target.checked };
+                          updateZoning("density_bonuses", next);
+                        }}
+                        className="accent-emerald-500"
+                      />
+                    </label>
+                    <div className="flex-1 space-y-1">
+                      <input value={b.source} onChange={e => {
+                        const next = [...zoning.density_bonuses]; next[i] = { ...next[i], source: e.target.value }; updateZoning("density_bonuses", next);
+                      }} className="w-full text-xs font-medium bg-transparent outline-none" placeholder="Source / Legislation" />
+                      <input value={b.description} onChange={e => {
+                        const next = [...zoning.density_bonuses]; next[i] = { ...next[i], description: e.target.value }; updateZoning("density_bonuses", next);
+                      }} className="w-full text-xs text-muted-foreground bg-transparent outline-none" placeholder="Description" />
+                      <input value={b.additional_density} onChange={e => {
+                        const next = [...zoning.density_bonuses]; next[i] = { ...next[i], additional_density: e.target.value }; updateZoning("density_bonuses", next);
+                      }} className="w-full text-xs text-emerald-400 bg-transparent outline-none" placeholder="e.g. +35% FAR" />
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
-                      {b.description}
-                    </p>
-                    {b.effects?.applySummary && (
-                      <p className="text-[10px] text-primary/80 mt-1">
-                        Programming can one-click apply: {b.effects.applySummary}
-                      </p>
-                    )}
-                  </button>
+                    <button onClick={() => updateZoning("density_bonuses", zoning.density_bonuses.filter((_, j) => j !== i))} className="text-muted-foreground/40 hover:text-red-400 text-xs mt-1" title="Remove">&times;</button>
+                  </div>
                 );
               })}
             </div>
+          )}
+
+          {/* Catalog — grouped by applicability ("applies", "may apply", "n/a").
+              Each card has a 3-way applicability picker and a "Spot" toggle
+              that adds the program to density_bonuses (carries through to
+              Programming). Analysts can edit rows after spotting. */}
+          <div className="mt-3 mb-2">
+            <p className="text-[10px] text-muted-foreground/80 mb-2">
+              Classify each program for this deal, then click <span className="font-medium text-foreground">Spot</span> to include it in the project.
+            </p>
+            {(["applies", "may_apply", "not_applicable"] as const).map(group => {
+              const groupItems = BONUS_CATALOG.filter(b => {
+                // Default "may_apply" so every catalog card lands somewhere
+                // even if the AI / analyst hasn't classified it yet.
+                const app = zoning.bonus_applicability[b.source] || "may_apply";
+                return app === group;
+              });
+              const groupLabel =
+                group === "applies" ? "Applies"
+                  : group === "may_apply" ? "May Apply"
+                    : "N/A";
+              const groupAccent =
+                group === "applies" ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/5"
+                  : group === "may_apply" ? "text-amber-400 border-amber-500/30 bg-amber-500/5"
+                    : "text-muted-foreground border-border/40 bg-muted/10";
+              return (
+                <div key={group} className="mb-3">
+                  <div className={`inline-flex items-center gap-2 px-2 py-0.5 rounded border text-[10px] uppercase tracking-wide mb-2 ${groupAccent}`}>
+                    <span className="font-semibold">{groupLabel}</span>
+                    <span className="text-[10px] opacity-70">{groupItems.length}</span>
+                  </div>
+                  {groupItems.length === 0 ? (
+                    <p className="text-[10px] text-muted-foreground/50 italic">None in this group.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {groupItems.map((b) => {
+                        const spottedRow = zoning.density_bonuses.find(x => x.source === b.source);
+                        const already = !!spottedRow;
+                        const app = zoning.bonus_applicability[b.source] || "may_apply";
+                        const setApp = (next: BonusApplicability) => {
+                          updateZoning("bonus_applicability", { ...zoning.bonus_applicability, [b.source]: next });
+                        };
+                        const toggleSpot = () => {
+                          if (already) {
+                            updateZoning(
+                              "density_bonuses",
+                              zoning.density_bonuses.filter(x => x.source !== b.source)
+                            );
+                          } else {
+                            updateZoning("density_bonuses", [
+                              ...zoning.density_bonuses,
+                              {
+                                source: b.source,
+                                description: b.description,
+                                additional_density: b.additional_density,
+                                enabled: true,
+                              },
+                            ]);
+                          }
+                        };
+                        return (
+                          <div
+                            key={b.source}
+                            className={`text-left p-2.5 rounded-lg border transition-colors ${
+                              already
+                                ? "bg-emerald-500/10 border-emerald-500/40"
+                                : "bg-muted/10 border-border/40"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-xs font-medium text-foreground">{b.source}</span>
+                              <span className={`text-[10px] whitespace-nowrap ${already ? "text-emerald-400" : "text-primary/70"}`}>
+                                {already ? "✓ Spotted" : b.additional_density}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{b.description}</p>
+                            {b.effects?.applySummary && (
+                              <p className="text-[10px] text-primary/80 mt-1">
+                                Programming can one-click apply: {b.effects.applySummary}
+                              </p>
+                            )}
+                            <div className="flex items-center gap-1 mt-2">
+                              {(["applies", "may_apply", "not_applicable"] as const).map(a => (
+                                <button
+                                  key={a}
+                                  type="button"
+                                  onClick={() => setApp(a)}
+                                  className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                                    app === a
+                                      ? a === "applies" ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400"
+                                        : a === "may_apply" ? "bg-amber-500/20 border-amber-500/40 text-amber-400"
+                                          : "bg-muted/40 border-border/60 text-muted-foreground"
+                                      : "bg-transparent border-border/40 text-muted-foreground/70 hover:border-primary/40"
+                                  }`}
+                                  title={`Mark as ${a === "may_apply" ? "may apply" : a === "not_applicable" ? "not applicable" : "applies"}`}
+                                >
+                                  {a === "applies" ? "Applies" : a === "may_apply" ? "May" : "N/A"}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={toggleSpot}
+                                className={`ml-auto px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                                  already
+                                    ? "bg-emerald-500/30 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/40"
+                                    : "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+                                }`}
+                              >
+                                {already ? "Remove" : "Spot"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <button
-            onClick={() => updateZoning("density_bonuses", [...zoning.density_bonuses, { source: "", description: "", additional_density: "" }])}
+            onClick={() => updateZoning("density_bonuses", [...zoning.density_bonuses, { source: "", description: "", additional_density: "", enabled: true }])}
             className="text-xs text-muted-foreground hover:text-foreground"
           >+ Add custom</button>
         </div>
@@ -1038,6 +1436,84 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           </div>
         </Section>
       )}
+
+      {/* ── Future Legislation ─────────────────────────────────────────
+          Upcoming bonuses, incentives, and general plan changes that could
+          affect housing on this site. Auto-populated by the AI Zoning Report
+          and editable by the analyst. Shown after the zoning report so it
+          reads as "here's what could change next". */}
+      <Section title="Future Legislation & Plan Changes" icon={<CalendarClock className="h-4 w-4 text-purple-400" />}>
+        <p className="text-[11px] text-muted-foreground mb-3">
+          Upcoming state or local legislation and general plan changes that could affect this project —
+          density bonuses or incentives coming online, phase-in rules, or plan amendments in the works.
+        </p>
+        {zoning.future_legislation.length === 0 ? (
+          <p className="text-xs text-muted-foreground/60 italic mb-3">
+            None yet. Run the AI Zoning Report to populate, or add items manually.
+          </p>
+        ) : (
+          <div className="space-y-2 mb-3">
+            {zoning.future_legislation.map((item, i) => (
+              <div
+                key={i}
+                className="grid grid-cols-1 md:grid-cols-[180px_120px_1fr_auto] gap-2 p-2.5 bg-purple-500/5 border border-purple-500/20 rounded-lg"
+              >
+                <input
+                  value={item.source}
+                  onChange={e => {
+                    const next = [...zoning.future_legislation];
+                    next[i] = { ...next[i], source: e.target.value };
+                    updateZoning("future_legislation", next);
+                  }}
+                  className="px-2 py-1 text-xs font-medium bg-muted/20 border border-border/40 rounded outline-none"
+                  placeholder="Bill / Plan"
+                />
+                <input
+                  value={item.effective_date}
+                  onChange={e => {
+                    const next = [...zoning.future_legislation];
+                    next[i] = { ...next[i], effective_date: e.target.value };
+                    updateZoning("future_legislation", next);
+                  }}
+                  className="px-2 py-1 text-xs bg-muted/20 border border-border/40 rounded outline-none"
+                  placeholder="Effective"
+                />
+                <div className="space-y-1">
+                  <input
+                    value={item.description}
+                    onChange={e => {
+                      const next = [...zoning.future_legislation];
+                      next[i] = { ...next[i], description: e.target.value };
+                      updateZoning("future_legislation", next);
+                    }}
+                    className="w-full px-2 py-1 text-xs bg-muted/20 border border-border/40 rounded outline-none"
+                    placeholder="What it does"
+                  />
+                  <input
+                    value={item.impact}
+                    onChange={e => {
+                      const next = [...zoning.future_legislation];
+                      next[i] = { ...next[i], impact: e.target.value };
+                      updateZoning("future_legislation", next);
+                    }}
+                    className="w-full px-2 py-1 text-xs text-purple-300 bg-muted/20 border border-border/40 rounded outline-none"
+                    placeholder="Impact on this deal"
+                  />
+                </div>
+                <button
+                  onClick={() => updateZoning("future_legislation", zoning.future_legislation.filter((_, j) => j !== i))}
+                  className="text-muted-foreground/40 hover:text-red-400 text-xs self-start"
+                  title="Remove"
+                >&times;</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          onClick={() => updateZoning("future_legislation", [...zoning.future_legislation, { source: "", description: "", effective_date: "", impact: "" }])}
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >+ Add legislation</button>
+      </Section>
 
       {/* Empty state */}
       {!narrative && !zoning.zoning_designation && (

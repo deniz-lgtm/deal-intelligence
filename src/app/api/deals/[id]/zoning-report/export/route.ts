@@ -142,7 +142,8 @@ export async function POST(
       }));
     }
 
-    // Height Limits
+    // Height Limits — support both the legacy `value` string and the newer
+    // structured shape ({ feet, stories, connector }).
     if (zoningInfo?.height_limits?.length > 0) {
       children.push(new Paragraph({
         children: [new TextRun({ text: "Height Limits", bold: true, size: 22, font: docFont })],
@@ -150,23 +151,38 @@ export async function POST(
       }));
 
       zoningInfo.height_limits.forEach((h: any) => {
+        let rendered: string = h.value || "";
+        const hasStructured =
+          (typeof h.feet === "number" && h.feet !== null) ||
+          (typeof h.stories === "number" && h.stories !== null);
+        if (hasStructured) {
+          const parts: string[] = [];
+          if (h.stories != null) parts.push(`${h.stories} stories`);
+          if (h.feet != null) parts.push(`${h.feet} ft`);
+          rendered = parts.join(` ${h.connector || "and"} `);
+        }
         children.push(new Paragraph({
           children: [
-            new TextRun({ text: `${h.label}: `, bold: true, size: 20, font: docFont }),
-            new TextRun({ text: h.value, size: 20, font: docFont }),
+            new TextRun({ text: `${h.label || ""}: `, bold: true, size: 20, font: docFont }),
+            new TextRun({ text: rendered, size: 20, font: docFont }),
           ],
         }));
       });
     }
 
-    // Density Bonuses
-    if (zoningInfo?.density_bonuses?.length > 0) {
+    // Density Bonuses — only export ENABLED bonuses. Rows where the analyst
+    // has toggled `enabled: false` are intentionally excluded from the
+    // report (they were considered and ruled out).
+    const activeBonuses = (zoningInfo?.density_bonuses || []).filter(
+      (b: any) => b?.enabled !== false
+    );
+    if (activeBonuses.length > 0) {
       children.push(new Paragraph({
         children: [new TextRun({ text: "Density Bonuses & Incentives", bold: true, size: 22, font: docFont })],
         spacing: { before: 200, after: 100 },
       }));
 
-      zoningInfo.density_bonuses.forEach((b: any) => {
+      activeBonuses.forEach((b: any) => {
         children.push(new Paragraph({
           children: [
             new TextRun({ text: `${b.source}: `, bold: true, size: 20, font: docFont }),
@@ -175,6 +191,40 @@ export async function POST(
           spacing: { after: 80 },
         }));
       });
+    }
+
+    // Future Legislation & Plan Changes
+    if (zoningInfo?.future_legislation?.length > 0) {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: "Future Legislation & Plan Changes", bold: true, size: 22, font: docFont })],
+        spacing: { before: 200, after: 100 },
+      }));
+
+      zoningInfo.future_legislation.forEach((f: any) => {
+        const header = f.effective_date
+          ? `${f.source} (${f.effective_date}): `
+          : `${f.source}: `;
+        const body = [f.description, f.impact].filter(Boolean).join(" — ");
+        children.push(new Paragraph({
+          children: [
+            new TextRun({ text: header, bold: true, size: 20, font: docFont }),
+            new TextRun({ text: body, size: 20, font: docFont }),
+          ],
+          spacing: { after: 80 },
+        }));
+      });
+    }
+
+    // Jurisdiction source link — appears under Zoning Information for
+    // traceability back to the actual code source.
+    if (zoningInfo?.source_url) {
+      children.push(new Paragraph({
+        children: [
+          new TextRun({ text: "Source: ", bold: true, size: 18, font: docFont }),
+          new TextRun({ text: zoningInfo.source_url, size: 18, color: "1F6FEB", font: docFont }),
+        ],
+        spacing: { before: 120, after: 120 },
+      }));
     }
 
     // Development Parameters

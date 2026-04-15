@@ -130,6 +130,10 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       let heightFt = 0;
       const hl = uw.zoning_info?.height_limits || [];
       for (const h of hl) {
+        // New structured shape — prefer feet, fall back to stories × 10.
+        if (typeof h.feet === "number" && h.feet > 0) { heightFt = h.feet; break; }
+        if (typeof h.stories === "number" && h.stories > 0) { heightFt = h.stories * 10; break; }
+        // Legacy shape — regex-parse the free-text value string.
         const match = (h.value || "").match(/(\d+)\s*(ft|feet|')/i);
         if (match) { heightFt = parseInt(match[1]); break; }
       }
@@ -142,7 +146,14 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         height_limit_ft: heightFt,
         height_limit_stories: uw.height_limit_stories || uw.dev_params?.height_limit_stories || 0,
       });
-      setDensityBonuses(uw.zoning_info?.density_bonuses || []);
+      // Only feed Programming the bonuses the analyst has left enabled on
+      // Site & Zoning. A disabled bonus means "considered, not applied" and
+      // shouldn't flow into the affordability planner / tax exemption UI.
+      setDensityBonuses(
+        (uw.zoning_info?.density_bonuses || []).filter(
+          (b: any) => b?.enabled !== false
+        )
+      );
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [params.id]);

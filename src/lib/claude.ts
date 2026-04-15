@@ -1419,6 +1419,10 @@ Answer questions accurately based on the documents. If information isn't availab
 export interface ZoningAnalysis {
   structured: {
     zoning_designation: string;
+    // Canonical URL to the jurisdiction's zoning page (the actual source,
+    // not a Wikipedia / blog link). Used by the UI to deep-link analysts
+    // back to the authoritative code.
+    source_url: string;
     far: number | null;
     max_height_ft: number | null;
     max_height_stories: number | null;
@@ -1428,6 +1432,18 @@ export interface ZoningAnalysis {
     overlays: string[];
     density_bonuses: Array<{ source: string; description: string; additional_density: string }>;
     parking_requirements: string;
+    // Per-catalog-program applicability hints keyed by catalog source name.
+    // Values: "applies" | "may_apply" | "not_applicable". The UI merges this
+    // over any manual user overrides.
+    bonus_applicability: Record<string, "applies" | "may_apply" | "not_applicable">;
+    // Upcoming state/local legislation or general plan changes that could
+    // affect housing density, bonuses, or allowed uses.
+    future_legislation: Array<{
+      source: string;
+      description: string;
+      effective_date: string;
+      impact: string;
+    }>;
   };
   narrative: string;
   sources: string[];
@@ -1478,11 +1494,20 @@ INSTRUCTIONS:
 5. Identify any overlay districts that apply.
 6. Research state-level density bonus programs or legislation that could allow additional density (e.g., California AB 2011, Texas Chapter 245, Florida Live Local Act, etc.).
 7. Flag any use restrictions that conflict with the intended property type (${propertyType}).
+8. Provide the canonical URL for the jurisdiction's zoning/planning page — this should be the actual municipal or county government page (e.g. city planning department, Municode, eCode360) — NOT a Wikipedia, news, or blog link. If you cannot identify a specific URL with high confidence, return an empty string.
+9. For each of the following well-known incentive programs, classify its applicability to THIS specific deal:
+     - "CA Density Bonus Law", "SB 35 (CA)", "CCHS (Citywide Commercial-Corridor Housing Services)",
+       "LIHTC 9% (100% affordable)", "LIHTC 4% (100% affordable)", "421-a (NYC)", "J-51 (NYC)",
+       "Local Inclusionary Zoning", "Opportunity Zone", "HUD 221(d)(4)", "PILOT Agreement", "SB 330 (CA)"
+   Use exactly these values: "applies" | "may_apply" | "not_applicable".
+   Base the classification on state/city fit (e.g. 421-a is NYC-only, SB 35 is CA-only) and property type.
+10. Identify any upcoming legislation or general plan changes (state or local) that could affect housing, density, bonuses, or allowed uses on THIS site within the next 1-3 years. Include pending bills, recent adoption where rules phase in, and upcoming general/specific plan amendments.
 
 Respond with valid JSON only (no markdown):
 {
   "structured": {
     "zoning_designation": "<zoning code/district, e.g. M-1, PD-123, C-2>",
+    "source_url": "<canonical URL to the jurisdiction's zoning page, or empty string>",
     "far": <number or null if unknown>,
     "max_height_ft": <number or null>,
     "max_height_stories": <number or null>,
@@ -1493,7 +1518,20 @@ Respond with valid JSON only (no markdown):
     "density_bonuses": [
       { "source": "<legislation or program name>", "description": "<what it allows>", "additional_density": "<e.g. +35% FAR>" }
     ],
-    "parking_requirements": "<brief summary>"
+    "parking_requirements": "<brief summary>",
+    "bonus_applicability": {
+      "CA Density Bonus Law": "applies" | "may_apply" | "not_applicable",
+      "SB 35 (CA)": "applies" | "may_apply" | "not_applicable"
+      /* include one entry for each program in the list above */
+    },
+    "future_legislation": [
+      {
+        "source": "<bill number or plan name, e.g. 'AB 1287 (CA)' or '2040 General Plan Update'>",
+        "description": "<what the legislation does>",
+        "effective_date": "<when it takes effect, e.g. 'Jan 2026' or 'Pending' or 'TBD'>",
+        "impact": "<how it could affect this deal>"
+      }
+    ]
   },
   "narrative": "<detailed markdown-formatted zoning memo covering: zoning designation, dimensional standards, permitted uses, overlays, density bonuses, potential conflicts, recommendations for the developer>",
   "sources": ["<source description or URL>"]
@@ -1517,6 +1555,7 @@ Be thorough in the narrative. Include specific code references where possible. I
     return {
       structured: {
         zoning_designation: "Unknown",
+        source_url: "",
         far: null,
         max_height_ft: null,
         max_height_stories: null,
@@ -1526,9 +1565,84 @@ Be thorough in the narrative. Include specific code references where possible. I
         overlays: [],
         density_bonuses: [],
         parking_requirements: "Unknown",
+        bonus_applicability: {},
+        future_legislation: [],
       },
       narrative: "Failed to parse zoning analysis. Please try again.",
       sources: [],
+    };
+  }
+}
+
+// ─── Parcel / APN Lookup ──────────────────────────────────────────────────────
+//
+// Best-effort parcel number (APN) lookup based on the deal address. Returns
+// the APN + a URL to the county assessor's parcel page when the model has
+// high confidence, otherwise returns nulls. This is surfaced in Site & Zoning
+// as an "Auto-fill" button next to the APN field.
+
+export interface ParcelLookup {
+  apn: string | null;
+  source_url: string | null;
+  confidence: "high" | "medium" | "low";
+  notes: string;
+}
+
+export async function lookupParcelApn(
+  address: string,
+  city: string,
+  state: string,
+  county?: string | null
+): Promise<ParcelLookup> {
+  const fullAddress = [address, city, state].filter(Boolean).join(", ");
+  if (!fullAddress) {
+    return { apn: null, source_url: null, confidence: "low", notes: "Address is empty." };
+  }
+
+  const prompt = `You are a real estate data assistant. Identify the parcel number (APN / Parcel ID / Tax ID) for this property.
+
+PROPERTY:
+- Address: ${fullAddress}
+- County: ${county || "Unknown — infer from the address"}
+
+Many county assessors publish parcel data publicly. Based on the address, return the most likely APN and the URL to the county assessor's parcel viewer or property detail page.
+
+RULES:
+- Respond with valid JSON ONLY (no markdown fences).
+- If you are NOT confident in a specific APN for this exact address, set "apn" to null and "confidence" to "low". Do NOT invent an APN — a wrong APN is worse than none.
+- Format the APN using the county's canonical format (e.g. "123-456-789" for CA, "1234567890" for NYC, etc.).
+- "source_url" should be the county assessor's parcel lookup page (not a real-estate listing site).
+
+{
+  "apn": "<APN string or null>",
+  "source_url": "<URL to county assessor parcel page, or null>",
+  "confidence": "high" | "medium" | "low",
+  "notes": "<one-sentence rationale — e.g. 'Los Angeles County APN format confirmed' or 'Unable to locate a specific APN'>"
+}`;
+
+  try {
+    const response = await getClient().messages.create({
+      model: await getActiveModel(),
+      max_tokens: 512,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text =
+      response.content[0].type === "text" ? response.content[0].text : "{}";
+    const cleaned = text.replace(/^```json\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+    const parsed = JSON.parse(cleaned);
+    return {
+      apn: parsed.apn || null,
+      source_url: parsed.source_url || null,
+      confidence: parsed.confidence || "low",
+      notes: parsed.notes || "",
+    };
+  } catch {
+    return {
+      apn: null,
+      source_url: null,
+      confidence: "low",
+      notes: "Lookup failed. Check the county assessor's site manually.",
     };
   }
 }
