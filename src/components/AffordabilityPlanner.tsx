@@ -151,6 +151,32 @@ interface Props {
    * unit_groups by the parent page.
    */
   buildingUnitMix?: BuildingUnitMix;
+  /**
+   * Which editing responsibilities this surface owns.
+   *
+   *   "type"  — Programming page. Pick the affordability TYPE (presets,
+   *             AMI%, % of units per tier, tax exemption). Per-BR mix of
+   *             affordable units is NOT edited here.
+   *
+   *   "mix"   — Underwriting page. Edit the per-BR affordable mix per tier
+   *             (Flexible / Match Building / Bedroom Count + Suggest +
+   *             Optimize with AI). Presets / tax exemption are read-only
+   *             here; the user sets those in Programming.
+   *
+   *   "full"  — Everything in one surface (default — backwards compat for
+   *             any caller that hasn't opted into the split yet).
+   */
+  mode?: "type" | "mix" | "full";
+  /**
+   * Bonuses/incentives "spotted" from the Site & Zoning page. Rendered
+   * read-only in the type surface so the analyst can see which density /
+   * affordability programs have been committed to before picking tiers.
+   */
+  spottedBonuses?: Array<{
+    source: string;
+    description: string;
+    additional_density: string;
+  }>;
 }
 
 function hydrateTiers(
@@ -394,7 +420,11 @@ export default function AffordabilityPlanner({
   onConfigChange,
   initialConfig,
   buildingUnitMix,
+  mode = "full",
+  spottedBonuses,
 }: Props) {
+  const showTypeControls = mode === "type" || mode === "full";
+  const showMixControls = mode === "mix" || mode === "full";
   const [open, setOpen] = useState(false);
   const [loadingAmi, setLoadingAmi] = useState(false);
   const [ami, setAmi] = useState<AmiData | null>(null);
@@ -799,7 +829,11 @@ export default function AffordabilityPlanner({
         {open ? <ChevronDown className="h-4 w-4 text-muted-foreground/60" /> : <ChevronRight className="h-4 w-4 text-muted-foreground/60" />}
         <span className="flex items-center gap-2">
           <DollarSign className="h-4 w-4 text-primary" />
-          <span className="font-semibold text-sm">Affordability & Income Restrictions</span>
+          <span className="font-semibold text-sm">
+            {mode === "mix"
+              ? "Affordable Unit Mix"
+              : "Affordability & Income Restrictions"}
+          </span>
         </span>
         {config.enabled && (
           <span className="ml-auto text-xs text-primary bg-primary/10 px-2 py-0.5 rounded-full">
@@ -807,6 +841,13 @@ export default function AffordabilityPlanner({
           </span>
         )}
       </button>
+      {mode !== "full" && open && (
+        <p className="px-5 pt-3 text-[10px] text-muted-foreground/80">
+          {mode === "type"
+            ? "Pick the affordability type here. The per-bedroom mix is set on Underwriting."
+            : "Per-bedroom mix for each tier. Change AMI levels, percentages, and tax exemption on Programming."}
+        </p>
+      )}
 
       {open && (
         <div className="px-5 py-4 space-y-4">
@@ -831,21 +872,70 @@ export default function AffordabilityPlanner({
             </div>
           )}
 
-          {/* Quick presets */}
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Quick Presets</div>
-            <div className="flex flex-wrap gap-1.5">
-              {AMI_PRESETS.map((preset) => (
-                <button
-                  key={preset.label}
-                  onClick={() => applyPreset(preset)}
-                  className="text-[10px] px-2.5 py-1 rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
-                >
-                  {preset.label}
-                </button>
-              ))}
+          {/* Spotted bonuses/incentives (type surface only) — read-only
+              summary of what's been committed to on the Site & Zoning page. */}
+          {showTypeControls && spottedBonuses && spottedBonuses.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                Spotted Bonuses / Incentives
+              </div>
+              <div className="space-y-1.5">
+                {spottedBonuses.map((b, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-2 p-2 rounded-md bg-emerald-500/5 border border-emerald-500/20 text-xs"
+                  >
+                    <div className="flex-1">
+                      <div className="font-medium text-foreground">
+                        {b.source || "Unnamed bonus"}
+                      </div>
+                      {b.description && (
+                        <div className="text-muted-foreground">
+                          {b.description}
+                        </div>
+                      )}
+                    </div>
+                    {b.additional_density && (
+                      <span className="text-[10px] text-emerald-400 whitespace-nowrap">
+                        {b.additional_density}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground/70 mt-1.5">
+                Picked from Site &amp; Zoning — edit there to add or remove.
+              </p>
             </div>
-          </div>
+          )}
+
+          {/* Quick presets — only on the type surface */}
+          {showTypeControls && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Quick Presets</div>
+              <div className="flex flex-wrap gap-1.5">
+                {AMI_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    onClick={() => applyPreset(preset)}
+                    className="text-[10px] px-2.5 py-1 rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Mix-only hint when no tiers exist yet — user needs to set the
+              type in Programming first. */}
+          {mode === "mix" && config.tiers.length === 0 && (
+            <div className="p-3 rounded-lg bg-muted/10 border border-border/30 text-xs text-muted-foreground">
+              No affordable tiers configured yet. Pick an affordability preset
+              or add tiers on the <span className="text-foreground font-medium">Programming</span> page,
+              then come back here to dial in the per-bedroom mix.
+            </div>
+          )}
 
           {/* Tiers */}
           {config.tiers.length > 0 && (
@@ -889,22 +979,34 @@ export default function AffordabilityPlanner({
 
                 return (
                   <div key={tier.id} className="border border-border/40 rounded-lg p-3 bg-muted/5 space-y-3">
-                    {/* Top row: AMI / target / revenue summary */}
+                    {/* Top row: AMI / target / revenue summary.
+                        - type surface: AMI (editable) + % of Units + Remove.
+                        - mix  surface: AMI (read-only label) + Bedroom Target
+                          (when bedroom_equivalent) + Revenue. */}
                     <div className="flex items-center gap-3 flex-wrap">
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">AMI Level</label>
-                        <select
-                          value={tier.ami_pct}
-                          onChange={(e) => updateTier(tier.id, { ami_pct: Number(e.target.value) })}
-                          className="block w-24 px-2 py-1 text-xs bg-background border border-border/40 rounded"
-                        >
-                          {[30, 50, 60, 80, 100, 120].map((v) => (
-                            <option key={v} value={v}>{v}% AMI</option>
-                          ))}
-                        </select>
-                      </div>
+                      {showTypeControls ? (
+                        <div>
+                          <label className="text-[10px] text-muted-foreground">AMI Level</label>
+                          <select
+                            value={tier.ami_pct}
+                            onChange={(e) => updateTier(tier.id, { ami_pct: Number(e.target.value) })}
+                            className="block w-24 px-2 py-1 text-xs bg-background border border-border/40 rounded"
+                          >
+                            {[30, 50, 60, 80, 100, 120].map((v) => (
+                              <option key={v} value={v}>{v}% AMI</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="text-[10px] text-muted-foreground">AMI Level</label>
+                          <div className="text-xs font-medium px-2 py-1">
+                            {tier.ami_pct}% AMI
+                          </div>
+                        </div>
+                      )}
 
-                      {tier.mix_mode !== "bedroom_equivalent" ? (
+                      {showTypeControls && tier.mix_mode !== "bedroom_equivalent" && (
                         <>
                           <div>
                             <label className="text-[10px] text-muted-foreground">% of Units</label>
@@ -925,7 +1027,9 @@ export default function AffordabilityPlanner({
                             <div className="font-medium">{tier.units_count}</div>
                           </div>
                         </>
-                      ) : (
+                      )}
+
+                      {showMixControls && tier.mix_mode === "bedroom_equivalent" && (
                         <div>
                           <label className="text-[10px] text-muted-foreground">Bedroom Target</label>
                           <input
@@ -948,76 +1052,85 @@ export default function AffordabilityPlanner({
                           {fc(tierAnnualRevenue(tier))}/yr
                         </div>
                       </div>
-                      <button
-                        onClick={() => removeTier(tier.id)}
-                        className="text-muted-foreground/50 hover:text-red-400"
-                        title="Remove tier"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
 
-                    {/* Mode selector */}
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">
-                        Distribution
-                      </span>
-                      {(
-                        [
-                          { value: "flexible", label: "Flexible" },
-                          { value: "match_building", label: "Match Building" },
-                          { value: "bedroom_equivalent", label: "Bedroom Count" },
-                        ] as Array<{ value: UnitMixMode; label: string }>
-                      ).map((opt) => (
+                      {showTypeControls && (
                         <button
-                          key={opt.value}
-                          onClick={() => updateTier(tier.id, { mix_mode: opt.value })}
-                          className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
-                            tier.mix_mode === opt.value
-                              ? "bg-primary/15 border-primary/40 text-primary"
-                              : "border-border/40 text-muted-foreground hover:text-foreground"
-                          }`}
-                          title={
-                            opt.value === "flexible"
-                              ? "Any mix of BR types counts — pick the most profitable"
-                              : opt.value === "match_building"
-                              ? "Mix must mirror the rest of the building's BR distribution"
-                              : "Target a total bedroom count; the mix can trade units for bedrooms"
-                          }
+                          onClick={() => removeTier(tier.id)}
+                          className="text-muted-foreground/50 hover:text-red-400"
+                          title="Remove tier"
                         >
-                          {opt.label}
+                          <Trash2 className="h-3.5 w-3.5" />
                         </button>
-                      ))}
-                      <div className="flex-1" />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => suggestTierMix(tier.id)}
-                        disabled={
-                          tier.mix_mode === "match_building" && !buildingUnitMix
-                        }
-                        title="Apply a deterministic best-fit mix based on the current mode"
-                      >
-                        <Wand2 className="h-3 w-3 mr-1" />
-                        Suggest Mix
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => aiOptimizeTierMix(tier.id)}
-                        disabled={optimizingTierId === tier.id}
-                        title="Ask Claude to pick a revenue-maximizing mix that's marketable in this submarket"
-                      >
-                        {optimizingTierId === tier.id ? (
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <Sparkles className="h-3 w-3 mr-1" />
-                        )}
-                        Optimize with AI
-                      </Button>
+                      )}
                     </div>
 
-                    {/* Per-bedroom mix editor */}
+                    {/* Mode selector + Suggest/AI actions — mix surface only */}
+                    {showMixControls && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">
+                          Distribution
+                        </span>
+                        {(
+                          [
+                            { value: "flexible", label: "Flexible" },
+                            { value: "match_building", label: "Match Building" },
+                            { value: "bedroom_equivalent", label: "Bedroom Count" },
+                          ] as Array<{ value: UnitMixMode; label: string }>
+                        ).map((opt) => (
+                          <button
+                            key={opt.value}
+                            onClick={() => updateTier(tier.id, { mix_mode: opt.value })}
+                            className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                              tier.mix_mode === opt.value
+                                ? "bg-primary/15 border-primary/40 text-primary"
+                                : "border-border/40 text-muted-foreground hover:text-foreground"
+                            }`}
+                            title={
+                              opt.value === "flexible"
+                                ? "Any mix of BR types counts — pick the most profitable"
+                                : opt.value === "match_building"
+                                ? "Mix must mirror the rest of the building's BR distribution"
+                                : "Target a total bedroom count; the mix can trade units for bedrooms"
+                            }
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                        <div className="flex-1" />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => suggestTierMix(tier.id)}
+                          disabled={
+                            tier.mix_mode === "match_building" && !buildingUnitMix
+                          }
+                          title="Apply a deterministic best-fit mix based on the current mode"
+                        >
+                          <Wand2 className="h-3 w-3 mr-1" />
+                          Suggest Mix
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => aiOptimizeTierMix(tier.id)}
+                          disabled={optimizingTierId === tier.id}
+                          title="Ask Claude to pick a revenue-maximizing mix that's marketable in this submarket"
+                        >
+                          {optimizingTierId === tier.id ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-3 w-3 mr-1" />
+                          )}
+                          Optimize with AI
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Per-bedroom mix editor — mix surface only.
+                        On the type surface, show a compact read-only
+                        summary so the user knows what's been set without
+                        exposing the editor. */}
+                    {showMixControls ? (
                     <div>
                       <div className="grid grid-cols-5 gap-2">
                         {mixBreakdown.map((b) => (
@@ -1076,17 +1189,41 @@ export default function AffordabilityPlanner({
                         )}
                       </div>
                     </div>
+                    ) : (
+                      /* Type surface: compact read-only per-BR breakdown so
+                         the analyst sees what the mix looks like without
+                         being invited to edit it (that's Underwriting). */
+                      <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+                        {mixBreakdown
+                          .filter((b) => b.units > 0)
+                          .map((b) => (
+                            <span
+                              key={b.field}
+                              className="px-2 py-0.5 rounded-full border border-border/40 bg-background/50 tabular-nums"
+                            >
+                              {b.units} × {b.label}
+                            </span>
+                          ))}
+                        {mixBreakdown.every((b) => b.units === 0) && (
+                          <span className="text-muted-foreground/70">
+                            Mix not set — open Underwriting to distribute these units.
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
-              <Button size="sm" variant="outline" onClick={() => addTier(60)}>
-                <Plus className="h-3.5 w-3.5 mr-1.5" />
-                Add Tier
-              </Button>
+              {showTypeControls && (
+                <Button size="sm" variant="outline" onClick={() => addTier(60)}>
+                  <Plus className="h-3.5 w-3.5 mr-1.5" />
+                  Add Tier
+                </Button>
+              )}
             </div>
           )}
 
-          {config.tiers.length === 0 && (
+          {config.tiers.length === 0 && showTypeControls && (
             <div className="text-center py-6 text-xs text-muted-foreground">
               <p>No affordability requirements set. Select a preset above or add custom tiers.</p>
               <Button size="sm" variant="outline" className="mt-3" onClick={() => addTier(60)}>
@@ -1096,7 +1233,9 @@ export default function AffordabilityPlanner({
             </div>
           )}
 
-          {/* Tax Exemption */}
+          {/* Tax Exemption — owned by the type surface. On the mix surface
+              it's read-only context only. */}
+          {showTypeControls && (
           <div className="border-t border-border/40 pt-4">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Property Tax Exemption</div>
             <div className="flex items-center gap-4 flex-wrap">
@@ -1158,6 +1297,7 @@ export default function AffordabilityPlanner({
               )}
             </div>
           </div>
+          )}
 
           {/* Impact summary */}
           {config.enabled && (
@@ -1198,17 +1338,19 @@ export default function AffordabilityPlanner({
             </div>
           )}
 
-          {/* Notes */}
-          <div>
-            <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Notes</label>
-            <textarea
-              value={config.notes}
-              onChange={(e) => updateConfig({ notes: e.target.value })}
-              placeholder="Affordability requirements, density bonus program details, regulatory agreement terms…"
-              rows={2}
-              className="w-full px-3 py-2 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none resize-none focus:border-primary/40"
-            />
-          </div>
+          {/* Notes — owned by the type surface. */}
+          {showTypeControls && (
+            <div>
+              <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Notes</label>
+              <textarea
+                value={config.notes}
+                onChange={(e) => updateConfig({ notes: e.target.value })}
+                placeholder="Affordability requirements, density bonus program details, regulatory agreement terms…"
+                rows={2}
+                className="w-full px-3 py-2 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none resize-none focus:border-primary/40"
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

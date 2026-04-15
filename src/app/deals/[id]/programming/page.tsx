@@ -550,6 +550,8 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           }
           return mix;
         })()}
+        mode="type"
+        spottedBonuses={densityBonuses}
         onConfigChange={(cfg) => { setAffordabilityConfig(cfg); setDirty(true); }}
       />
 
