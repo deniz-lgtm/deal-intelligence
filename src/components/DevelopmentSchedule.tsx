@@ -3,6 +3,23 @@
 import { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   Plus,
   Trash2,
   ChevronDown,
@@ -19,6 +36,7 @@ import {
   ArrowUp,
   ArrowDown,
   BookmarkPlus,
+  GripVertical,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -56,24 +74,38 @@ import {
 import { toast } from "sonner";
 
 /**
- * Per-browser custom entitlement templates (localStorage). A template is
- * just a named task list the analyst builds once and replays on future
- * deals. Kept lean intentionally — if/when there's demand for cross-
- * machine sync we can migrate to a DB table with the same shape.
+ * Per-user custom entitlement templates (now DB-backed). Each template
+ * is a named list of tasks the analyst builds once and replays on
+ * future deals — lives in `entitlement_templates` and follows the user
+ * across machines.
+ *
+ * Shape matches the API payload: { label, duration_days, category?,
+ * owner? } per task (intentionally slimmer than DevPhase — these are
+ * authoring blueprints, not scheduled rows).
  */
 interface EntitlementTemplate {
   id: string;
   name: string;
-  tasks: Array<{ label: string; duration_days: number; category?: TaskCategory }>;
+  tasks: Array<{
+    label: string;
+    duration_days: number;
+    category?: TaskCategory;
+    owner?: string;
+  }>;
   created_at: string;
+  updated_at?: string;
 }
 
-const ENTITLEMENT_TEMPLATES_KEY = "entitlement_templates_v1";
-
-function loadTemplates(): EntitlementTemplate[] {
+/**
+ * One-time migration from the v1 localStorage templates (see prior PR)
+ * to the DB. Runs best-effort on mount when the browser has a non-empty
+ * cached list and the server returns none.
+ */
+const LEGACY_TEMPLATES_KEY = "entitlement_templates_v1";
+function readLegacyLocalTemplates(): EntitlementTemplate[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(ENTITLEMENT_TEMPLATES_KEY);
+    const raw = window.localStorage.getItem(LEGACY_TEMPLATES_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -81,14 +113,9 @@ function loadTemplates(): EntitlementTemplate[] {
     return [];
   }
 }
-
-function saveTemplates(list: EntitlementTemplate[]): void {
+function clearLegacyLocalTemplates(): void {
   if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(ENTITLEMENT_TEMPLATES_KEY, JSON.stringify(list));
-  } catch {
-    /* quota / disabled storage — swallow */
-  }
+  try { window.localStorage.removeItem(LEGACY_TEMPLATES_KEY); } catch { /* noop */ }
 }
 
 interface Props {
@@ -129,14 +156,59 @@ export default function DevelopmentSchedule({ dealId }: Props) {
     parent_phase_id: "",
     // Entitlement task category chip. Empty string = no category.
     task_category: "" as TaskCategory | "",
+    // Free-text owner / assignee for child tasks.
+    task_owner: "",
   });
   const [seedingEntitlements, setSeedingEntitlements] = useState(false);
-  // User's custom entitlement templates (stored in localStorage so they
-  // follow the user across deals on this browser).
+  // Drag sensors for reordering entitlement child tasks. Pointer
+  // activates after a small movement so regular clicks (like label
+  // edit) still work.
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  // User's custom entitlement templates — DB-backed so they follow the
+  // user across machines. Loaded once on mount; subsequent mutations
+  // refresh via reloadTemplates().
   const [templates, setTemplates] = useState<EntitlementTemplate[]>([]);
-  useEffect(() => {
-    setTemplates(loadTemplates());
+  const reloadTemplates = useCallback(async () => {
+    try {
+      const res = await fetch("/api/entitlement-templates");
+      const json = await res.json();
+      if (res.ok && Array.isArray(json.data)) {
+        setTemplates(json.data);
+        return json.data as EntitlementTemplate[];
+      }
+    } catch { /* swallow — empty list is fine */ }
+    setTemplates([]);
+    return [] as EntitlementTemplate[];
   }, []);
+  useEffect(() => {
+    (async () => {
+      const rows = await reloadTemplates();
+      // One-time migration: if server has nothing but localStorage has a
+      // cached v1 list, upload them then clear the legacy bucket.
+      if (rows.length === 0) {
+        const legacy = readLegacyLocalTemplates();
+        if (legacy.length > 0) {
+          try {
+            for (const tpl of legacy) {
+              await fetch("/api/entitlement-templates", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: tpl.name, tasks: tpl.tasks }),
+              });
+            }
+            clearLegacyLocalTemplates();
+            await reloadTemplates();
+            toast.message(
+              `Migrated ${legacy.length} local template${legacy.length === 1 ? "" : "s"} to your account`
+            );
+          } catch { /* best-effort */ }
+        }
+      }
+    })();
+  }, [reloadTemplates]);
   // Pair-swap reordering guards the child row up/down arrows.
   const [reorderingIds, setReorderingIds] = useState<Set<string>>(new Set());
 
@@ -206,7 +278,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
 
   // ── Phase CRUD ──
   const resetPhaseForm = () => {
-    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "", parent_phase_id: "", task_category: "" });
+    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "", parent_phase_id: "", task_category: "", task_owner: "" });
   };
 
   const openCreatePhase = () => {
@@ -234,6 +306,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       notes: "",
       parent_phase_id: parentPhaseId,
       task_category: "pre_submittal",
+      task_owner: "",
     });
     setPhaseDialogOpen(true);
   };
@@ -251,6 +324,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       notes: p.notes || "",
       parent_phase_id: p.parent_phase_id || "",
       task_category: p.task_category ?? "",
+      task_owner: p.task_owner ?? "",
     });
     setPhaseDialogOpen(true);
   };
@@ -266,6 +340,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       lag_days: phaseForm.lag_days,
       parent_phase_id: phaseForm.parent_phase_id || null,
       task_category: phaseForm.task_category || null,
+      task_owner: phaseForm.task_owner?.trim() || null,
       start_date: hasPredecessor ? null : (phaseForm.start_date || null),
       pct_complete: phaseForm.pct_complete,
       status: phaseForm.status,
@@ -333,7 +408,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       | { kind: "template"; template: EntitlementTemplate }
   ) => {
     let scenarioLabel: string;
-    let baseTasks: Array<{ label: string; duration_days: number; category?: TaskCategory }>;
+    let baseTasks: Array<{ label: string; duration_days: number; category?: TaskCategory; owner?: string }>;
     if (source.kind === "scenario") {
       const scenario = findEntitlementScenario(source.scenarioKey);
       if (!scenario) {
@@ -352,6 +427,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
         label: t.label,
         duration_days: t.duration_days,
         category: t.category,
+        owner: t.owner,
       }));
     }
     setSeedingEntitlements(true);
@@ -375,7 +451,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
 
       // Build the task list: scenario/template tasks first, then
       // bonus-specific filings (scenarios only).
-      const toCreate: Array<{ label: string; duration_days: number; category?: TaskCategory }> = [
+      const toCreate: Array<{ label: string; duration_days: number; category?: TaskCategory; owner?: string }> = [
         ...baseTasks,
       ];
       for (const src of spottedSources) {
@@ -426,6 +502,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
             duration_days: t.duration_days,
             parent_phase_id: entitlementPhaseId,
             task_category: t.category ?? null,
+            task_owner: t.owner ?? null,
             sort_order: baseSort + i + 1,
           }),
         });
@@ -482,9 +559,21 @@ export default function DevelopmentSchedule({ dealId }: Props) {
    * template. Persisted to localStorage so the analyst can re-apply
    * the same task list on future deals without rebuilding it.
    */
-  const handleSaveAsTemplate = (entitlementPhaseId: string) => {
-    const children = phases.filter((p) => p.parent_phase_id === entitlementPhaseId);
-    if (children.length === 0) {
+  /** Snapshot a parent's current children into a task-list payload. */
+  const buildTemplateTasks = (entitlementPhaseId: string) =>
+    phases
+      .filter((p) => p.parent_phase_id === entitlementPhaseId)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((p) => ({
+        label: p.label,
+        duration_days: p.duration_days ?? 30,
+        category: p.task_category ?? undefined,
+        owner: p.task_owner ?? undefined,
+      }));
+
+  const handleSaveAsTemplate = async (entitlementPhaseId: string) => {
+    const tasks = buildTemplateTasks(entitlementPhaseId);
+    if (tasks.length === 0) {
       toast.error("Nothing to save — add tasks first");
       return;
     }
@@ -493,32 +582,87 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       `My Entitlement Path ${templates.length + 1}`
     );
     if (!name || !name.trim()) return;
-    const tpl: EntitlementTemplate = {
-      id: uuidv4(),
-      name: name.trim(),
-      tasks: children
-        .sort((a, b) => a.sort_order - b.sort_order)
-        .map((p) => ({
-          label: p.label,
-          duration_days: p.duration_days ?? 30,
-          category: p.task_category ?? undefined,
-        })),
-      created_at: new Date().toISOString(),
-    };
-    const next = [...templates, tpl];
-    setTemplates(next);
-    saveTemplates(next);
-    toast.success(`Saved "${tpl.name}" — re-apply from the Seed dropdown`);
+    try {
+      const res = await fetch("/api/entitlement-templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), tasks }),
+      });
+      if (!res.ok) throw new Error();
+      await reloadTemplates();
+      toast.success(`Saved "${name.trim()}" — re-apply from the Seed dropdown`);
+    } catch {
+      toast.error("Failed to save template");
+    }
   };
 
-  const handleDeleteTemplate = (templateId: string) => {
+  /** Rename an existing template in place. */
+  const handleRenameTemplate = async (templateId: string) => {
+    const tpl = templates.find((t) => t.id === templateId);
+    if (!tpl) return;
+    const next = window.prompt("Rename template:", tpl.name);
+    if (!next || !next.trim() || next.trim() === tpl.name) return;
+    try {
+      const res = await fetch(`/api/entitlement-templates/${templateId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: next.trim() }),
+      });
+      if (!res.ok) throw new Error();
+      await reloadTemplates();
+      toast.success(`Renamed to "${next.trim()}"`);
+    } catch {
+      toast.error("Failed to rename template");
+    }
+  };
+
+  /**
+   * Overwrite a template's tasks with the current children of the
+   * entitlements phase. Useful when the analyst tweaks their pathway
+   * after saving and wants the template to reflect the current state.
+   */
+  const handleOverwriteTemplate = async (
+    templateId: string,
+    entitlementPhaseId: string
+  ) => {
+    const tpl = templates.find((t) => t.id === templateId);
+    if (!tpl) return;
+    const tasks = buildTemplateTasks(entitlementPhaseId);
+    if (tasks.length === 0) {
+      toast.error("No tasks under Entitlements — nothing to snapshot");
+      return;
+    }
+    if (!window.confirm(
+      `Overwrite "${tpl.name}" with the current ${tasks.length} task${tasks.length === 1 ? "" : "s"}? The saved version will be replaced.`
+    )) return;
+    try {
+      const res = await fetch(`/api/entitlement-templates/${templateId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tasks }),
+      });
+      if (!res.ok) throw new Error();
+      await reloadTemplates();
+      toast.success(`Updated "${tpl.name}"`);
+    } catch {
+      toast.error("Failed to update template");
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string) => {
     const tpl = templates.find((t) => t.id === templateId);
     if (!tpl) return;
     if (!window.confirm(`Delete template "${tpl.name}"?`)) return;
-    const next = templates.filter((t) => t.id !== templateId);
-    setTemplates(next);
-    saveTemplates(next);
-    toast.success(`Deleted template "${tpl.name}"`);
+    try {
+      const res = await fetch(`/api/entitlement-templates/${templateId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error();
+      await reloadTemplates();
+      toast.success(`Deleted template "${tpl.name}"`);
+    } catch {
+      toast.error("Failed to delete template");
+    }
   };
 
   /**
@@ -526,6 +670,52 @@ export default function DevelopmentSchedule({ dealId }: Props) {
    * given direction. Siblings = other children of the same parent,
    * ordered by their stored sort_order. PATCHes both rows.
    */
+  /**
+   * Drag-end handler for a DnD context over one parent's children.
+   * Computes the new order, PATCHes `sort_order` for every child that
+   * moved, and refreshes. `parentPhaseId` tells us which child list
+   * this drag applies to so children of other phases don't shuffle.
+   */
+  const handleDragReorder = async (evt: DragEndEvent, parentPhaseId: string) => {
+    const { active, over } = evt;
+    if (!over || active.id === over.id) return;
+    const siblings = phases
+      .filter((p) => p.parent_phase_id === parentPhaseId)
+      .sort((a, b) => a.sort_order - b.sort_order);
+    const oldIdx = siblings.findIndex((p) => p.id === active.id);
+    const newIdx = siblings.findIndex((p) => p.id === over.id);
+    if (oldIdx < 0 || newIdx < 0) return;
+    const reordered = arrayMove(siblings, oldIdx, newIdx);
+    // Only PATCH the rows whose sort_order actually changes.
+    const updates: Array<{ id: string; sort_order: number }> = [];
+    reordered.forEach((p, i) => {
+      if (p.sort_order !== i) updates.push({ id: p.id, sort_order: i });
+    });
+    if (updates.length === 0) return;
+    setReorderingIds((s) => {
+      const next = new Set(s);
+      for (const u of updates) next.add(u.id);
+      return next;
+    });
+    try {
+      await Promise.all(
+        updates.map((u) =>
+          fetch(`/api/deals/${dealId}/dev-schedule/${u.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sort_order: u.sort_order }),
+          })
+        )
+      );
+      loadAll();
+    } catch (err) {
+      console.error("Failed to reorder (drag):", err);
+      toast.error("Failed to reorder");
+    } finally {
+      setReorderingIds(new Set());
+    }
+  };
+
   const handleReorderChild = async (phase: DevPhase, direction: "up" | "down") => {
     if (!phase.parent_phase_id) return;
     const siblings = phases
@@ -844,7 +1034,12 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                       p: DevPhase,
                       isChild: boolean,
                       childIdx = 0,
-                      childCount = 0
+                      childCount = 0,
+                      dragHandleProps?: {
+                        setActivatorNodeRef: (el: HTMLElement | null) => void;
+                        listeners: Record<string, unknown> | undefined;
+                        attributes: Record<string, unknown>;
+                      }
                     ) => {
                       const cfg = DEV_PHASE_STATUS_CONFIG[p.status];
                       const barStyle = getBarStyle(p.start_date, p.end_date);
@@ -860,6 +1055,24 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                       return (
                         <div key={p.id} className="group">
                           <div className="grid grid-cols-12 gap-2 items-center">
+                            {/* Drag handle — rendered inside the label cell
+                                as an absolute-ish slot to the left. The
+                                activator ref + listeners come from
+                                SortableChild; regular clicks still hit the
+                                label button. */}
+                            {dragHandleProps && (
+                              <button
+                                ref={dragHandleProps.setActivatorNodeRef}
+                                {...dragHandleProps.attributes}
+                                {...(dragHandleProps.listeners as Record<string, unknown>)}
+                                className="absolute ml-[-12px] opacity-0 group-hover:opacity-60 hover:opacity-100 text-muted-foreground cursor-grab active:cursor-grabbing transition-opacity"
+                                title="Drag to reorder"
+                                aria-label="Drag to reorder"
+                                type="button"
+                              >
+                                <GripVertical className="h-3 w-3" />
+                              </button>
+                            )}
                             {/* Label + category chip (child rows only) */}
                             <button
                               onClick={() => openEditPhase(p)}
@@ -892,6 +1105,14 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                               <span className="truncate">{p.label}</span>
                               {p.duration_days && (
                                 <span className="text-2xs text-muted-foreground flex-shrink-0">{p.duration_days}d</span>
+                              )}
+                              {isChild && p.task_owner && (
+                                <span
+                                  className="text-2xs text-muted-foreground/80 flex-shrink-0"
+                                  title={`Owner: ${p.task_owner}`}
+                                >
+                                  · {p.task_owner}
+                                </span>
                               )}
                             </button>
                             {/* Bar */}
@@ -978,11 +1199,26 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                         <div key={p.id} className="space-y-1">
                           {renderRow(p, false)}
                           {sortedChildren.length > 0 && (
-                            <div className="space-y-1">
-                              {sortedChildren.map((c, i) =>
-                                renderRow(c, true, i, sortedChildren.length)
-                              )}
-                            </div>
+                            <DndContext
+                              sensors={dndSensors}
+                              collisionDetection={closestCenter}
+                              onDragEnd={(e) => handleDragReorder(e, p.id)}
+                            >
+                              <SortableContext
+                                items={sortedChildren.map((c) => c.id)}
+                                strategy={verticalListSortingStrategy}
+                              >
+                                <div className="space-y-1">
+                                  {sortedChildren.map((c, i) => (
+                                    <SortableChild key={c.id} id={c.id}>
+                                      {(drag) =>
+                                        renderRow(c, true, i, sortedChildren.length, drag)
+                                      }
+                                    </SortableChild>
+                                  ))}
+                                </div>
+                              </SortableContext>
+                            </DndContext>
                           )}
                           {/* Entitlement-phase toolbar — pick a scenario
                               to seed the typical task list for that
@@ -1105,6 +1341,23 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                       title={`${t.tasks.length} task${t.tasks.length === 1 ? "" : "s"} — saved ${new Date(t.created_at).toLocaleDateString()}`}
                                     >
                                       <span>{t.name}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRenameTemplate(t.id)}
+                                        className="text-muted-foreground/50 hover:text-foreground transition-colors"
+                                        title="Rename template"
+                                      >
+                                        ✎
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOverwriteTemplate(t.id, p.id)}
+                                        className="text-muted-foreground/50 hover:text-foreground transition-colors"
+                                        title="Overwrite with current tasks (snapshot the entitlement phase again)"
+                                        disabled={children.length === 0}
+                                      >
+                                        ⟳
+                                      </button>
                                       <button
                                         type="button"
                                         onClick={() => handleDeleteTemplate(t.id)}
@@ -1386,26 +1639,42 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                 </select>
               </div>
             </div>
-            {/* Child tasks: which category chip this task carries
-                (pre-submittal / review / approval / permit / other). */}
+            {/* Child tasks: category chip + owner/assignee. Both free
+                to leave blank. Owner is a free-text string so it can be
+                any stakeholder (broker, architect, outside counsel…)
+                without requiring a users lookup. */}
             {phaseForm.parent_phase_id && (
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Task Category</label>
-                <select
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={phaseForm.task_category || ""}
-                  onChange={(e) =>
-                    setPhaseForm({
-                      ...phaseForm,
-                      task_category: e.target.value as TaskCategory | "",
-                    })
-                  }
-                >
-                  <option value="">— None —</option>
-                  {Object.entries(TASK_CATEGORY_CONFIG).map(([k, cfg]) => (
-                    <option key={k} value={k}>{cfg.label}</option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Task Category</label>
+                  <select
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    value={phaseForm.task_category || ""}
+                    onChange={(e) =>
+                      setPhaseForm({
+                        ...phaseForm,
+                        task_category: e.target.value as TaskCategory | "",
+                      })
+                    }
+                  >
+                    <option value="">— None —</option>
+                    {Object.entries(TASK_CATEGORY_CONFIG).map(([k, cfg]) => (
+                      <option key={k} value={k}>{cfg.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Owner / Assignee</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Project Manager, Outside Counsel"
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    value={phaseForm.task_owner}
+                    onChange={(e) =>
+                      setPhaseForm({ ...phaseForm, task_owner: e.target.value })
+                    }
+                  />
+                </div>
               </div>
             )}
             <div>
@@ -1598,6 +1867,50 @@ export default function DevelopmentSchedule({ dealId }: Props) {
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * Wraps a single entitlement child-task row in @dnd-kit's sortable
+ * bindings so the user can drag it within its parent's task list.
+ * The actual row markup is still rendered by the parent (via
+ * `renderRow`) — we only provide transform + listeners here.
+ */
+function SortableChild({
+  id,
+  children,
+}: {
+  id: string;
+  children: (opts: {
+    setActivatorNodeRef: (el: HTMLElement | null) => void;
+    listeners: Record<string, unknown> | undefined;
+    attributes: Record<string, unknown>;
+    isDragging: boolean;
+  }) => React.ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+  };
+  return (
+    <div ref={setNodeRef} style={style}>
+      {children({
+        setActivatorNodeRef,
+        listeners: listeners as Record<string, unknown> | undefined,
+        attributes: attributes as unknown as Record<string, unknown>,
+        isDragging,
+      })}
     </div>
   );
 }
