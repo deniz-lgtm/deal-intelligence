@@ -27,22 +27,28 @@ interface DensityBonusOption {
   additional_density: string;
 }
 
+interface SitePlanBuildingLite {
+  id: string;
+  label: string;
+  area_sf: number;
+}
+
 interface Props {
   program: BuildingProgram;
   onChange: (program: BuildingProgram) => void;
   zoning: ZoningInputs;
   densityBonuses?: DensityBonusOption[];
-  // Building-footprint SF drawn on the Site & Zoning page site plan. When
-  // non-zero and it differs from the active scenario's footprint_sf, a small
-  // "from site plan" hint + sync button renders next to the Base Footprint
-  // input. Backwards compatible: when zero or absent, MassingSection
-  // behaves exactly as before (typed footprint is the only source).
-  sitePlanFootprintSf?: number;
+  // Buildings drawn on the Site & Zoning page site plan. When present, a
+  // dropdown next to the Base Footprint input lets the analyst pick which
+  // building this scenario represents; its area_sf then flows into
+  // footprint_sf. Backwards compatible: when absent/empty the input
+  // behaves exactly as before (typed footprint only).
+  sitePlanBuildings?: SitePlanBuildingLite[];
   onPushBaseline: (scenario: MassingScenario) => void;
   onPushScenario: (scenario: MassingScenario) => void;
 }
 
-export default function MassingSection({ program, onChange, zoning, densityBonuses = [], sitePlanFootprintSf = 0, onPushBaseline, onPushScenario }: Props) {
+export default function MassingSection({ program, onChange, zoning, densityBonuses = [], sitePlanBuildings = [], onPushBaseline, onPushScenario }: Props) {
   const [quickStackOpen, setQuickStackOpen] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
@@ -236,41 +242,72 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
           {/* Footprint + Density Bonus */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <div>
+              {/* Base footprint with optional site-plan building link. When
+                  the site plan has drawn buildings, a dropdown above the SF
+                  input lets the scenario represent a specific structure —
+                  selecting one snaps the footprint to that building's area
+                  and records the link via site_plan_building_id so the
+                  hydration path can keep them in sync on reload. */}
               <label className="block text-xs font-medium text-muted-foreground mb-1 flex items-center justify-between gap-2">
                 <span>Base Footprint (SF)</span>
-                {sitePlanFootprintSf > 0 && (
-                  <span
-                    className={`text-[9px] font-semibold tracking-wide uppercase ${
-                      Math.abs(sitePlanFootprintSf - (activeScenario.footprint_sf || 0)) < 1
-                        ? "text-emerald-400"
-                        : "text-amber-400"
-                    }`}
-                    title="Source: Site Plan (drawn on Site & Zoning page)"
-                  >
-                    {Math.abs(sitePlanFootprintSf - (activeScenario.footprint_sf || 0)) < 1
-                      ? "· site plan"
-                      : "· site plan differs"}
-                  </span>
-                )}
+                {sitePlanBuildings.length > 0 && activeScenario.site_plan_building_id && (() => {
+                  const linked = sitePlanBuildings.find(b => b.id === activeScenario.site_plan_building_id);
+                  if (!linked) return null;
+                  const matches = Math.abs(linked.area_sf - (activeScenario.footprint_sf || 0)) < 1;
+                  return (
+                    <span
+                      className={`text-[9px] font-semibold tracking-wide uppercase ${matches ? "text-emerald-400" : "text-amber-400"}`}
+                      title={`Linked to ${linked.label} (${linked.area_sf.toLocaleString()} SF) on the site plan`}
+                    >
+                      {matches ? `· ${linked.label}` : `· ${linked.label} differs`}
+                    </span>
+                  );
+                })()}
               </label>
+              {sitePlanBuildings.length > 0 && (
+                <select
+                  value={activeScenario.site_plan_building_id || ""}
+                  onChange={e => {
+                    const id = e.target.value || null;
+                    const linked = id ? sitePlanBuildings.find(b => b.id === id) : null;
+                    updateScenario(activeScenario.id, s => ({
+                      ...s,
+                      site_plan_building_id: id,
+                      footprint_sf: linked ? linked.area_sf : s.footprint_sf,
+                    }));
+                  }}
+                  className="w-full mb-1 border rounded-md px-2 py-1 text-xs bg-background text-foreground outline-none"
+                  title="Link this scenario to a building drawn on the site plan"
+                >
+                  <option value="" className="bg-background text-foreground">No site plan link (typed below)</option>
+                  {sitePlanBuildings.map(b => (
+                    <option key={b.id} value={b.id} className="bg-background text-foreground">
+                      {b.label} — {b.area_sf.toLocaleString()} SF
+                    </option>
+                  ))}
+                </select>
+              )}
               <input type="text" inputMode="decimal"
                 value={activeScenario.footprint_sf || ""}
                 onChange={e => updateScenario(activeScenario.id, s => ({ ...s, footprint_sf: parseFloat(e.target.value.replace(/,/g, "")) || 0 }))}
                 className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none tabular-nums"
                 placeholder="0" />
-              {sitePlanFootprintSf > 0 &&
-                Math.abs(sitePlanFootprintSf - (activeScenario.footprint_sf || 0)) >= 1 && (
+              {activeScenario.site_plan_building_id && (() => {
+                const linked = sitePlanBuildings.find(b => b.id === activeScenario.site_plan_building_id);
+                if (!linked || Math.abs(linked.area_sf - (activeScenario.footprint_sf || 0)) < 1) return null;
+                return (
                   <button
                     type="button"
                     onClick={() =>
-                      updateScenario(activeScenario.id, s => ({ ...s, footprint_sf: sitePlanFootprintSf }))
+                      updateScenario(activeScenario.id, s => ({ ...s, footprint_sf: linked.area_sf }))
                     }
                     className="mt-1 text-[10px] text-primary hover:underline"
-                    title="Overwrite this scenario's footprint with the drawn site plan footprint"
+                    title={`Reset the footprint to match ${linked.label}`}
                   >
-                    Use site plan ({sitePlanFootprintSf.toLocaleString()} SF)
+                    Use {linked.label} ({linked.area_sf.toLocaleString()} SF)
                   </button>
-                )}
+                );
+              })()}
             </div>
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Parking SF / Space</label>

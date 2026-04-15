@@ -293,10 +293,41 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       setDevParams(dp);
 
       // Hydrate the drawn site plan if the analyst has previously traced it.
-      // Backwards compatible: older UW blobs will have no site_plan key and
-      // we fall through to the default (empty polygons, no center).
+      // Backwards compatible on two axes:
+      // 1. Older UW blobs may have no site_plan key at all — fall through
+      //    to the default (empty polygons, no center).
+      // 2. The initial release stored a single building as
+      //    { building_points, building_area_sf }. If we see that shape and
+      //    there's no `buildings` array yet, migrate it into
+      //    buildings: [{ id, label: "Building 1", ... }]. The legacy keys
+      //    are dropped from state so re-saves write the new shape only.
       if (uw?.site_plan) {
-        setSitePlan({ ...DEFAULT_SITE_PLAN, ...uw.site_plan });
+        const raw = uw.site_plan as any;
+        let buildings = Array.isArray(raw.buildings) ? raw.buildings : [];
+        let activeId = raw.active_building_id ?? null;
+        if (
+          buildings.length === 0 &&
+          Array.isArray(raw.building_points) &&
+          raw.building_points.length >= 3
+        ) {
+          const migratedId =
+            (crypto as any)?.randomUUID?.() ||
+            `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          buildings = [{
+            id: migratedId,
+            label: "Building 1",
+            points: raw.building_points,
+            area_sf: Math.round(raw.building_area_sf || 0),
+          }];
+          activeId = migratedId;
+        }
+        const { building_points: _bp, building_area_sf: _ba, ...rest } = raw;
+        setSitePlan({
+          ...DEFAULT_SITE_PLAN,
+          ...rest,
+          buildings,
+          active_building_id: activeId,
+        });
       }
 
       setNarrative(uw?.zoning_narrative || "");
@@ -381,6 +412,18 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       setSaving(false);
     }
   }, [params.id, siteInfo, zoning, devParams, sitePlan, narrative, lastReportDate, deal, recalcBuilding]);
+
+  // ── Autosave: fires 2s after any meaningful change, mirrors the
+  //    programming page behaviour so drawing a site plan or editing a
+  //    zoning field doesn't require clicking Save. The Save button still
+  //    works for explicit saves; it just becomes redundant while the
+  //    page is idle. Pan/zoom never trigger dirty (see updateSitePlan
+  //    below) so map exploration won't thrash the endpoint.
+  useEffect(() => {
+    if (loading || !dirty) return;
+    const t = setTimeout(saveAll, 2000);
+    return () => clearTimeout(t);
+  }, [dirty, loading, saveAll]);
 
   // ── AI Zoning Report ───────────────────────────────────────────────────
   const runZoningReport = async () => {
@@ -501,14 +544,79 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     setDirty(true);
   };
 
-  // Map-controlled updates flow through here. Covers both drawn polygons
-  // and the map view (pan/zoom) — the generator calls onChange for both, so
-  // the dirty flag trips even for a simple pan, which matches the autosave
-  // behaviour on the programming page.
+  // Map-controlled updates flow through here. Pan/zoom events also come
+  // through onChange (we persist center/zoom so the map re-opens where the
+  // user left it), but we do NOT mark the page dirty for pure view changes
+  // — otherwise just looking around the map would flip the Save button on
+  // and fight autosave. We compare meaningful fields; anything else is
+  // treated as a content edit and marks dirty.
   const updateSitePlan = useCallback((next: SitePlanType) => {
-    setSitePlan(next);
-    setDirty(true);
+    setSitePlan(prev => {
+      const contentChanged =
+        prev.parcel_points !== next.parcel_points ||
+        prev.buildings !== next.buildings ||
+        prev.active_building_id !== next.active_building_id ||
+        prev.parcel_area_sf !== next.parcel_area_sf ||
+        prev.show_setbacks !== next.show_setbacks ||
+        prev.snap_right_angle !== next.snap_right_angle ||
+        prev.snap_vertex !== next.snap_vertex ||
+        prev.snap_grid_ft !== next.snap_grid_ft ||
+        prev.map_style !== next.map_style;
+      if (contentChanged) setDirty(true);
+      return next;
+    });
   }, []);
+
+  // Push the drawn site-plan footprint into the Programming page's active
+  // massing scenario. Writes directly to underwriting.data.building_program
+  // so the user sees the update when they switch pages. We also stamp the
+  // scenario's site_plan_building_id so the hydration path knows the link.
+  const pushFootprintToProgramming = useCallback(
+    async (footprintSf: number, building: any | null) => {
+      if (footprintSf <= 0) return;
+      try {
+        const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+        const uwJson = await uwRes.json();
+        const current = uwJson.data?.data
+          ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
+          : {};
+        const prog = current.building_program;
+        if (!prog?.scenarios?.length) {
+          toast.error("No massing scenarios yet — create one on the Programming page first");
+          return;
+        }
+        const activeId = prog.active_scenario_id || prog.scenarios[0].id;
+        const updatedProg = {
+          ...prog,
+          scenarios: prog.scenarios.map((s: any) =>
+            s.id === activeId
+              ? {
+                  ...s,
+                  footprint_sf: Math.round(footprintSf),
+                  site_plan_building_id: building?.id || null,
+                }
+              : s
+          ),
+        };
+        await fetch("/api/underwriting", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deal_id: params.id,
+            data: { ...current, building_program: updatedProg },
+          }),
+        });
+        toast.success(
+          `Pushed ${Math.round(footprintSf).toLocaleString()} SF ${
+            building ? `(${building.label}) ` : ""
+          }to active scenario`
+        );
+      } catch {
+        toast.error("Failed to push footprint to Programming");
+      }
+    },
+    [params.id]
+  );
 
   const updateDev = (k: keyof DevParams, v: number) => {
     setDevParams(prev => {
@@ -962,9 +1070,12 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             />
             <SitePlanMetrics
               value={sitePlan}
+              onChange={updateSitePlan}
               setbacks={sitePlanSetbacks}
               zoningLotCoveragePct={zoning.lot_coverage_pct}
               expectedLandSf={siteInfo.land_sf}
+              onPushToProgramming={pushFootprintToProgramming}
+              pushTargetLabel="Active massing scenario"
             />
           </div>
         </Section>

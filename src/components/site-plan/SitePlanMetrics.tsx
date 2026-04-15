@@ -2,22 +2,29 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SitePlanMetrics — sidebar that reads a SitePlan value and surfaces the
-// analyst-facing numbers: parcel area / acres / perimeter, building
-// footprint SF, lot coverage, setback compliance, and a sync button that
-// pushes the drawn footprint into the active massing scenario.
+// analyst-facing numbers: parcel area / acres / perimeter, one row per
+// drawn building (with rename / delete / select), total building SF, lot
+// coverage, setback compliance, and a "Push to Programming" button that
+// replaces the active scenario's base footprint with the drawn total.
 //
-// Split out of SitePlanGenerator so the host page can lay them out freely
-// (map left / metrics right on wide screens, stacked on narrow).
+// Multi-building: the SitePlan now carries a list of buildings. We render
+// a row per building with label, area, selector, rename and delete. Legacy
+// single-building payloads are migrated on the host page — we don't need
+// to touch them here.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useMemo } from "react";
-import { AlertTriangle, Check, Ruler, Home, Trees, ArrowRight, Info } from "lucide-react";
-import type { SitePlan } from "@/lib/types";
+import { useMemo, useState } from "react";
+import {
+  AlertTriangle, Check, Ruler, Home, Trees, ArrowRight, Info,
+  Pencil, Trash2, Plus,
+} from "lucide-react";
+import type { SitePlan, SitePlanBuilding } from "@/lib/types";
 import type { SitePlanSetbacks } from "./SitePlanGenerator";
 import { polygonAreaSf, polygonPerimeterFt, insetPolygon } from "./site-plan-utils";
 
 interface Props {
   value: SitePlan;
+  onChange: (next: SitePlan) => void;
   // Zoning-provided setback values (used for envelope viz + compliance)
   setbacks?: SitePlanSetbacks;
   // Zoning-provided maxes (used for compliance flags)
@@ -25,18 +32,20 @@ interface Props {
   // Land SF from the site-info section — lets us flag when the drawn parcel
   // disagrees with the typed land acreage.
   expectedLandSf?: number | null;
-  // Optional callback. When present, a "Sync to massing footprint" button is
-  // shown that forwards `building_area_sf` to the programming page.
-  onSyncFootprint?: (footprintSf: number) => void;
-  // Optional label shown beside the sync button (e.g., current massing scenario name)
-  syncTargetLabel?: string;
+  // Push-to-programming handler. When present the "Push to Programming"
+  // card renders; it's wired by the host to write the chosen footprint
+  // into the active massing scenario and navigate / toast.
+  onPushToProgramming?: (footprintSf: number, building: SitePlanBuilding | null) => void;
+  // Optional label shown beside the push button (e.g., current scenario name)
+  pushTargetLabel?: string;
 }
 
 const fn = (n: number) => (n || n === 0 ? Math.round(n).toLocaleString("en-US") : "—");
 const fn2 = (n: number) => (n || n === 0 ? n.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "—");
 
 export default function SitePlanMetrics({
-  value, setbacks, zoningLotCoveragePct, expectedLandSf, onSyncFootprint, syncTargetLabel,
+  value, onChange, setbacks, zoningLotCoveragePct, expectedLandSf,
+  onPushToProgramming, pushTargetLabel,
 }: Props) {
   const parcelSF = value.parcel_area_sf;
   const parcelAcres = parcelSF / 43560;
@@ -45,8 +54,12 @@ export default function SitePlanMetrics({
     [value.parcel_points]
   );
 
-  const buildingSF = value.building_area_sf;
-  const lotCoveragePct = parcelSF > 0 ? (buildingSF / parcelSF) * 100 : 0;
+  const buildings = value.buildings || [];
+  const totalBuildingSf = useMemo(
+    () => buildings.reduce((s, b) => s + (b.area_sf || 0), 0),
+    [buildings]
+  );
+  const lotCoveragePct = parcelSF > 0 ? (totalBuildingSf / parcelSF) * 100 : 0;
 
   // Setback envelope area (SF) — buildable area after applying the most
   // restrictive setback as a uniform inset. Informational only.
@@ -74,9 +87,49 @@ export default function SitePlanMetrics({
       ? ((parcelSF - expectedLandSf) / expectedLandSf) * 100
       : null;
 
-  // Empty state helpers
   const hasParcel = value.parcel_points.length >= 3;
-  const hasBuilding = value.building_points.length >= 3;
+  const hasBuildings = buildings.length > 0;
+
+  // Inline rename state (one label editor at a time)
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+
+  // Push selector — which building to push to Programming. Defaults to the
+  // active building, else the first, else "total".
+  const [pushTarget, setPushTarget] = useState<string>("");
+  const effectiveTarget =
+    pushTarget ||
+    (value.active_building_id && buildings.some(b => b.id === value.active_building_id)
+      ? value.active_building_id
+      : buildings[0]?.id || "total");
+
+  const pushSf =
+    effectiveTarget === "total"
+      ? totalBuildingSf
+      : buildings.find(b => b.id === effectiveTarget)?.area_sf || 0;
+  const pushBuilding =
+    effectiveTarget === "total"
+      ? null
+      : buildings.find(b => b.id === effectiveTarget) || null;
+
+  // Mutation helpers
+  const setActive = (id: string | null) =>
+    onChange({ ...value, active_building_id: id, updated_at: new Date().toISOString() });
+
+  const renameBuilding = (id: string, label: string) =>
+    onChange({
+      ...value,
+      buildings: buildings.map(b => (b.id === id ? { ...b, label } : b)),
+      updated_at: new Date().toISOString(),
+    });
+
+  const deleteBuilding = (id: string) =>
+    onChange({
+      ...value,
+      buildings: buildings.filter(b => b.id !== id),
+      active_building_id: value.active_building_id === id ? null : value.active_building_id,
+      updated_at: new Date().toISOString(),
+    });
 
   return (
     <div className="space-y-3">
@@ -90,17 +143,101 @@ export default function SitePlanMetrics({
         />
         <MetricTile
           icon={<Home className="h-3.5 w-3.5 text-blue-400" />}
-          label="Building"
-          primary={hasBuilding ? `${fn(buildingSF)} SF` : "—"}
-          secondary={hasBuilding ? "Footprint" : "Draw building on map"}
+          label={buildings.length > 1 ? `${buildings.length} Buildings` : "Building"}
+          primary={hasBuildings ? `${fn(totalBuildingSf)} SF` : "—"}
+          secondary={hasBuildings ? "Total footprint" : "Draw building on map"}
         />
       </div>
+
+      {/* Buildings list — one row per drawn building, with select / rename / delete. */}
+      {hasBuildings && (
+        <div className="border border-border/40 rounded-lg p-2 bg-muted/10">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 px-1 flex items-center justify-between">
+            <span>Buildings</span>
+            <span className="text-[10px] text-muted-foreground/80 normal-case tracking-normal">
+              Use the Building tool to add more
+            </span>
+          </div>
+          <div className="space-y-1">
+            {buildings.map((b) => {
+              const isActive = b.id === value.active_building_id;
+              const isRenaming = renamingId === b.id;
+              return (
+                <div
+                  key={b.id}
+                  className={`flex items-center gap-1.5 rounded-md px-2 py-1 border transition-colors ${
+                    isActive
+                      ? "bg-blue-500/10 border-blue-500/30"
+                      : "bg-background/30 border-border/30 hover:border-border/60"
+                  }`}
+                >
+                  <button
+                    onClick={() => setActive(isActive ? null : b.id)}
+                    className="h-2 w-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: isActive ? "#3b82f6" : "#64748b" }}
+                    title={isActive ? "Active" : "Click to activate"}
+                  />
+                  {isRenaming ? (
+                    <input
+                      autoFocus
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={() => {
+                        if (renameDraft.trim()) renameBuilding(b.id, renameDraft.trim());
+                        setRenamingId(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          if (renameDraft.trim()) renameBuilding(b.id, renameDraft.trim());
+                          setRenamingId(null);
+                        } else if (e.key === "Escape") {
+                          setRenamingId(null);
+                        }
+                      }}
+                      className="flex-1 text-xs bg-transparent outline-none border-b border-border/60"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => setActive(b.id)}
+                      className="flex-1 text-left text-xs truncate"
+                    >
+                      {b.label}
+                    </button>
+                  )}
+                  <span className="text-[10px] tabular-nums text-muted-foreground flex-shrink-0">
+                    {b.area_sf.toLocaleString()} SF
+                  </span>
+                  {!isRenaming && (
+                    <button
+                      onClick={() => {
+                        setRenameDraft(b.label);
+                        setRenamingId(b.id);
+                      }}
+                      className="text-muted-foreground/60 hover:text-foreground p-0.5"
+                      title="Rename"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => deleteBuilding(b.id)}
+                    className="text-muted-foreground/60 hover:text-red-400 p-0.5"
+                    title="Delete building"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Coverage */}
       <div className="border border-border/40 rounded-lg p-3 bg-muted/10">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Lot Coverage</span>
-          {hasParcel && hasBuilding && (
+          {hasParcel && hasBuildings && (
             coverageCompliant ? (
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded bg-emerald-500/15 text-emerald-300">
                 <Check className="h-3 w-3" /> OK
@@ -113,13 +250,12 @@ export default function SitePlanMetrics({
           )}
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="text-xl font-bold tabular-nums">{hasParcel && hasBuilding ? `${lotCoveragePct.toFixed(1)}%` : "—"}</span>
+          <span className="text-xl font-bold tabular-nums">{hasParcel && hasBuildings ? `${lotCoveragePct.toFixed(1)}%` : "—"}</span>
           {zoningLotCoveragePct != null && zoningLotCoveragePct > 0 && (
             <span className="text-[10px] text-muted-foreground">max {zoningLotCoveragePct}%</span>
           )}
         </div>
-        {/* Progress bar */}
-        {hasParcel && hasBuilding && (
+        {hasParcel && hasBuildings && (
           <div className="mt-2 h-1.5 rounded-full bg-muted/40 overflow-hidden">
             <div
               className={`h-full ${coverageCompliant ? "bg-emerald-400/70" : "bg-amber-400/70"}`}
@@ -185,27 +321,45 @@ export default function SitePlanMetrics({
         </div>
       )}
 
-      {/* Sync button */}
-      {hasBuilding && onSyncFootprint && (
-        <button
-          onClick={() => onSyncFootprint(buildingSF)}
-          className="w-full border border-primary/30 bg-primary/10 hover:bg-primary/20 rounded-lg p-3 text-left transition-colors group"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-primary/80">
-                Sync to Massing
-              </div>
+      {/* Push to Programming */}
+      {hasBuildings && onPushToProgramming && (
+        <div className="border border-primary/30 bg-primary/5 rounded-lg p-3">
+          <div className="text-[10px] uppercase tracking-wide text-primary/80 mb-2">
+            Push to Programming
+          </div>
+          {/* Target selector — one row per building + "Total" when there's more than one. */}
+          {buildings.length > 1 && (
+            <select
+              value={effectiveTarget}
+              onChange={(e) => setPushTarget(e.target.value)}
+              className="w-full mb-2 text-xs bg-background text-foreground border border-border/60 rounded px-2 py-1 outline-none"
+            >
+              {buildings.map((b) => (
+                <option key={b.id} value={b.id} className="bg-background text-foreground">
+                  {b.label} — {b.area_sf.toLocaleString()} SF
+                </option>
+              ))}
+              <option value="total" className="bg-background text-foreground">
+                Total of all buildings — {totalBuildingSf.toLocaleString()} SF
+              </option>
+            </select>
+          )}
+          <button
+            onClick={() => onPushToProgramming(pushSf, pushBuilding)}
+            disabled={pushSf <= 0}
+            className="w-full flex items-center justify-between gap-2 rounded-md bg-primary/10 hover:bg-primary/20 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-2 group transition-colors"
+          >
+            <div className="text-left">
               <div className="text-xs font-medium text-primary">
-                Push {fn(buildingSF)} SF footprint
+                Replace base footprint · {fn(pushSf)} SF
               </div>
-              {syncTargetLabel && (
-                <div className="text-[10px] text-muted-foreground mt-0.5">→ {syncTargetLabel}</div>
+              {pushTargetLabel && (
+                <div className="text-[10px] text-muted-foreground mt-0.5">→ {pushTargetLabel}</div>
               )}
             </div>
-            <ArrowRight className="h-4 w-4 text-primary group-hover:translate-x-0.5 transition-transform" />
-          </div>
-        </button>
+            <ArrowRight className="h-4 w-4 text-primary group-hover:translate-x-0.5 transition-transform flex-shrink-0" />
+          </button>
+        </div>
       )}
     </div>
   );

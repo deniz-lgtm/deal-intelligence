@@ -18,16 +18,17 @@ import {
   Polyline,
   CircleMarker,
   Tooltip,
+  ZoomControl,
   useMap,
   useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import {
-  MousePointer2, Hexagon, Building2, Undo2, Trash2, Check, X,
+  MousePointer2, Hexagon, Building2, Undo2, Trash2, Check, X, Ruler,
 } from "lucide-react";
-import type { SitePlan, SitePlanPoint } from "@/lib/types";
-import { getTileConfig, hasMapbox } from "@/lib/map-config";
+import type { SitePlan, SitePlanPoint, SitePlanBuilding } from "@/lib/types";
+import { getTileConfig } from "@/lib/map-config";
 import {
   polygonAreaSf,
   segmentLengthFt,
@@ -61,7 +62,7 @@ export interface SitePlanGeneratorProps {
   height?: number;
 }
 
-type Tool = "pan" | "parcel" | "building";
+type Tool = "pan" | "parcel" | "building" | "measure";
 
 // ── Leaflet tile style keeper ────────────────────────────────────────────────
 
@@ -134,8 +135,11 @@ function DrawingSurface({
   draftRef.current = draft;
 
   // Snap a raw click/move point to the best hint available.
+  // When `bypass` is true (user held a modifier — Alt / Ctrl / Meta), we
+  // skip all snapping so the analyst can place a pixel-precise vertex.
   const applySnap = useCallback(
-    (raw: SitePlanPoint): SitePlanPoint => {
+    (raw: SitePlanPoint, bypass = false): SitePlanPoint => {
+      if (bypass) return raw;
       let p = raw;
       const d = draftRef.current;
 
@@ -162,15 +166,39 @@ function DrawingSurface({
     [map, snapVertexOn, snapRightAngleOn, snapGridFt, existingVertices]
   );
 
+  // Precision-mode hint is just "is a modifier key held right now?". We
+  // can't read it from mousemove on Leaflet reliably because the synthetic
+  // event doesn't always carry the OS modifier state, so we track it
+  // globally on the window.
+  const precisionRef = useRef(false);
+  useEffect(() => {
+    const sync = (e: KeyboardEvent) => {
+      precisionRef.current = e.altKey || e.ctrlKey || e.metaKey;
+    };
+    window.addEventListener("keydown", sync);
+    window.addEventListener("keyup", sync);
+    return () => {
+      window.removeEventListener("keydown", sync);
+      window.removeEventListener("keyup", sync);
+    };
+  }, []);
+
   useMapEvents({
     click(e) {
       if (tool === "pan") return;
       const raw: SitePlanPoint = { lat: e.latlng.lat, lng: e.latlng.lng };
-      const snapped = applySnap(raw);
+      // The native MouseEvent does reliably carry modifier state on click,
+      // prefer it over the window-tracked ref when available.
+      const native = e.originalEvent as MouseEvent | undefined;
+      const bypass = !!(native && (native.altKey || native.ctrlKey || native.metaKey));
+      const snapped = applySnap(raw, bypass);
       const d = draftRef.current;
 
       // If clicking near first vertex with ≥3 existing vertices → close.
-      if (d.length >= 3 && distanceFt(snapped, d[0]) < 8) {
+      // Only when NOT bypassing snap: in precision mode the analyst may
+      // want to place a vertex near the start without accidentally closing.
+      // Measure mode is an open polyline, so skip closing there.
+      if (tool !== "measure" && !bypass && d.length >= 3 && distanceFt(snapped, d[0]) < 8) {
         onFinish();
         return;
       }
@@ -182,16 +210,24 @@ function DrawingSurface({
         return;
       }
       const raw: SitePlanPoint = { lat: e.latlng.lat, lng: e.latlng.lng };
-      setCursor(applySnap(raw));
+      const native = e.originalEvent as MouseEvent | undefined;
+      const bypass = !!(native && (native.altKey || native.ctrlKey || native.metaKey))
+        || precisionRef.current;
+      setCursor(applySnap(raw, bypass));
     },
     mouseout() {
       setCursor(null);
     },
     dblclick(e) {
       // Swallow the auto-zoom double-click while drawing, and use it to close
-      // the polygon instead.
+      // the polygon instead. Measure mode uses double-click to finish the
+      // measurement chain and clear the draft.
       if (tool === "pan") return;
       L.DomEvent.stop(e.originalEvent as unknown as Event);
+      if (tool === "measure") {
+        setDraft([]);
+        return;
+      }
       if (draftRef.current.length >= 3) onFinish();
     },
   });
@@ -224,7 +260,10 @@ export default function SitePlanGenerator({
     return [39.5, -98.35];
   }, [value.center_lat, value.center_lng, fallbackCenter]);
 
-  const initialZoom = value.zoom || (fallbackCenter ? 19 : 4);
+  // Zoom 20 is where Mapbox satellite-streets starts rendering building
+  // addresses / numbers; we default there when we have a deal location so
+  // analysts immediately see enough detail to trace a parcel accurately.
+  const initialZoom = value.zoom || (fallbackCenter ? 20 : 4);
 
   // When user picks a different tool, clear the in-progress draft (unless
   // they're resuming drawing on the same layer). Simplest rule: switching
@@ -235,7 +274,9 @@ export default function SitePlanGenerator({
     setCursor(null);
   };
 
-  // Commit the draft into either parcel or building polygon.
+  // Commit the draft into either the parcel or a new building entry.
+  // For buildings we append; multi-building sites are just a list of these.
+  // The newly-drawn building becomes active so the sidebar focuses it.
   const finish = useCallback(() => {
     const points = draft;
     if (points.length < 3) {
@@ -252,10 +293,21 @@ export default function SitePlanGenerator({
       });
     } else if (tool === "building") {
       const area = polygonAreaSf(points);
+      // Auto-generate a label "Building N" where N is the next available
+      // integer that isn't already in use. Analysts can rename in sidebar.
+      const usedLabels = new Set((value.buildings || []).map(b => b.label));
+      let n = (value.buildings || []).length + 1;
+      while (usedLabels.has(`Building ${n}`)) n++;
+      const newBuilding: SitePlanBuilding = {
+        id: crypto.randomUUID?.() || `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        label: `Building ${n}`,
+        points,
+        area_sf: Math.round(area),
+      };
       onChange({
         ...value,
-        building_points: points,
-        building_area_sf: Math.round(area),
+        buildings: [...(value.buildings || []), newBuilding],
+        active_building_id: newBuilding.id,
         updated_at: new Date().toISOString(),
       });
     }
@@ -283,12 +335,20 @@ export default function SitePlanGenerator({
     return () => window.removeEventListener("keydown", onKey);
   }, [tool, draft, finish]);
 
-  // Existing vertices we can snap to when drawing the other polygon.
-  const existingVertices = useMemo(() => {
-    if (tool === "parcel") return value.building_points;
-    if (tool === "building") return value.parcel_points;
-    return [];
-  }, [tool, value.parcel_points, value.building_points]);
+  // Vertices the drawing surface may snap to — the other polygons that
+  // are already on the map. When drawing the parcel we snap to any
+  // already-drawn buildings; when drawing a new building we snap to the
+  // parcel and every other building vertex.
+  const existingVertices = useMemo<SitePlanPoint[]>(() => {
+    const all: SitePlanPoint[] = [];
+    if (tool === "parcel") {
+      for (const b of value.buildings || []) all.push(...b.points);
+    } else if (tool === "building") {
+      all.push(...value.parcel_points);
+      for (const b of value.buildings || []) all.push(...b.points);
+    }
+    return all;
+  }, [tool, value.parcel_points, value.buildings]);
 
   // Live ghost polyline from last draft vertex → snapped cursor.
   const ghostLine = useMemo<SitePlanPoint[] | null>(() => {
@@ -307,6 +367,20 @@ export default function SitePlanGenerator({
     if (!ghostLine) return 0;
     return segmentLengthFt(ghostLine[0], ghostLine[1]);
   }, [ghostLine]);
+
+  // Running total distance for the measure tool, including the ghost
+  // segment if the cursor is on the map. Zero outside measure mode.
+  const measureTotalFt = useMemo(() => {
+    if (tool !== "measure" || draft.length === 0) return 0;
+    let total = 0;
+    for (let i = 0; i < draft.length - 1; i++) {
+      total += segmentLengthFt(draft[i], draft[i + 1]);
+    }
+    if (cursor && draft.length >= 1) {
+      total += segmentLengthFt(draft[draft.length - 1], cursor);
+    }
+    return total;
+  }, [tool, draft, cursor]);
 
   // Save center/zoom back to site_plan after the user pans. We debounce via
   // moveend to avoid spamming onChange.
@@ -339,7 +413,12 @@ export default function SitePlanGenerator({
   const PARCEL_COLOR = "#ef4444";
   const BUILDING_COLOR = "#3b82f6";
   const SETBACK_COLOR = "#f59e0b";
-  const DRAFT_COLOR = tool === "parcel" ? PARCEL_COLOR : tool === "building" ? BUILDING_COLOR : "#a1a1aa";
+  const MEASURE_COLOR = "#22d3ee";
+  const DRAFT_COLOR =
+    tool === "parcel" ? PARCEL_COLOR
+    : tool === "building" ? BUILDING_COLOR
+    : tool === "measure" ? MEASURE_COLOR
+    : "#a1a1aa";
 
   // Setback envelope — inset the parcel by the MAX setback value. We can't
   // know which edge is "Front" without labeling, so we take the most
@@ -382,6 +461,12 @@ export default function SitePlanGenerator({
             onClick={() => switchTool("building")}
             label="Building"
             icon={<Building2 className="h-3.5 w-3.5 text-blue-400" />}
+          />
+          <ToolButton
+            active={tool === "measure"}
+            onClick={() => switchTool("measure")}
+            label="Measure"
+            icon={<Ruler className="h-3.5 w-3.5 text-cyan-400" />}
           />
         </div>
 
@@ -438,13 +523,13 @@ export default function SitePlanGenerator({
             <select
               value={value.snap_grid_ft}
               onChange={(e) => onChange({ ...value, snap_grid_ft: parseFloat(e.target.value) || 0 })}
-              className="bg-transparent text-[10px] border border-border/60 rounded px-1 py-0.5 outline-none"
+              className="bg-background text-foreground text-[10px] border border-border/60 rounded px-1 py-0.5 outline-none"
             >
-              <option value={0}>Off</option>
-              <option value={1}>1 ft</option>
-              <option value={5}>5 ft</option>
-              <option value={10}>10 ft</option>
-              <option value={25}>25 ft</option>
+              <option value={0} className="bg-background text-foreground">Off</option>
+              <option value={1} className="bg-background text-foreground">1 ft</option>
+              <option value={5} className="bg-background text-foreground">5 ft</option>
+              <option value={10} className="bg-background text-foreground">10 ft</option>
+              <option value={25} className="bg-background text-foreground">25 ft</option>
             </select>
           </label>
           {maxSetbackFt > 0 && (
@@ -472,13 +557,22 @@ export default function SitePlanGenerator({
           >
             <Trash2 className="h-3 w-3" /> Parcel
           </button>
+          {/* "Clear buildings" wipes every drawn building. The sidebar
+              surfaces per-building delete + rename for more surgical edits. */}
           <button
-            disabled={value.building_points.length === 0}
-            onClick={() => onChange({ ...value, building_points: [], building_area_sf: 0, updated_at: new Date().toISOString() })}
+            disabled={(value.buildings || []).length === 0}
+            onClick={() =>
+              onChange({
+                ...value,
+                buildings: [],
+                active_building_id: null,
+                updated_at: new Date().toISOString(),
+              })
+            }
             className="h-7 px-2 flex items-center gap-1 rounded-md text-[10px] text-blue-300 hover:bg-blue-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Clear building polygon"
+            title="Clear all buildings"
           >
-            <Trash2 className="h-3 w-3" /> Building
+            <Trash2 className="h-3 w-3" /> Buildings
           </button>
         </div>
 
@@ -500,21 +594,25 @@ export default function SitePlanGenerator({
       {tool !== "pan" && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[500] bg-background/95 backdrop-blur-sm border border-border/60 rounded-lg shadow-card px-3 py-1.5 text-[11px] text-muted-foreground">
           <span className="text-foreground font-medium mr-2">
-            {tool === "parcel" ? "Tracing parcel" : "Drawing building footprint"}
+            {tool === "parcel" ? "Tracing parcel"
+              : tool === "building" ? "Drawing building footprint"
+              : "Measuring distance"}
           </span>
-          Click to add vertex · first-vertex / double-click / Enter to close · Backspace to undo · Esc to cancel
-          {draft.length >= 3 && (
+          {tool === "measure" ? (
+            <>Click to add point · double-click to clear · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision (no snap)</>
+          ) : (
+            <>Click to add vertex · first-vertex / double-click / Enter to close · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision (no snap)</>
+          )}
+          {tool !== "measure" && draft.length >= 3 && (
             <span className="ml-2 text-emerald-300 tabular-nums">
               {Math.round(liveArea).toLocaleString()} SF
             </span>
           )}
-        </div>
-      )}
-
-      {/* Mapbox token warning */}
-      {!hasMapbox() && value.map_style === "satellite" && (
-        <div className="absolute bottom-3 right-3 z-[500] bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1 text-[10px] text-amber-300">
-          Set NEXT_PUBLIC_MAPBOX_TOKEN for satellite imagery
+          {tool === "measure" && draft.length >= 1 && (
+            <span className="ml-2 text-cyan-300 tabular-nums">
+              {Math.round(measureTotalFt).toLocaleString()} ft total
+            </span>
+          )}
         </div>
       )}
 
@@ -524,8 +622,12 @@ export default function SitePlanGenerator({
         maxZoom={22}
         scrollWheelZoom
         doubleClickZoom={false}
+        zoomControl={false}
         style={{ height: "100%", width: "100%", background: "#000" }}
       >
+        {/* Zoom control placed in the bottom-left out of the way of the
+            top toolbars and the bottom-center drawing hint. */}
+        <ZoomControl position="bottomleft" />
         <TileUpdater style={value.map_style} />
         <CursorStyler tool={tool} />
         <MapRefCapture onReady={(m) => { mapRef.current = m; }} />
@@ -583,34 +685,87 @@ export default function SitePlanGenerator({
           </Polygon>
         )}
 
-        {/* ── Building polygon ── */}
-        {value.building_points.length >= 3 && (
-          <Polygon
-            positions={value.building_points.map(toLatLng)}
-            pathOptions={{
-              color: BUILDING_COLOR,
-              weight: 2.5,
-              fillColor: BUILDING_COLOR,
-              fillOpacity: 0.3,
-            }}
-          />
+        {/* ── Buildings (one polygon per drawn structure) ── */}
+        {(value.buildings || []).map((b) => {
+          const isActive = b.id === value.active_building_id;
+          return (
+            <Polygon
+              key={`b-${b.id}`}
+              positions={b.points.map(toLatLng)}
+              pathOptions={{
+                color: BUILDING_COLOR,
+                weight: isActive ? 3 : 2,
+                fillColor: BUILDING_COLOR,
+                fillOpacity: isActive ? 0.35 : 0.2,
+              }}
+              eventHandlers={{
+                click: () => {
+                  // Click a building to select it (only when pan tool is
+                  // active — avoids hijacking polygon-draw clicks).
+                  if (tool === "pan") {
+                    onChange({
+                      ...value,
+                      active_building_id: b.id,
+                      updated_at: new Date().toISOString(),
+                    });
+                  }
+                },
+              }}
+            >
+              <Tooltip direction="center" className="site-plan-dim-label">
+                {b.label} · {b.area_sf.toLocaleString()} SF
+              </Tooltip>
+            </Polygon>
+          );
+        })}
+        {(value.buildings || []).flatMap((b) =>
+          b.points.map((p, i) => (
+            <CircleMarker
+              key={`bv-${b.id}-${i}`}
+              center={toLatLng(p)}
+              radius={b.id === value.active_building_id ? 4 : 3}
+              pathOptions={{
+                color: BUILDING_COLOR,
+                fillColor: "#fff",
+                fillOpacity: 1,
+                weight: 2,
+              }}
+            />
+          ))
         )}
-        {value.building_points.map((p, i) => (
-          <CircleMarker
-            key={`bv-${i}`}
-            center={toLatLng(p)}
-            radius={4}
-            pathOptions={{ color: BUILDING_COLOR, fillColor: "#fff", fillOpacity: 1, weight: 2 }}
-          />
-        ))}
 
-        {/* ── In-progress draft polygon ── */}
+        {/* ── In-progress draft polygon / measure chain ── */}
         {draft.length >= 2 && (
           <Polyline
             positions={draft.map(toLatLng)}
-            pathOptions={{ color: DRAFT_COLOR, weight: 2, dashArray: "4 3" }}
+            pathOptions={{
+              color: DRAFT_COLOR,
+              weight: tool === "measure" ? 2.5 : 2,
+              dashArray: tool === "measure" ? undefined : "4 3",
+            }}
           />
         )}
+        {/* In measure mode show a per-segment dimension label on each
+            committed segment so the analyst can read off the distances
+            without counting clicks. */}
+        {tool === "measure" && draft.length >= 2 && draft.slice(0, -1).map((p, i) => {
+          const next = draft[i + 1];
+          const midLat = (p.lat + next.lat) / 2;
+          const midLng = (p.lng + next.lng) / 2;
+          const lenFt = segmentLengthFt(p, next);
+          return (
+            <CircleMarker
+              key={`ms-${i}`}
+              center={[midLat, midLng]}
+              radius={0.1}
+              pathOptions={{ color: "transparent", weight: 0, opacity: 0 }}
+            >
+              <Tooltip permanent direction="top" offset={[0, -4]} className="site-plan-dim-label">
+                {Math.round(lenFt)} ft
+              </Tooltip>
+            </CircleMarker>
+          );
+        })}
         {draft.map((p, i) => (
           <CircleMarker
             key={`d-${i}`}
