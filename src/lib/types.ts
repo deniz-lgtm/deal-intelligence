@@ -1252,6 +1252,12 @@ export interface DevPhase {
    * sensible defaults.
    */
   task_category: TaskCategory | null;
+  /**
+   * Free-text owner / assignee — who's driving this task (project
+   * manager, architect, outside counsel, broker, etc.). Not tied to a
+   * user record so it can be anyone.
+   */
+  task_owner: string | null;
   pct_complete: number;
   budget: number | null;
   status: DevPhaseStatus;

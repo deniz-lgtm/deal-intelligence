@@ -198,6 +198,22 @@ export async function ensureColumns(): Promise<void> {
     // permit | other). Purely visual — seed scenarios assign sensible
     // defaults; nothing breaks if it's null.
     "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS task_category TEXT",
+    // Optional owner / assignee per task. Free-text so it can be any
+    // stakeholder name (project manager, architect, outside counsel…)
+    // without needing a users lookup.
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS task_owner TEXT",
+    // User-owned entitlement templates. Each row is a named list of
+    // tasks the analyst can re-apply under any deal's entitlements
+    // phase. Scoped to the creating user.
+    `CREATE TABLE IF NOT EXISTS entitlement_templates (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      tasks JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_entitlement_templates_user_id ON entitlement_templates(user_id)`,
     // Communication tracking: stakeholder correspondence log
     `CREATE TABLE IF NOT EXISTS deal_communications (
       id TEXT PRIMARY KEY,
@@ -3730,8 +3746,8 @@ export const devPhaseQueries = {
   create: async (phase: Record<string, unknown>) => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
+      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
        RETURNING *`,
       [
         phase.id,
@@ -3745,6 +3761,7 @@ export const devPhaseQueries = {
         phase.lag_days ?? 0,
         phase.parent_phase_id ?? null,
         phase.task_category ?? null,
+        phase.task_owner ?? null,
         phase.pct_complete ?? 0,
         phase.budget ?? null,
         phase.status ?? "not_started",
@@ -3762,7 +3779,7 @@ export const devPhaseQueries = {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "pct_complete", "budget", "status", "notes", "sort_order"].includes(key)) {
+      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
         idx++;
@@ -3795,6 +3812,84 @@ export const devPhaseQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_dev_phases WHERE id = $1", [id]);
+  },
+};
+
+// ─── Entitlement Template queries ─────────────────────────────────────────────
+//
+// Templates live per-user so analysts can save a task list once and apply it
+// to any deal. Each row holds a JSONB tasks[] with { label, duration_days,
+// category?, owner? } so we don't duplicate the deal_dev_phases columns
+// here — these are authoring blueprints, not live phase rows.
+
+export const entitlementTemplateQueries = {
+  getByUserId: async (userId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM entitlement_templates WHERE user_id = $1 ORDER BY name ASC",
+      [userId]
+    );
+    return res.rows;
+  },
+
+  getByIdForUser: async (id: string, userId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM entitlement_templates WHERE id = $1 AND user_id = $2",
+      [id, userId]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  create: async (
+    id: string,
+    userId: string,
+    name: string,
+    tasks: unknown
+  ) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO entitlement_templates (id, user_id, name, tasks, created_at, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, NOW(), NOW())
+       RETURNING *`,
+      [id, userId, name, JSON.stringify(tasks ?? [])]
+    );
+    return res.rows[0];
+  },
+
+  update: async (
+    id: string,
+    userId: string,
+    updates: { name?: string; tasks?: unknown }
+  ) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    if (updates.name != null) {
+      setClauses.push(`name = $${idx++}`);
+      values.push(updates.name);
+    }
+    if (updates.tasks != null) {
+      setClauses.push(`tasks = $${idx++}::jsonb`);
+      values.push(JSON.stringify(updates.tasks));
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id, userId);
+    const res = await pool.query(
+      `UPDATE entitlement_templates SET ${setClauses.join(", ")} WHERE id = $${idx++} AND user_id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string, userId: string) => {
+    const pool = getPool();
+    await pool.query(
+      "DELETE FROM entitlement_templates WHERE id = $1 AND user_id = $2",
+      [id, userId]
+    );
   },
 };
 
