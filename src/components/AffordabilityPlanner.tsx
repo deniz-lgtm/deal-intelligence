@@ -178,6 +178,13 @@ interface Props {
     description: string;
     additional_density: string;
   }>;
+  /**
+   * Mix-surface only. When provided, a "Push to Unit Mix" action appears
+   * so the analyst can re-run the unit-group split after dialing in the
+   * per-BR mix, without jumping to Programming to save. The parent owns
+   * the actual mutation (it knows the current unit_groups state).
+   */
+  onPushToUnitMix?: () => void;
 }
 
 function hydrateTiers(
@@ -423,6 +430,7 @@ export default function AffordabilityPlanner({
   buildingUnitMix,
   mode = "full",
   spottedBonuses,
+  onPushToUnitMix,
 }: Props) {
   const showTypeControls = mode === "type" || mode === "full";
   const showMixControls = mode === "mix" || mode === "full";
@@ -1101,7 +1109,22 @@ export default function AffordabilityPlanner({
           {/* Tiers */}
           {config.tiers.length > 0 && (
             <div className="space-y-3">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Affordability Tiers</div>
+              <div className="flex items-center gap-3">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Affordability Tiers
+                </div>
+                <div className="flex-1" />
+                {mode === "mix" && onPushToUnitMix && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={onPushToUnitMix}
+                    title="Apply this mix to the Unit / Space Mix table — market rows shrink, and each (tier × BR) gets its own affordable row you can edit independently (they're usually smaller SF than market)"
+                  >
+                    Push to Unit Mix
+                  </Button>
+                )}
+              </div>
               {config.tiers.map((tier) => {
                 // Each row knows which AmiTier field to write when the user
               // edits its count cell, so the onChange can just lift a field
