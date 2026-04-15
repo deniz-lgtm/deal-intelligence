@@ -35,13 +35,26 @@ import {
   snapToNearestVertex,
   snapToGrid,
   distanceFt,
+  insetPolygon,
 } from "./site-plan-utils";
 
 // ── Props ────────────────────────────────────────────────────────────────────
 
+export interface SitePlanSetbacks {
+  front: number | null;
+  side: number | null;
+  rear: number | null;
+  corner?: number | null;
+}
+
 export interface SitePlanGeneratorProps {
   value: SitePlan;
   onChange: (next: SitePlan) => void;
+  // Setback values from zoning (live — inset updates as these change).
+  // The inset uses the max of the provided values as a conservative
+  // buildable envelope (a single-polygon shrink cannot represent per-side
+  // setbacks without edge labeling; the sidebar breaks out each value).
+  setbacks?: SitePlanSetbacks;
   // Optional fallback center when site_plan has no saved center yet
   fallbackCenter?: { lat: number; lng: number } | null;
   // Optional height
@@ -191,7 +204,7 @@ const toLatLng = (p: SitePlanPoint): [number, number] => [p.lat, p.lng];
 // ── The full component ──────────────────────────────────────────────────────
 
 export default function SitePlanGenerator({
-  value, onChange, fallbackCenter, height = 560,
+  value, onChange, setbacks, fallbackCenter, height = 560,
 }: SitePlanGeneratorProps) {
   const [tool, setTool] = useState<Tool>("pan");
   const [draft, setDraft] = useState<SitePlanPoint[]>([]);
@@ -322,10 +335,29 @@ export default function SitePlanGenerator({
     return () => { map.off("moveend", handler); };
   }, [value, onChange]);
 
-  // Colors — red parcel, blue building, amber setback (phase 2).
+  // Colors — red parcel, blue building, amber setback envelope.
   const PARCEL_COLOR = "#ef4444";
   const BUILDING_COLOR = "#3b82f6";
+  const SETBACK_COLOR = "#f59e0b";
   const DRAFT_COLOR = tool === "parcel" ? PARCEL_COLOR : tool === "building" ? BUILDING_COLOR : "#a1a1aa";
+
+  // Setback envelope — inset the parcel by the MAX setback value. We can't
+  // know which edge is "Front" without labeling, so we take the most
+  // constraining value as a conservative buildable envelope. The metrics
+  // sidebar (separate component) still lists each value individually so the
+  // analyst can see the underlying requirements.
+  const maxSetbackFt = useMemo(() => {
+    if (!setbacks) return 0;
+    const vals = [setbacks.front, setbacks.side, setbacks.rear, setbacks.corner]
+      .map((v) => (v == null ? 0 : Number(v)))
+      .filter((v) => v > 0);
+    return vals.length ? Math.max(...vals) : 0;
+  }, [setbacks]);
+
+  const envelopePolygon = useMemo<SitePlanPoint[]>(() => {
+    if (!value.show_setbacks || maxSetbackFt <= 0 || value.parcel_points.length < 3) return [];
+    return insetPolygon(value.parcel_points, maxSetbackFt);
+  }, [value.show_setbacks, maxSetbackFt, value.parcel_points]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -415,6 +447,17 @@ export default function SitePlanGenerator({
               <option value={25}>25 ft</option>
             </select>
           </label>
+          {maxSetbackFt > 0 && (
+            <label className="flex items-center gap-1.5 cursor-pointer pt-1 border-t border-border/40">
+              <input
+                type="checkbox"
+                checked={value.show_setbacks}
+                onChange={(e) => onChange({ ...value, show_setbacks: e.target.checked })}
+                className="accent-amber-400 h-3 w-3"
+              />
+              Setback envelope
+            </label>
+          )}
         </div>
       </div>
 
@@ -521,6 +564,24 @@ export default function SitePlanGenerator({
             pathOptions={{ color: PARCEL_COLOR, fillColor: "#fff", fillOpacity: 1, weight: 2 }}
           />
         ))}
+
+        {/* ── Setback envelope (inset of parcel by max setback) ── */}
+        {envelopePolygon.length >= 3 && (
+          <Polygon
+            positions={envelopePolygon.map(toLatLng)}
+            pathOptions={{
+              color: SETBACK_COLOR,
+              weight: 1.5,
+              fillColor: SETBACK_COLOR,
+              fillOpacity: 0.08,
+              dashArray: "4 3",
+            }}
+          >
+            <Tooltip direction="center" className="site-plan-dim-label">
+              Buildable envelope · {maxSetbackFt} ft setback
+            </Tooltip>
+          </Polygon>
+        )}
 
         {/* ── Building polygon ── */}
         {value.building_points.length >= 3 && (
