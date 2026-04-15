@@ -50,7 +50,7 @@ export function newScenario(name: string, floors: BuildingFloor[] = []): Massing
 }
 
 export function newBuildingProgram(): BuildingProgram {
-  const scenario = newScenario("Base Case");
+  const scenario = newScenario("Massing 1");
   scenario.is_baseline = true;
   return { scenarios: [scenario], active_scenario_id: scenario.id };
 }

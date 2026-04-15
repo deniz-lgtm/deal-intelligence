@@ -7,7 +7,7 @@ import {
   Loader2, MapPin, Sparkles, RefreshCw, Download, Save,
   Building2, Ruler, Trees, ChevronDown, ChevronRight, FileText,
   Map as MapIcon, ExternalLink, CalendarClock, Wand2,
-  Pencil, Copy, Trash2, Bookmark,
+  Pencil, Copy, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -526,7 +526,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             activeBuildingId = migratedId;
           }
           if (parcelPoints.length > 0 || buildings.length > 0) {
-            const baseScen = newSitePlanScenario("Base Case");
+            const baseScen = newSitePlanScenario("Massing 1");
             baseScen.parcel_points = parcelPoints;
             baseScen.parcel_area_sf = parcelAreaSf;
             baseScen.buildings = buildings;
@@ -540,7 +540,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         // something to anchor; also ensure active_scenario_id points to
         // something valid.
         if (scenarios.length === 0) {
-          const s = newSitePlanScenario("Base Case");
+          const s = newSitePlanScenario("Massing 1");
           scenarios = [s];
           activeScenarioId = s.id;
         }
@@ -827,142 +827,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       return next;
     });
   }, []);
-
-  // Push the drawn site-plan footprint into the Programming page's active
-  // massing scenario. Writes directly to underwriting.data.building_program
-  // so the user sees the update when they switch pages. We also stamp the
-  // scenario's site_plan_building_id so the hydration path knows the link.
-  const pushFootprintToProgramming = useCallback(
-    async (footprintSf: number, building: any | null) => {
-      if (footprintSf <= 0) return;
-      try {
-        const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
-        const uwJson = await uwRes.json();
-        const current = uwJson.data?.data
-          ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
-          : {};
-        const prog = current.building_program;
-        if (!prog?.scenarios?.length) {
-          toast.error("No massing scenarios yet — create one on the Programming page first");
-          return;
-        }
-        const activeId = prog.active_scenario_id || prog.scenarios[0].id;
-        const updatedProg = {
-          ...prog,
-          scenarios: prog.scenarios.map((s: any) =>
-            s.id === activeId
-              ? {
-                  ...s,
-                  footprint_sf: Math.round(footprintSf),
-                  site_plan_building_id: building?.id || null,
-                }
-              : s
-          ),
-        };
-        await fetch("/api/underwriting", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            deal_id: params.id,
-            data: { ...current, building_program: updatedProg },
-          }),
-        });
-        toast.success(
-          `Pushed ${Math.round(footprintSf).toLocaleString()} SF ${
-            building ? `(${building.label}) ` : ""
-          }to active scenario`
-        );
-      } catch {
-        toast.error("Failed to push footprint to Programming");
-      }
-    },
-    [params.id]
-  );
-
-  // Snapshot the current programming state as a named Underwriting
-  // Scenario the analyst can reload later. Stored under
-  // underwriting.data.uw_scenarios[]. We snapshot the fields that drive
-  // the numbers that differ between alternatives (building_program +
-  // unit_groups + revenue lists) and a thin summary object for the
-  // Saved Scenarios list on the Underwriting page to display without
-  // recomputing. The live state is unchanged after save.
-  const saveAsUwScenario = useCallback(async () => {
-    const defaultName =
-      sitePlan.scenarios?.find((s) => s.id === sitePlan.active_scenario_id)?.name ||
-      `Scenario ${new Date().toLocaleDateString()}`;
-    const name = window.prompt("Save as Underwriting Scenario — name:", defaultName);
-    if (!name?.trim()) return;
-    try {
-      const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
-      const uwJson = await uwRes.json();
-      const current = uwJson.data?.data
-        ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
-        : {};
-      // Build a quick summary from what we have in memory right now (the
-      // building_program has per-scenario floors; summing across linked
-      // scenarios matches the "Project Totals" strip on Programming).
-      const bp = current.building_program as any;
-      let summary: {
-        total_gsf?: number;
-        total_nrsf?: number;
-        total_units?: number;
-        total_parking_spaces_est?: number;
-        buildings_count?: number;
-      } = {};
-      if (bp?.scenarios?.length) {
-        summary = bp.scenarios.reduce(
-          (acc: any, s: any) => {
-            const gsf = (s.floors || []).reduce((x: number, f: any) => x + (f.floor_plate_sf || 0), 0);
-            const nrsf = (s.floors || []).reduce(
-              (x: number, f: any) => x + Math.round((f.floor_plate_sf || 0) * ((f.efficiency_pct || 0) / 100)),
-              0
-            );
-            const units = (s.floors || []).reduce((x: number, f: any) => x + (f.units_on_floor || 0), 0);
-            const parkingSf = (s.floors || []).reduce(
-              (x: number, f: any) => x + (f.use_type === "parking" ? f.floor_plate_sf : 0),
-              0
-            );
-            return {
-              total_gsf: (acc.total_gsf || 0) + gsf,
-              total_nrsf: (acc.total_nrsf || 0) + nrsf,
-              total_units: (acc.total_units || 0) + units,
-              total_parking_spaces_est:
-                (acc.total_parking_spaces_est || 0) +
-                Math.floor(parkingSf / (s.parking_sf_per_space || 350)),
-              buildings_count: (acc.buildings_count || 0) + (s.site_plan_building_id ? 1 : 0),
-            };
-          },
-          {}
-        );
-      }
-      const snapshot = {
-        id:
-          (typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
-            ? (crypto as any).randomUUID()
-            : `uws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-        name: name.trim(),
-        created_at: new Date().toISOString(),
-        site_plan_scenario_id: sitePlan.active_scenario_id,
-        building_program: current.building_program || null,
-        unit_groups: current.unit_groups || [],
-        other_income_items: current.other_income_items || [],
-        commercial_tenants: current.commercial_tenants || [],
-        summary,
-      };
-      const existing = Array.isArray(current.uw_scenarios) ? current.uw_scenarios : [];
-      await fetch("/api/underwriting", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          deal_id: params.id,
-          data: { ...current, uw_scenarios: [...existing, snapshot] },
-        }),
-      });
-      toast.success(`Saved as Underwriting Scenario: "${name.trim()}"`);
-    } catch {
-      toast.error("Failed to save UW scenario");
-    }
-  }, [params.id, sitePlan.scenarios, sitePlan.active_scenario_id]);
 
   const updateDev = (k: keyof DevParams, v: number) => {
     setDevParams(prev => {
@@ -1713,27 +1577,19 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 )}
                 Save now
               </Button>
-              <Button
-                size="sm"
-                onClick={saveAsUwScenario}
-                className="bg-primary hover:bg-primary/90"
-                title="Snapshot the current programming state as a named Underwriting Scenario"
-              >
-                <Bookmark className="h-3.5 w-3.5 mr-1.5" />
-                Save as UW Scenario
-              </Button>
             </div>
           </div>
 
-          {/* Scenario tab bar — one tab per site-plan scenario. Analysts
-              create scenarios to compare alternatives on the same site
-              (as-of-right vs with bonus vs max build). The active tab
-              owns the parcel + buildings the generator draws. Inline
-              rename, duplicate (copies the parcel + buildings into a
-              new scenario), and delete live inline on each tab. */}
+          {/* Massing tab bar — one tab per drawn massing. Analysts use
+              massings to compare alternatives on the same site (as-of-
+              right vs with bonus vs max build). Each massing owns its
+              parcel + buildings and is the same unit Programming and
+              Underwriting consume. Inline rename, duplicate (deep-
+              copies the parcel + buildings), and delete (disabled at
+              count = 1) live on each tab. */}
           <div className="flex items-center gap-1 flex-wrap mb-3 pb-2 border-b border-border/40">
             <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
-              Scenario
+              Massing
             </span>
             {(sitePlan.scenarios || []).map((s) => {
               const isActive = s.id === sitePlan.active_scenario_id;
@@ -1798,8 +1654,8 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 // Seed "Scenario N" with the lowest unused integer.
                 const used = new Set((sitePlan.scenarios || []).map((x) => x.name));
                 let n = (sitePlan.scenarios || []).length + 1;
-                while (used.has(`Scenario ${n}`)) n++;
-                const s = newSitePlanScenario(`Scenario ${n}`);
+                while (used.has(`Massing ${n}`)) n++;
+                const s = newSitePlanScenario(`Massing ${n}`);
                 updateSitePlan({
                   ...sitePlan,
                   scenarios: [...(sitePlan.scenarios || []), s],
@@ -1808,9 +1664,9 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 });
               }}
               className="px-2 py-1 text-[11px] rounded-md border border-dashed border-border/60 text-muted-foreground hover:text-foreground hover:border-border"
-              title="Add a new blank scenario"
+              title="Add a new blank massing"
             >
-              + New scenario
+              + New massing
             </button>
           </div>
 
@@ -1828,8 +1684,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
               setbacks={sitePlanSetbacks}
               zoningLotCoveragePct={zoning.lot_coverage_pct}
               expectedLandSf={siteInfo.land_sf}
-              onPushToProgramming={pushFootprintToProgramming}
-              pushTargetLabel="Active massing scenario"
             />
           </div>
         </Section>

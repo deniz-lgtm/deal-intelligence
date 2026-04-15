@@ -75,13 +75,24 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const [unitGroups, setUnitGroups] = useState<any[]>([]);
   const [affordabilityConfig, setAffordabilityConfig] = useState<any>(null);
   const [taxesAnnual, setTaxesAnnual] = useState(0);
-  // Buildings drawn on the Site & Zoning page site plan. Each {id, label,
-  // area_sf} lets a massing scenario reference one specific building via
-  // site_plan_building_id. Empty array means no drawn site plan — the
-  // typed-footprint workflow is preserved.
-  const [sitePlanBuildings, setSitePlanBuildings] = useState<
-    Array<{ id: string; label: string; area_sf: number }>
+  // Site-plan massings drive everything on this page. Each massing
+  // owns a list of buildings (drawn on Site & Zoning); Programming
+  // surfaces them as nested tabs (massing → building) where each
+  // (massing, building) pair has its own floor stack stored as a
+  // MassingScenario row keyed by site_plan_scenario_id +
+  // site_plan_building_id. Empty list = no drawn site plan; the page
+  // falls back to the legacy single-scenario workflow.
+  const [sitePlanMassings, setSitePlanMassings] = useState<
+    Array<{
+      id: string;
+      name: string;
+      buildings: Array<{ id: string; label: string; area_sf: number }>;
+    }>
   >([]);
+  // Currently active (massing, building) selection drives which scenario
+  // row we're editing. Both fall back to the first available when null.
+  const [activeMassingId, setActiveMassingId] = useState<string | null>(null);
+  const [activeBuildingId, setActiveBuildingId] = useState<string | null>(null);
 
   // Load data
   useEffect(() => {
@@ -93,62 +104,151 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       setDeal(d);
       const uw = uwRes.data?.data ? (typeof uwRes.data.data === "string" ? JSON.parse(uwRes.data.data) : uwRes.data.data) : {};
 
-      // Site plan drawn on the Site & Zoning page. Extract the building
-      // list (handles both the new `buildings[]` shape and the legacy
-      // `{building_points, building_area_sf}` single-building shape for
-      // reading — writes always go through the site-zoning page which
-      // normalizes to the new shape).
+      // ── Build the site-plan massings list (Programming's source of truth)
+      // The Site & Zoning page owns the canonical structure
+      // (`scenarios: SitePlanScenario[]`, each with `buildings`).
+      // We also handle two legacy shapes:
+      //   - flat {parcel_points, buildings} → wrap as one Massing
+      //   - earliest {building_points, building_area_sf} → wrap as one
+      //     Massing with one Building.
+      // Whatever we materialize is what drives the tab structure below.
       const rawPlan = uw.site_plan as any;
-      let bList: Array<{ id: string; label: string; area_sf: number; points?: unknown }> = [];
-      if (rawPlan && Array.isArray(rawPlan.buildings) && rawPlan.buildings.length > 0) {
-        bList = rawPlan.buildings.map((b: any) => ({
-          id: b.id,
-          label: b.label,
-          area_sf: Math.round(Number(b.area_sf) || 0),
-        }));
+      const massings: Array<{
+        id: string;
+        name: string;
+        buildings: Array<{ id: string; label: string; area_sf: number }>;
+      }> = [];
+      if (rawPlan && Array.isArray(rawPlan.scenarios) && rawPlan.scenarios.length > 0) {
+        for (const sp of rawPlan.scenarios) {
+          massings.push({
+            id: sp.id,
+            name: sp.name || "Massing",
+            buildings: (Array.isArray(sp.buildings) ? sp.buildings : []).map((b: any) => ({
+              id: b.id,
+              label: b.label,
+              area_sf: Math.round(Number(b.area_sf) || 0),
+            })),
+          });
+        }
+      } else if (rawPlan && Array.isArray(rawPlan.buildings) && rawPlan.buildings.length > 0) {
+        massings.push({
+          id: "legacy-massing-1",
+          name: "Massing 1",
+          buildings: rawPlan.buildings.map((b: any) => ({
+            id: b.id,
+            label: b.label,
+            area_sf: Math.round(Number(b.area_sf) || 0),
+          })),
+        });
       } else if (
         rawPlan &&
         Array.isArray(rawPlan.building_points) &&
         rawPlan.building_points.length >= 3
       ) {
-        bList = [{
-          id: "legacy",
-          label: "Building 1",
-          area_sf: Math.round(Number(rawPlan.building_area_sf) || 0),
-        }];
-      }
-      setSitePlanBuildings(bList);
-
-      // Default seed footprint — the scenario's linked building if set,
-      // else the first building, else the legacy sum. Keeps existing
-      // behaviour (first-time hydration only when scenario is unsized).
-      const defaultSeedSf = bList[0]?.area_sf || 0;
-
-      if (uw.building_program?.scenarios?.length > 0) {
-        const prog = uw.building_program as BuildingProgram;
-        const activeId = prog.active_scenario_id || prog.scenarios[0]?.id;
-        prog.scenarios = prog.scenarios.map(s => {
-          if (s.id !== activeId) return s;
-          // If the scenario is linked to a specific building, prefer that
-          // building's current area; otherwise only seed when unsized.
-          const linkedB = s.site_plan_building_id
-            ? bList.find(b => b.id === s.site_plan_building_id)
-            : null;
-          if (linkedB) return { ...s, footprint_sf: linkedB.area_sf };
-          if ((!s.footprint_sf || s.footprint_sf === 0) && defaultSeedSf > 0) {
-            return { ...s, footprint_sf: defaultSeedSf };
-          }
-          return s;
+        massings.push({
+          id: "legacy-massing-1",
+          name: "Massing 1",
+          buildings: [{
+            id: "legacy-building-1",
+            label: "Building 1",
+            area_sf: Math.round(Number(rawPlan.building_area_sf) || 0),
+          }],
         });
-        setBuildingProgram(prog);
-      } else if (defaultSeedSf > 0) {
-        // No saved program yet but we have a drawn footprint → start the
-        // default Base Case scenario with it pre-filled.
-        const fresh = newBuildingProgram();
-        fresh.scenarios[0].footprint_sf = defaultSeedSf;
-        fresh.scenarios[0].site_plan_building_id = bList[0]?.id || null;
-        setBuildingProgram(fresh);
       }
+      setSitePlanMassings(massings);
+
+      // ── Sync building_program.scenarios with the site-plan structure
+      // We want exactly one MassingScenario row per (massing, building)
+      // pair. Existing rows are preserved (so floors/unit_mix/AI label
+      // survive). New pairs get a fresh row. Orphan rows that no longer
+      // map to a site-plan pair are kept too (analyst legacy work) but
+      // hidden from the tab UI; if they want them back they can pin to
+      // a different building.
+      const prog =
+        uw.building_program?.scenarios?.length > 0
+          ? (uw.building_program as BuildingProgram)
+          : newBuildingProgram();
+      const existing = prog.scenarios;
+      const synced: typeof existing = [];
+
+      if (massings.length === 0) {
+        // No site plan at all — keep whatever was saved as-is so the
+        // legacy typed-footprint workflow keeps working.
+        synced.push(...existing);
+      } else {
+        for (const m of massings) {
+          if (m.buildings.length === 0) {
+            // Massing with no buildings yet — emit one placeholder so
+            // the tab still renders, footprint=0 until they draw one.
+            const match = existing.find(
+              (s) =>
+                s.site_plan_scenario_id === m.id && !s.site_plan_building_id
+            );
+            if (match) {
+              synced.push(match);
+            } else {
+              const fresh = newScenario(m.name);
+              fresh.site_plan_scenario_id = m.id;
+              fresh.site_plan_building_id = null;
+              synced.push(fresh);
+            }
+            continue;
+          }
+          for (const b of m.buildings) {
+            // Find an existing row that matches this exact pair, or
+            // adopt a legacy row keyed only by building_id when this
+            // massing is the legacy-migrated one.
+            let match = existing.find(
+              (s) =>
+                s.site_plan_scenario_id === m.id && s.site_plan_building_id === b.id
+            );
+            if (!match) {
+              match = existing.find(
+                (s) =>
+                  !s.site_plan_scenario_id && s.site_plan_building_id === b.id
+              );
+            }
+            if (match) {
+              synced.push({
+                ...match,
+                site_plan_scenario_id: m.id,
+                site_plan_building_id: b.id,
+                footprint_sf: b.area_sf, // always re-sync from the drawn area
+              });
+            } else {
+              const fresh = newScenario(b.label);
+              fresh.site_plan_scenario_id = m.id;
+              fresh.site_plan_building_id = b.id;
+              fresh.footprint_sf = b.area_sf;
+              synced.push(fresh);
+            }
+          }
+        }
+      }
+
+      // Pick a sensible active selection: prefer what was previously
+      // active if it still exists, else the first massing/building.
+      const firstMassing = massings[0];
+      const initialMassingId = firstMassing?.id || null;
+      const initialBuildingId = firstMassing?.buildings[0]?.id || null;
+      setActiveMassingId(initialMassingId);
+      setActiveBuildingId(initialBuildingId);
+
+      // Active scenario = the row matching the active (massing, building).
+      const activeScenarioRow =
+        synced.find(
+          (s) =>
+            s.site_plan_scenario_id === initialMassingId &&
+            s.site_plan_building_id === initialBuildingId
+        ) ||
+        synced.find((s) => s.site_plan_scenario_id === initialMassingId) ||
+        synced[0];
+
+      setBuildingProgram({
+        ...prog,
+        scenarios: synced,
+        active_scenario_id: activeScenarioRow?.id || prog.active_scenario_id,
+      });
       if (uw.other_income_items?.length > 0) setOtherIncomeItems(uw.other_income_items);
       if (uw.commercial_tenants?.length > 0) setCommercialTenants(uw.commercial_tenants);
       if (uw.unit_groups?.length > 0) setUnitGroups(uw.unit_groups);
@@ -276,8 +376,18 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       //     alternative flow), we replace the whole unit_groups list —
       //     same behaviour as before.
       const buildingId = scenario.site_plan_building_id || null;
-      const buildingLabel =
-        (buildingId && sitePlanBuildings.find(b => b.id === buildingId)?.label) || "";
+      // Look the building label up across every massing — pushToUW is
+      // called from massing-iteration in "Push <Massing> to UW" and
+      // from the per-stack hydrate path, so we can't assume it's the
+      // currently active massing.
+      const buildingLabel = (() => {
+        if (!buildingId) return "";
+        for (const m of sitePlanMassings) {
+          const b = m.buildings.find((x) => x.id === buildingId);
+          if (b) return b.label;
+        }
+        return "";
+      })();
       const generated = mix.length > 0
         ? mix.map((m: any) => ({
             id: uuidv4(),
@@ -412,71 +522,151 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     } catch {
       toast.error("Failed to push to underwriting");
     }
-  }, [params.id, zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanBuildings]);
+  }, [params.id, zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanMassings]);
+
+  // Snapshot the current programming state as a named UW Scenario.
+  // Called automatically by "Push <Massing> to UW" so each massing push
+  // becomes a comparable saved scenario in Underwriting. The snapshot
+  // captures whatever is in the underwriting blob right NOW (after the
+  // pushes have committed building_program + unit_groups), so the saved
+  // scenario reflects the freshly-pushed numbers.
+  const snapshotMassingToUw = useCallback(async (massingName: string) => {
+    try {
+      const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+      const uwJson = await uwRes.json();
+      const current = uwJson.data?.data
+        ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
+        : {};
+      // Sum a quick summary across the linked stacks of this massing
+      // for the saved-scenarios list display on Underwriting.
+      const linkedScenarios = (current.building_program?.scenarios || []).filter(
+        (s: any) => s.site_plan_scenario_id === activeMassingId
+      );
+      const summarized = linkedScenarios.reduce(
+        (acc: any, s: any) => {
+          const gsf = (s.floors || []).reduce((x: number, f: any) => x + (f.floor_plate_sf || 0), 0);
+          const nrsf = (s.floors || []).reduce(
+            (x: number, f: any) => x + Math.round((f.floor_plate_sf || 0) * ((f.efficiency_pct || 0) / 100)),
+            0
+          );
+          const units = (s.floors || []).reduce((x: number, f: any) => x + (f.units_on_floor || 0), 0);
+          const parkingSf = (s.floors || []).reduce(
+            (x: number, f: any) => x + (f.use_type === "parking" ? f.floor_plate_sf : 0),
+            0
+          );
+          return {
+            total_gsf: (acc.total_gsf || 0) + gsf,
+            total_nrsf: (acc.total_nrsf || 0) + nrsf,
+            total_units: (acc.total_units || 0) + units,
+            total_parking_spaces_est:
+              (acc.total_parking_spaces_est || 0) +
+              Math.floor(parkingSf / (s.parking_sf_per_space || 350)),
+            buildings_count: (acc.buildings_count || 0) + 1,
+          };
+        },
+        {}
+      );
+      // De-dupe by name: replace an existing scenario with the same
+      // massing name so re-pushing doesn't pile up duplicates.
+      const existing = Array.isArray(current.uw_scenarios) ? current.uw_scenarios : [];
+      const nameClash = existing.findIndex((x: any) => x.name === massingName);
+      const snapshot = {
+        id:
+          (typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
+            ? (crypto as any).randomUUID()
+            : `uws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+        name: massingName,
+        created_at: new Date().toISOString(),
+        site_plan_scenario_id: activeMassingId,
+        building_program: current.building_program || null,
+        unit_groups: current.unit_groups || [],
+        other_income_items: current.other_income_items || [],
+        commercial_tenants: current.commercial_tenants || [],
+        summary: summarized,
+      };
+      const next = nameClash >= 0
+        ? existing.map((x: any, i: number) => (i === nameClash ? snapshot : x))
+        : [...existing, snapshot];
+      await fetch("/api/underwriting", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deal_id: params.id,
+          data: { ...current, uw_scenarios: next },
+        }),
+      });
+      toast.success(
+        nameClash >= 0
+          ? `Updated UW scenario "${massingName}"`
+          : `Saved as UW scenario "${massingName}"`
+      );
+    } catch {
+      toast.error("Failed to snapshot massing as UW scenario");
+    }
+  }, [params.id, activeMassingId]);
 
   if (loading) return <div className="flex items-center justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
   // Compute summary for active scenario
-  const activeScenario = buildingProgram.scenarios.find(s => s.id === buildingProgram.active_scenario_id) || buildingProgram.scenarios[0];
-  const summary = activeScenario ? computeMassingSummary(activeScenario, zoningInputs) : null;
-  const totalUnits = unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0) || summary?.total_units || 0;
+  // ── Active selection (massing + building) → scenario row
+  // The Programming page is a 2D grid: massings on one axis, buildings
+  // on the other. Each cell is a MassingScenario row keyed by
+  // (site_plan_scenario_id, site_plan_building_id). The selection is
+  // managed at the page level — MassingSection just edits the row.
+  const currentMassing =
+    sitePlanMassings.find((m) => m.id === activeMassingId) || sitePlanMassings[0] || null;
+  const currentBuilding =
+    currentMassing?.buildings.find((b) => b.id === activeBuildingId) ||
+    currentMassing?.buildings[0] ||
+    null;
 
-  // Multi-building UX: when the site plan has more than one building, we
-  // pivot the page into "tabs" where each tab is a dedicated massing
-  // scenario for one building. Clicking a tab either switches to the
-  // existing scenario for that building, or fabricates a fresh scenario
-  // seeded with that building's footprint and links it back via
-  // site_plan_building_id. Legacy single-building decks remain unchanged.
-  const selectBuilding = (buildingId: string) => {
-    const existing = buildingProgram.scenarios.find(
-      s => s.site_plan_building_id === buildingId
-    );
-    if (existing) {
-      setBuildingProgram({ ...buildingProgram, active_scenario_id: existing.id });
-      setDirty(true);
-      return;
-    }
-    const b = sitePlanBuildings.find(x => x.id === buildingId);
-    if (!b) return;
-    const fresh = newScenario(b.label);
-    fresh.site_plan_building_id = b.id;
-    fresh.footprint_sf = b.area_sf;
-    setBuildingProgram({
-      ...buildingProgram,
-      scenarios: [...buildingProgram.scenarios, fresh],
-      active_scenario_id: fresh.id,
-    });
-    setDirty(true);
-  };
-
-  // Small display helper: returns the SitePlanBuilding linked to the
-  // current active scenario, or null for scenarios not tied to a building.
-  const activeBuildingId = activeScenario?.site_plan_building_id ?? null;
-  const hasMultipleBuildings = sitePlanBuildings.length > 1;
-
-  // Project totals — summed across every scenario that is linked to a
-  // site-plan building. Used by the second summary strip when multi-
-  // building so the analyst can see the whole project at a glance
-  // without switching tabs. Not summed for non-linked scenarios (those
-  // are alternatives, not concurrent buildings).
-  const projectTotals = hasMultipleBuildings
-    ? buildingProgram.scenarios
-        .filter(s => s.site_plan_building_id)
-        .reduce(
-          (acc, s) => {
-            const sum = computeMassingSummary(s, zoningInputs);
-            return {
-              total_gsf: acc.total_gsf + sum.total_gsf,
-              total_nrsf: acc.total_nrsf + sum.total_nrsf,
-              total_units: acc.total_units + sum.total_units,
-              total_parking_spaces_est: acc.total_parking_spaces_est + sum.total_parking_spaces_est,
-              max_height_ft: Math.max(acc.max_height_ft, sum.total_height_ft),
-              buildings_count: acc.buildings_count + 1,
-            };
-          },
-          { total_gsf: 0, total_nrsf: 0, total_units: 0, total_parking_spaces_est: 0, max_height_ft: 0, buildings_count: 0 }
+  const activeScenario =
+    (currentMassing
+      ? buildingProgram.scenarios.find(
+          (s) =>
+            s.site_plan_scenario_id === currentMassing.id &&
+            s.site_plan_building_id === (currentBuilding?.id ?? null)
         )
+      : null) ||
+    buildingProgram.scenarios.find((s) => s.id === buildingProgram.active_scenario_id) ||
+    buildingProgram.scenarios[0];
+
+  const summary = activeScenario ? computeMassingSummary(activeScenario, zoningInputs) : null;
+
+  // ── Massing totals — sums the floor stacks of every building in the
+  // current massing. This is what the analyst sees in the GSF box at
+  // the top: the whole massing's numbers, not just the visible building.
+  const massingScenarios = currentMassing
+    ? buildingProgram.scenarios.filter((s) => s.site_plan_scenario_id === currentMassing.id)
+    : [];
+  const massingTotals = massingScenarios.length > 0
+    ? massingScenarios.reduce(
+        (acc, s) => {
+          const sm = computeMassingSummary(s, zoningInputs);
+          return {
+            total_gsf: acc.total_gsf + sm.total_gsf,
+            total_nrsf: acc.total_nrsf + sm.total_nrsf,
+            total_units: acc.total_units + sm.total_units,
+            total_parking_spaces_est: acc.total_parking_spaces_est + sm.total_parking_spaces_est,
+            max_height_ft: Math.max(acc.max_height_ft, sm.total_height_ft),
+            buildings_count: acc.buildings_count + 1,
+          };
+        },
+        { total_gsf: 0, total_nrsf: 0, total_units: 0, total_parking_spaces_est: 0, max_height_ft: 0, buildings_count: 0 }
+      )
     : null;
+
+  const totalUnits = unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0) || summary?.total_units || 0;
+  const hasMultipleBuildings = (currentMassing?.buildings.length || 0) > 1;
+  const hasMultipleMassings = sitePlanMassings.length > 1;
+
+  // Keep buildingProgram.active_scenario_id in sync with the selection
+  // so other components that still read it (legacy AffordabilityPlanner,
+  // etc) keep working.
+  useEffect(() => {
+    if (!activeScenario || activeScenario.id === buildingProgram.active_scenario_id) return;
+    setBuildingProgram((p) => ({ ...p, active_scenario_id: activeScenario.id }));
+  }, [activeScenario, buildingProgram.active_scenario_id]);
 
   // Commercial tenant totals
   const commercialGPR = commercialTenants.reduce((s, t) => s + t.sf * t.rent_per_sf, 0);
@@ -502,183 +692,159 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           <Button variant="outline" size="sm" onClick={saveAll} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
-          {activeScenario && (
-            <Button size="sm" onClick={() => pushToUW(activeScenario)} className="bg-primary hover:bg-primary/90">
-              <ArrowRight className="h-4 w-4 mr-2" /> Push {hasMultipleBuildings ? "Building" : ""} to UW
+          {currentMassing && massingScenarios.length > 0 && (
+            <Button
+              size="sm"
+              onClick={async () => {
+                if (massingScenarios.length > 1) {
+                  toast.info(`Pushing ${currentMassing.name} (${massingScenarios.length} buildings)…`);
+                }
+                for (const s of massingScenarios) {
+                  await pushToUW(s);
+                }
+                // After the buildings are pushed, snapshot the whole
+                // massing as a named UW Scenario so it shows in the
+                // Underwriting "Saved Scenarios" panel.
+                await snapshotMassingToUw(currentMassing.name);
+              }}
+              className="bg-primary hover:bg-primary/90"
+              title={`Push the ${currentMassing.name} massing (all ${massingScenarios.length} building${massingScenarios.length === 1 ? "" : "s"}) to Underwriting and save it as a UW Scenario named "${currentMassing.name}"`}
+            >
+              <ArrowRight className="h-4 w-4 mr-2" /> Push {currentMassing.name} to UW
             </Button>
           )}
-          {/* Multi-building convenience: push every scenario linked to a
-              site-plan building sequentially. Preserves per-building tags
-              on the resulting unit_groups so Underwriting's grouped view
-              shows Building 1 / Building 2 / … in one go. We iterate so
-              the pushToUW side-effects (auto-OpEx / loan sizing on empty)
-              still fire once and are idempotent on subsequent rounds. */}
-          {hasMultipleBuildings && (() => {
-            const linkedScenarios = buildingProgram.scenarios.filter(
-              s => s.site_plan_building_id
-            );
-            if (linkedScenarios.length < 2) return null;
-            return (
-              <Button
-                size="sm"
-                onClick={async () => {
-                  toast.info(`Pushing ${linkedScenarios.length} buildings…`);
-                  for (const s of linkedScenarios) {
-                    // Sequential to avoid racing underwriting read-modify-write
-                    await pushToUW(s);
-                  }
-                  toast.success(`Pushed ${linkedScenarios.length} buildings to Underwriting`);
-                }}
-                className="bg-primary/80 hover:bg-primary"
-                title="Push every building's scenario to the underwriting unit_groups in one pass"
-              >
-                <ArrowRight className="h-4 w-4 mr-2" /> Push All Buildings
-              </Button>
-            );
-          })()}
         </div>
       </div>
 
-      {/* Building tabs — only when the site plan has >1 building. Each
-          tab is a distinct massing scenario linked via
-          site_plan_building_id. Clicking a tab that has no scenario yet
-          creates one seeded with the building's footprint. */}
-      {hasMultipleBuildings && (
+      {/* Massing tabs — driven 1:1 by site_plan.scenarios. To rename,
+          add or delete a Massing the analyst goes back to Site & Zoning;
+          this page is read-only on the structure (it just edits the
+          floor stacks within each cell). */}
+      {hasMultipleMassings && (
+        <div className="flex items-center gap-1 flex-wrap border-b border-border/40 pb-2">
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
+            Massing
+          </span>
+          {sitePlanMassings.map((m) => {
+            const isActive = currentMassing?.id === m.id;
+            return (
+              <button
+                key={m.id}
+                onClick={() => {
+                  setActiveMassingId(m.id);
+                  // When switching massings, jump to its first building
+                  setActiveBuildingId(m.buildings[0]?.id || null);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                  isActive
+                    ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
+                    : "bg-muted/20 border-border/40 text-muted-foreground hover:border-border/60 hover:text-foreground"
+                }`}
+                title="Site-plan massing"
+              >
+                <Layers className="h-3 w-3" />
+                <span className="font-medium">{m.name}</span>
+                <span className="text-[10px] text-muted-foreground/80">
+                  {m.buildings.length} {m.buildings.length === 1 ? "building" : "buildings"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Building tabs (within the active Massing) — driven by
+          currentMassing.buildings. Each tab edits its own floor stack +
+          unit mix. Add/delete/rename happens on Site & Zoning. */}
+      {hasMultipleBuildings && currentMassing && (
         <div className="flex items-center gap-1 flex-wrap border-b border-border/40 pb-2">
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
             Building
           </span>
-          {sitePlanBuildings.map((b) => {
-            const linked = buildingProgram.scenarios.find(
-              s => s.site_plan_building_id === b.id
-            );
-            const isActive = activeBuildingId === b.id;
+          {currentMassing.buildings.map((b) => {
+            const isActive = currentBuilding?.id === b.id;
             return (
               <button
                 key={b.id}
-                onClick={() => selectBuilding(b.id)}
+                onClick={() => setActiveBuildingId(b.id)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border transition-colors ${
                   isActive
                     ? "bg-blue-500/15 border-blue-500/40 text-blue-200"
                     : "bg-muted/20 border-border/40 text-muted-foreground hover:border-border/60 hover:text-foreground"
                 }`}
-                title={
-                  linked
-                    ? `Massing scenario: ${linked.name}`
-                    : "No scenario yet — click to create one for this building"
-                }
               >
                 <Building2 className="h-3 w-3" />
                 <span className="font-medium">{b.label}</span>
                 <span className="text-[10px] text-muted-foreground/80">
                   {b.area_sf.toLocaleString()} SF
                 </span>
-                {!linked && (
-                  <Plus className="h-3 w-3 text-muted-foreground/60" />
-                )}
               </button>
             );
           })}
-          {/* Unlinked scenarios still get their own tab at the end so
-              the analyst can reach as-of-right / bonus alternatives if
-              they've been configured that way. */}
-          {buildingProgram.scenarios
-            .filter(s => !s.site_plan_building_id)
-            .map((s) => {
-              const isActive = activeScenario?.id === s.id;
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => {
-                    setBuildingProgram({ ...buildingProgram, active_scenario_id: s.id });
-                    setDirty(true);
-                  }}
-                  className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
-                    isActive
-                      ? "bg-muted/40 border-border/60 text-foreground"
-                      : "bg-muted/10 border-border/30 text-muted-foreground hover:text-foreground"
-                  }`}
-                  title="Scenario not linked to a site-plan building"
-                >
-                  {s.name}
-                </button>
-              );
-            })}
         </div>
       )}
 
-      {/* Summary Bar */}
-      {summary && (
+      {/* Summary Bar — when in multi-building mode, the headline numbers
+          show the WHOLE active massing (all buildings summed). The
+          per-building MassingSection below shows the single-stack
+          numbers for whichever building tab is active. */}
+      {(massingTotals || summary) && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="border rounded-lg p-3 bg-card">
-            <p className="text-[10px] text-muted-foreground uppercase">Total GSF</p>
-            <p className="text-lg font-bold tabular-nums">{fn(summary.total_gsf)}</p>
-          </div>
-          <div className="border rounded-lg p-3 bg-card">
-            <p className="text-[10px] text-muted-foreground uppercase">Total NRSF</p>
-            <p className="text-lg font-bold tabular-nums">{fn(summary.total_nrsf)}</p>
-          </div>
-          <div className="border rounded-lg p-3 bg-card">
-            <p className="text-[10px] text-muted-foreground uppercase">Res. Units</p>
-            <p className="text-lg font-bold tabular-nums">{fn(summary.total_units)}</p>
-          </div>
-          <div className="border rounded-lg p-3 bg-card">
-            <p className="text-[10px] text-muted-foreground uppercase">Parking</p>
-            <p className="text-lg font-bold tabular-nums">{fn(summary.total_parking_spaces_est)}</p>
-          </div>
-          <div className="border rounded-lg p-3 bg-card">
-            <p className="text-[10px] text-muted-foreground uppercase">Height</p>
-            <p className="text-lg font-bold tabular-nums">{summary.total_height_ft.toFixed(0)} ft</p>
-          </div>
-        </div>
-      )}
-
-      {/* Project totals — sums across every scenario linked to a site-plan
-          building. Only renders in multi-building projects, and only
-          when at least one building has a real scenario attached. Lets
-          the analyst sanity-check project-wide numbers without leaving
-          the current building tab. */}
-      {projectTotals && projectTotals.buildings_count > 0 && (
-        <div className="border border-primary/25 bg-primary/5 rounded-lg p-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] uppercase tracking-wide text-primary/80 font-medium">
-              Project Totals — {projectTotals.buildings_count} building{projectTotals.buildings_count > 1 ? "s" : ""}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase">Total GSF</p>
-              <p className="text-lg font-bold tabular-nums">{fn(projectTotals.total_gsf)}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase">Total NRSF</p>
-              <p className="text-lg font-bold tabular-nums">{fn(projectTotals.total_nrsf)}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase">Res. Units</p>
-              <p className="text-lg font-bold tabular-nums">{fn(projectTotals.total_units)}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase">Parking</p>
-              <p className="text-lg font-bold tabular-nums">{fn(projectTotals.total_parking_spaces_est)}</p>
-            </div>
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase">Max Height</p>
-              <p className="text-lg font-bold tabular-nums">{projectTotals.max_height_ft.toFixed(0)} ft</p>
-            </div>
-          </div>
+          {(() => {
+            const t = massingTotals || (summary ? {
+              total_gsf: summary.total_gsf,
+              total_nrsf: summary.total_nrsf,
+              total_units: summary.total_units,
+              total_parking_spaces_est: summary.total_parking_spaces_est,
+              max_height_ft: summary.total_height_ft,
+              buildings_count: 1,
+            } : null);
+            if (!t) return null;
+            const heightLabel = (massingTotals?.buildings_count || 1) > 1 ? "Max Height" : "Height";
+            return (
+              <>
+                <div className="border rounded-lg p-3 bg-card">
+                  <p className="text-[10px] text-muted-foreground uppercase">
+                    Total GSF{currentMassing ? ` · ${currentMassing.name}` : ""}
+                  </p>
+                  <p className="text-lg font-bold tabular-nums">{fn(t.total_gsf)}</p>
+                  {(massingTotals?.buildings_count || 0) > 1 && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {massingTotals!.buildings_count} buildings
+                    </p>
+                  )}
+                </div>
+                <div className="border rounded-lg p-3 bg-card">
+                  <p className="text-[10px] text-muted-foreground uppercase">Total NRSF</p>
+                  <p className="text-lg font-bold tabular-nums">{fn(t.total_nrsf)}</p>
+                </div>
+                <div className="border rounded-lg p-3 bg-card">
+                  <p className="text-[10px] text-muted-foreground uppercase">Res. Units</p>
+                  <p className="text-lg font-bold tabular-nums">{fn(t.total_units)}</p>
+                </div>
+                <div className="border rounded-lg p-3 bg-card">
+                  <p className="text-[10px] text-muted-foreground uppercase">Parking</p>
+                  <p className="text-lg font-bold tabular-nums">{fn(t.total_parking_spaces_est)}</p>
+                </div>
+                <div className="border rounded-lg p-3 bg-card">
+                  <p className="text-[10px] text-muted-foreground uppercase">{heightLabel}</p>
+                  <p className="text-lg font-bold tabular-nums">{Math.round(t.max_height_ft)} ft</p>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
       {/* ═══════════════════ BUILDING MASSING ═══════════════════ */}
       <Section
         title={(() => {
-          // Scope the section title to the active building when multi-
-          // building so the analyst has a clear "I am editing Building
-          // 2" anchor as they move between tabs.
+          // When multi-building, scope the section to the active building
+          // so the analyst has a clear anchor as they switch tabs.
           if (!hasMultipleBuildings) return "Building Massing";
-          const linked = sitePlanBuildings.find(b => b.id === activeBuildingId);
-          return linked ? `Building Massing — ${linked.label}` : "Building Massing";
+          return currentBuilding
+            ? `Building Massing — ${currentBuilding.label}`
+            : "Building Massing";
         })()}
         icon={<Layers className="h-4 w-4 text-blue-400" />}
       >
@@ -687,9 +853,8 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           onChange={p => { setBuildingProgram(p); setDirty(true); }}
           zoning={zoningInputs}
           densityBonuses={densityBonuses}
-          sitePlanBuildings={sitePlanBuildings}
-          onPushBaseline={pushToUW}
-          onPushScenario={pushToUW}
+          footprintReadOnly={!!currentBuilding}
+          activeBuildingLabel={currentBuilding?.label ?? null}
         />
       </Section>
 
@@ -697,12 +862,13 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       <AffordabilityPlanner
         dealId={params.id}
         totalUnits={(() => {
-          // Compute total units from active massing scenario or UW unit groups
-          const activeScenario = buildingProgram.scenarios.find(s => s.id === buildingProgram.active_scenario_id);
-          if (activeScenario) {
-            const summary = computeMassingSummary(activeScenario, zoningInputs);
-            return summary.total_units || unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
-          }
+          // Affordability is set per Massing — totalUnits is the sum of
+          // all building stacks in the active massing (so a 3-building
+          // project's affordable target is computed against the whole
+          // massing, not just the visible tab). Falls back to UW unit
+          // groups when there's no massing data yet.
+          if (massingTotals && massingTotals.total_units > 0) return massingTotals.total_units;
+          if (summary?.total_units) return summary.total_units;
           return unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0) || 100;
         })()}
         avgMarketRent={(() => {
