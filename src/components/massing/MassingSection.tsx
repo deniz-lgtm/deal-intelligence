@@ -32,11 +32,17 @@ interface Props {
   onChange: (program: BuildingProgram) => void;
   zoning: ZoningInputs;
   densityBonuses?: DensityBonusOption[];
+  // Building-footprint SF drawn on the Site & Zoning page site plan. When
+  // non-zero and it differs from the active scenario's footprint_sf, a small
+  // "from site plan" hint + sync button renders next to the Base Footprint
+  // input. Backwards compatible: when zero or absent, MassingSection
+  // behaves exactly as before (typed footprint is the only source).
+  sitePlanFootprintSf?: number;
   onPushBaseline: (scenario: MassingScenario) => void;
   onPushScenario: (scenario: MassingScenario) => void;
 }
 
-export default function MassingSection({ program, onChange, zoning, densityBonuses = [], onPushBaseline, onPushScenario }: Props) {
+export default function MassingSection({ program, onChange, zoning, densityBonuses = [], sitePlanFootprintSf = 0, onPushBaseline, onPushScenario }: Props) {
   const [quickStackOpen, setQuickStackOpen] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
@@ -230,12 +236,41 @@ export default function MassingSection({ program, onChange, zoning, densityBonus
           {/* Footprint + Density Bonus */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Base Footprint (SF)</label>
+              <label className="block text-xs font-medium text-muted-foreground mb-1 flex items-center justify-between gap-2">
+                <span>Base Footprint (SF)</span>
+                {sitePlanFootprintSf > 0 && (
+                  <span
+                    className={`text-[9px] font-semibold tracking-wide uppercase ${
+                      Math.abs(sitePlanFootprintSf - (activeScenario.footprint_sf || 0)) < 1
+                        ? "text-emerald-400"
+                        : "text-amber-400"
+                    }`}
+                    title="Source: Site Plan (drawn on Site & Zoning page)"
+                  >
+                    {Math.abs(sitePlanFootprintSf - (activeScenario.footprint_sf || 0)) < 1
+                      ? "· site plan"
+                      : "· site plan differs"}
+                  </span>
+                )}
+              </label>
               <input type="text" inputMode="decimal"
                 value={activeScenario.footprint_sf || ""}
                 onChange={e => updateScenario(activeScenario.id, s => ({ ...s, footprint_sf: parseFloat(e.target.value.replace(/,/g, "")) || 0 }))}
                 className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none tabular-nums"
                 placeholder="0" />
+              {sitePlanFootprintSf > 0 &&
+                Math.abs(sitePlanFootprintSf - (activeScenario.footprint_sf || 0)) >= 1 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateScenario(activeScenario.id, s => ({ ...s, footprint_sf: sitePlanFootprintSf }))
+                    }
+                    className="mt-1 text-[10px] text-primary hover:underline"
+                    title="Overwrite this scenario's footprint with the drawn site plan footprint"
+                  >
+                    Use site plan ({sitePlanFootprintSf.toLocaleString()} SF)
+                  </button>
+                )}
             </div>
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Parking SF / Space</label>

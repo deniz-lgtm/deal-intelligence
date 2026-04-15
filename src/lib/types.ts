@@ -2091,6 +2091,61 @@ export interface BuildingProgram {
   active_scenario_id: string;
 }
 
+// ─── Site Plan (parcel + building footprint on satellite) ────────────────────
+//
+// Stored under underwriting.data.site_plan. Used by the Site & Zoning page to
+// let analysts trace the parcel, draw the building footprint, and preview
+// setbacks on a to-scale satellite map. The resulting building_area_sf is then
+// the source of truth for the active massing scenario's footprint_sf (the
+// Programming page reads this on hydrate; the old flat-number workflow still
+// works when site_plan is empty).
+export interface SitePlanPoint {
+  lat: number;
+  lng: number;
+}
+
+export interface SitePlan {
+  // Map view saved between sessions
+  center_lat: number | null;
+  center_lng: number | null;
+  zoom: number;
+  map_style: "satellite" | "streets" | "dark" | "light";
+
+  // Parcel boundary (closed polygon, CCW recommended but not required)
+  parcel_points: SitePlanPoint[];
+  parcel_area_sf: number;
+
+  // Building footprint polygon
+  building_points: SitePlanPoint[];
+  building_area_sf: number;
+
+  // Setback visualization
+  show_setbacks: boolean;
+
+  // Snapping options
+  snap_right_angle: boolean;  // 0/45/90/135° relative to previous edge
+  snap_vertex: boolean;       // snap to nearby existing vertices
+  snap_grid_ft: number;       // grid spacing in ft; 0 = off
+
+  updated_at: string;
+}
+
+export const DEFAULT_SITE_PLAN: SitePlan = {
+  center_lat: null,
+  center_lng: null,
+  zoom: 19,
+  map_style: "satellite",
+  parcel_points: [],
+  parcel_area_sf: 0,
+  building_points: [],
+  building_area_sf: 0,
+  show_setbacks: true,
+  snap_right_angle: true,
+  snap_vertex: true,
+  snap_grid_ft: 0,
+  updated_at: "",
+};
+
 export interface MassingSummary {
   total_gsf: number;
   total_nrsf: number;
