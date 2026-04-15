@@ -44,6 +44,7 @@ export interface BonusCardEffects {
   entitlement_tasks?: Array<{
     label: string;
     duration_days?: number;
+    category?: TaskCategory;
   }>;
   applySummary?: string;
 }
@@ -76,11 +77,11 @@ export const BONUS_CATALOG: BonusCard[] = [
       affordability_tier: { ami_pct: 80, units_pct: 10 },
       applySummary: "Adds 10% @ 80% AMI tier",
       entitlement_tasks: [
-        { label: "SB 35 Eligibility Letter", duration_days: 14 },
-        { label: "Preliminary Application (SB 330 lock-in)", duration_days: 14 },
-        { label: "SB 35 Ministerial Filing", duration_days: 30 },
-        { label: "Objective Design Review", duration_days: 60 },
-        { label: "Ministerial Permit Issuance", duration_days: 90 },
+        { label: "SB 35 Eligibility Letter",                 duration_days: 14, category: "pre_submittal" },
+        { label: "Preliminary Application (SB 330 lock-in)", duration_days: 14, category: "pre_submittal" },
+        { label: "SB 35 Ministerial Filing",                 duration_days: 30, category: "pre_submittal" },
+        { label: "Objective Design Review",                  duration_days: 60, category: "review" },
+        { label: "Ministerial Permit Issuance",              duration_days: 90, category: "permit" },
       ],
     },
   },
@@ -91,10 +92,10 @@ export const BONUS_CATALOG: BonusCard[] = [
     additional_density: "By-right residential",
     effects: {
       entitlement_tasks: [
-        { label: "CCHS Eligibility Verification", duration_days: 14 },
-        { label: "CCHS Ministerial Filing", duration_days: 30 },
-        { label: "Planning Department Objective Review", duration_days: 60 },
-        { label: "Ministerial Permit Issuance", duration_days: 60 },
+        { label: "CCHS Eligibility Verification",        duration_days: 14, category: "pre_submittal" },
+        { label: "CCHS Ministerial Filing",              duration_days: 30, category: "pre_submittal" },
+        { label: "Planning Department Objective Review", duration_days: 60, category: "review" },
+        { label: "Ministerial Permit Issuance",          duration_days: 60, category: "permit" },
       ],
       applySummary: "Adds 4 CCHS entitlement tasks",
     },
@@ -184,9 +185,9 @@ export const BONUS_CATALOG: BonusCard[] = [
     additional_density: "Entitlement shield",
     effects: {
       entitlement_tasks: [
-        { label: "SB 330 Preliminary Application", duration_days: 14 },
-        { label: "Vesting Lock-In Confirmation", duration_days: 30 },
-        { label: "Discretionary Review (max 5 hearings)", duration_days: 120 },
+        { label: "SB 330 Preliminary Application",        duration_days: 14,  category: "pre_submittal" },
+        { label: "Vesting Lock-In Confirmation",          duration_days: 30,  category: "pre_submittal" },
+        { label: "Discretionary Review (max 5 hearings)", duration_days: 120, category: "approval" },
       ],
       applySummary: "Adds 3 SB 330 entitlement tasks",
     },
@@ -198,6 +199,8 @@ export function findBonusCard(source: string): BonusCard | undefined {
   return BONUS_CATALOG.find((b) => b.source === source);
 }
 
+import type { TaskCategory } from "./types";
+
 /**
  * Default entitlement tasks that apply to just about any discretionary
  * ground-up approval regardless of which programs are spotted. The
@@ -207,18 +210,21 @@ export function findBonusCard(source: string): BonusCard | undefined {
  * Durations are conservative placeholders — analysts should tailor them
  * to their jurisdiction after seeding.
  */
-export const DEFAULT_ENTITLEMENT_TASKS: Array<{
+export interface EntitlementTaskDef {
   label: string;
   duration_days: number;
-}> = [
-  { label: "Pre-Application Meeting", duration_days: 14 },
-  { label: "Community / Neighborhood Outreach", duration_days: 30 },
-  { label: "Project Application Submittal", duration_days: 30 },
-  { label: "Environmental Review (CEQA/NEPA)", duration_days: 120 },
-  { label: "Design Review Board", duration_days: 45 },
-  { label: "Planning Commission Hearing", duration_days: 30 },
-  { label: "City Council Hearing", duration_days: 30 },
-  { label: "Building Permit Issuance", duration_days: 60 },
+  category?: TaskCategory;
+}
+
+export const DEFAULT_ENTITLEMENT_TASKS: EntitlementTaskDef[] = [
+  { label: "Pre-Application Meeting",             duration_days: 14,  category: "pre_submittal" },
+  { label: "Community / Neighborhood Outreach",   duration_days: 30,  category: "pre_submittal" },
+  { label: "Project Application Submittal",       duration_days: 30,  category: "pre_submittal" },
+  { label: "Environmental Review (CEQA/NEPA)",    duration_days: 120, category: "review" },
+  { label: "Design Review Board",                 duration_days: 45,  category: "review" },
+  { label: "Planning Commission Hearing",         duration_days: 30,  category: "approval" },
+  { label: "City Council Hearing",                duration_days: 30,  category: "approval" },
+  { label: "Building Permit Issuance",            duration_days: 60,  category: "permit" },
 ];
 
 /**
@@ -236,7 +242,7 @@ export interface EntitlementScenario {
   key: string;
   label: string;
   description: string;
-  tasks: Array<{ label: string; duration_days: number }>;
+  tasks: EntitlementTaskDef[];
 }
 
 export const ENTITLEMENT_SCENARIOS: EntitlementScenario[] = [
@@ -246,10 +252,10 @@ export const ENTITLEMENT_SCENARIOS: EntitlementScenario[] = [
     description:
       "No discretionary review — administrative checks and the building permit. Project conforms to zoning; staff approves at counter.",
     tasks: [
-      { label: "Zoning Verification Letter", duration_days: 14 },
-      { label: "Building Permit Submittal", duration_days: 30 },
-      { label: "Plan Check & Corrections", duration_days: 45 },
-      { label: "Building Permit Issuance", duration_days: 30 },
+      { label: "Zoning Verification Letter",   duration_days: 14, category: "pre_submittal" },
+      { label: "Building Permit Submittal",     duration_days: 30, category: "permit" },
+      { label: "Plan Check & Corrections",      duration_days: 45, category: "review" },
+      { label: "Building Permit Issuance",      duration_days: 30, category: "permit" },
     ],
   },
   {
@@ -258,12 +264,12 @@ export const ENTITLEMENT_SCENARIOS: EntitlementScenario[] = [
     description:
       "State / local streamlining — no hearings, objective standards, fixed clock. Requires program eligibility.",
     tasks: [
-      { label: "Eligibility / Pre-Application Filing", duration_days: 14 },
-      { label: "Objective Standards Checklist", duration_days: 21 },
-      { label: "Ministerial Permit Application", duration_days: 30 },
-      { label: "Objective Design Review", duration_days: 60 },
-      { label: "Plan Check & Corrections", duration_days: 45 },
-      { label: "Building Permit Issuance", duration_days: 60 },
+      { label: "Eligibility / Pre-Application Filing", duration_days: 14, category: "pre_submittal" },
+      { label: "Objective Standards Checklist",         duration_days: 21, category: "pre_submittal" },
+      { label: "Ministerial Permit Application",        duration_days: 30, category: "pre_submittal" },
+      { label: "Objective Design Review",               duration_days: 60, category: "review" },
+      { label: "Plan Check & Corrections",              duration_days: 45, category: "review" },
+      { label: "Building Permit Issuance",              duration_days: 60, category: "permit" },
     ],
   },
   {
@@ -272,14 +278,14 @@ export const ENTITLEMENT_SCENARIOS: EntitlementScenario[] = [
     description:
       "Administrative use permit or minor modification — staff-level decision with public notice but no hearing.",
     tasks: [
-      { label: "Pre-Application Meeting", duration_days: 14 },
-      { label: "Use Permit Application", duration_days: 30 },
-      { label: "Public Notice Period", duration_days: 14 },
-      { label: "Design Review (Staff)", duration_days: 30 },
-      { label: "Administrative Decision", duration_days: 14 },
-      { label: "Appeal Window", duration_days: 14 },
-      { label: "Building Permit Submittal", duration_days: 30 },
-      { label: "Building Permit Issuance", duration_days: 45 },
+      { label: "Pre-Application Meeting",     duration_days: 14, category: "pre_submittal" },
+      { label: "Use Permit Application",      duration_days: 30, category: "pre_submittal" },
+      { label: "Public Notice Period",        duration_days: 14, category: "review" },
+      { label: "Design Review (Staff)",       duration_days: 30, category: "review" },
+      { label: "Administrative Decision",     duration_days: 14, category: "approval" },
+      { label: "Appeal Window",               duration_days: 14, category: "approval" },
+      { label: "Building Permit Submittal",   duration_days: 30, category: "permit" },
+      { label: "Building Permit Issuance",    duration_days: 45, category: "permit" },
     ],
   },
   {
@@ -295,17 +301,17 @@ export const ENTITLEMENT_SCENARIOS: EntitlementScenario[] = [
     description:
       "Requires legislative action — General Plan or zoning map change on top of the standard discretionary path. Longer timeline, higher risk.",
     tasks: [
-      { label: "Pre-Application Meeting", duration_days: 21 },
-      { label: "Community / Neighborhood Outreach", duration_days: 60 },
-      { label: "Application: Rezone + GPA + Entitlements", duration_days: 45 },
-      { label: "Environmental Review (EIR likely)", duration_days: 180 },
-      { label: "Design Review Board", duration_days: 45 },
-      { label: "Planning Commission Hearing", duration_days: 45 },
-      { label: "City Council — First Reading", duration_days: 30 },
-      { label: "City Council — Second Reading / Adoption", duration_days: 30 },
-      { label: "Ordinance Effective Date", duration_days: 30 },
-      { label: "Building Permit Submittal", duration_days: 30 },
-      { label: "Building Permit Issuance", duration_days: 60 },
+      { label: "Pre-Application Meeting",                  duration_days: 21,  category: "pre_submittal" },
+      { label: "Community / Neighborhood Outreach",        duration_days: 60,  category: "pre_submittal" },
+      { label: "Application: Rezone + GPA + Entitlements", duration_days: 45,  category: "pre_submittal" },
+      { label: "Environmental Review (EIR likely)",         duration_days: 180, category: "review" },
+      { label: "Design Review Board",                      duration_days: 45,  category: "review" },
+      { label: "Planning Commission Hearing",              duration_days: 45,  category: "approval" },
+      { label: "City Council — First Reading",             duration_days: 30,  category: "approval" },
+      { label: "City Council — Second Reading / Adoption", duration_days: 30,  category: "approval" },
+      { label: "Ordinance Effective Date",                 duration_days: 30,  category: "approval" },
+      { label: "Building Permit Submittal",                duration_days: 30,  category: "permit" },
+      { label: "Building Permit Issuance",                 duration_days: 60,  category: "permit" },
     ],
   },
   {
@@ -314,15 +320,15 @@ export const ENTITLEMENT_SCENARIOS: EntitlementScenario[] = [
     description:
       "Master plan framework (SP / PD) approved first, individual permits follow. Best for phased or campus-scale projects.",
     tasks: [
-      { label: "Pre-Application Meeting", duration_days: 21 },
-      { label: "Specific Plan Preparation", duration_days: 120 },
-      { label: "Community / Neighborhood Outreach", duration_days: 90 },
-      { label: "Environmental Review (Program EIR)", duration_days: 240 },
-      { label: "Specific Plan Adoption — Planning Commission", duration_days: 45 },
-      { label: "Specific Plan Adoption — City Council", duration_days: 45 },
-      { label: "Phase Implementation Permit", duration_days: 60 },
-      { label: "Building Permit Submittal", duration_days: 30 },
-      { label: "Building Permit Issuance", duration_days: 60 },
+      { label: "Pre-Application Meeting",                    duration_days: 21,  category: "pre_submittal" },
+      { label: "Specific Plan Preparation",                   duration_days: 120, category: "pre_submittal" },
+      { label: "Community / Neighborhood Outreach",           duration_days: 90,  category: "pre_submittal" },
+      { label: "Environmental Review (Program EIR)",          duration_days: 240, category: "review" },
+      { label: "Specific Plan Adoption — Planning Commission", duration_days: 45, category: "approval" },
+      { label: "Specific Plan Adoption — City Council",        duration_days: 45, category: "approval" },
+      { label: "Phase Implementation Permit",                 duration_days: 60,  category: "permit" },
+      { label: "Building Permit Submittal",                   duration_days: 30,  category: "permit" },
+      { label: "Building Permit Issuance",                    duration_days: 60,  category: "permit" },
     ],
   },
   {
@@ -331,17 +337,17 @@ export const ENTITLEMENT_SCENARIOS: EntitlementScenario[] = [
     description:
       "Within California's coastal zone — Coastal Development Permit layered on top of standard discretionary review. Adds significant calendar risk.",
     tasks: [
-      { label: "Pre-Application Meeting", duration_days: 14 },
-      { label: "Community / Neighborhood Outreach", duration_days: 30 },
-      { label: "Project Application Submittal", duration_days: 30 },
-      { label: "Environmental Review (CEQA)", duration_days: 120 },
-      { label: "Coastal Development Permit Application", duration_days: 30 },
-      { label: "Coastal Commission Staff Review", duration_days: 60 },
-      { label: "Coastal Commission Hearing", duration_days: 60 },
-      { label: "Design Review Board", duration_days: 45 },
-      { label: "Planning Commission Hearing", duration_days: 30 },
-      { label: "City Council Hearing", duration_days: 30 },
-      { label: "Building Permit Issuance", duration_days: 60 },
+      { label: "Pre-Application Meeting",              duration_days: 14,  category: "pre_submittal" },
+      { label: "Community / Neighborhood Outreach",    duration_days: 30,  category: "pre_submittal" },
+      { label: "Project Application Submittal",        duration_days: 30,  category: "pre_submittal" },
+      { label: "Environmental Review (CEQA)",          duration_days: 120, category: "review" },
+      { label: "Coastal Development Permit Application", duration_days: 30, category: "pre_submittal" },
+      { label: "Coastal Commission Staff Review",      duration_days: 60,  category: "review" },
+      { label: "Coastal Commission Hearing",           duration_days: 60,  category: "approval" },
+      { label: "Design Review Board",                  duration_days: 45,  category: "review" },
+      { label: "Planning Commission Hearing",          duration_days: 30,  category: "approval" },
+      { label: "City Council Hearing",                 duration_days: 30,  category: "approval" },
+      { label: "Building Permit Issuance",             duration_days: 60,  category: "permit" },
     ],
   },
   {
@@ -350,17 +356,17 @@ export const ENTITLEMENT_SCENARIOS: EntitlementScenario[] = [
     description:
       "Project affects a historic resource or district — adds Historic Review Board / SHPO review on top of standard discretionary.",
     tasks: [
-      { label: "Pre-Application Meeting", duration_days: 14 },
-      { label: "Historic Resources Assessment", duration_days: 45 },
-      { label: "Community / Neighborhood Outreach", duration_days: 30 },
-      { label: "Project Application Submittal", duration_days: 30 },
-      { label: "Environmental Review (CEQA)", duration_days: 120 },
-      { label: "Historic Review Board Hearing", duration_days: 45 },
-      { label: "SHPO Consultation (if federal nexus)", duration_days: 60 },
-      { label: "Design Review Board", duration_days: 45 },
-      { label: "Planning Commission Hearing", duration_days: 30 },
-      { label: "City Council Hearing", duration_days: 30 },
-      { label: "Building Permit Issuance", duration_days: 60 },
+      { label: "Pre-Application Meeting",             duration_days: 14,  category: "pre_submittal" },
+      { label: "Historic Resources Assessment",        duration_days: 45,  category: "pre_submittal" },
+      { label: "Community / Neighborhood Outreach",    duration_days: 30,  category: "pre_submittal" },
+      { label: "Project Application Submittal",        duration_days: 30,  category: "pre_submittal" },
+      { label: "Environmental Review (CEQA)",          duration_days: 120, category: "review" },
+      { label: "Historic Review Board Hearing",        duration_days: 45,  category: "review" },
+      { label: "SHPO Consultation (if federal nexus)", duration_days: 60,  category: "review" },
+      { label: "Design Review Board",                  duration_days: 45,  category: "review" },
+      { label: "Planning Commission Hearing",          duration_days: 30,  category: "approval" },
+      { label: "City Council Hearing",                 duration_days: 30,  category: "approval" },
+      { label: "Building Permit Issuance",             duration_days: 60,  category: "permit" },
     ],
   },
 ];

@@ -1210,6 +1210,26 @@ export interface DealContactLink extends Contact {
 
 export type DevPhaseStatus = "not_started" | "in_progress" | "complete" | "delayed";
 
+/**
+ * Entitlement task category — drives the visual chip on child rows and
+ * keeps related tasks visually grouped. Top-level phases typically
+ * leave this null (not used for them).
+ */
+export type TaskCategory =
+  | "pre_submittal"
+  | "review"
+  | "approval"
+  | "permit"
+  | "other";
+
+export const TASK_CATEGORY_CONFIG: Record<TaskCategory, { label: string; color: string; bg: string; border: string }> = {
+  pre_submittal: { label: "Pre-Submittal", color: "text-sky-300",    bg: "bg-sky-500/10",    border: "border-sky-500/30" },
+  review:        { label: "Review",        color: "text-amber-300",  bg: "bg-amber-500/10",  border: "border-amber-500/30" },
+  approval:      { label: "Approval",      color: "text-emerald-300", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
+  permit:        { label: "Permit",        color: "text-violet-300", bg: "bg-violet-500/10", border: "border-violet-500/30" },
+  other:         { label: "Other",         color: "text-zinc-300",   bg: "bg-zinc-500/10",   border: "border-zinc-500/30" },
+};
+
 export interface DevPhase {
   id: string;
   deal_id: string;
@@ -1226,6 +1246,12 @@ export interface DevPhase {
    * absent for top-level phases.
    */
   parent_phase_id: string | null;
+  /**
+   * Optional visual chip that groups related entitlement tasks (e.g.
+   * pre-submittal vs hearings vs permit). Scenario seeders assign
+   * sensible defaults.
+   */
+  task_category: TaskCategory | null;
   pct_complete: number;
   budget: number | null;
   status: DevPhaseStatus;

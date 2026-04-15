@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { v4 as uuidv4 } from "uuid";
 import {
   Plus,
   Trash2,
@@ -15,6 +16,9 @@ import {
   TrendingUp,
   Settings as SettingsIcon,
   Loader2,
+  ArrowUp,
+  ArrowDown,
+  BookmarkPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,12 +37,16 @@ import {
   PREDEV_CATEGORIES,
   DEFAULT_PREDEV_THRESHOLDS,
 } from "@/lib/types";
+import {
+  TASK_CATEGORY_CONFIG,
+} from "@/lib/types";
 import type {
   DevPhase,
   DevPhaseStatus,
   PreDevCost,
   PreDevCostStatus,
   PreDevSettings,
+  TaskCategory,
 } from "@/lib/types";
 import {
   ENTITLEMENT_SCENARIOS,
@@ -46,6 +54,42 @@ import {
   findBonusCard,
 } from "@/lib/bonus-catalog";
 import { toast } from "sonner";
+
+/**
+ * Per-browser custom entitlement templates (localStorage). A template is
+ * just a named task list the analyst builds once and replays on future
+ * deals. Kept lean intentionally — if/when there's demand for cross-
+ * machine sync we can migrate to a DB table with the same shape.
+ */
+interface EntitlementTemplate {
+  id: string;
+  name: string;
+  tasks: Array<{ label: string; duration_days: number; category?: TaskCategory }>;
+  created_at: string;
+}
+
+const ENTITLEMENT_TEMPLATES_KEY = "entitlement_templates_v1";
+
+function loadTemplates(): EntitlementTemplate[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(ENTITLEMENT_TEMPLATES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTemplates(list: EntitlementTemplate[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(ENTITLEMENT_TEMPLATES_KEY, JSON.stringify(list));
+  } catch {
+    /* quota / disabled storage — swallow */
+  }
+}
 
 interface Props {
   dealId: string;
@@ -83,8 +127,18 @@ export default function DevelopmentSchedule({ dealId }: Props) {
     // its parent phase (e.g. "Neighborhood Meeting" under "Entitlements
     // & Permits"). Empty string = top-level phase.
     parent_phase_id: "",
+    // Entitlement task category chip. Empty string = no category.
+    task_category: "" as TaskCategory | "",
   });
   const [seedingEntitlements, setSeedingEntitlements] = useState(false);
+  // User's custom entitlement templates (stored in localStorage so they
+  // follow the user across deals on this browser).
+  const [templates, setTemplates] = useState<EntitlementTemplate[]>([]);
+  useEffect(() => {
+    setTemplates(loadTemplates());
+  }, []);
+  // Pair-swap reordering guards the child row up/down arrows.
+  const [reorderingIds, setReorderingIds] = useState<Set<string>>(new Set());
 
   // Cost dialog
   const [costDialogOpen, setCostDialogOpen] = useState(false);
@@ -152,7 +206,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
 
   // ── Phase CRUD ──
   const resetPhaseForm = () => {
-    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "", parent_phase_id: "" });
+    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "", parent_phase_id: "", task_category: "" });
   };
 
   const openCreatePhase = () => {
@@ -179,6 +233,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       status: "not_started",
       notes: "",
       parent_phase_id: parentPhaseId,
+      task_category: "pre_submittal",
     });
     setPhaseDialogOpen(true);
   };
@@ -195,6 +250,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       status: p.status,
       notes: p.notes || "",
       parent_phase_id: p.parent_phase_id || "",
+      task_category: p.task_category ?? "",
     });
     setPhaseDialogOpen(true);
   };
@@ -209,6 +265,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       predecessor_id: phaseForm.predecessor_id || null,
       lag_days: phaseForm.lag_days,
       parent_phase_id: phaseForm.parent_phase_id || null,
+      task_category: phaseForm.task_category || null,
       start_date: hasPredecessor ? null : (phaseForm.start_date || null),
       pct_complete: phaseForm.pct_complete,
       status: phaseForm.status,
@@ -263,43 +320,72 @@ export default function DevelopmentSchedule({ dealId }: Props) {
    * already present as a child of the entitlements parent. Re-click
    * after spotting another bonus, no duplicates.
    *
-   * @param scenarioKey — key from ENTITLEMENT_SCENARIOS; falls back to
-   *   major_discretionary if an unknown key is passed.
+   * @param source — either `{ kind: "scenario", scenarioKey }` to seed a
+   *   built-in approval pathway (bonus filings layered on top), or
+   *   `{ kind: "template", template }` to apply a user-saved template
+   *   as-is. Templates skip the bonus-merge step so they apply
+   *   predictably every time.
    */
   const handleSeedEntitlementTasks = async (
     entitlementPhaseId: string,
-    scenarioKey: string
+    source:
+      | { kind: "scenario"; scenarioKey: string }
+      | { kind: "template"; template: EntitlementTemplate }
   ) => {
-    const scenario = findEntitlementScenario(scenarioKey);
-    if (!scenario) {
-      toast.error("Unknown scenario");
-      return;
+    let scenarioLabel: string;
+    let baseTasks: Array<{ label: string; duration_days: number; category?: TaskCategory }>;
+    if (source.kind === "scenario") {
+      const scenario = findEntitlementScenario(source.scenarioKey);
+      if (!scenario) {
+        toast.error("Unknown scenario");
+        return;
+      }
+      scenarioLabel = scenario.label;
+      baseTasks = scenario.tasks.map((t) => ({
+        label: t.label,
+        duration_days: t.duration_days,
+        category: t.category,
+      }));
+    } else {
+      scenarioLabel = source.template.name;
+      baseTasks = source.template.tasks.map((t) => ({
+        label: t.label,
+        duration_days: t.duration_days,
+        category: t.category,
+      }));
     }
     setSeedingEntitlements(true);
     try {
-      // Pull the deal's currently-spotted bonuses from underwriting so we
-      // can merge each card's entitlement_tasks on top of the scenario.
+      // Scenario seeds layer in program-specific filings from any
+      // spotted bonus cards; templates are user-defined and apply as-is.
       let spottedSources: string[] = [];
-      try {
-        const uwRes = await fetch(`/api/underwriting?deal_id=${dealId}`);
-        const uwJson = await uwRes.json();
-        const raw = uwJson.data?.data;
-        const parsed = raw == null ? null : typeof raw === "string" ? JSON.parse(raw) : raw;
-        spottedSources = (parsed?.zoning_info?.density_bonuses || [])
-          .map((b: { source?: string }) => b?.source)
-          .filter((s: unknown): s is string => typeof s === "string" && s.length > 0);
-      } catch {
-        /* Deal may have no underwriting yet — fall through to scenario only */
+      if (source.kind === "scenario") {
+        try {
+          const uwRes = await fetch(`/api/underwriting?deal_id=${dealId}`);
+          const uwJson = await uwRes.json();
+          const raw = uwJson.data?.data;
+          const parsed = raw == null ? null : typeof raw === "string" ? JSON.parse(raw) : raw;
+          spottedSources = (parsed?.zoning_info?.density_bonuses || [])
+            .map((b: { source?: string }) => b?.source)
+            .filter((s: unknown): s is string => typeof s === "string" && s.length > 0);
+        } catch {
+          /* Deal may have no underwriting yet — fall through to scenario only */
+        }
       }
 
-      // Build the task list: scenario tasks first, then bonus-specific.
-      const toCreate: Array<{ label: string; duration_days: number }> = [
-        ...scenario.tasks,
+      // Build the task list: scenario/template tasks first, then
+      // bonus-specific filings (scenarios only).
+      const toCreate: Array<{ label: string; duration_days: number; category?: TaskCategory }> = [
+        ...baseTasks,
       ];
-      for (const source of spottedSources) {
-        const card = findBonusCard(source);
+      for (const src of spottedSources) {
+        const card = findBonusCard(src);
         for (const t of card?.effects?.entitlement_tasks ?? []) {
-          toCreate.push({ label: t.label, duration_days: t.duration_days ?? 30 });
+          toCreate.push({
+            label: t.label,
+            duration_days: t.duration_days ?? 30,
+            category: t.category,
+          });
         }
       }
 
@@ -339,13 +425,14 @@ export default function DevelopmentSchedule({ dealId }: Props) {
             label: t.label,
             duration_days: t.duration_days,
             parent_phase_id: entitlementPhaseId,
+            task_category: t.category ?? null,
             sort_order: baseSort + i + 1,
           }),
         });
         if (res.ok) created++;
       }
       toast.success(
-        `Seeded ${created} task${created === 1 ? "" : "s"} for "${scenario.label}"${
+        `Seeded ${created} task${created === 1 ? "" : "s"} for "${scenarioLabel}"${
           spottedSources.length > 0 ? ` (+ ${spottedSources.length} bonus program${spottedSources.length === 1 ? "" : "s"})` : ""
         }`
       );
@@ -387,6 +474,95 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       toast.error("Failed to clear tasks");
     } finally {
       setSeedingEntitlements(false);
+    }
+  };
+
+  /**
+   * Save the entitlements parent's current children as a reusable
+   * template. Persisted to localStorage so the analyst can re-apply
+   * the same task list on future deals without rebuilding it.
+   */
+  const handleSaveAsTemplate = (entitlementPhaseId: string) => {
+    const children = phases.filter((p) => p.parent_phase_id === entitlementPhaseId);
+    if (children.length === 0) {
+      toast.error("Nothing to save — add tasks first");
+      return;
+    }
+    const name = window.prompt(
+      "Name this template (so you can find it later):",
+      `My Entitlement Path ${templates.length + 1}`
+    );
+    if (!name || !name.trim()) return;
+    const tpl: EntitlementTemplate = {
+      id: uuidv4(),
+      name: name.trim(),
+      tasks: children
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map((p) => ({
+          label: p.label,
+          duration_days: p.duration_days ?? 30,
+          category: p.task_category ?? undefined,
+        })),
+      created_at: new Date().toISOString(),
+    };
+    const next = [...templates, tpl];
+    setTemplates(next);
+    saveTemplates(next);
+    toast.success(`Saved "${tpl.name}" — re-apply from the Seed dropdown`);
+  };
+
+  const handleDeleteTemplate = (templateId: string) => {
+    const tpl = templates.find((t) => t.id === templateId);
+    if (!tpl) return;
+    if (!window.confirm(`Delete template "${tpl.name}"?`)) return;
+    const next = templates.filter((t) => t.id !== templateId);
+    setTemplates(next);
+    saveTemplates(next);
+    toast.success(`Deleted template "${tpl.name}"`);
+  };
+
+  /**
+   * Swap a child task's sort_order with its immediate sibling in the
+   * given direction. Siblings = other children of the same parent,
+   * ordered by their stored sort_order. PATCHes both rows.
+   */
+  const handleReorderChild = async (phase: DevPhase, direction: "up" | "down") => {
+    if (!phase.parent_phase_id) return;
+    const siblings = phases
+      .filter((p) => p.parent_phase_id === phase.parent_phase_id)
+      .sort((a, b) => a.sort_order - b.sort_order);
+    const idx = siblings.findIndex((p) => p.id === phase.id);
+    if (idx < 0) return;
+    const swapWith =
+      direction === "up" ? siblings[idx - 1] : siblings[idx + 1];
+    if (!swapWith) return; // already at edge
+    setReorderingIds((s) => {
+      const next = new Set(s);
+      next.add(phase.id);
+      next.add(swapWith.id);
+      return next;
+    });
+    try {
+      // Swap sort_order values. The API ignores unsupported fields, and
+      // both rows survive a PATCH in parallel.
+      await Promise.all([
+        fetch(`/api/deals/${dealId}/dev-schedule/${phase.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sort_order: swapWith.sort_order }),
+        }),
+        fetch(`/api/deals/${dealId}/dev-schedule/${swapWith.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sort_order: phase.sort_order }),
+        }),
+      ]);
+      loadAll();
+    } catch (err) {
+      console.error("Failed to reorder:", err);
+      toast.error("Failed to reorder");
+    } finally {
+      setReorderingIds(new Set());
     }
   };
 
@@ -664,7 +840,12 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                       childrenByParent.set(p.parent_phase_id, list);
                     }
 
-                    const renderRow = (p: DevPhase, isChild: boolean) => {
+                    const renderRow = (
+                      p: DevPhase,
+                      isChild: boolean,
+                      childIdx = 0,
+                      childCount = 0
+                    ) => {
                       const cfg = DEV_PHASE_STATUS_CONFIG[p.status];
                       const barStyle = getBarStyle(p.start_date, p.end_date);
                       const predLabel = p.predecessor_id
@@ -672,10 +853,14 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                         : null;
                       const isCritical = criticalPhaseIds.has(p.id);
                       const delayed = isDelayed(p);
+                      const catCfg = p.task_category
+                        ? TASK_CATEGORY_CONFIG[p.task_category]
+                        : null;
+                      const isReordering = reorderingIds.has(p.id);
                       return (
                         <div key={p.id} className="group">
                           <div className="grid grid-cols-12 gap-2 items-center">
-                            {/* Label */}
+                            {/* Label + category chip (child rows only) */}
                             <button
                               onClick={() => openEditPhase(p)}
                               className={cn(
@@ -690,6 +875,19 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                               )}
                               {!isChild && !isCritical && !p.predecessor_id && (
                                 <span className="text-2xs text-amber-400" title="Anchor phase">⚓</span>
+                              )}
+                              {isChild && catCfg && (
+                                <span
+                                  className={cn(
+                                    "text-[9px] uppercase tracking-wide px-1 rounded border flex-shrink-0",
+                                    catCfg.color,
+                                    catCfg.bg,
+                                    catCfg.border
+                                  )}
+                                  title={catCfg.label}
+                                >
+                                  {catCfg.label}
+                                </span>
                               )}
                               <span className="truncate">{p.label}</span>
                               {p.duration_days && (
@@ -723,8 +921,36 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                 )}
                               </div>
                             </div>
-                            {/* Status + actions */}
+                            {/* Status + actions. Child rows get up/down
+                                arrows for manual reordering within the
+                                parent's task list. */}
                             <div className="col-span-2 flex items-center justify-end gap-1">
+                              {isChild && (
+                                <>
+                                  <button
+                                    onClick={() => handleReorderChild(p, "up")}
+                                    disabled={childIdx === 0 || isReordering}
+                                    className={cn(
+                                      "text-muted-foreground/50 hover:text-foreground transition-colors",
+                                      (childIdx === 0 || isReordering) && "opacity-30 cursor-not-allowed"
+                                    )}
+                                    title="Move up"
+                                  >
+                                    <ArrowUp className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleReorderChild(p, "down")}
+                                    disabled={childIdx >= childCount - 1 || isReordering}
+                                    className={cn(
+                                      "text-muted-foreground/50 hover:text-foreground transition-colors",
+                                      (childIdx >= childCount - 1 || isReordering) && "opacity-30 cursor-not-allowed"
+                                    )}
+                                    title="Move down"
+                                  >
+                                    <ArrowDown className="h-3 w-3" />
+                                  </button>
+                                </>
+                              )}
                               <Badge variant="secondary" className={cn("text-2xs", delayed ? "text-red-400 bg-red-500/10" : cfg.color)}>
                                 {p.pct_complete}%
                               </Badge>
@@ -743,12 +969,19 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                     return rootPhases.map((p) => {
                       const children = childrenByParent.get(p.id) || [];
                       const isEntitlement = p.phase_key === "entitlements";
+                      // Children are stored by sort_order so up/down
+                      // arrows can do stable pair-swaps.
+                      const sortedChildren = [...children].sort(
+                        (a, b) => a.sort_order - b.sort_order
+                      );
                       return (
                         <div key={p.id} className="space-y-1">
                           {renderRow(p, false)}
-                          {children.length > 0 && (
+                          {sortedChildren.length > 0 && (
                             <div className="space-y-1">
-                              {children.map((c) => renderRow(c, true))}
+                              {sortedChildren.map((c, i) =>
+                                renderRow(c, true, i, sortedChildren.length)
+                              )}
                             </div>
                           )}
                           {/* Entitlement-phase toolbar — pick a scenario
@@ -773,25 +1006,72 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                   value=""
                                   disabled={seedingEntitlements}
                                   onChange={(e) => {
-                                    const key = e.target.value;
-                                    if (!key) return;
-                                    handleSeedEntitlementTasks(p.id, key);
+                                    const raw = e.target.value;
                                     e.target.value = "";
+                                    if (!raw) return;
+                                    // The <select> flags scenarios vs
+                                    // templates via a small `scenario:` /
+                                    // `template:` prefix so both can live
+                                    // in the same picker.
+                                    if (raw.startsWith("scenario:")) {
+                                      handleSeedEntitlementTasks(p.id, {
+                                        kind: "scenario",
+                                        scenarioKey: raw.slice("scenario:".length),
+                                      });
+                                    } else if (raw.startsWith("template:")) {
+                                      const tplId = raw.slice("template:".length);
+                                      const tpl = templates.find((t) => t.id === tplId);
+                                      if (tpl) {
+                                        handleSeedEntitlementTasks(p.id, {
+                                          kind: "template",
+                                          template: tpl,
+                                        });
+                                      }
+                                    }
                                   }}
-                                  title="Seed a typical task list for the chosen approval pathway. Spotted bonus cards add their specific filings on top."
+                                  title="Seed a typical task list. Scenarios include spotted bonus filings on top; templates apply as-is."
                                   className="h-6 text-2xs bg-background border border-border/40 rounded px-1.5 outline-none hover:border-primary/40"
                                 >
-                                  <option value="">Seed scenario…</option>
-                                  {ENTITLEMENT_SCENARIOS.map((s) => (
-                                    <option key={s.key} value={s.key}>
-                                      {s.label}
-                                    </option>
-                                  ))}
+                                  <option value="">Seed scenario / template…</option>
+                                  <optgroup label="Approval Pathways">
+                                    {ENTITLEMENT_SCENARIOS.map((s) => (
+                                      <option
+                                        key={s.key}
+                                        value={`scenario:${s.key}`}
+                                      >
+                                        {s.label}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                  {templates.length > 0 && (
+                                    <optgroup label="Your Saved Templates">
+                                      {templates.map((t) => (
+                                        <option
+                                          key={t.id}
+                                          value={`template:${t.id}`}
+                                        >
+                                          {t.name} ({t.tasks.length})
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  )}
                                 </select>
                                 {seedingEntitlements && (
                                   <Loader2 className="h-2.5 w-2.5 animate-spin text-muted-foreground" />
                                 )}
                               </div>
+                              {children.length > 0 && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 text-2xs"
+                                  onClick={() => handleSaveAsTemplate(p.id)}
+                                  disabled={seedingEntitlements}
+                                  title="Save the current task list as a reusable template (stored on this browser). Apply it on any future deal from the Seed dropdown."
+                                >
+                                  <BookmarkPlus className="h-2.5 w-2.5 mr-1" /> Save as template
+                                </Button>
+                              )}
                               {children.length > 0 && (
                                 <Button
                                   size="sm"
@@ -806,8 +1086,36 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                               )}
                               {children.length === 0 && (
                                 <span className="text-2xs text-muted-foreground/70 ml-1 self-center">
-                                  Pick a scenario to seed, or add a task manually.
+                                  Pick a scenario or saved template to seed, or add a task manually.
                                 </span>
+                              )}
+                              {/* Template manager strip — one chip per saved
+                                  template with a small × to delete. Kept
+                                  minimal; same information as the dropdown
+                                  but lets the user prune the list. */}
+                              {templates.length > 0 && (
+                                <div className="w-full flex items-center gap-1 flex-wrap pt-1">
+                                  <span className="text-[9px] uppercase tracking-wide text-muted-foreground/70 mr-1">
+                                    Templates
+                                  </span>
+                                  {templates.map((t) => (
+                                    <span
+                                      key={t.id}
+                                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border border-border/40 bg-muted/20"
+                                      title={`${t.tasks.length} task${t.tasks.length === 1 ? "" : "s"} — saved ${new Date(t.created_at).toLocaleDateString()}`}
+                                    >
+                                      <span>{t.name}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteTemplate(t.id)}
+                                        className="text-muted-foreground/50 hover:text-red-400 transition-colors"
+                                        title="Delete template"
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
                               )}
                             </div>
                           )}
@@ -1078,6 +1386,28 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                 </select>
               </div>
             </div>
+            {/* Child tasks: which category chip this task carries
+                (pre-submittal / review / approval / permit / other). */}
+            {phaseForm.parent_phase_id && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Task Category</label>
+                <select
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  value={phaseForm.task_category || ""}
+                  onChange={(e) =>
+                    setPhaseForm({
+                      ...phaseForm,
+                      task_category: e.target.value as TaskCategory | "",
+                    })
+                  }
+                >
+                  <option value="">— None —</option>
+                  {Object.entries(TASK_CATEGORY_CONFIG).map(([k, cfg]) => (
+                    <option key={k} value={k}>{cfg.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
               <textarea

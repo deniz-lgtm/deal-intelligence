@@ -194,6 +194,10 @@ export async function ensureColumns(): Promise<void> {
     // task (neighborhood meeting, DRB hearing, planning commission, etc.)
     // rendered under its parent phase in the schedule.
     "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS parent_phase_id TEXT",
+    // Entitlement task category chip (pre_submittal | review | approval |
+    // permit | other). Purely visual — seed scenarios assign sensible
+    // defaults; nothing breaks if it's null.
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS task_category TEXT",
     // Communication tracking: stakeholder correspondence log
     `CREATE TABLE IF NOT EXISTS deal_communications (
       id TEXT PRIMARY KEY,
@@ -3726,8 +3730,8 @@ export const devPhaseQueries = {
   create: async (phase: Record<string, unknown>) => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
        RETURNING *`,
       [
         phase.id,
@@ -3740,6 +3744,7 @@ export const devPhaseQueries = {
         phase.predecessor_id ?? null,
         phase.lag_days ?? 0,
         phase.parent_phase_id ?? null,
+        phase.task_category ?? null,
         phase.pct_complete ?? 0,
         phase.budget ?? null,
         phase.status ?? "not_started",
@@ -3757,7 +3762,7 @@ export const devPhaseQueries = {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "pct_complete", "budget", "status", "notes", "sort_order"].includes(key)) {
+      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "pct_complete", "budget", "status", "notes", "sort_order"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
         idx++;
