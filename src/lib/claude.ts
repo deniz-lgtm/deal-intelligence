@@ -1038,6 +1038,272 @@ Always reply with a helpful text response in addition to any tool use.`,
   return { response: responseText, actions };
 }
 
+// ─── Universal Chatbot ───────────────────────────────────────────────────────
+//
+// chatUniversal powers the floating chatbot that lives on every page of the
+// app. It differs from chatWithDealIntelligence in three ways:
+//
+//   1. Deal is OPTIONAL. On workspace pages (inbox, comps library, etc.) the
+//      user might ask questions that don't relate to any one deal.
+//   2. Page context is injected into the system prompt — the user's current
+//      screen (underwriting, documents, etc.) is passed through as plain
+//      text so Claude can answer "what am I looking at?" and take page-aware
+//      actions.
+//   3. The UW co-pilot is folded in as a tool. When the user asks to stress-
+//      test the model, explore a what-if, or check benchmarks, Claude can
+//      return structured action blocks that the widget renders inline.
+
+export interface UniversalChatAction {
+  type:
+    | "context_saved"
+    | "deal_updated"
+    | "underwriting_updated"
+    | "note_created";
+  note?: string;
+  fields?: Record<string, unknown>;
+  category?: string;
+  display: string;
+}
+
+const UNIVERSAL_CHAT_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "save_context",
+    description:
+      "Save deal context, intel, or notes to persistent memory for a deal. Use whenever the user shares factual information about a specific deal — seller motivation, broker intel, physical issues, market conditions, negotiation context. Requires an active deal context.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        note: {
+          type: "string",
+          description:
+            "The context to save. Write as clear, complete sentences. Include who said it and why it matters.",
+        },
+        category: {
+          type: "string",
+          enum: ["context", "thesis", "risk", "review", "site_walk"],
+          description:
+            "Which memory bucket the note belongs in. Default 'context' for broker/seller intel, 'thesis' for investment rationale, 'risk' for red flags, 'review' for team discussion, 'site_walk' for property observations.",
+        },
+      },
+      required: ["note"],
+    },
+  },
+  {
+    name: "update_underwriting",
+    description:
+      "Update underwriting assumptions when the user provides specific numbers (purchase price, rent, vacancy, exit cap, hold period, financing, etc.). Requires an active deal. On the UW page the widget will also offer to apply the patch to the live model.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        fields: {
+          type: "object",
+          description: "Underwriting model fields to update",
+          properties: {
+            purchase_price: { type: "number", description: "Purchase price in dollars" },
+            vacancy_rate: { type: "number", description: "Vacancy as a whole number (5 = 5%)" },
+            management_fee_pct: { type: "number", description: "Management fee as whole number %" },
+            taxes_annual: { type: "number", description: "Annual property taxes in dollars" },
+            insurance_annual: { type: "number", description: "Annual insurance in dollars" },
+            repairs_annual: { type: "number", description: "Annual repairs/maintenance in dollars" },
+            utilities_annual: { type: "number", description: "Annual utilities in dollars" },
+            other_expenses_annual: { type: "number", description: "Other annual expenses in dollars" },
+            exit_cap_rate: { type: "number", description: "Exit cap rate as whole number (7.5 = 7.5%)" },
+            hold_period_years: { type: "number", description: "Hold period in years" },
+            acq_ltc: { type: "number", description: "Acquisition loan-to-cost as whole number %" },
+            acq_interest_rate: { type: "number", description: "Acquisition interest rate as whole number %" },
+            acq_amort_years: { type: "number", description: "Acquisition amortization in years" },
+            closing_costs_pct: { type: "number", description: "Closing costs as whole number %" },
+          },
+        },
+      },
+      required: ["fields"],
+    },
+  },
+  {
+    name: "update_deal_fields",
+    description:
+      "Update structured fields on the current deal (price, SF, units, status, etc.). Requires an active deal.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        updates: {
+          type: "object",
+          description: "Key-value pairs of fields to update",
+          properties: {
+            name: { type: "string" },
+            asking_price: { type: "number", description: "Price in dollars" },
+            square_footage: { type: "number" },
+            units: { type: "integer" },
+            year_built: { type: "integer" },
+            address: { type: "string" },
+            city: { type: "string" },
+            state: { type: "string", description: "2-letter state code" },
+            zip: { type: "string" },
+            property_type: {
+              type: "string",
+              enum: ["industrial", "office", "retail", "multifamily", "student_housing", "mixed_use", "land", "hospitality", "other"],
+            },
+            status: {
+              type: "string",
+              enum: ["sourcing", "screening", "loi", "under_contract", "diligence", "closing", "closed", "dead"],
+            },
+          },
+        },
+      },
+      required: ["updates"],
+    },
+  },
+];
+
+export interface UniversalChatContext {
+  // Current deal the user is looking at (if any). Used to scope save_context,
+  // update_deal_fields, update_underwriting and to enrich the prompt.
+  deal?: {
+    id: string;
+    name: string;
+    context_notes?: string | null;
+    property_type?: string | null;
+    status?: string | null;
+    city?: string | null;
+    state?: string | null;
+  } | null;
+  // Free-text snapshot of what's on screen. Pages call useSetPageContext
+  // to publish this. Examples:
+  //   "Page: Underwriting. Purchase price $12.5M. Vacancy 6%. Exit cap 6.5%."
+  //   "Page: Documents. 14 docs uploaded, 3 categorized as leases."
+  screen?: string | null;
+  // Which page the user is on. Helps the model craft relevant suggestions.
+  route?: string | null;
+}
+
+export async function chatUniversal(
+  ctx: UniversalChatContext,
+  documents: Array<{ name: string; category: string; content_text: string | null; ai_summary: string | null }>,
+  history: ChatMessage[],
+  userMessage: string
+): Promise<{ response: string; actions: UniversalChatAction[] }> {
+  const docContext = documents
+    .filter((d) => d.content_text || d.ai_summary)
+    .slice(0, 20)
+    .map(
+      (d) =>
+        `### ${d.name} (${d.category})\n${d.ai_summary || ""}\n${
+          d.content_text ? d.content_text.slice(0, 1500) : ""
+        }`
+    )
+    .join("\n\n---\n\n");
+
+  const dealBlock = ctx.deal
+    ? `## Active Deal
+Name: ${ctx.deal.name}
+${ctx.deal.property_type ? `Type: ${ctx.deal.property_type}` : ""}
+${ctx.deal.status ? `Status: ${ctx.deal.status}` : ""}
+${ctx.deal.city || ctx.deal.state ? `Location: ${[ctx.deal.city, ctx.deal.state].filter(Boolean).join(", ")}` : ""}
+
+## Deal Memory
+${ctx.deal.context_notes?.trim() || "No context saved yet."}`
+    : `## Active Deal
+None — the user is on a workspace-level page. save_context, update_deal_fields, and update_underwriting tools are NOT available. Answer questions, help navigate, and give general underwriting guidance.`;
+
+  const screenBlock = ctx.screen?.trim()
+    ? `## Current Screen
+${ctx.screen.trim()}`
+    : "";
+
+  const promptTemplate = await getPrompt(
+    "universal_chat",
+    "Universal Chatbot",
+    `You are the floating assistant for Deal Intelligence — a CRE deal analyst's co-pilot that lives on every page.
+
+{{deal_block}}
+
+{{screen_block}}
+
+## Uploaded Documents
+{{doc_context}}
+
+## Your capabilities
+1. Answer questions about the deal, the current screen, or CRE underwriting generally.
+2. Take notes — when the user says "note that..." or shares intel, save it with save_context.
+3. Update the deal record (price, status, etc.) when the user provides structured facts.
+4. Update underwriting assumptions (vacancy, exit cap, rents, financing, etc.).
+5. Be page-aware — if the user says "the exit cap is too aggressive" and they're on the Underwriting page, patch that field. If they say "move this to LOI" from the deals list, update the status.
+
+Guidance:
+- Always accompany a tool use with a short text confirmation so the user sees what you did.
+- Keep responses concise — this is a sidebar, not a full page.
+- If the user asks you to "stress-test" / "challenge" / "review" the underwriting model, point them to the UW Co-Pilot tab of this widget (Review / What-If / Benchmarks) rather than trying to do that analysis in chat.
+- Never fabricate financial facts. If you don't have enough data in the memory or documents to answer, say so and ask the user for the missing piece.`,
+    "System prompt for the universal (cross-page) chatbot. Supports {{deal_block}}, {{screen_block}}, {{doc_context}}."
+  );
+
+  const systemPrompt = promptTemplate
+    .replace(/\{\{deal_block\}\}/g, dealBlock)
+    .replace(/\{\{screen_block\}\}/g, screenBlock)
+    .replace(/\{\{doc_context\}\}/g, docContext || "No documents uploaded yet.");
+
+  // Filter out deal-scoped tools when no deal is active. Keeps the model
+  // from hallucinating save_context calls with no place to save them.
+  const tools = ctx.deal
+    ? UNIVERSAL_CHAT_TOOLS
+    : UNIVERSAL_CHAT_TOOLS.filter((t) => t.name !== "save_context" && t.name !== "update_deal_fields" && t.name !== "update_underwriting");
+
+  const messages: Anthropic.MessageParam[] = [
+    ...history.slice(-10).map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+    { role: "user", content: userMessage },
+  ];
+
+  const response = await getClient().messages.create({
+    model: await getActiveModel(),
+    max_tokens: 2048,
+    system: systemPrompt,
+    tools,
+    messages,
+  });
+
+  let responseText = response.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b as Anthropic.TextBlock).text)
+    .join("\n")
+    .trim();
+
+  if (!responseText) responseText = "Done.";
+
+  const actions: UniversalChatAction[] = [];
+  const toolUses = response.content.filter((b) => b.type === "tool_use") as Anthropic.ToolUseBlock[];
+
+  for (const tool of toolUses) {
+    if (tool.name === "save_context" && ctx.deal) {
+      const input = tool.input as { note: string; category?: string };
+      const category = input.category || "context";
+      actions.push({
+        type: "context_saved",
+        note: input.note,
+        category,
+        display: `Saved to ${category}: "${input.note.slice(0, 80)}${input.note.length > 80 ? "…" : ""}"`,
+      });
+    } else if (tool.name === "update_deal_fields" && ctx.deal) {
+      const input = tool.input as { updates: Record<string, unknown> };
+      const fieldNames = Object.keys(input.updates).join(", ");
+      actions.push({
+        type: "deal_updated",
+        fields: input.updates,
+        display: `Updated deal: ${fieldNames}`,
+      });
+    } else if (tool.name === "update_underwriting" && ctx.deal) {
+      const input = tool.input as { fields: Record<string, unknown> };
+      const fieldNames = Object.keys(input.fields).join(", ");
+      actions.push({
+        type: "underwriting_updated",
+        fields: input.fields,
+        display: `Updated underwriting: ${fieldNames}`,
+      });
+    }
+  }
+
+  return { response: responseText, actions };
+}
+
 // ─── Checklist Auto-fill ─────────────────────────────────────────────────────
 
 export interface ChecklistFillResult {

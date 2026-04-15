@@ -99,8 +99,15 @@ export async function ensureColumns(): Promise<void> {
     "CREATE INDEX IF NOT EXISTS idx_documents_parent ON documents(parent_document_id) WHERE parent_document_id IS NOT NULL",
     // photos table
     "ALTER TABLE photos ADD COLUMN IF NOT EXISTS is_cover BOOLEAN NOT NULL DEFAULT false",
-    // chat_messages table
+    // chat_messages table — expanded to support a universal (cross-page)
+    // chatbot. deal_id becomes optional (workspace-level conversations have
+    // no deal), user_id scopes conversations per user, and page_context
+    // snapshots what the user was looking at when they sent the message.
     "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata JSONB",
+    "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS user_id TEXT",
+    "ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS page_context JSONB",
+    "ALTER TABLE chat_messages ALTER COLUMN deal_id DROP NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_chat_user_id ON chat_messages(user_id) WHERE user_id IS NOT NULL",
     // business_plans table
     "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS investment_theses JSONB NOT NULL DEFAULT '[]'",
     "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS target_markets JSONB NOT NULL DEFAULT '[]'",
@@ -2707,17 +2714,58 @@ export const chatQueries = {
     return res.rows;
   },
 
+  // Universal-chat thread: all messages for a given user, optionally
+  // filtered to a single deal. Used by the floating chatbot that lives
+  // on every page.
+  getForUser: async (userId: string, dealId: string | null, limit = 50) => {
+    const pool = getPool();
+    const res = dealId
+      ? await pool.query(
+          "SELECT * FROM chat_messages WHERE user_id = $1 AND deal_id = $2 ORDER BY created_at ASC LIMIT $3",
+          [userId, dealId, limit]
+        )
+      : await pool.query(
+          "SELECT * FROM chat_messages WHERE user_id = $1 AND deal_id IS NULL ORDER BY created_at ASC LIMIT $2",
+          [userId, limit]
+        );
+    return res.rows;
+  },
+
   create: async (msg: Record<string, unknown>) => {
     const pool = getPool();
     await pool.query(
-      "INSERT INTO chat_messages (id, deal_id, role, content, metadata) VALUES ($1,$2,$3,$4,$5)",
-      [msg.id, msg.deal_id, msg.role, msg.content, msg.metadata ? JSON.stringify(msg.metadata) : null]
+      `INSERT INTO chat_messages (id, deal_id, user_id, role, content, metadata, page_context)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        msg.id,
+        msg.deal_id ?? null,
+        msg.user_id ?? null,
+        msg.role,
+        msg.content,
+        msg.metadata ? JSON.stringify(msg.metadata) : null,
+        msg.page_context ? JSON.stringify(msg.page_context) : null,
+      ]
     );
   },
 
   clear: async (dealId: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM chat_messages WHERE deal_id = $1", [dealId]);
+  },
+
+  clearForUser: async (userId: string, dealId: string | null) => {
+    const pool = getPool();
+    if (dealId) {
+      await pool.query(
+        "DELETE FROM chat_messages WHERE user_id = $1 AND deal_id = $2",
+        [userId, dealId]
+      );
+    } else {
+      await pool.query(
+        "DELETE FROM chat_messages WHERE user_id = $1 AND deal_id IS NULL",
+        [userId]
+      );
+    }
   },
 };
 
