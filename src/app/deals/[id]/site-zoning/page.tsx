@@ -759,10 +759,11 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
 
   // ── APN auto-lookup ───────────────────────────────────────────────────
   // Calls the parcel-lookup endpoint, which uses Claude to suggest an APN
-  // based on the deal address. Only overwrites the APN field if the lookup
-  // returned a non-empty value — never clobbers an analyst's manual entry
-  // unless the user explicitly re-ran it.
-  const lookupApn = useCallback(async (opts: { overwrite: boolean }) => {
+  // based on the deal address. Manual-only — we used to auto-trigger on
+  // first load, but Claude's knowledge of county-specific APNs isn't
+  // reliable enough for silent execution. Analysts click "Auto-fill" when
+  // they want to try it.
+  const lookupApn = useCallback(async () => {
     if (!deal?.address && !deal?.city) {
       toast.error("Add a deal address first");
       return;
@@ -783,39 +784,18 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         notes: string;
       };
       setApnLookup({ loading: false, source_url, confidence, notes, attempted: true });
-      if (apn && (opts.overwrite || !siteInfo.parcel_id)) {
+      if (apn) {
         updateSite("parcel_id", apn);
         toast.success(`APN auto-filled (${confidence} confidence)`);
-      } else if (!apn) {
-        // Low-confidence / not found — don't touch the field, just surface notes.
-        if (opts.overwrite) toast.info("Couldn't find a confident APN — check the county assessor");
       } else {
-        // Lookup returned an APN but we already have one and the caller asked
-        // not to overwrite. Still expose the source URL so the analyst can
-        // cross-check manually.
-        toast.info("APN already set — source page linked below");
+        toast.info("Couldn't find a confident APN — check the county assessor page");
       }
     } catch {
       setApnLookup({ loading: false, source_url: null, confidence: "low", notes: "Network error", attempted: true });
       toast.error("APN lookup failed");
     }
-  // siteInfo.parcel_id is intentionally excluded — lookupApn reads its current
-  // value via closure and callers pass opts.overwrite when they mean to.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id, deal?.address, deal?.city]);
-
-  // Auto-trigger on first load when the deal has an address but no APN.
-  // Runs once per mount after the initial data has hydrated.
-  const [apnAutoTried, setApnAutoTried] = useState(false);
-  useEffect(() => {
-    if (loading || apnAutoTried) return;
-    if (!siteInfo.parcel_id && (deal?.address || deal?.city)) {
-      setApnAutoTried(true);
-      lookupApn({ overwrite: false });
-    } else if (deal) {
-      setApnAutoTried(true);
-    }
-  }, [loading, apnAutoTried, siteInfo.parcel_id, deal, lookupApn]);
 
   // ── Loading ────────────────────────────────────────────────────────────
   if (loading) {
@@ -902,10 +882,10 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
               <label className="block text-[10px] text-muted-foreground uppercase tracking-wide">Parcel ID / APN</label>
               <button
                 type="button"
-                onClick={() => lookupApn({ overwrite: true })}
+                onClick={() => lookupApn()}
                 disabled={apnLookup.loading || (!deal?.address && !deal?.city)}
                 className="inline-flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 disabled:text-muted-foreground/40 disabled:cursor-not-allowed"
-                title="Auto-fill APN from address"
+                title="Try to auto-fill APN from address (best effort)"
               >
                 {apnLookup.loading
                   ? <><Loader2 className="h-3 w-3 animate-spin" /> Looking up…</>
@@ -1232,183 +1212,200 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
-        {/* Density Bonuses — spotted rows (incl. the AI defaults) can be
-            toggled on/off, and the catalog below is grouped by applicability
-            so analysts can quickly see what's relevant. */}
+        {/* Density Bonuses & Incentives — one unified card grid.
+            - Cards in `density_bonuses` (i.e. clicked / applied) render at
+              the TOP in "Applied to this project". These are the ones that
+              flow through to Programming and underwriting.
+            - All other catalog cards render BELOW, grouped by applicability
+              (By-Right → Possible → Doesn't Apply).
+            - Clicking any card toggles it on/off — applied cards move up
+              top, catalog cards move down. Same visual format throughout. */}
         <div className="mt-4">
           <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Density Bonuses & Incentives</label>
-          {zoning.density_bonuses.length > 0 && (
-            <div className="space-y-2 mb-2">
-              {zoning.density_bonuses.map((b, i) => {
-                const enabled = b.enabled !== false;
-                return (
-                  <div
-                    key={i}
-                    className={`flex items-start gap-2 p-2.5 rounded-lg border transition-colors ${
-                      enabled
-                        ? "bg-emerald-500/5 border-emerald-500/20"
-                        : "bg-muted/20 border-border/40 opacity-60"
-                    }`}
-                  >
-                    {/* On/off toggle — "select to turn on or off" without
-                        deleting the row. AI-populated defaults are enabled by
-                        default; analysts can disable any row. */}
-                    <label
-                      className="flex items-center pt-1 cursor-pointer"
-                      title={enabled ? "Click to disable" : "Click to enable"}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={enabled}
-                        onChange={e => {
-                          const next = [...zoning.density_bonuses];
-                          next[i] = { ...next[i], enabled: e.target.checked };
-                          updateZoning("density_bonuses", next);
-                        }}
-                        className="accent-emerald-500"
-                      />
-                    </label>
-                    <div className="flex-1 space-y-1">
-                      <input value={b.source} onChange={e => {
-                        const next = [...zoning.density_bonuses]; next[i] = { ...next[i], source: e.target.value }; updateZoning("density_bonuses", next);
-                      }} className="w-full text-xs font-medium bg-transparent outline-none" placeholder="Source / Legislation" />
-                      <input value={b.description} onChange={e => {
-                        const next = [...zoning.density_bonuses]; next[i] = { ...next[i], description: e.target.value }; updateZoning("density_bonuses", next);
-                      }} className="w-full text-xs text-muted-foreground bg-transparent outline-none" placeholder="Description" />
-                      <input value={b.additional_density} onChange={e => {
-                        const next = [...zoning.density_bonuses]; next[i] = { ...next[i], additional_density: e.target.value }; updateZoning("density_bonuses", next);
-                      }} className="w-full text-xs text-emerald-400 bg-transparent outline-none" placeholder="e.g. +35% FAR" />
-                    </div>
-                    <button onClick={() => updateZoning("density_bonuses", zoning.density_bonuses.filter((_, j) => j !== i))} className="text-muted-foreground/40 hover:text-red-400 text-xs mt-1" title="Remove">&times;</button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <p className="text-[10px] text-muted-foreground/80 mb-3">
+            Click a card to apply it to this project. Applied programs move to the top and flow through to Programming & Underwriting.
+          </p>
 
-          {/* Catalog — grouped by applicability ("applies", "may apply", "n/a").
-              Each card has a 3-way applicability picker and a "Spot" toggle
-              that adds the program to density_bonuses (carries through to
-              Programming). Analysts can edit rows after spotting. */}
-          <div className="mt-3 mb-2">
-            <p className="text-[10px] text-muted-foreground/80 mb-2">
-              Classify each program for this deal, then click <span className="font-medium text-foreground">Spot</span> to include it in the project.
-            </p>
-            {(["applies", "may_apply", "not_applicable"] as const).map(group => {
-              const groupItems = BONUS_CATALOG.filter(b => {
-                // Default "may_apply" so every catalog card lands somewhere
-                // even if the AI / analyst hasn't classified it yet.
-                const app = zoning.bonus_applicability[b.source] || "may_apply";
-                return app === group;
-              });
-              const groupLabel =
-                group === "applies" ? "Applies"
-                  : group === "may_apply" ? "May Apply"
-                    : "N/A";
-              const groupAccent =
-                group === "applies" ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/5"
-                  : group === "may_apply" ? "text-amber-400 border-amber-500/30 bg-amber-500/5"
-                    : "text-muted-foreground border-border/40 bg-muted/10";
+          {(() => {
+            // Small reusable card renderer so applied + catalog cards share
+            // exactly the same visual format (user's ask: "same grid
+            // format"). `applied` controls the emerald accent + the
+            // top-right toggle label; everything else is identical.
+            const renderCard = (args: {
+              source: string;
+              description: string;
+              additional_density: string;
+              applySummary?: string;
+              applied: boolean;
+              // Allow the 3-way applicability picker to appear only on
+              // non-applied (catalog) cards — applied cards don't need it
+              // because they've already been selected.
+              showApplicability: boolean;
+              onToggle: () => void;
+            }) => {
+              const app = zoning.bonus_applicability[args.source] || "may_apply";
+              const setApp = (next: BonusApplicability) => {
+                updateZoning("bonus_applicability", { ...zoning.bonus_applicability, [args.source]: next });
+              };
               return (
-                <div key={group} className="mb-3">
-                  <div className={`inline-flex items-center gap-2 px-2 py-0.5 rounded border text-[10px] uppercase tracking-wide mb-2 ${groupAccent}`}>
-                    <span className="font-semibold">{groupLabel}</span>
-                    <span className="text-[10px] opacity-70">{groupItems.length}</span>
+                <button
+                  type="button"
+                  onClick={args.onToggle}
+                  className={`text-left p-2.5 rounded-lg border transition-colors h-full flex flex-col ${
+                    args.applied
+                      ? "bg-emerald-500/10 border-emerald-500/40 hover:bg-emerald-500/15"
+                      : "bg-muted/10 border-border/40 hover:border-primary/40 hover:bg-muted/20"
+                  }`}
+                  title={args.applied ? "Click to remove from this project" : "Click to apply to this project"}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs font-medium text-foreground">{args.source || "(custom)"}</span>
+                    <span className={`text-[10px] whitespace-nowrap ${args.applied ? "text-emerald-400" : "text-primary/70"}`}>
+                      {args.applied ? "✓ Applied" : args.additional_density}
+                    </span>
                   </div>
-                  {groupItems.length === 0 ? (
-                    <p className="text-[10px] text-muted-foreground/50 italic">None in this group.</p>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {groupItems.map((b) => {
-                        const spottedRow = zoning.density_bonuses.find(x => x.source === b.source);
-                        const already = !!spottedRow;
-                        const app = zoning.bonus_applicability[b.source] || "may_apply";
-                        const setApp = (next: BonusApplicability) => {
-                          updateZoning("bonus_applicability", { ...zoning.bonus_applicability, [b.source]: next });
-                        };
-                        const toggleSpot = () => {
-                          if (already) {
-                            updateZoning(
-                              "density_bonuses",
-                              zoning.density_bonuses.filter(x => x.source !== b.source)
-                            );
-                          } else {
-                            updateZoning("density_bonuses", [
-                              ...zoning.density_bonuses,
-                              {
-                                source: b.source,
-                                description: b.description,
-                                additional_density: b.additional_density,
-                                enabled: true,
-                              },
-                            ]);
-                          }
-                        };
-                        return (
-                          <div
-                            key={b.source}
-                            className={`text-left p-2.5 rounded-lg border transition-colors ${
-                              already
-                                ? "bg-emerald-500/10 border-emerald-500/40"
-                                : "bg-muted/10 border-border/40"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <span className="text-xs font-medium text-foreground">{b.source}</span>
-                              <span className={`text-[10px] whitespace-nowrap ${already ? "text-emerald-400" : "text-primary/70"}`}>
-                                {already ? "✓ Spotted" : b.additional_density}
-                              </span>
-                            </div>
-                            <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{b.description}</p>
-                            {b.effects?.applySummary && (
-                              <p className="text-[10px] text-primary/80 mt-1">
-                                Programming can one-click apply: {b.effects.applySummary}
-                              </p>
-                            )}
-                            <div className="flex items-center gap-1 mt-2">
-                              {(["applies", "may_apply", "not_applicable"] as const).map(a => (
-                                <button
-                                  key={a}
-                                  type="button"
-                                  onClick={() => setApp(a)}
-                                  className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
-                                    app === a
-                                      ? a === "applies" ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400"
-                                        : a === "may_apply" ? "bg-amber-500/20 border-amber-500/40 text-amber-400"
-                                          : "bg-muted/40 border-border/60 text-muted-foreground"
-                                      : "bg-transparent border-border/40 text-muted-foreground/70 hover:border-primary/40"
-                                  }`}
-                                  title={`Mark as ${a === "may_apply" ? "may apply" : a === "not_applicable" ? "not applicable" : "applies"}`}
-                                >
-                                  {a === "applies" ? "Applies" : a === "may_apply" ? "May" : "N/A"}
-                                </button>
-                              ))}
-                              <button
-                                type="button"
-                                onClick={toggleSpot}
-                                className={`ml-auto px-2 py-0.5 rounded text-[10px] border transition-colors ${
-                                  already
-                                    ? "bg-emerald-500/30 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/40"
-                                    : "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
-                                }`}
-                              >
-                                {already ? "Remove" : "Spot"}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
+                  <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{args.description}</p>
+                  {args.applySummary && (
+                    <p className="text-[10px] text-primary/80 mt-1">
+                      Programming can one-click apply: {args.applySummary}
+                    </p>
+                  )}
+                  {args.showApplicability && (
+                    <div className="flex items-center gap-1 mt-2">
+                      {(["applies", "may_apply", "not_applicable"] as const).map(a => (
+                        <span
+                          key={a}
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => { e.stopPropagation(); setApp(a); }}
+                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); setApp(a); } }}
+                          className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors cursor-pointer ${
+                            app === a
+                              ? a === "applies" ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400"
+                                : a === "may_apply" ? "bg-amber-500/20 border-amber-500/40 text-amber-400"
+                                  : "bg-muted/40 border-border/60 text-muted-foreground"
+                              : "bg-transparent border-border/40 text-muted-foreground/70 hover:border-primary/40"
+                          }`}
+                          title={a === "applies" ? "Move to By-Right" : a === "may_apply" ? "Move to Possible" : "Move to Doesn't Apply"}
+                        >
+                          {a === "applies" ? "By-Right" : a === "may_apply" ? "Possible" : "N/A"}
+                        </span>
+                      ))}
                     </div>
                   )}
-                </div>
+                </button>
               );
-            })}
-          </div>
+            };
+
+            // ── Applied section (top) ─────────────────────────────────
+            const appliedCards = zoning.density_bonuses.map((b, i) => {
+              const catalogMatch = BONUS_CATALOG.find(c => c.source === b.source);
+              return {
+                index: i,
+                source: b.source,
+                description: b.description || catalogMatch?.description || "",
+                additional_density: b.additional_density || catalogMatch?.additional_density || "",
+                applySummary: catalogMatch?.effects?.applySummary,
+              };
+            });
+
+            // ── Catalog section (grouped, excludes applied) ───────────
+            const appliedSources = new Set(zoning.density_bonuses.map(b => b.source));
+            const catalogByGroup = (["applies", "may_apply", "not_applicable"] as const).map(group => ({
+              group,
+              items: BONUS_CATALOG.filter(b => {
+                if (appliedSources.has(b.source)) return false;
+                // Default unclassified programs to "Possible" so every card
+                // still lands somewhere legible.
+                const app = zoning.bonus_applicability[b.source] || "may_apply";
+                return app === group;
+              }),
+            }));
+
+            const groupLabel = (g: BonusApplicability) =>
+              g === "applies" ? "By-Right" : g === "may_apply" ? "Possible" : "Doesn't Apply";
+            const groupAccent = (g: BonusApplicability) =>
+              g === "applies" ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/5"
+                : g === "may_apply" ? "text-amber-400 border-amber-500/30 bg-amber-500/5"
+                  : "text-muted-foreground border-border/40 bg-muted/10";
+
+            return (
+              <>
+                {/* Applied section — only renders when at least one card has
+                    been clicked. Uses the same grid layout as the catalog. */}
+                {appliedCards.length > 0 && (
+                  <div className="mb-4 pb-4 border-b border-border/40">
+                    <div className="inline-flex items-center gap-2 px-2 py-0.5 rounded border text-[10px] uppercase tracking-wide mb-2 text-emerald-400 border-emerald-500/40 bg-emerald-500/10">
+                      <span className="font-semibold">Applied to This Project</span>
+                      <span className="text-[10px] opacity-70">{appliedCards.length}</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {appliedCards.map(card => renderCard({
+                        source: card.source,
+                        description: card.description,
+                        additional_density: card.additional_density,
+                        applySummary: card.applySummary,
+                        applied: true,
+                        showApplicability: false,
+                        onToggle: () => updateZoning(
+                          "density_bonuses",
+                          zoning.density_bonuses.filter((_, j) => j !== card.index)
+                        ),
+                      }))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Catalog section — all remaining cards grouped by
+                    applicability. Every card uses the same renderCard. */}
+                {catalogByGroup.map(({ group, items }) => (
+                  <div key={group} className="mb-3">
+                    <div className={`inline-flex items-center gap-2 px-2 py-0.5 rounded border text-[10px] uppercase tracking-wide mb-2 ${groupAccent(group)}`}>
+                      <span className="font-semibold">{groupLabel(group)}</span>
+                      <span className="text-[10px] opacity-70">{items.length}</span>
+                    </div>
+                    {items.length === 0 ? (
+                      <p className="text-[10px] text-muted-foreground/50 italic">None in this group.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {items.map(b => renderCard({
+                          source: b.source,
+                          description: b.description,
+                          additional_density: b.additional_density,
+                          applySummary: b.effects?.applySummary,
+                          applied: false,
+                          showApplicability: true,
+                          onToggle: () => updateZoning("density_bonuses", [
+                            ...zoning.density_bonuses,
+                            {
+                              source: b.source,
+                              description: b.description,
+                              additional_density: b.additional_density,
+                              enabled: true,
+                            },
+                          ]),
+                        }))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </>
+            );
+          })()}
 
           <button
-            onClick={() => updateZoning("density_bonuses", [...zoning.density_bonuses, { source: "", description: "", additional_density: "", enabled: true }])}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >+ Add custom</button>
+            onClick={() => {
+              const source = window.prompt("Program name / source (e.g. 'Local Inclusionary'):");
+              if (!source?.trim()) return;
+              const description = window.prompt("Description:", "") || "";
+              const additional_density = window.prompt("Additional density (e.g. '+35% FAR'):", "") || "";
+              updateZoning("density_bonuses", [
+                ...zoning.density_bonuses,
+                { source: source.trim(), description: description.trim(), additional_density: additional_density.trim(), enabled: true },
+              ]);
+            }}
+            className="mt-2 text-xs text-muted-foreground hover:text-foreground"
+          >+ Add custom program</button>
         </div>
 
         {/* Zone Change / Rezone */}
