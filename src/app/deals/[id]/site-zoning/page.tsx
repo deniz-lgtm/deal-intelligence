@@ -1,14 +1,32 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
 import {
   Loader2, MapPin, Sparkles, RefreshCw, Download, Save,
   Building2, Ruler, Trees, ChevronDown, ChevronRight, FileText,
+  Map as MapIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { BONUS_CATALOG } from "@/lib/bonus-catalog";
+import type { SitePlan as SitePlanType } from "@/lib/types";
+import { DEFAULT_SITE_PLAN } from "@/lib/types";
+import SitePlanMetrics from "@/components/site-plan/SitePlanMetrics";
+
+// SitePlanGenerator is client-only (leaflet touches window on import).
+const SitePlanGenerator = dynamic(
+  () => import("@/components/site-plan/SitePlanGenerator"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="border border-border/40 rounded-xl bg-card/40 h-[560px] flex items-center justify-center text-xs text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading site plan…
+      </div>
+    ),
+  }
+);
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface Setback { label: string; feet: number | null; }
@@ -212,6 +230,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   const [siteInfo, setSiteInfo] = useState<SiteInfo>(DEFAULT_SITE_INFO);
   const [zoning, setZoning] = useState<ZoningInfo>(DEFAULT_ZONING);
   const [devParams, setDevParams] = useState<DevParams>(DEFAULT_DEV);
+  const [sitePlan, setSitePlan] = useState<SitePlanType>(DEFAULT_SITE_PLAN);
   const [narrative, setNarrative] = useState("");
   const [lastReportDate, setLastReportDate] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -272,6 +291,14 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         max_nrsf: uw?.max_nrsf ?? uw?.dev_params?.max_nrsf ?? 0,
       };
       setDevParams(dp);
+
+      // Hydrate the drawn site plan if the analyst has previously traced it.
+      // Backwards compatible: older UW blobs will have no site_plan key and
+      // we fall through to the default (empty polygons, no center).
+      if (uw?.site_plan) {
+        setSitePlan({ ...DEFAULT_SITE_PLAN, ...uw.site_plan });
+      }
+
       setNarrative(uw?.zoning_narrative || "");
       setLastReportDate(uw?.last_report_date || null);
       setLoading(false);
@@ -316,6 +343,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         site_info: siteInfo,
         zoning_info: zoning,
         dev_params: finalDev,
+        site_plan: sitePlan,
         zoning_narrative: narrative,
         last_report_date: lastReportDate,
         // Also sync flat fields used by underwriting page
@@ -352,7 +380,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     } finally {
       setSaving(false);
     }
-  }, [params.id, siteInfo, zoning, devParams, narrative, lastReportDate, deal, recalcBuilding]);
+  }, [params.id, siteInfo, zoning, devParams, sitePlan, narrative, lastReportDate, deal, recalcBuilding]);
 
   // ── AI Zoning Report ───────────────────────────────────────────────────
   const runZoningReport = async () => {
@@ -473,6 +501,15 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     setDirty(true);
   };
 
+  // Map-controlled updates flow through here. Covers both drawn polygons
+  // and the map view (pan/zoom) — the generator calls onChange for both, so
+  // the dirty flag trips even for a simple pan, which matches the autosave
+  // behaviour on the programming page.
+  const updateSitePlan = useCallback((next: SitePlanType) => {
+    setSitePlan(next);
+    setDirty(true);
+  }, []);
+
   const updateDev = (k: keyof DevParams, v: number) => {
     setDevParams(prev => {
       const updated = { ...prev, [k]: v };
@@ -490,7 +527,40 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   const isIndustrial = deal?.property_type === "industrial";
   const isMF = ["multifamily", "student_housing"].includes(deal?.property_type || "");
   const isGroundUp = deal?.investment_strategy === "ground_up";
+  // Site plan is only relevant where the analyst is shaping a physical
+  // program — ground-up, value-add (redevelopment), and opportunistic. Core /
+  // core-plus acquisitions typically don't need to sketch a new footprint.
+  const isDev = ["ground_up", "value_add", "opportunistic"].includes(
+    deal?.investment_strategy || ""
+  );
   const computedDev = recalcBuilding(siteInfo, devParams);
+
+  // Map zoning.setbacks[] (label + feet) into the {front, side, rear, corner}
+  // shape the SitePlanGenerator / SitePlanMetrics expect. Matches by the
+  // label string case-insensitively so analysts who renamed a row still get
+  // the envelope — anything we can't match just doesn't drive the inset.
+  // We match "side" but exclude rows containing "corner" so a "Corner Side"
+  // row feeds the corner slot rather than the side slot.
+  const findSetback = (include: string, exclude?: string): number | null => {
+    const row = zoning.setbacks.find(s => {
+      const label = (s.label || "").toLowerCase();
+      if (!label.includes(include)) return false;
+      if (exclude && label.includes(exclude)) return false;
+      return true;
+    });
+    return row?.feet ?? null;
+  };
+  const sitePlanSetbacks = {
+    front: findSetback("front"),
+    side: findSetback("side", "corner"),
+    rear: findSetback("rear"),
+    corner: findSetback("corner"),
+  };
+
+  const dealCenter =
+    deal?.lat != null && deal?.lng != null
+      ? { lat: Number(deal.lat), lng: Number(deal.lng) }
+      : null;
 
   return (
     <div className="space-y-5 animate-fade-up">
@@ -866,6 +936,39 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           <TextArea label="Zoning Strategy Notes (saves to Deal Context)" value={zoning.additional_notes} onChange={v => updateZoning("additional_notes", v)} placeholder="Key zoning considerations, local legislation (CCHS, SB 35, density bonuses), entitlement strategy..." rows={3} />
         </div>
       </Section>
+
+      {/* ── Site Plan (parcel + building footprint on satellite) ──────────── */}
+      {/* Only shown for strategies where the analyst is shaping the physical
+          program: ground-up, value-add (redevelopment), or opportunistic.
+          The drawn building footprint (SF) flows into the Programming page's
+          active massing scenario footprint_sf on hydrate. Backwards
+          compatible: if nothing is drawn, the old typed-footprint workflow
+          on Programming is unaffected. */}
+      {isDev && (
+        <Section title="Site Plan" icon={<MapIcon className="h-4 w-4 text-amber-400" />}>
+          <p className="text-xs text-muted-foreground mb-3">
+            Trace the parcel boundary, then draw the building footprint on the
+            satellite map. Setbacks from the zoning section above appear live
+            as a buildable envelope. The drawn footprint SF feeds the
+            Programming page&apos;s active massing scenario.
+          </p>
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+            <SitePlanGenerator
+              value={sitePlan}
+              onChange={updateSitePlan}
+              setbacks={sitePlanSetbacks}
+              fallbackCenter={dealCenter}
+              height={560}
+            />
+            <SitePlanMetrics
+              value={sitePlan}
+              setbacks={sitePlanSetbacks}
+              zoningLotCoveragePct={zoning.lot_coverage_pct}
+              expectedLandSf={siteInfo.land_sf}
+            />
+          </div>
+        </Section>
+      )}
 
       {/* ── Development Summary (read-only, data from Zoning + Programming) ── */}
       {isGroundUp && (
