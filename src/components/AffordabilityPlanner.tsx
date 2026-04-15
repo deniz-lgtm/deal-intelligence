@@ -3,23 +3,49 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
-  Loader2, Plus, Trash2, DollarSign, TrendingUp, Sparkles,
-  ChevronDown, ChevronRight, BarChart3,
+  Loader2, Plus, Trash2, DollarSign, Sparkles,
+  ChevronDown, ChevronRight, Wand2, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/**
+ * Distribution mode controls how the tier's total unit count is split across
+ * bedroom types. Drives both the UI (locks certain inputs) and the solver.
+ */
+export type UnitMixMode =
+  | "flexible"            // any mix of BR types satisfies the requirement
+  | "match_building"      // must mirror the building's own BR mix proportions
+  | "bedroom_equivalent"; // target is a TOTAL BEDROOM count, not a unit count
+
 export interface AmiTier {
   id: string;
   ami_pct: number;           // e.g., 60 for 60% AMI
-  units_pct: number;         // % of total units at this tier
-  units_count: number;       // computed from total
+  units_pct: number;         // % of total units at this tier (ignored when mode = bedroom_equivalent)
+  units_count: number;       // total units at this tier (derived from per-BR counts)
+  // Per-bedroom unit counts — the affordable mix the user has committed to.
+  units_studio: number;
+  units_1br: number;
+  units_2br: number;
+  units_3br: number;
+  units_4br_plus: number;
+  // Max rents sourced from HUD AMI data at the given ami_pct.
   max_rent_studio: number;
   max_rent_1br: number;
   max_rent_2br: number;
   max_rent_3br: number;
+  max_rent_4br_plus: number;
+  // Mix constraint for this tier.
+  mix_mode: UnitMixMode;
+  /**
+   * Total bedroom target (only used when mix_mode === "bedroom_equivalent").
+   * A studio counts as 0, 1BR as 1, 2BR as 2, 3BR as 3, 4BR+ as 4. If a
+   * jurisdiction counts studios differently, the user edits the mix manually
+   * and switches back to "flexible".
+   */
+  bedroom_target: number;
 }
 
 export interface AffordabilityConfig {
@@ -40,9 +66,35 @@ interface AmiData {
   year: number;
   area_name: string;
   median_family_income: number;
-  max_rents: Record<string, { studio: number; one_br: number; two_br: number; three_br: number }>;
+  max_rents: Record<
+    string,
+    { studio: number; one_br: number; two_br: number; three_br: number; four_br?: number }
+  >;
   income_limits: Record<string, number[]>;
 }
+
+/**
+ * The subject building's own unit mix — used when a tier is in
+ * "match_building" mode and for the AI optimizer to reason about what's
+ * typical for the deal. Each field is a unit count.
+ */
+export interface BuildingUnitMix {
+  studio: number;
+  one_br: number;
+  two_br: number;
+  three_br: number;
+  four_br_plus: number;
+}
+
+// Bedroom counts used by the "bedroom_equivalent" solver. Exported so callers
+// can override if their jurisdiction treats studios as 1 bedroom, etc.
+export const BEDROOM_WEIGHTS = {
+  studio: 0,
+  one_br: 1,
+  two_br: 2,
+  three_br: 3,
+  four_br_plus: 4,
+} as const;
 
 // ── Default AMI tier presets ─────────────────────────────────────────────────
 
@@ -64,10 +116,17 @@ const fpct = (n: number) => n.toFixed(1) + "%";
 
 // Loose shape of whatever's been previously stored on the deal's underwriting
 // record. Historically this was saved with a smaller tier schema (no id / max
-// rent fields), so we accept a lax shape here and hydrate below.
+// rent fields / no per-BR counts), so we accept a lax shape here and hydrate
+// below.
 interface InitialConfigLoose {
   enabled?: boolean;
-  tiers?: Array<Partial<AmiTier> & { ami_pct?: number; units_pct?: number; units_count?: number }>;
+  tiers?: Array<
+    Partial<AmiTier> & {
+      ami_pct?: number;
+      units_pct?: number;
+      units_count?: number;
+    }
+  >;
   total_units?: number;
   market_rate_units?: number;
   density_bonus_pct?: number;
@@ -86,19 +145,245 @@ interface Props {
   currentTaxes: number;       // current taxes_annual from UW
   onConfigChange: (config: AffordabilityConfig) => void;
   initialConfig?: InitialConfigLoose | null;
+  /**
+   * The subject building's own unit mix — powers the "match_building" solver
+   * and the AI optimizer's sense of what's normal for the deal. Derived from
+   * unit_groups by the parent page.
+   */
+  buildingUnitMix?: BuildingUnitMix;
 }
 
-function hydrateTiers(tiers: InitialConfigLoose["tiers"] = []): AmiTier[] {
-  return tiers.map((t) => ({
-    id: t.id ?? uuidv4(),
-    ami_pct: t.ami_pct ?? 60,
-    units_pct: t.units_pct ?? 0,
-    units_count: t.units_count ?? 0,
-    max_rent_studio: t.max_rent_studio ?? 0,
-    max_rent_1br: t.max_rent_1br ?? 0,
-    max_rent_2br: t.max_rent_2br ?? 0,
-    max_rent_3br: t.max_rent_3br ?? 0,
-  }));
+function hydrateTiers(
+  tiers: InitialConfigLoose["tiers"] = [],
+  mix?: BuildingUnitMix
+): AmiTier[] {
+  return tiers.map((t) => {
+    // If a legacy tier has a units_count but no per-BR breakdown yet, seed
+    // the mix from the building's bedroom distribution when possible. That
+    // gives existing deals a sensible starting point instead of an
+    // "unallocated" warning. If no building mix is available, put the total
+    // in 1BR as a safe default and let the user rebalance.
+    const unitsCount = t.units_count ?? 0;
+    const hasPerBr =
+      (t.units_studio ?? 0) +
+        (t.units_1br ?? 0) +
+        (t.units_2br ?? 0) +
+        (t.units_3br ?? 0) +
+        (t.units_4br_plus ?? 0) >
+      0;
+
+    let studio = t.units_studio ?? 0;
+    let one = t.units_1br ?? 0;
+    let two = t.units_2br ?? 0;
+    let three = t.units_3br ?? 0;
+    let four = t.units_4br_plus ?? 0;
+
+    if (!hasPerBr && unitsCount > 0) {
+      if (mix) {
+        const spread = solveMatchBuilding(unitsCount, mix);
+        studio = spread.studio;
+        one = spread.one_br;
+        two = spread.two_br;
+        three = spread.three_br;
+        four = spread.four_br_plus;
+      } else {
+        one = unitsCount;
+      }
+    }
+
+    return {
+      id: t.id ?? uuidv4(),
+      ami_pct: t.ami_pct ?? 60,
+      units_pct: t.units_pct ?? 0,
+      units_count: studio + one + two + three + four || unitsCount,
+      units_studio: studio,
+      units_1br: one,
+      units_2br: two,
+      units_3br: three,
+      units_4br_plus: four,
+      max_rent_studio: t.max_rent_studio ?? 0,
+      max_rent_1br: t.max_rent_1br ?? 0,
+      max_rent_2br: t.max_rent_2br ?? 0,
+      max_rent_3br: t.max_rent_3br ?? 0,
+      max_rent_4br_plus: t.max_rent_4br_plus ?? 0,
+      mix_mode: (t.mix_mode as UnitMixMode) ?? "flexible",
+      bedroom_target: t.bedroom_target ?? 0,
+    };
+  });
+}
+
+// ── Solvers ──────────────────────────────────────────────────────────────────
+
+interface MixResult {
+  studio: number;
+  one_br: number;
+  two_br: number;
+  three_br: number;
+  four_br_plus: number;
+}
+
+/**
+ * Spread a unit count across BR types in the same proportions as the
+ * building. Rounds with a largest-remainder pass so the result sums exactly
+ * to the target.
+ */
+export function solveMatchBuilding(
+  unitsCount: number,
+  mix: BuildingUnitMix
+): MixResult {
+  const total =
+    mix.studio + mix.one_br + mix.two_br + mix.three_br + mix.four_br_plus;
+  if (total <= 0 || unitsCount <= 0) {
+    return { studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0 };
+  }
+  const raw = {
+    studio: (mix.studio / total) * unitsCount,
+    one_br: (mix.one_br / total) * unitsCount,
+    two_br: (mix.two_br / total) * unitsCount,
+    three_br: (mix.three_br / total) * unitsCount,
+    four_br_plus: (mix.four_br_plus / total) * unitsCount,
+  };
+  const floored = {
+    studio: Math.floor(raw.studio),
+    one_br: Math.floor(raw.one_br),
+    two_br: Math.floor(raw.two_br),
+    three_br: Math.floor(raw.three_br),
+    four_br_plus: Math.floor(raw.four_br_plus),
+  };
+  const placed =
+    floored.studio +
+    floored.one_br +
+    floored.two_br +
+    floored.three_br +
+    floored.four_br_plus;
+  let remaining = unitsCount - placed;
+  // Assign remaining units by largest fractional part.
+  const remainders = (
+    ["studio", "one_br", "two_br", "three_br", "four_br_plus"] as const
+  )
+    .map((k) => ({ k, frac: raw[k] - Math.floor(raw[k]) }))
+    .sort((a, b) => b.frac - a.frac);
+  for (const { k } of remainders) {
+    if (remaining <= 0) break;
+    floored[k] += 1;
+    remaining -= 1;
+  }
+  return floored;
+}
+
+/**
+ * Maximize tier revenue by putting units in the highest-rent BR type that's
+ * present (non-zero max rent). Studios / no-rent types fall out naturally.
+ */
+export function solveFlexibleMaxRevenue(
+  unitsCount: number,
+  rents: {
+    max_rent_studio: number;
+    max_rent_1br: number;
+    max_rent_2br: number;
+    max_rent_3br: number;
+    max_rent_4br_plus: number;
+  }
+): MixResult {
+  if (unitsCount <= 0) {
+    return { studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0 };
+  }
+  const byRent: Array<{ k: keyof MixResult; rent: number }> = [
+    { k: "studio", rent: rents.max_rent_studio },
+    { k: "one_br", rent: rents.max_rent_1br },
+    { k: "two_br", rent: rents.max_rent_2br },
+    { k: "three_br", rent: rents.max_rent_3br },
+    { k: "four_br_plus", rent: rents.max_rent_4br_plus },
+  ];
+  const best = byRent
+    .filter((b) => b.rent > 0)
+    .sort((a, b) => b.rent - a.rent)[0];
+  const result: MixResult = {
+    studio: 0,
+    one_br: 0,
+    two_br: 0,
+    three_br: 0,
+    four_br_plus: 0,
+  };
+  // If no rent data yet, fall back to 1BR so users see a sensible baseline.
+  if (!best) {
+    result.one_br = unitsCount;
+  } else {
+    result[best.k] = unitsCount;
+  }
+  return result;
+}
+
+/**
+ * Find a mix that exactly hits `bedroomTarget` total bedrooms AND maximizes
+ * revenue. Unit count is free — the user cares about bedrooms, not units.
+ *
+ * Greedy approach: walk BR types in descending rent order and fill them up
+ * until the bedroom target is reached. Studios are only used if the target
+ * permits and they're the best revenue option that fits.
+ *
+ * Returns a "best-effort" result even if the target can't be hit exactly
+ * (e.g. target = 5 with only 2BR available → 2 × 2BR = 4 beds, the remainder
+ * is dropped so the user can adjust).
+ */
+export function solveBedroomEquivalentMaxRevenue(
+  bedroomTarget: number,
+  rents: {
+    max_rent_studio: number;
+    max_rent_1br: number;
+    max_rent_2br: number;
+    max_rent_3br: number;
+    max_rent_4br_plus: number;
+  }
+): MixResult {
+  const result: MixResult = {
+    studio: 0,
+    one_br: 0,
+    two_br: 0,
+    three_br: 0,
+    four_br_plus: 0,
+  };
+  if (bedroomTarget <= 0) return result;
+
+  const allTypes: Array<{ k: keyof MixResult; br: number; rent: number }> = [
+    { k: "studio", br: BEDROOM_WEIGHTS.studio, rent: rents.max_rent_studio },
+    { k: "one_br", br: BEDROOM_WEIGHTS.one_br, rent: rents.max_rent_1br },
+    { k: "two_br", br: BEDROOM_WEIGHTS.two_br, rent: rents.max_rent_2br },
+    { k: "three_br", br: BEDROOM_WEIGHTS.three_br, rent: rents.max_rent_3br },
+    {
+      k: "four_br_plus",
+      br: BEDROOM_WEIGHTS.four_br_plus,
+      rent: rents.max_rent_4br_plus,
+    },
+  ];
+  const types = allTypes.filter((t) => t.rent > 0);
+
+  // Score each type by rent-per-bedroom (higher = more revenue efficient per
+  // bedroom spent). Studios are 0 bedrooms and thus infinite efficiency, but
+  // they don't contribute to the target — handle them after.
+  const withBr = types.filter((t) => t.br > 0);
+  if (withBr.length === 0) {
+    // No bedroom-carrying types available — can't hit the target, bail.
+    return result;
+  }
+
+  let remaining = bedroomTarget;
+  // Prefer the highest rent-per-bedroom type, but bias toward larger units
+  // first to avoid filling with tiny 1BRs when 3BRs beat them on absolute
+  // rent (which is usually the case).
+  const sorted = withBr
+    .slice()
+    .sort((a, b) => b.rent / b.br - a.rent / a.br);
+  // Fill with the best type while the target allows.
+  for (const t of sorted) {
+    if (remaining <= 0) break;
+    const count = Math.floor(remaining / t.br);
+    if (count > 0) {
+      result[t.k] += count;
+      remaining -= count * t.br;
+    }
+  }
+  return result;
 }
 
 export default function AffordabilityPlanner({
@@ -108,13 +393,15 @@ export default function AffordabilityPlanner({
   currentTaxes,
   onConfigChange,
   initialConfig,
+  buildingUnitMix,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [loadingAmi, setLoadingAmi] = useState(false);
   const [ami, setAmi] = useState<AmiData | null>(null);
+  const [optimizingTierId, setOptimizingTierId] = useState<string | null>(null);
   const [config, setConfig] = useState<AffordabilityConfig>({
     enabled: initialConfig?.enabled ?? false,
-    tiers: hydrateTiers(initialConfig?.tiers),
+    tiers: hydrateTiers(initialConfig?.tiers, buildingUnitMix),
     total_units: initialConfig?.total_units ?? totalUnits,
     market_rate_units: initialConfig?.market_rate_units ?? totalUnits,
     density_bonus_pct: initialConfig?.density_bonus_pct ?? 0,
@@ -172,15 +459,29 @@ export default function AffordabilityPlanner({
 
   function addTier(amiPct: number = 60) {
     const rents = getMaxRents(amiPct);
+    const units = Math.round(totalUnits * 0.1);
+    // Seed the new tier's mix from the building's BR distribution when we
+    // have it — that's the most common default. Users can rebalance freely.
+    const seedMix = buildingUnitMix
+      ? solveMatchBuilding(units, buildingUnitMix)
+      : { studio: 0, one_br: units, two_br: 0, three_br: 0, four_br_plus: 0 };
     const newTier: AmiTier = {
       id: uuidv4(),
       ami_pct: amiPct,
       units_pct: 10,
-      units_count: Math.round(totalUnits * 0.1),
+      units_count: units,
+      units_studio: seedMix.studio,
+      units_1br: seedMix.one_br,
+      units_2br: seedMix.two_br,
+      units_3br: seedMix.three_br,
+      units_4br_plus: seedMix.four_br_plus,
       max_rent_studio: rents.studio,
       max_rent_1br: rents.one_br,
       max_rent_2br: rents.two_br,
       max_rent_3br: rents.three_br,
+      max_rent_4br_plus: rents.four_br_plus,
+      mix_mode: "flexible",
+      bedroom_target: 0,
     };
     updateConfig({ enabled: true, tiers: [...config.tiers, newTier] });
   }
@@ -189,9 +490,11 @@ export default function AffordabilityPlanner({
     const newTiers = config.tiers.map((t) => {
       if (t.id !== id) return t;
       const updated = { ...t, ...changes };
-      // Recompute unit count from percentage
+      // If the total target units changed, re-solve the mix so the BR
+      // breakdown still sums to the requested total.
       if (changes.units_pct != null) {
         updated.units_count = Math.round(totalUnits * (updated.units_pct / 100));
+        resolveTierMixInPlace(updated, buildingUnitMix);
       }
       // Recompute rents if AMI level changed
       if (changes.ami_pct != null) {
@@ -200,6 +503,27 @@ export default function AffordabilityPlanner({
         updated.max_rent_1br = rents.one_br;
         updated.max_rent_2br = rents.two_br;
         updated.max_rent_3br = rents.three_br;
+        updated.max_rent_4br_plus = rents.four_br_plus;
+      }
+      // Mode toggles re-run the solver so the mix matches the new constraint.
+      if (changes.mix_mode != null || changes.bedroom_target != null) {
+        resolveTierMixInPlace(updated, buildingUnitMix);
+      }
+      // Keep units_count in sync when the user edits per-BR counts directly
+      // (flexible mode lets them hand-edit).
+      if (
+        changes.units_studio != null ||
+        changes.units_1br != null ||
+        changes.units_2br != null ||
+        changes.units_3br != null ||
+        changes.units_4br_plus != null
+      ) {
+        updated.units_count =
+          updated.units_studio +
+          updated.units_1br +
+          updated.units_2br +
+          updated.units_3br +
+          updated.units_4br_plus;
       }
       return updated;
     });
@@ -211,43 +535,254 @@ export default function AffordabilityPlanner({
     updateConfig({ tiers: newTiers, enabled: newTiers.length > 0 });
   }
 
+  /**
+   * Re-run whichever solver the tier's mode calls for and mutate the tier
+   * in place. Used from updateTier() after changes that would invalidate
+   * the current mix. Flexible mode leaves the user's manual edits alone.
+   */
+  function resolveTierMixInPlace(tier: AmiTier, mix?: BuildingUnitMix): void {
+    if (tier.mix_mode === "match_building" && mix) {
+      const r = solveMatchBuilding(tier.units_count, mix);
+      tier.units_studio = r.studio;
+      tier.units_1br = r.one_br;
+      tier.units_2br = r.two_br;
+      tier.units_3br = r.three_br;
+      tier.units_4br_plus = r.four_br_plus;
+    } else if (tier.mix_mode === "bedroom_equivalent") {
+      const r = solveBedroomEquivalentMaxRevenue(tier.bedroom_target, {
+        max_rent_studio: tier.max_rent_studio,
+        max_rent_1br: tier.max_rent_1br,
+        max_rent_2br: tier.max_rent_2br,
+        max_rent_3br: tier.max_rent_3br,
+        max_rent_4br_plus: tier.max_rent_4br_plus,
+      });
+      tier.units_studio = r.studio;
+      tier.units_1br = r.one_br;
+      tier.units_2br = r.two_br;
+      tier.units_3br = r.three_br;
+      tier.units_4br_plus = r.four_br_plus;
+      tier.units_count =
+        r.studio + r.one_br + r.two_br + r.three_br + r.four_br_plus;
+    }
+    // "flexible" leaves per-BR counts alone.
+  }
+
   function applyPreset(preset: typeof AMI_PRESETS[0]) {
-    const tiers = preset.tiers.map((p) => {
+    const tiers: AmiTier[] = preset.tiers.map((p) => {
       const rents = getMaxRents(p.ami);
+      const units = Math.round(totalUnits * (p.pct / 100));
+      const seedMix = buildingUnitMix
+        ? solveMatchBuilding(units, buildingUnitMix)
+        : { studio: 0, one_br: units, two_br: 0, three_br: 0, four_br_plus: 0 };
       return {
         id: uuidv4(),
         ami_pct: p.ami,
         units_pct: p.pct,
-        units_count: Math.round(totalUnits * (p.pct / 100)),
+        units_count: units,
+        units_studio: seedMix.studio,
+        units_1br: seedMix.one_br,
+        units_2br: seedMix.two_br,
+        units_3br: seedMix.three_br,
+        units_4br_plus: seedMix.four_br_plus,
         max_rent_studio: rents.studio,
         max_rent_1br: rents.one_br,
         max_rent_2br: rents.two_br,
         max_rent_3br: rents.three_br,
+        max_rent_4br_plus: rents.four_br_plus,
+        mix_mode: "flexible" as const,
+        bedroom_target: 0,
       };
     });
     updateConfig({ enabled: true, tiers });
     toast.success(`Applied "${preset.label}" preset`);
   }
 
+  // ── Per-tier mix actions ───────────────────────────────────────────────
+  function suggestTierMix(tierId: string) {
+    const tier = config.tiers.find((t) => t.id === tierId);
+    if (!tier) return;
+    if (tier.mix_mode === "match_building" && !buildingUnitMix) {
+      toast.error(
+        "Add unit groups in Underwriting first so the building mix is known."
+      );
+      return;
+    }
+    if (tier.mix_mode === "match_building" && buildingUnitMix) {
+      const r = solveMatchBuilding(tier.units_count, buildingUnitMix);
+      updateTier(tierId, {
+        units_studio: r.studio,
+        units_1br: r.one_br,
+        units_2br: r.two_br,
+        units_3br: r.three_br,
+        units_4br_plus: r.four_br_plus,
+      });
+      toast.success("Mix matched to building distribution");
+      return;
+    }
+    if (tier.mix_mode === "bedroom_equivalent") {
+      if (!tier.bedroom_target) {
+        toast.error("Set a bedroom target first");
+        return;
+      }
+      const r = solveBedroomEquivalentMaxRevenue(tier.bedroom_target, {
+        max_rent_studio: tier.max_rent_studio,
+        max_rent_1br: tier.max_rent_1br,
+        max_rent_2br: tier.max_rent_2br,
+        max_rent_3br: tier.max_rent_3br,
+        max_rent_4br_plus: tier.max_rent_4br_plus,
+      });
+      updateTier(tierId, {
+        units_studio: r.studio,
+        units_1br: r.one_br,
+        units_2br: r.two_br,
+        units_3br: r.three_br,
+        units_4br_plus: r.four_br_plus,
+      });
+      toast.success(
+        `Max-revenue mix for ${tier.bedroom_target} bedrooms applied`
+      );
+      return;
+    }
+    // Flexible: maximize revenue given the current unit count.
+    const r = solveFlexibleMaxRevenue(tier.units_count, {
+      max_rent_studio: tier.max_rent_studio,
+      max_rent_1br: tier.max_rent_1br,
+      max_rent_2br: tier.max_rent_2br,
+      max_rent_3br: tier.max_rent_3br,
+      max_rent_4br_plus: tier.max_rent_4br_plus,
+    });
+    updateTier(tierId, {
+      units_studio: r.studio,
+      units_1br: r.one_br,
+      units_2br: r.two_br,
+      units_3br: r.three_br,
+      units_4br_plus: r.four_br_plus,
+    });
+    toast.success("Max-revenue mix applied");
+  }
+
+  async function aiOptimizeTierMix(tierId: string) {
+    const tier = config.tiers.find((t) => t.id === tierId);
+    if (!tier) return;
+    setOptimizingTierId(tierId);
+    try {
+      const res = await fetch(
+        `/api/deals/${dealId}/affordability/optimize-mix`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mix_mode: tier.mix_mode,
+            units_count: tier.units_count,
+            bedroom_target: tier.bedroom_target,
+            ami_pct: tier.ami_pct,
+            building_unit_mix: buildingUnitMix ?? null,
+            max_rents: {
+              studio: tier.max_rent_studio,
+              one_br: tier.max_rent_1br,
+              two_br: tier.max_rent_2br,
+              three_br: tier.max_rent_3br,
+              four_br_plus: tier.max_rent_4br_plus,
+            },
+          }),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "AI optimization failed");
+        return;
+      }
+      const r = json.data?.mix as MixResult | undefined;
+      if (!r) {
+        toast.error("AI returned no mix");
+        return;
+      }
+      updateTier(tierId, {
+        units_studio: r.studio,
+        units_1br: r.one_br,
+        units_2br: r.two_br,
+        units_3br: r.three_br,
+        units_4br_plus: r.four_br_plus,
+      });
+      const rationale: string | undefined = json.data?.rationale;
+      toast.success(
+        rationale ? `AI mix applied: ${rationale}` : "AI mix applied"
+      );
+    } catch {
+      toast.error("AI optimization failed");
+    } finally {
+      setOptimizingTierId(null);
+    }
+  }
+
   function getMaxRents(amiPct: number) {
-    if (!ami?.max_rents) return { studio: 0, one_br: 0, two_br: 0, three_br: 0 };
-    const key = amiPct === 30 ? "ami_30" : amiPct === 50 ? "ami_50" : amiPct === 60 ? "ami_60" : amiPct === 80 ? "ami_80" : amiPct === 100 ? "ami_100" : "ami_120";
-    return ami.max_rents[key] || { studio: 0, one_br: 0, two_br: 0, three_br: 0 };
+    const zero = { studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0 };
+    if (!ami?.max_rents) return zero;
+    const key =
+      amiPct === 30
+        ? "ami_30"
+        : amiPct === 50
+        ? "ami_50"
+        : amiPct === 60
+        ? "ami_60"
+        : amiPct === 80
+        ? "ami_80"
+        : amiPct === 100
+        ? "ami_100"
+        : "ami_120";
+    const raw = ami.max_rents[key];
+    if (!raw) return zero;
+    return {
+      studio: raw.studio,
+      one_br: raw.one_br,
+      two_br: raw.two_br,
+      three_br: raw.three_br,
+      // HUD publishes 4BR+ rents less consistently — fall back to 3BR if the
+      // feed omits it so the solver still has a value to work with.
+      four_br_plus: raw.four_br ?? raw.three_br,
+    };
+  }
+
+  /** Annual revenue from a single affordable tier at its current mix. */
+  function tierAnnualRevenue(t: AmiTier): number {
+    return (
+      (t.units_studio * t.max_rent_studio +
+        t.units_1br * t.max_rent_1br +
+        t.units_2br * t.max_rent_2br +
+        t.units_3br * t.max_rent_3br +
+        t.units_4br_plus * t.max_rent_4br_plus) *
+      12
+    );
+  }
+
+  /** Total bedrooms produced by a tier's current mix. */
+  function tierBedrooms(t: AmiTier): number {
+    return (
+      t.units_studio * BEDROOM_WEIGHTS.studio +
+      t.units_1br * BEDROOM_WEIGHTS.one_br +
+      t.units_2br * BEDROOM_WEIGHTS.two_br +
+      t.units_3br * BEDROOM_WEIGHTS.three_br +
+      t.units_4br_plus * BEDROOM_WEIGHTS.four_br_plus
+    );
   }
 
   // Revenue impact calculations
   const affordableUnits = config.tiers.reduce((s, t) => s + t.units_count, 0);
   const affordablePct = totalUnits > 0 ? (affordableUnits / totalUnits) * 100 : 0;
 
-  // Weighted average affordable rent (use 2BR as proxy)
-  const weightedAffordableRent = affordableUnits > 0
-    ? config.tiers.reduce((s, t) => s + t.max_rent_2br * t.units_count, 0) / affordableUnits
-    : 0;
+  const affordableAnnualRevenue = config.tiers.reduce(
+    (s, t) => s + tierAnnualRevenue(t),
+    0
+  );
+  // Weighted average monthly affordable rent per unit (for the summary line).
+  const weightedAffordableRent =
+    affordableUnits > 0 ? affordableAnnualRevenue / affordableUnits / 12 : 0;
 
-  // Revenue comparison
+  // Revenue comparison — market-rate units at avg market rent, affordable
+  // units at their actual per-BR mix (no more 2BR-proxy approximation).
   const marketGPR = totalUnits * avgMarketRent * 12;
-  const blendedGPR = config.market_rate_units * avgMarketRent * 12 +
-    config.tiers.reduce((s, t) => s + t.units_count * t.max_rent_2br * 12, 0);
+  const blendedGPR =
+    config.market_rate_units * avgMarketRent * 12 + affordableAnnualRevenue;
   const revenueImpact = marketGPR - blendedGPR;
   const revenueImpactPct = marketGPR > 0 ? (revenueImpact / marketGPR) * 100 : 0;
 
@@ -314,51 +849,236 @@ export default function AffordabilityPlanner({
 
           {/* Tiers */}
           {config.tiers.length > 0 && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Affordability Tiers</div>
-              {config.tiers.map((tier) => (
-                <div key={tier.id} className="border border-border/40 rounded-lg p-3 bg-muted/5 space-y-2">
-                  <div className="flex items-center gap-3">
-                    <div>
-                      <label className="text-[10px] text-muted-foreground">AMI Level</label>
-                      <select
-                        value={tier.ami_pct}
-                        onChange={(e) => updateTier(tier.id, { ami_pct: Number(e.target.value) })}
-                        className="block w-24 px-2 py-1 text-xs bg-background border border-border/40 rounded"
+              {config.tiers.map((tier) => {
+                // Each row knows which AmiTier field to write when the user
+              // edits its count cell, so the onChange can just lift a field
+              // name from the row definition.
+              const mixBreakdown: Array<{
+                label: string;
+                units: number;
+                rent: number;
+                field:
+                  | "units_studio"
+                  | "units_1br"
+                  | "units_2br"
+                  | "units_3br"
+                  | "units_4br_plus";
+              }> = [
+                  { field: "units_studio", label: "Studio", units: tier.units_studio, rent: tier.max_rent_studio },
+                  { field: "units_1br", label: "1BR", units: tier.units_1br, rent: tier.max_rent_1br },
+                  { field: "units_2br", label: "2BR", units: tier.units_2br, rent: tier.max_rent_2br },
+                  { field: "units_3br", label: "3BR", units: tier.units_3br, rent: tier.max_rent_3br },
+                  { field: "units_4br_plus", label: "4BR+", units: tier.units_4br_plus, rent: tier.max_rent_4br_plus },
+                ];
+                const mixSum = mixBreakdown.reduce((s, b) => s + b.units, 0);
+                // In bedroom_equivalent mode the target is bedrooms, not
+                // units, so the "target" shown to the user is different.
+                const target =
+                  tier.mix_mode === "bedroom_equivalent"
+                    ? tier.bedroom_target
+                    : tier.units_count;
+                const actual =
+                  tier.mix_mode === "bedroom_equivalent"
+                    ? tierBedrooms(tier)
+                    : mixSum;
+                const unitHint = tier.mix_mode === "bedroom_equivalent" ? "bedrooms" : "units";
+                const mismatch = target > 0 && actual !== target;
+                const editable = tier.mix_mode === "flexible";
+
+                return (
+                  <div key={tier.id} className="border border-border/40 rounded-lg p-3 bg-muted/5 space-y-3">
+                    {/* Top row: AMI / target / revenue summary */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div>
+                        <label className="text-[10px] text-muted-foreground">AMI Level</label>
+                        <select
+                          value={tier.ami_pct}
+                          onChange={(e) => updateTier(tier.id, { ami_pct: Number(e.target.value) })}
+                          className="block w-24 px-2 py-1 text-xs bg-background border border-border/40 rounded"
+                        >
+                          {[30, 50, 60, 80, 100, 120].map((v) => (
+                            <option key={v} value={v}>{v}% AMI</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {tier.mix_mode !== "bedroom_equivalent" ? (
+                        <>
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">% of Units</label>
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                value={tier.units_pct}
+                                onChange={(e) => updateTier(tier.id, { units_pct: Number(e.target.value) || 0 })}
+                                className="w-16 px-2 py-1 text-xs bg-background border border-border/40 rounded text-right"
+                              />
+                              <span className="text-xs text-muted-foreground">%</span>
+                            </div>
+                          </div>
+                          <div className="text-xs">
+                            <label className="text-[10px] text-muted-foreground">Units Required</label>
+                            <div className="font-medium">{tier.units_count}</div>
+                          </div>
+                        </>
+                      ) : (
+                        <div>
+                          <label className="text-[10px] text-muted-foreground">Bedroom Target</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={tier.bedroom_target}
+                            onChange={(e) =>
+                              updateTier(tier.id, {
+                                bedroom_target: Number(e.target.value) || 0,
+                              })
+                            }
+                            className="block w-20 px-2 py-1 text-xs bg-background border border-border/40 rounded text-right"
+                          />
+                        </div>
+                      )}
+
+                      <div className="flex-1 text-xs text-muted-foreground">
+                        <label className="text-[10px]">Est. Revenue</label>
+                        <div className="font-medium text-foreground">
+                          {fc(tierAnnualRevenue(tier))}/yr
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => removeTier(tier.id)}
+                        className="text-muted-foreground/50 hover:text-red-400"
+                        title="Remove tier"
                       >
-                        {[30, 50, 60, 80, 100, 120].map((v) => (
-                          <option key={v} value={v}>{v}% AMI</option>
-                        ))}
-                      </select>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
+
+                    {/* Mode selector */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">
+                        Distribution
+                      </span>
+                      {(
+                        [
+                          { value: "flexible", label: "Flexible" },
+                          { value: "match_building", label: "Match Building" },
+                          { value: "bedroom_equivalent", label: "Bedroom Count" },
+                        ] as Array<{ value: UnitMixMode; label: string }>
+                      ).map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => updateTier(tier.id, { mix_mode: opt.value })}
+                          className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                            tier.mix_mode === opt.value
+                              ? "bg-primary/15 border-primary/40 text-primary"
+                              : "border-border/40 text-muted-foreground hover:text-foreground"
+                          }`}
+                          title={
+                            opt.value === "flexible"
+                              ? "Any mix of BR types counts — pick the most profitable"
+                              : opt.value === "match_building"
+                              ? "Mix must mirror the rest of the building's BR distribution"
+                              : "Target a total bedroom count; the mix can trade units for bedrooms"
+                          }
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                      <div className="flex-1" />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => suggestTierMix(tier.id)}
+                        disabled={
+                          tier.mix_mode === "match_building" && !buildingUnitMix
+                        }
+                        title="Apply a deterministic best-fit mix based on the current mode"
+                      >
+                        <Wand2 className="h-3 w-3 mr-1" />
+                        Suggest Mix
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => aiOptimizeTierMix(tier.id)}
+                        disabled={optimizingTierId === tier.id}
+                        title="Ask Claude to pick a revenue-maximizing mix that's marketable in this submarket"
+                      >
+                        {optimizingTierId === tier.id ? (
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3 w-3 mr-1" />
+                        )}
+                        Optimize with AI
+                      </Button>
+                    </div>
+
+                    {/* Per-bedroom mix editor */}
                     <div>
-                      <label className="text-[10px] text-muted-foreground">% of Units</label>
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          min={1}
-                          max={100}
-                          value={tier.units_pct}
-                          onChange={(e) => updateTier(tier.id, { units_pct: Number(e.target.value) || 0 })}
-                          className="w-16 px-2 py-1 text-xs bg-background border border-border/40 rounded text-right"
-                        />
-                        <span className="text-xs text-muted-foreground">%</span>
+                      <div className="grid grid-cols-5 gap-2">
+                        {mixBreakdown.map((b) => (
+                          <div
+                            key={b.field}
+                            className="border border-border/30 rounded-md bg-background/40 px-2 py-1.5"
+                          >
+                            <div className="text-[10px] text-muted-foreground flex items-center justify-between">
+                              <span>{b.label}</span>
+                              <span className="text-muted-foreground/70">
+                                {b.rent > 0 ? fc(b.rent) + "/mo" : "—"}
+                              </span>
+                            </div>
+                            <input
+                              type="number"
+                              min={0}
+                              value={b.units}
+                              disabled={!editable}
+                              onChange={(e) =>
+                                updateTier(tier.id, {
+                                  [b.field]: Number(e.target.value) || 0,
+                                } as Partial<AmiTier>)
+                              }
+                              className={`block w-full text-right tabular-nums text-sm bg-transparent outline-none mt-0.5 ${
+                                !editable ? "text-muted-foreground/80 cursor-not-allowed" : ""
+                              }`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2 text-[10px]">
+                        <span className="text-muted-foreground">
+                          Allocated: <span className="tabular-nums font-medium text-foreground">{actual}</span> {unitHint}
+                          {target > 0 && (
+                            <span className="text-muted-foreground"> / target {target}</span>
+                          )}
+                        </span>
+                        {mismatch && (
+                          <span className="flex items-center gap-1 text-amber-400">
+                            <AlertTriangle className="h-3 w-3" />
+                            {actual < target
+                              ? `${target - actual} ${unitHint} short`
+                              : `${actual - target} over`}
+                          </span>
+                        )}
+                        {tier.mix_mode === "match_building" && !buildingUnitMix && (
+                          <span className="flex items-center gap-1 text-amber-400">
+                            <AlertTriangle className="h-3 w-3" />
+                            Building mix unknown — add unit groups in Underwriting
+                          </span>
+                        )}
+                        {editable && (
+                          <span className="text-muted-foreground/70 ml-auto">
+                            Flexible mode — edit any cell directly
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <div className="text-xs">
-                      <label className="text-[10px] text-muted-foreground">Units</label>
-                      <div className="font-medium">{tier.units_count}</div>
-                    </div>
-                    <div className="flex-1 text-xs text-muted-foreground">
-                      <label className="text-[10px]">Max 2BR Rent</label>
-                      <div className="font-medium text-foreground">{fc(tier.max_rent_2br)}/mo</div>
-                    </div>
-                    <button onClick={() => removeTier(tier.id)} className="text-muted-foreground/50 hover:text-red-400">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               <Button size="sm" variant="outline" onClick={() => addTier(60)}>
                 <Plus className="h-3.5 w-3.5 mr-1.5" />
                 Add Tier

@@ -463,6 +463,22 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         })()}
         currentTaxes={taxesAnnual}
         initialConfig={affordabilityConfig}
+        buildingUnitMix={(() => {
+          // Bucket the UW unit_groups into BR buckets — same logic as
+          // underwriting/page.tsx. unit_groups is typed as any[] here.
+          const mix = { studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0 };
+          for (const g of unitGroups as any[]) {
+            const count = Number(g.unit_count) || 0;
+            if (!count) continue;
+            const bd = Number(g.bedrooms) || 0;
+            if (bd === 0) mix.studio += count;
+            else if (bd === 1) mix.one_br += count;
+            else if (bd === 2) mix.two_br += count;
+            else if (bd === 3) mix.three_br += count;
+            else mix.four_br_plus += count;
+          }
+          return mix;
+        })()}
         onConfigChange={(cfg) => { setAffordabilityConfig(cfg); setDirty(true); }}
       />
 
