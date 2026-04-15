@@ -218,6 +218,10 @@ export async function ensureColumns(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_entitlement_templates_user_id ON entitlement_templates(user_id)`,
+    // Shared = true means the template is visible to every authenticated
+    // user (company-wide playbook). Creator stays the only one who can
+    // rename / overwrite / delete.
+    "ALTER TABLE entitlement_templates ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT false",
     // Communication tracking: stakeholder correspondence log
     `CREATE TABLE IF NOT EXISTS deal_communications (
       id TEXT PRIMARY KEY,
@@ -3836,10 +3840,18 @@ export const devPhaseQueries = {
 // here — these are authoring blueprints, not live phase rows.
 
 export const entitlementTemplateQueries = {
-  getByUserId: async (userId: string) => {
+  /**
+   * Returns every template the caller can SEE: the ones they own plus
+   * every template another user has flagged as `shared`. Shared rows
+   * arrive marked so the UI can prevent non-owners from editing them.
+   */
+  getVisibleToUser: async (userId: string) => {
     const pool = getPool();
     const res = await pool.query(
-      "SELECT * FROM entitlement_templates WHERE user_id = $1 ORDER BY name ASC",
+      `SELECT t.*, (t.user_id = $1) AS is_owner
+         FROM entitlement_templates t
+        WHERE t.user_id = $1 OR t.shared = true
+        ORDER BY t.shared ASC, t.name ASC`,
       [userId]
     );
     return res.rows;
@@ -3858,22 +3870,27 @@ export const entitlementTemplateQueries = {
     id: string,
     userId: string,
     name: string,
-    tasks: unknown
+    tasks: unknown,
+    shared: boolean
   ) => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO entitlement_templates (id, user_id, name, tasks, created_at, updated_at)
-       VALUES ($1, $2, $3, $4::jsonb, NOW(), NOW())
+      `INSERT INTO entitlement_templates (id, user_id, name, tasks, shared, created_at, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5, NOW(), NOW())
        RETURNING *`,
-      [id, userId, name, JSON.stringify(tasks ?? [])]
+      [id, userId, name, JSON.stringify(tasks ?? []), shared]
     );
     return res.rows[0];
   },
 
+  /**
+   * Update rename / tasks / shared flag — only the creator can mutate.
+   * Returns null if no row matched (foreign user or missing id).
+   */
   update: async (
     id: string,
     userId: string,
-    updates: { name?: string; tasks?: unknown }
+    updates: { name?: string; tasks?: unknown; shared?: boolean }
   ) => {
     const pool = getPool();
     const setClauses: string[] = [];
@@ -3886,6 +3903,10 @@ export const entitlementTemplateQueries = {
     if (updates.tasks != null) {
       setClauses.push(`tasks = $${idx++}::jsonb`);
       values.push(JSON.stringify(updates.tasks));
+    }
+    if (updates.shared != null) {
+      setClauses.push(`shared = $${idx++}`);
+      values.push(updates.shared);
     }
     if (setClauses.length === 0) return null;
     setClauses.push(`updated_at = NOW()`);

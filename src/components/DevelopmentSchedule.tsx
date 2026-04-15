@@ -98,6 +98,12 @@ interface EntitlementTemplate {
     category?: TaskCategory;
     owner?: string;
   }>;
+  shared?: boolean;
+  /**
+   * Comes from the GET endpoint — true when the current user created
+   * this template. Non-owner rows are read-only in the UI.
+   */
+  is_owner?: boolean;
   created_at: string;
   updated_at?: string;
 }
@@ -168,6 +174,10 @@ export default function DevelopmentSchedule({ dealId }: Props) {
     // Stored as an array of document ids — the picker writes this, the
     // child row renders a paperclip chip when it's non-empty.
     linked_document_ids: [] as string[],
+    // Optional per-task budget. Null = no budget set. Rolls up under the
+    // parent phase in the schedule so analysts see total committed
+    // entitlement spend without jumping to the pre-dev budget tracker.
+    budget: null as number | null,
   });
   const [seedingEntitlements, setSeedingEntitlements] = useState(false);
   // Deal documents — fetched once and used by the phase dialog's linker.
@@ -311,7 +321,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
 
   // ── Phase CRUD ──
   const resetPhaseForm = () => {
-    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "", parent_phase_id: "", task_category: "", task_owner: "", linked_document_ids: [] });
+    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "", parent_phase_id: "", task_category: "", task_owner: "", linked_document_ids: [], budget: null });
   };
 
   const openCreatePhase = () => {
@@ -341,6 +351,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       task_category: "pre_submittal",
       task_owner: "",
       linked_document_ids: [],
+      budget: null,
     });
     setPhaseDialogOpen(true);
   };
@@ -362,6 +373,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       linked_document_ids: Array.isArray(p.linked_document_ids)
         ? p.linked_document_ids
         : [],
+      budget: p.budget != null ? Number(p.budget) : null,
     });
     setPhaseDialogOpen(true);
   };
@@ -381,6 +393,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       linked_document_ids: phaseForm.linked_document_ids.length > 0
         ? phaseForm.linked_document_ids
         : null,
+      budget: phaseForm.budget,
       start_date: hasPredecessor ? null : (phaseForm.start_date || null),
       pct_complete: phaseForm.pct_complete,
       status: phaseForm.status,
@@ -633,6 +646,29 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       toast.success(`Saved "${name.trim()}" — re-apply from the Seed dropdown`);
     } catch {
       toast.error("Failed to save template");
+    }
+  };
+
+  /** Flip the shared flag on a template the current user owns. */
+  const handleToggleShareTemplate = async (templateId: string) => {
+    const tpl = templates.find((t) => t.id === templateId);
+    if (!tpl) return;
+    const nextShared = !tpl.shared;
+    try {
+      const res = await fetch(`/api/entitlement-templates/${templateId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shared: nextShared }),
+      });
+      if (!res.ok) throw new Error();
+      await reloadTemplates();
+      toast.success(
+        nextShared
+          ? `"${tpl.name}" is now shared with your workspace`
+          : `"${tpl.name}" is back to private`
+      );
+    } catch {
+      toast.error("Failed to toggle sharing");
     }
   };
 
@@ -1249,6 +1285,33 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                   {p.linked_document_ids.length}
                                 </span>
                               )}
+                              {isChild && p.budget != null && Number(p.budget) > 0 && (
+                                <span
+                                  className="text-2xs text-emerald-400/80 flex-shrink-0 tabular-nums"
+                                  title="Budget"
+                                >
+                                  · {fc(Number(p.budget))}
+                                </span>
+                              )}
+                              {isChild && p.status === "complete" && p.start_date && p.end_date && p.duration_days != null && (() => {
+                                // Variance: actual calendar days elapsed
+                                // between start and end vs the planned
+                                // duration. Green = early / on-time,
+                                // red = late. Muted when 0-day delta.
+                                const s = new Date(p.start_date);
+                                const e = new Date(p.end_date);
+                                const actual = Math.max(0, Math.round((e.getTime() - s.getTime()) / 86400000));
+                                const delta = actual - (p.duration_days || 0);
+                                const color = delta > 0 ? "text-red-400" : delta < 0 ? "text-emerald-400" : "text-muted-foreground/80";
+                                return (
+                                  <span
+                                    className={cn("text-2xs flex-shrink-0 tabular-nums", color)}
+                                    title={`Planned ${p.duration_days}d · actual ${actual}d (${delta > 0 ? "+" : ""}${delta}d)`}
+                                  >
+                                    · actual {actual}d
+                                  </span>
+                                );
+                              })()}
                             </button>
                             {/* Bar */}
                             <div className={cn("col-span-7 relative rounded", isChild ? "h-3 bg-muted/20" : "h-5 bg-muted/30")}>
@@ -1330,6 +1393,29 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                       const sortedChildren = [...children].sort(
                         (a, b) => a.sort_order - b.sort_order
                       );
+                      // Rolled-up budget + planned/actual summaries — only
+                      // render the summary strip when children exist so the
+                      // parent row itself stays quiet on empty phases.
+                      const childBudgetTotal = sortedChildren.reduce(
+                        (s, c) => s + (c.budget != null ? Number(c.budget) : 0),
+                        0
+                      );
+                      const plannedTotalDays = sortedChildren.reduce(
+                        (s, c) => s + (c.duration_days || 0),
+                        0
+                      );
+                      const completedChildren = sortedChildren.filter(
+                        (c) => c.status === "complete" && c.start_date && c.end_date
+                      );
+                      const actualCompletedDays = completedChildren.reduce((s, c) => {
+                        const start = new Date(c.start_date!);
+                        const end = new Date(c.end_date!);
+                        return s + Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
+                      }, 0);
+                      const plannedForCompletedChildren = completedChildren.reduce(
+                        (s, c) => s + (c.duration_days || 0),
+                        0
+                      );
                       return (
                         <div key={p.id} className="space-y-1">
                           {renderRow(p, false)}
@@ -1354,6 +1440,39 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                 </div>
                               </SortableContext>
                             </DndContext>
+                          )}
+                          {sortedChildren.length > 0 && (childBudgetTotal > 0 || plannedTotalDays > 0) && (
+                            <div className="flex items-center gap-3 pl-6 text-2xs text-muted-foreground">
+                              <span>
+                                {sortedChildren.length} task
+                                {sortedChildren.length === 1 ? "" : "s"}
+                              </span>
+                              {plannedTotalDays > 0 && (
+                                <span className="tabular-nums">
+                                  Planned: <span className="text-foreground font-medium">{plannedTotalDays}d</span>
+                                </span>
+                              )}
+                              {completedChildren.length > 0 && (() => {
+                                const delta = actualCompletedDays - plannedForCompletedChildren;
+                                const color = delta > 0 ? "text-red-400" : delta < 0 ? "text-emerald-400" : "text-muted-foreground";
+                                return (
+                                  <span
+                                    className={cn("tabular-nums", color)}
+                                    title={`${completedChildren.length} complete task${completedChildren.length === 1 ? "" : "s"}: planned ${plannedForCompletedChildren}d vs actual ${actualCompletedDays}d (${delta > 0 ? "+" : ""}${delta}d)`}
+                                  >
+                                    Actual (completed): {actualCompletedDays}d
+                                    <span className="text-muted-foreground">
+                                      {" · "}{delta > 0 ? "+" : ""}{delta}d vs plan
+                                    </span>
+                                  </span>
+                                );
+                              })()}
+                              {childBudgetTotal > 0 && (
+                                <span className="tabular-nums text-emerald-400">
+                                  Budget: {fc(childBudgetTotal)}
+                                </span>
+                              )}
+                            </div>
                           )}
                           {/* Entitlement-phase toolbar — pick a scenario
                               to seed the typical task list for that
@@ -1503,13 +1622,41 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                   <span className="text-[9px] uppercase tracking-wide text-muted-foreground/70 mr-1">
                                     Templates
                                   </span>
-                                  {templates.map((t) => (
+                                  {templates.map((t) => {
+                                    // Only the creator can rename / overwrite /
+                                    // delete / toggle share. Shared templates
+                                    // authored by someone else are read-only
+                                    // ("from the workspace") and still apply
+                                    // from the dropdown.
+                                    const canEdit = t.is_owner !== false;
+                                    return (
                                     <span
                                       key={t.id}
-                                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border border-border/40 bg-muted/20"
-                                      title={`${t.tasks.length} task${t.tasks.length === 1 ? "" : "s"} — saved ${new Date(t.created_at).toLocaleDateString()}`}
+                                      className={cn(
+                                        "inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border",
+                                        t.shared
+                                          ? "border-emerald-500/40 bg-emerald-500/10"
+                                          : "border-border/40 bg-muted/20"
+                                      )}
+                                      title={`${t.tasks.length} task${t.tasks.length === 1 ? "" : "s"} — saved ${new Date(t.created_at).toLocaleDateString()}${t.shared ? " · shared with workspace" : ""}${canEdit ? "" : " · shared by a teammate"}`}
                                     >
                                       <span>{t.name}</span>
+                                      {t.shared && (
+                                        <span className="text-emerald-400" title="Shared with workspace">
+                                          🌐
+                                        </span>
+                                      )}
+                                      {canEdit && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleShareTemplate(t.id)}
+                                          className="text-muted-foreground/50 hover:text-foreground transition-colors"
+                                          title={t.shared ? "Make private" : "Share with workspace"}
+                                        >
+                                          {t.shared ? "🔒" : "↗"}
+                                        </button>
+                                      )}
+                                      {canEdit && (
                                       <button
                                         type="button"
                                         onClick={() => handleRenameTemplate(t.id)}
@@ -1518,6 +1665,8 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                       >
                                         ✎
                                       </button>
+                                      )}
+                                      {canEdit && (
                                       <button
                                         type="button"
                                         onClick={() => handleOverwriteTemplate(t.id, p.id)}
@@ -1527,6 +1676,8 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                       >
                                         ⟳
                                       </button>
+                                      )}
+                                      {canEdit && (
                                       <button
                                         type="button"
                                         onClick={() => handleDeleteTemplate(t.id)}
@@ -1535,8 +1686,10 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                       >
                                         ×
                                       </button>
+                                      )}
                                     </span>
-                                  ))}
+                                  );
+                                  })}
                                 </div>
                               )}
                             </div>
@@ -1866,6 +2019,33 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                     value={phaseForm.task_owner}
                     onChange={(e) =>
                       setPhaseForm({ ...phaseForm, task_owner: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+            )}
+            {phaseForm.parent_phase_id && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  Budget (optional)
+                  <span className="text-2xs text-muted-foreground/70 ml-2">
+                    rolls up under the parent phase
+                  </span>
+                </label>
+                <div className="flex items-center border border-border rounded-md bg-background overflow-hidden">
+                  <span className="px-2 text-sm text-muted-foreground bg-muted border-r">$</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100}
+                    placeholder="0"
+                    className="flex-1 px-3 py-2 text-sm bg-transparent outline-none tabular-nums"
+                    value={phaseForm.budget ?? ""}
+                    onChange={(e) =>
+                      setPhaseForm({
+                        ...phaseForm,
+                        budget: e.target.value === "" ? null : Number(e.target.value),
+                      })
                     }
                   />
                 </div>
