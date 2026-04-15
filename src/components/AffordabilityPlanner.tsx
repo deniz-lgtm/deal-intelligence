@@ -4,10 +4,11 @@ import React, { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   Loader2, Plus, Trash2, DollarSign, Sparkles,
-  ChevronDown, ChevronRight, Wand2, AlertTriangle,
+  ChevronDown, ChevronRight, Wand2, AlertTriangle, Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { findBonusCard, type BonusCardEffects } from "@/lib/bonus-catalog";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -627,6 +628,124 @@ export default function AffordabilityPlanner({
     toast.success(`Applied "${preset.label}" preset`);
   }
 
+  // ── Bonus / incentive card application ─────────────────────────────────
+  //
+  // A spotted bonus card (set on Site & Zoning) may declare structured
+  // effects. `isBonusApplied` checks whether the current config already
+  // contains those effects; `applyBonusEffects` merges them in.
+  //
+  // Rules intentionally kept boring so the UX is predictable:
+  //   • Adding an affordability tier is idempotent — we never duplicate
+  //     a tier that already matches on (ami_pct, units_pct). If a match
+  //     exists, we assume the user already applied this card.
+  //   • Setting tax exemption is idempotent — we only enable it when
+  //     not already enabled, and we prefer the card's values.
+  //   • We never REMOVE tiers or exemptions automatically (un-spotting
+  //     a card on Site & Zoning does not reverse effects). The analyst
+  //     stays in control of cleanup.
+
+  function isBonusApplied(effects?: BonusCardEffects): boolean {
+    if (!effects) return false;
+    const tierOk =
+      !effects.affordability_tier ||
+      config.tiers.some(
+        (t) =>
+          t.ami_pct === effects.affordability_tier!.ami_pct &&
+          t.units_pct === effects.affordability_tier!.units_pct
+      );
+    const taxOk =
+      !effects.tax_exemption ||
+      (config.tax_exemption_enabled &&
+        config.tax_exemption_pct === effects.tax_exemption.pct &&
+        config.tax_exemption_type === effects.tax_exemption.type);
+    return tierOk && taxOk;
+  }
+
+  function applyBonusEffects(sourceLabel: string, effects: BonusCardEffects) {
+    let changed = false;
+    setConfig((prev) => {
+      let nextTiers = prev.tiers;
+      let nextTaxEnabled = prev.tax_exemption_enabled;
+      let nextTaxPct = prev.tax_exemption_pct;
+      let nextTaxYears = prev.tax_exemption_years;
+      let nextTaxType = prev.tax_exemption_type;
+
+      // Affordability tier (idempotent — matches on ami_pct + units_pct).
+      if (effects.affordability_tier) {
+        const { ami_pct, units_pct } = effects.affordability_tier;
+        const already = prev.tiers.some(
+          (t) => t.ami_pct === ami_pct && t.units_pct === units_pct
+        );
+        if (!already) {
+          const units = Math.round(totalUnits * (units_pct / 100));
+          const seedMix = buildingUnitMix
+            ? solveMatchBuilding(units, buildingUnitMix)
+            : { studio: 0, one_br: units, two_br: 0, three_br: 0, four_br_plus: 0 };
+          const rents = getMaxRents(ami_pct);
+          nextTiers = [
+            ...prev.tiers,
+            {
+              id: uuidv4(),
+              ami_pct,
+              units_pct,
+              units_count: units,
+              units_studio: seedMix.studio,
+              units_1br: seedMix.one_br,
+              units_2br: seedMix.two_br,
+              units_3br: seedMix.three_br,
+              units_4br_plus: seedMix.four_br_plus,
+              max_rent_studio: rents.studio,
+              max_rent_1br: rents.one_br,
+              max_rent_2br: rents.two_br,
+              max_rent_3br: rents.three_br,
+              max_rent_4br_plus: rents.four_br_plus,
+              mix_mode: "flexible",
+              bedroom_target: 0,
+            },
+          ];
+          changed = true;
+        }
+      }
+
+      // Tax exemption (idempotent — only enables if off, and refreshes
+      // pct / years / type to the card's spec).
+      if (effects.tax_exemption) {
+        const { pct, years, type } = effects.tax_exemption;
+        if (
+          !prev.tax_exemption_enabled ||
+          prev.tax_exemption_pct !== pct ||
+          prev.tax_exemption_type !== type ||
+          prev.tax_exemption_years !== years
+        ) {
+          nextTaxEnabled = true;
+          nextTaxPct = pct;
+          nextTaxYears = years;
+          nextTaxType = type;
+          changed = true;
+        }
+      }
+
+      if (!changed) return prev;
+      const next: AffordabilityConfig = {
+        ...prev,
+        enabled: true,
+        tiers: nextTiers,
+        tax_exemption_enabled: nextTaxEnabled,
+        tax_exemption_pct: nextTaxPct,
+        tax_exemption_years: nextTaxYears,
+        tax_exemption_type: nextTaxType,
+        market_rate_units: Math.max(
+          0,
+          prev.total_units - nextTiers.reduce((s, t) => s + t.units_count, 0)
+        ),
+      };
+      onConfigChange(next);
+      return next;
+    });
+    if (changed) toast.success(`Applied "${sourceLabel}"`);
+    else toast.message(`"${sourceLabel}" already applied`);
+  }
+
   // ── Per-tier mix actions ───────────────────────────────────────────────
   function suggestTierMix(tierId: string) {
     const tier = config.tiers.find((t) => t.id === tierId);
@@ -872,39 +991,81 @@ export default function AffordabilityPlanner({
             </div>
           )}
 
-          {/* Spotted bonuses/incentives (type surface only) — read-only
-              summary of what's been committed to on the Site & Zoning page. */}
+          {/* Spotted bonuses/incentives (type surface only) — each spotted
+              card carries structured effects from the shared catalog
+              (src/lib/bonus-catalog.ts). If it does, we render an "Apply"
+              button that merges those effects (adds an AMI tier, enables
+              tax exemption) into the config. Idempotent: if the tier /
+              exemption already matches, the button shows "✓ Applied". */}
           {showTypeControls && spottedBonuses && spottedBonuses.length > 0 && (
             <div>
               <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
                 Spotted Bonuses / Incentives
               </div>
               <div className="space-y-1.5">
-                {spottedBonuses.map((b, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-2 p-2 rounded-md bg-emerald-500/5 border border-emerald-500/20 text-xs"
-                  >
-                    <div className="flex-1">
-                      <div className="font-medium text-foreground">
-                        {b.source || "Unnamed bonus"}
-                      </div>
-                      {b.description && (
-                        <div className="text-muted-foreground">
-                          {b.description}
+                {spottedBonuses.map((b, i) => {
+                  const card = findBonusCard(b.source);
+                  const effects = card?.effects;
+                  const applied = isBonusApplied(effects);
+                  const hasEffects =
+                    !!effects?.affordability_tier || !!effects?.tax_exemption;
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-start gap-2 p-2 rounded-md bg-emerald-500/5 border border-emerald-500/20 text-xs"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-foreground truncate">
+                          {b.source || "Unnamed bonus"}
                         </div>
+                        {effects?.applySummary ? (
+                          <div className="text-muted-foreground">
+                            {effects.applySummary}
+                          </div>
+                        ) : b.description ? (
+                          <div className="text-muted-foreground">
+                            {b.description}
+                          </div>
+                        ) : null}
+                      </div>
+                      {hasEffects ? (
+                        applied ? (
+                          <span className="flex items-center gap-1 text-emerald-400 whitespace-nowrap text-[10px]">
+                            <Check className="h-3 w-3" />
+                            Applied
+                          </span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              applyBonusEffects(b.source, effects!)
+                            }
+                            title="Merge this program's affordability + tax exemption effects into the project"
+                          >
+                            Apply
+                          </Button>
+                        )
+                      ) : (
+                        // Pure-informational cards (e.g. Opportunity Zone,
+                        // HUD loan, entitlement pathways). Show the headline
+                        // hint rather than an Apply button — they don't map
+                        // to a tier or tax exemption we can set here.
+                        b.additional_density && (
+                          <span className="text-[10px] text-emerald-400 whitespace-nowrap">
+                            {b.additional_density}
+                          </span>
+                        )
                       )}
                     </div>
-                    {b.additional_density && (
-                      <span className="text-[10px] text-emerald-400 whitespace-nowrap">
-                        {b.additional_density}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <p className="text-[10px] text-muted-foreground/70 mt-1.5">
-                Picked from Site &amp; Zoning — edit there to add or remove.
+                Picked from Site &amp; Zoning. &quot;Apply&quot; creates the
+                matching tier / tax exemption on this project — it never
+                removes anything, so you can un-spot a card without losing
+                edits.
               </p>
             </div>
           )}
