@@ -16,6 +16,7 @@ import MassingSection from "@/components/massing/MassingSection";
 import AffordabilityPlanner from "@/components/AffordabilityPlanner";
 import { newBuildingProgram, computeMassingSummary } from "@/components/massing/massing-utils";
 import type { ZoningInputs } from "@/components/massing/massing-utils";
+import { splitUnitGroupsByAffordability } from "@/lib/affordability-split";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const fc = (n: number) => n || n === 0 ? "$" + Math.round(n).toLocaleString("en-US") : "—";
@@ -155,131 +156,13 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       const uwJson = await uwRes.json();
       const current = uwJson.data?.data ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data) : {};
 
-      // Split unit groups by affordability tiers if configured.
-      //
-      // Each AMI tier now carries its own per-BR unit breakdown (units_studio
-      // / units_1br / units_2br / units_3br / units_4br_plus) driven by the
-      // AffordabilityPlanner's mix mode (flexible / match-building /
-      // bedroom-equivalent). We honour that breakdown directly here — the
-      // old proportional-to-building allocation was wrong for flexible and
-      // bedroom-equivalent modes.
-      let nextUnitGroups = current.unit_groups || [];
-      if (
-        affordabilityConfig?.enabled &&
-        affordabilityConfig.tiers?.length > 0 &&
-        nextUnitGroups.length > 0
-      ) {
-        // Map each BR bucket to the matching market-rate unit group — we
-        // clone its template (bedrooms/bathrooms/sf_per_unit) for the
-        // affordable version. Anything ≥4 BR shares the 3BR template as a
-        // fallback; users can adjust after the split.
-        const marketBaseByBr: Record<string, any> = {};
-        for (const g of nextUnitGroups.filter((x: any) => !x.is_affordable)) {
-          const bd = g.bedrooms || 0;
-          const key =
-            bd === 0 ? "studio"
-            : bd === 1 ? "one_br"
-            : bd === 2 ? "two_br"
-            : bd === 3 ? "three_br"
-            : "four_br_plus";
-          if (!marketBaseByBr[key]) marketBaseByBr[key] = g;
-        }
-        const fallbackBase =
-          nextUnitGroups.find((g: any) => !g.is_affordable) || nextUnitGroups[0];
-
-        // Total affordable units per BR bucket across all tiers — used to
-        // scale down the market groups so the building total stays the same.
-        const affordableByBr: Record<string, number> = {
-          studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0,
-        };
-        for (const t of affordabilityConfig.tiers) {
-          affordableByBr.studio += Number(t.units_studio || 0);
-          affordableByBr.one_br += Number(t.units_1br || 0);
-          affordableByBr.two_br += Number(t.units_2br || 0);
-          affordableByBr.three_br += Number(t.units_3br || 0);
-          affordableByBr.four_br_plus += Number(t.units_4br_plus || 0);
-        }
-
-        // Scale each market-rate group down by the number of that BR that
-        // have been claimed as affordable. Preserves the "template" group's
-        // other fields (rents, sf, etc.) and labels it "(Market)".
-        const marketGroups = nextUnitGroups
-          .filter((g: any) => !g.is_affordable)
-          .map((g: any) => {
-            const bd = g.bedrooms || 0;
-            const key =
-              bd === 0 ? "studio"
-              : bd === 1 ? "one_br"
-              : bd === 2 ? "two_br"
-              : bd === 3 ? "three_br"
-              : "four_br_plus";
-            const claimed = affordableByBr[key] || 0;
-            const remaining = Math.max(0, (g.unit_count || 0) - claimed);
-            return {
-              ...g,
-              id: g.id || uuidv4(),
-              label:
-                g.label?.replace(/\s*\(Market\)|\s*\(Affordable.*\)/gi, "").trim() +
-                " (Market)",
-              unit_count: remaining,
-              is_affordable: false,
-            };
-          })
-          .filter((g: any) => g.unit_count > 0);
-
-        // Create one affordable group per (tier, BR bucket) with a non-zero
-        // count. Rent comes from the tier's max_rent_<br> directly — the
-        // user has already committed to that mix via the planner.
-        const brBuckets: Array<{
-          key: "studio" | "one_br" | "two_br" | "three_br" | "four_br_plus";
-          field:
-            | "units_studio"
-            | "units_1br"
-            | "units_2br"
-            | "units_3br"
-            | "units_4br_plus";
-          rentField:
-            | "max_rent_studio"
-            | "max_rent_1br"
-            | "max_rent_2br"
-            | "max_rent_3br"
-            | "max_rent_4br_plus";
-          label: string;
-          bedrooms: number;
-        }> = [
-          { key: "studio",       field: "units_studio",      rentField: "max_rent_studio",      label: "Studio", bedrooms: 0 },
-          { key: "one_br",       field: "units_1br",         rentField: "max_rent_1br",         label: "1BR",    bedrooms: 1 },
-          { key: "two_br",       field: "units_2br",         rentField: "max_rent_2br",         label: "2BR",    bedrooms: 2 },
-          { key: "three_br",     field: "units_3br",         rentField: "max_rent_3br",         label: "3BR",    bedrooms: 3 },
-          { key: "four_br_plus", field: "units_4br_plus",    rentField: "max_rent_4br_plus",    label: "4BR+",   bedrooms: 4 },
-        ];
-
-        const affordableGroups: any[] = [];
-        for (const tier of affordabilityConfig.tiers) {
-          for (const b of brBuckets) {
-            const units = Number((tier as any)[b.field] || 0);
-            if (units <= 0) continue;
-            const base = marketBaseByBr[b.key] || fallbackBase;
-            const rent = Number((tier as any)[b.rentField] || 0);
-            const baseLabel =
-              base?.label?.replace(/\s*\(Market\)|\s*\(Affordable.*\)/gi, "").trim() ||
-              b.label;
-            affordableGroups.push({
-              ...base,
-              id: uuidv4(),
-              label: `${baseLabel} (Affordable ${tier.ami_pct}% AMI)`,
-              bedrooms: base?.bedrooms ?? b.bedrooms,
-              unit_count: units,
-              market_rent_per_unit: rent,
-              current_rent_per_unit: rent,
-              is_affordable: true,
-              ami_pct: tier.ami_pct,
-            });
-          }
-        }
-
-        nextUnitGroups = [...marketGroups, ...affordableGroups];
-      }
+      // Split unit groups by affordability tiers if configured. The shared
+      // helper honours each tier's per-BR breakdown directly (see
+      // src/lib/affordability-split.ts).
+      const nextUnitGroups = splitUnitGroupsByAffordability(
+        current.unit_groups || [],
+        affordabilityConfig
+      );
 
       // Pro-rata tax exemption: (affordable_units / total_units) × taxes × exemption_pct
       let adjustedTaxes = current.taxes_annual;
