@@ -504,9 +504,38 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           </Button>
           {activeScenario && (
             <Button size="sm" onClick={() => pushToUW(activeScenario)} className="bg-primary hover:bg-primary/90">
-              <ArrowRight className="h-4 w-4 mr-2" /> Push to Underwriting
+              <ArrowRight className="h-4 w-4 mr-2" /> Push {hasMultipleBuildings ? "Building" : ""} to UW
             </Button>
           )}
+          {/* Multi-building convenience: push every scenario linked to a
+              site-plan building sequentially. Preserves per-building tags
+              on the resulting unit_groups so Underwriting's grouped view
+              shows Building 1 / Building 2 / … in one go. We iterate so
+              the pushToUW side-effects (auto-OpEx / loan sizing on empty)
+              still fire once and are idempotent on subsequent rounds. */}
+          {hasMultipleBuildings && (() => {
+            const linkedScenarios = buildingProgram.scenarios.filter(
+              s => s.site_plan_building_id
+            );
+            if (linkedScenarios.length < 2) return null;
+            return (
+              <Button
+                size="sm"
+                onClick={async () => {
+                  toast.info(`Pushing ${linkedScenarios.length} buildings…`);
+                  for (const s of linkedScenarios) {
+                    // Sequential to avoid racing underwriting read-modify-write
+                    await pushToUW(s);
+                  }
+                  toast.success(`Pushed ${linkedScenarios.length} buildings to Underwriting`);
+                }}
+                className="bg-primary/80 hover:bg-primary"
+                title="Push every building's scenario to the underwriting unit_groups in one pass"
+              >
+                <ArrowRight className="h-4 w-4 mr-2" /> Push All Buildings
+              </Button>
+            );
+          })()}
         </div>
       </div>
 
