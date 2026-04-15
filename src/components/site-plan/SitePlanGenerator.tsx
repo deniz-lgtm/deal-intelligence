@@ -26,12 +26,15 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import {
-  MousePointer2, Hexagon, Building2, Undo2, Trash2, Check, X, Ruler,
+  MousePointer2, Hexagon, Building2, Undo2, Trash2, Check, X, Ruler, Scissors,
+  Spline as LineIcon,
 } from "lucide-react";
-import type { SitePlan, SitePlanPoint, SitePlanBuilding, SitePlanScenario } from "@/lib/types";
+import type { SitePlan, SitePlanPoint, SitePlanBuilding, SitePlanScenario, SitePlanCutout } from "@/lib/types";
 import { getTileConfig } from "@/lib/map-config";
 import {
   polygonAreaSf,
+  polygonPerimeterFt,
+  polygonPerimeterFtOpen,
   segmentLengthFt,
   snapRightAngle,
   snapToNearestVertex,
@@ -63,7 +66,7 @@ export interface SitePlanGeneratorProps {
   height?: number;
 }
 
-type Tool = "pan" | "parcel" | "building" | "measure";
+type Tool = "pan" | "parcel" | "building" | "cutout" | "frontage" | "measure";
 
 // ── Handle icons for the active-building resize handles ──────────────────────
 //
@@ -265,7 +268,10 @@ function DrawingSurface({
       // Only when NOT bypassing snap: in precision mode the analyst may
       // want to place a vertex near the start without accidentally closing.
       // Measure mode is an open polyline, so skip closing there.
-      if (tool !== "measure" && !bypass && d.length >= 3 && distanceFt(snapped, d[0]) < 8) {
+      // Frontage is an open polyline and measure doesn't close either —
+      // both exit the close-on-first-vertex shortcut so they don't
+      // accidentally terminate on a nearby click.
+      if (tool !== "measure" && tool !== "frontage" && !bypass && d.length >= 3 && distanceFt(snapped, d[0]) < 8) {
         onFinish();
         return;
       }
@@ -287,15 +293,17 @@ function DrawingSurface({
     },
     dblclick(e) {
       // Swallow the auto-zoom double-click while drawing, and use it to close
-      // the polygon instead. Measure mode uses double-click to finish the
-      // measurement chain and clear the draft.
+      // the polygon (or finish the open polyline) instead.
       if (tool === "pan") return;
       L.DomEvent.stop(e.originalEvent as unknown as Event);
       if (tool === "measure") {
+        // Measurements are ephemeral — clear on double-click.
         setDraft([]);
         return;
       }
-      if (draftRef.current.length >= 3) onFinish();
+      // Frontage is an open polyline and finishes on ≥2 points.
+      const minPoints = tool === "frontage" ? 2 : 3;
+      if (draftRef.current.length >= minPoints) onFinish();
     },
   });
   return null;
@@ -459,7 +467,9 @@ export default function SitePlanGenerator({
   // The newly-drawn building becomes active so the sidebar focuses it.
   const finish = useCallback(() => {
     const points = draft;
-    if (points.length < 3) {
+    // Frontage is an open polyline — finishes with 2+ points, not 3+.
+    const minPoints = tool === "frontage" ? 2 : 3;
+    if (points.length < minPoints) {
       setDraft([]);
       return;
     }
@@ -472,9 +482,6 @@ export default function SitePlanGenerator({
       }));
     } else if (tool === "building") {
       const area = polygonAreaSf(points);
-      // Auto-generate a label "Building N" where N is the next available
-      // integer that isn't already in use within this scenario. Analysts
-      // can rename in the sidebar afterwards.
       updateActiveScenario((scen) => {
         const usedLabels = new Set(scen.buildings.map((b) => b.label));
         let n = scen.buildings.length + 1;
@@ -494,6 +501,44 @@ export default function SitePlanGenerator({
           active_building_id: newBuilding.id,
         };
       });
+    } else if (tool === "cutout") {
+      // Cutouts attach to the currently active building. No active
+      // building = no-op (shouldn't happen because the toolbar gates
+      // the Cutout button, but belt-and-braces).
+      const area = polygonAreaSf(points);
+      updateActiveScenario((scen) => {
+        const activeBid = scen.active_building_id;
+        if (!activeBid) return scen;
+        return {
+          ...scen,
+          buildings: scen.buildings.map((b) => {
+            if (b.id !== activeBid) return b;
+            const existing = b.cutouts || [];
+            const usedLabels = new Set(existing.map((c) => c.label));
+            let n = existing.length + 1;
+            while (usedLabels.has(`Cutout ${n}`)) n++;
+            const newCutout: SitePlanCutout = {
+              id:
+                (typeof crypto !== "undefined" && typeof (crypto as { randomUUID?: () => string }).randomUUID === "function"
+                  ? (crypto as { randomUUID: () => string }).randomUUID()
+                  : `cut-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+              label: `Cutout ${n}`,
+              points,
+              area_sf: Math.round(area),
+            };
+            return { ...b, cutouts: [...existing, newCutout] };
+          }),
+        };
+      });
+    } else if (tool === "frontage") {
+      // Frontage = open polyline stored on the scenario. Length drives
+      // linear-SF line items in the dev budget.
+      const len = polygonPerimeterFtOpen(points);
+      updateActiveScenario((scen) => ({
+        ...scen,
+        frontage_points: points,
+        frontage_length_ft: Math.round(len),
+      }));
     }
     setDraft([]);
     setTool("pan");
@@ -598,9 +643,13 @@ export default function SitePlanGenerator({
   const BUILDING_COLOR = "#3b82f6";
   const SETBACK_COLOR = "#f59e0b";
   const MEASURE_COLOR = "#22d3ee";
+  const CUTOUT_COLOR = "#f472b6";    // pink — "void inside the building"
+  const FRONTAGE_COLOR = "#fbbf24";  // amber — reads as a different kind of linework
   const DRAFT_COLOR =
     tool === "parcel" ? PARCEL_COLOR
     : tool === "building" ? BUILDING_COLOR
+    : tool === "cutout" ? CUTOUT_COLOR
+    : tool === "frontage" ? FRONTAGE_COLOR
     : tool === "measure" ? MEASURE_COLOR
     : "#a1a1aa";
 
@@ -645,6 +694,27 @@ export default function SitePlanGenerator({
             onClick={() => switchTool("building")}
             label="Building"
             icon={<Building2 className="h-3.5 w-3.5 text-blue-400" />}
+          />
+          {/* Cutout requires an active building — render disabled when
+              no building has been drawn / selected. */}
+          <ToolButton
+            active={tool === "cutout"}
+            onClick={() => switchTool("cutout")}
+            label="Cutout"
+            icon={<Scissors className="h-3.5 w-3.5 text-pink-400" />}
+            disabled={!activeBuildingId}
+            title={
+              activeBuildingId
+                ? "Draw a courtyard / light well inside the active building"
+                : "Select a building first"
+            }
+          />
+          <ToolButton
+            active={tool === "frontage"}
+            onClick={() => switchTool("frontage")}
+            label="Frontage"
+            icon={<LineIcon className="h-3.5 w-3.5 text-amber-400" />}
+            title="Draw the parcel's street frontage — linear SF flows into dev-budget line items"
           />
           <ToolButton
             active={tool === "measure"}
@@ -786,16 +856,25 @@ export default function SitePlanGenerator({
           <span className="text-foreground font-medium mr-2">
             {tool === "parcel" ? "Tracing parcel"
               : tool === "building" ? "Drawing building footprint"
+              : tool === "cutout" ? "Cutting out courtyard"
+              : tool === "frontage" ? "Drawing frontage"
               : "Measuring distance"}
           </span>
           {tool === "measure" ? (
             <>Click to add point · double-click to clear · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision (no snap)</>
+          ) : tool === "frontage" ? (
+            <>Click to add point · double-click / Enter to finish · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision (no snap)</>
           ) : (
             <>Click to add vertex · first-vertex / double-click / Enter to close · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision (no snap)</>
           )}
-          {tool !== "measure" && draft.length >= 3 && (
+          {tool !== "measure" && tool !== "frontage" && draft.length >= 3 && (
             <span className="ml-2 text-emerald-300 tabular-nums">
               {Math.round(liveArea).toLocaleString()} SF
+            </span>
+          )}
+          {tool === "frontage" && draft.length >= 2 && (
+            <span className="ml-2 text-amber-300 tabular-nums">
+              {Math.round(measureTotalFt).toLocaleString()} LF
             </span>
           )}
           {tool === "measure" && draft.length >= 1 && (
@@ -884,13 +963,22 @@ export default function SitePlanGenerator({
           </Polygon>
         )}
 
-        {/* ── Buildings (one polygon per drawn structure) ── */}
+        {/* ── Buildings (one polygon per drawn structure) ──
+            Cutouts are rendered as inner holes by passing a multi-ring
+            positions array: [outer, cutout1, cutout2, ...]. Leaflet's
+            Polygon then treats the inner rings as holes, which is
+            exactly the Texas-donut behaviour the analyst wants. */}
         {buildings.map((b) => {
           const isActive = b.id === activeBuildingId;
+          const cutouts = b.cutouts || [];
+          const positions =
+            cutouts.length > 0
+              ? [b.points.map(toLatLng), ...cutouts.map((c) => c.points.map(toLatLng))]
+              : b.points.map(toLatLng);
           return (
             <Polygon
               key={`b-${b.id}`}
-              positions={b.points.map(toLatLng)}
+              positions={positions}
               pathOptions={{
                 color: BUILDING_COLOR,
                 weight: isActive ? 3 : 2,
@@ -1047,6 +1135,76 @@ export default function SitePlanGenerator({
           return nodes;
         })}
 
+        {/* ── Cutouts — render outline + vertex markers + label so the
+            analyst can see the hole even though Leaflet's multi-ring
+            polygon already visually voids the fill. We draw them as
+            pink dashed rings. */}
+        {buildings.flatMap((b) => {
+          const cutouts = b.cutouts || [];
+          if (cutouts.length === 0) return [] as React.ReactElement[];
+          const nodes: React.ReactElement[] = [];
+          for (const c of cutouts) {
+            // Centroid for label placement.
+            const cx = c.points.reduce((s, p) => s + p.lat, 0) / c.points.length;
+            const cy = c.points.reduce((s, p) => s + p.lng, 0) / c.points.length;
+            nodes.push(
+              <Polyline
+                key={`co-${b.id}-${c.id}`}
+                positions={[...c.points.map(toLatLng), toLatLng(c.points[0])]}
+                pathOptions={{
+                  color: CUTOUT_COLOR,
+                  weight: 2,
+                  dashArray: "4 3",
+                }}
+              />
+            );
+            c.points.forEach((p, i) => {
+              nodes.push(
+                <CircleMarker
+                  key={`cov-${b.id}-${c.id}-${i}`}
+                  center={toLatLng(p)}
+                  radius={3}
+                  pathOptions={{ color: CUTOUT_COLOR, fillColor: "#fff", fillOpacity: 1, weight: 2 }}
+                />
+              );
+            });
+            // Invisible marker at the centroid carrying a permanent
+            // tooltip with the label + area. Keeps cutouts visually
+            // identifiable without a standalone Text layer.
+            nodes.push(
+              <CircleMarker
+                key={`col-${b.id}-${c.id}`}
+                center={[cx, cy]}
+                radius={0.1}
+                pathOptions={{ color: "transparent", weight: 0, opacity: 0 }}
+              >
+                <Tooltip permanent direction="center" className="site-plan-dim-label">
+                  {c.label} · {c.area_sf.toLocaleString()} SF
+                </Tooltip>
+              </CircleMarker>
+            );
+          }
+          return nodes;
+        })}
+
+        {/* ── Frontage polyline (open) for the active scenario ── */}
+        {activeScen?.frontage_points && activeScen.frontage_points.length >= 2 && (
+          <>
+            <Polyline
+              positions={activeScen.frontage_points.map(toLatLng)}
+              pathOptions={{ color: FRONTAGE_COLOR, weight: 3 }}
+            />
+            {activeScen.frontage_points.map((p, i) => (
+              <CircleMarker
+                key={`fv-${i}`}
+                center={toLatLng(p)}
+                radius={3}
+                pathOptions={{ color: FRONTAGE_COLOR, fillColor: "#fff", fillOpacity: 1, weight: 2 }}
+              />
+            ))}
+          </>
+        )}
+
         {/* ── In-progress draft polygon / measure chain ── */}
         {draft.length >= 2 && (
           <Polyline
@@ -1058,10 +1216,12 @@ export default function SitePlanGenerator({
             }}
           />
         )}
-        {/* In measure mode show a per-segment dimension label on each
-            committed segment so the analyst can read off the distances
-            without counting clicks. */}
-        {tool === "measure" && draft.length >= 2 && draft.slice(0, -1).map((p, i) => {
+        {/* Per-segment dimension labels on every committed draft segment.
+            Shown for every drawing tool (parcel / building / cutout /
+            frontage / measure) so the analyst can read off leg lengths
+            as they click — important for multifamily where the bay
+            dimension matters. */}
+        {tool !== "pan" && draft.length >= 2 && draft.slice(0, -1).map((p, i) => {
           const next = draft[i + 1];
           const midLat = (p.lat + next.lat) / 2;
           const midLng = (p.lng + next.lng) / 2;
@@ -1134,15 +1294,27 @@ export default function SitePlanGenerator({
 // ── Small tool button ────────────────────────────────────────────────────────
 
 function ToolButton({
-  active, onClick, label, icon,
-}: { active: boolean; onClick: () => void; label: string; icon: React.ReactNode }) {
+  active, onClick, label, icon, disabled, title,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  icon: React.ReactNode;
+  disabled?: boolean;
+  title?: string;
+}) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={`h-7 px-2 flex items-center gap-1 rounded-md text-[11px] transition-colors ${
-        active ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+        active
+          ? "bg-primary/20 text-primary"
+          : disabled
+          ? "text-muted-foreground/40 cursor-not-allowed"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
       }`}
-      title={label}
+      title={title || label}
     >
       {icon}
       <span>{label}</span>

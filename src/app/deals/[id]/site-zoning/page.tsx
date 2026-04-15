@@ -1768,13 +1768,53 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           Upcoming state or local legislation and general plan changes that could affect this project —
           density bonuses or incentives coming online, phase-in rules, or plan amendments in the works.
         </p>
-        {zoning.future_legislation.length === 0 ? (
+        {(() => {
+          // Filter out rows whose effective_date parses to a date in
+          // the past — "Future Legislation" shouldn't list bills that
+          // already took effect. Unparseable strings (e.g. "TBD") stay
+          // visible so half-known items aren't silently dropped. The
+          // underlying array is preserved in state so if the AI report
+          // re-runs it doesn't re-add stale items.
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const visibleRows: Array<{ item: FutureLegislation; index: number }> = [];
+          let hiddenCount = 0;
+          zoning.future_legislation.forEach((item, index) => {
+            const parsed = item.effective_date?.trim()
+              ? new Date(item.effective_date)
+              : null;
+            if (parsed && !isNaN(parsed.getTime()) && parsed < today) {
+              hiddenCount++;
+              return;
+            }
+            visibleRows.push({ item, index });
+          });
+          return (
+            <>
+              {hiddenCount > 0 && (
+                <p className="text-[11px] text-muted-foreground/80 mb-2">
+                  {hiddenCount} past-dated {hiddenCount === 1 ? "item is" : "items are"} hidden.{" "}
+                  <button
+                    onClick={() => {
+                      const kept = zoning.future_legislation.filter((it) => {
+                        const p = it.effective_date?.trim() ? new Date(it.effective_date) : null;
+                        return !(p && !isNaN(p.getTime()) && p < today);
+                      });
+                      updateZoning("future_legislation", kept);
+                    }}
+                    className="text-purple-300 hover:text-purple-200 underline decoration-dotted"
+                  >
+                    Remove them
+                  </button>
+                </p>
+              )}
+        {visibleRows.length === 0 ? (
           <p className="text-xs text-muted-foreground/60 italic mb-3">
             None yet. Run the AI Zoning Report to populate, or add items manually.
           </p>
         ) : (
           <div className="space-y-2 mb-3">
-            {zoning.future_legislation.map((item, i) => (
+            {visibleRows.map(({ item, index: i }) => (
               <div
                 key={i}
                 className="grid grid-cols-1 md:grid-cols-[180px_120px_1fr_auto] gap-2 p-2.5 bg-purple-500/5 border border-purple-500/20 rounded-lg"
@@ -1830,6 +1870,9 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             ))}
           </div>
         )}
+            </>
+          );
+        })()}
         <button
           onClick={() => updateZoning("future_legislation", [...zoning.future_legislation, { source: "", description: "", effective_date: "", impact: "" }])}
           className="text-xs text-muted-foreground hover:text-foreground"

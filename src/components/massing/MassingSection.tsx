@@ -53,8 +53,17 @@ export default function MassingSection({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const activeScenario = program.scenarios.find(s => s.id === program.active_scenario_id) || program.scenarios[0];
-  if (!activeScenario) return null;
+  const activeScenarioRaw = program.scenarios.find(s => s.id === program.active_scenario_id) || program.scenarios[0];
+  if (!activeScenarioRaw) return null;
+  // Defensive normalization — legacy rows that pre-date the Massings
+  // refactor sometimes lack floors/unit_mix as arrays. Treating them as
+  // arrays crashes the render; treating them as missing shows an empty
+  // editor which the analyst can fill.
+  const activeScenario: typeof activeScenarioRaw = {
+    ...activeScenarioRaw,
+    floors: Array.isArray(activeScenarioRaw.floors) ? activeScenarioRaw.floors : [],
+    unit_mix: Array.isArray(activeScenarioRaw.unit_mix) ? activeScenarioRaw.unit_mix : [],
+  };
 
   const summary = computeMassingSummary(activeScenario, zoning);
 

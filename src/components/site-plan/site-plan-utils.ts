@@ -78,6 +78,19 @@ export function polygonPerimeterFt(points: SitePlanPoint[]): number {
   return total * FT_PER_M;
 }
 
+// ── Open polyline length (ft) — for frontage / measure chains ────────────────
+// Same as polygonPerimeterFt but without the closing segment.
+export function polygonPerimeterFtOpen(points: SitePlanPoint[]): number {
+  if (points.length < 2) return 0;
+  const o = centroid(points);
+  const xy = points.map((p) => latLngToXY(p, o));
+  let total = 0;
+  for (let i = 0; i < xy.length - 1; i++) {
+    total += Math.hypot(xy[i + 1].x - xy[i].x, xy[i + 1].y - xy[i].y);
+  }
+  return total * FT_PER_M;
+}
+
 // ── Segment length in ft (for live drawing dimension labels) ─────────────────
 
 export function segmentLengthFt(a: SitePlanPoint, b: SitePlanPoint): number {
