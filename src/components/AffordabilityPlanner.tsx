@@ -47,6 +47,16 @@ export interface AmiTier {
    * and switches back to "flexible".
    */
   bedroom_target: number;
+  /**
+   * Optional per-tier building targeting. When set, the affordable units
+   * for THIS tier are routed only to unit groups whose
+   * site_plan_building_id is in this list (the split routine ignores
+   * other buildings' rows for this tier). Empty / unset = affordable
+   * units distribute proportionally across every building in the
+   * massing, matching prior behaviour. Only meaningful on multi-
+   * building massings.
+   */
+  target_building_ids?: string[];
 }
 
 export interface AffordabilityConfig {
@@ -185,6 +195,15 @@ interface Props {
    * the actual mutation (it knows the current unit_groups state).
    */
   onPushToUnitMix?: () => void;
+  /**
+   * Buildings in the active Massing. When present AND length > 1, each
+   * tier gets a "Target Building" selector that lets analysts route
+   * that tier's affordable units to one specific building (e.g. "100%
+   * affordable Building 3, market-rate Buildings 1 & 2"). Empty /
+   * single-building massings fall back to proportional distribution
+   * across everything.
+   */
+  availableBuildings?: Array<{ id: string; label: string }>;
 }
 
 function hydrateTiers(
@@ -431,6 +450,7 @@ export default function AffordabilityPlanner({
   mode = "full",
   spottedBonuses,
   onPushToUnitMix,
+  availableBuildings,
 }: Props) {
   const showTypeControls = mode === "type" || mode === "full";
   const showMixControls = mode === "mix" || mode === "full";
@@ -1247,6 +1267,63 @@ export default function AffordabilityPlanner({
                         </button>
                       )}
                     </div>
+
+                    {/* Target building(s) — shown on Programming (type
+                        surface) when the active massing has >1 building.
+                        Lets analysts route this tier's affordable units
+                        to a specific building (e.g. all affordable in
+                        Building 3). Empty selection = distribute across
+                        every building proportionally. */}
+                    {showTypeControls && availableBuildings && availableBuildings.length > 1 && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">
+                          Target Building
+                        </span>
+                        {(() => {
+                          const selected = tier.target_building_ids || [];
+                          const allSelected = selected.length === 0;
+                          return (
+                            <>
+                              <button
+                                onClick={() =>
+                                  updateTier(tier.id, { target_building_ids: [] })
+                                }
+                                className={`px-2 py-0.5 text-[10px] rounded border ${
+                                  allSelected
+                                    ? "bg-primary/20 border-primary/40 text-primary"
+                                    : "bg-muted/20 border-border/40 text-muted-foreground hover:border-border/60"
+                                }`}
+                                title="Distribute affordable units proportionally across every building in this massing"
+                              >
+                                All buildings
+                              </button>
+                              {availableBuildings.map((b) => {
+                                const on = selected.includes(b.id);
+                                return (
+                                  <button
+                                    key={b.id}
+                                    onClick={() => {
+                                      const next = on
+                                        ? selected.filter((x) => x !== b.id)
+                                        : [...selected, b.id];
+                                      updateTier(tier.id, { target_building_ids: next });
+                                    }}
+                                    className={`px-2 py-0.5 text-[10px] rounded border ${
+                                      on
+                                        ? "bg-blue-500/20 border-blue-500/40 text-blue-200"
+                                        : "bg-muted/20 border-border/40 text-muted-foreground hover:border-border/60"
+                                    }`}
+                                    title={on ? `Remove ${b.label} from this tier` : `Route this tier's affordable units to ${b.label}`}
+                                  >
+                                    {b.label}
+                                  </button>
+                                );
+                              })}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
 
                     {/* Mode selector + Suggest/AI actions — mix surface only */}
                     {showMixControls && (
