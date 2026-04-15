@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { BONUS_CATALOG } from "@/lib/bonus-catalog";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface Setback { label: string; feet: number | null; }
@@ -101,92 +102,6 @@ const DEFAULT_DEV: DevParams = {
   lot_coverage_pct: 40, far: 0, height_limit_stories: 0,
   efficiency_pct: 100, max_gsf: 0, max_nrsf: 0,
 };
-
-// Catalog of well-known density / affordability bonus and incentive programs.
-// Clicking a card on the Site & Zoning page "spots" the program — appending
-// it to zoning.density_bonuses. The Programming page then reads those as
-// read-only spotted programs via AffordabilityPlanner's spottedBonuses prop.
-//
-// Keep the source names stable — the "already spotted?" check on the catalog
-// buttons compares by `source`.
-const BONUS_CATALOG: Array<{
-  source: string;
-  description: string;
-  additional_density: string;
-}> = [
-  {
-    source: "CA Density Bonus Law",
-    description:
-      "State density bonus for providing affordable units. Incentives scale with the % of units affordable and the AMI target.",
-    additional_density: "+20% to +50% units",
-  },
-  {
-    source: "SB 35 (CA)",
-    description:
-      "Streamlined ministerial approval when the project includes at least 10% (or 50%) affordable units in a jurisdiction behind its RHNA.",
-    additional_density: "By-right",
-  },
-  {
-    source: "CCHS (Citywide Commercial-Corridor Housing Services)",
-    description:
-      "Allows residential use by-right in qualifying commercial corridors, bypassing rezone timelines.",
-    additional_density: "By-right residential",
-  },
-  {
-    source: "LIHTC 9% (100% affordable)",
-    description:
-      "Competitive Low-Income Housing Tax Credit — roughly 70% of eligible basis over 10 years. Typically paired with an 100% affordable tier structure.",
-    additional_density: "Equity ~70% basis",
-  },
-  {
-    source: "LIHTC 4% (100% affordable)",
-    description:
-      "Non-competitive 4% LIHTC paired with tax-exempt bonds. ~30% of eligible basis over 10 years.",
-    additional_density: "Equity ~30% basis",
-  },
-  {
-    source: "421-a (NYC)",
-    description:
-      "NYC property tax exemption for new multifamily with affordable set-asides. Terms vary by option (A–G).",
-    additional_density: "Tax abatement 25–35 yrs",
-  },
-  {
-    source: "J-51 (NYC)",
-    description:
-      "NYC tax abatement + exemption for substantial rehab or conversion projects that add regulated affordable units.",
-    additional_density: "Tax abatement",
-  },
-  {
-    source: "Local Inclusionary Zoning",
-    description:
-      "Jurisdiction-specific inclusionary ordinance — typically 10%–20% of units at 50%–80% AMI with optional in-lieu fee.",
-    additional_density: "Varies by city",
-  },
-  {
-    source: "Opportunity Zone",
-    description:
-      "Federal OZ tax benefits: deferred capital-gains recognition + 10-year basis step-up on the replacement investment.",
-    additional_density: "Tax deferral",
-  },
-  {
-    source: "HUD 221(d)(4)",
-    description:
-      "FHA-insured construction/rehab loan — up to 40-year fixed-rate non-recourse financing for market-rate or affordable MF.",
-    additional_density: "Debt 83.3% LTV",
-  },
-  {
-    source: "PILOT Agreement",
-    description:
-      "Payment In Lieu Of Taxes — negotiated reduced property-tax payments for projects with affordable set-asides.",
-    additional_density: "Tax reduction",
-  },
-  {
-    source: "SB 330 (CA)",
-    description:
-      "Housing Crisis Act — caps approval timelines and locks in the rules in effect when a preliminary application is filed.",
-    additional_density: "Entitlement shield",
-  },
-];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -903,6 +818,11 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                     <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
                       {b.description}
                     </p>
+                    {b.effects?.applySummary && (
+                      <p className="text-[10px] text-primary/80 mt-1">
+                        Programming can one-click apply: {b.effects.applySummary}
+                      </p>
+                    )}
                   </button>
                 );
               })}
