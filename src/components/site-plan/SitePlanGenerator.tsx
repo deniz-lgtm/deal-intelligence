@@ -28,7 +28,7 @@ import "leaflet/dist/leaflet.css";
 import {
   MousePointer2, Hexagon, Building2, Undo2, Trash2, Check, X, Ruler,
 } from "lucide-react";
-import type { SitePlan, SitePlanPoint, SitePlanBuilding } from "@/lib/types";
+import type { SitePlan, SitePlanPoint, SitePlanBuilding, SitePlanScenario } from "@/lib/types";
 import { getTileConfig } from "@/lib/map-config";
 import {
   polygonAreaSf,
@@ -341,6 +341,38 @@ export default function SitePlanGenerator({
     setCursor(null);
   };
 
+  // ── Scenario plumbing ──────────────────────────────────────────────────
+  // Everything the generator reads and writes lives on the *active*
+  // scenario. The map view / snap settings stay at the top level so they
+  // survive scenario switches. These derived values keep the rest of the
+  // component looking like it's editing a single scenario, hiding the
+  // scenarios[] wrapper from each call site.
+  const activeScen = (value.scenarios || []).find(
+    (s) => s.id === value.active_scenario_id
+  ) || null;
+  const parcelPoints = activeScen?.parcel_points || [];
+  const parcelAreaSf = activeScen?.parcel_area_sf || 0;
+  const buildings = activeScen?.buildings || [];
+  const activeBuildingId = activeScen?.active_building_id ?? null;
+
+  // Mutate the active scenario. `commit=false` updates without stamping
+  // `updated_at` — used during drags so each frame doesn't thrash the
+  // dirty-state detection in the host page.
+  const updateActiveScenario = useCallback(
+    (mutator: (scen: SitePlanScenario) => SitePlanScenario, commit = true) => {
+      const scenarios = value.scenarios || [];
+      const activeId = value.active_scenario_id;
+      if (!activeId) return;
+      const nextScenarios = scenarios.map((s) => (s.id === activeId ? mutator(s) : s));
+      onChange({
+        ...value,
+        scenarios: nextScenarios,
+        ...(commit ? { updated_at: new Date().toISOString() } : {}),
+      });
+    },
+    [value, onChange]
+  );
+
   // Commit the draft into either the parcel or a new building entry.
   // ── Resize helpers ─────────────────────────────────────────────────────
   // updateBuildingVertex moves vertex i of the given building to a new
@@ -349,25 +381,22 @@ export default function SitePlanGenerator({
   // dirty-detection in the host page picks it up.
   const updateBuildingVertex = useCallback(
     (buildingId: string, index: number, latlng: SitePlanPoint, commit: boolean) => {
-      const buildings = value.buildings || [];
-      const next = buildings.map((b) => {
-        if (b.id !== buildingId) return b;
-        if (index < 0 || index >= b.points.length) return b;
-        const newPoints = b.points.slice();
-        newPoints[index] = latlng;
-        return {
-          ...b,
-          points: newPoints,
-          area_sf: Math.round(polygonAreaSf(newPoints)),
-        };
-      });
-      onChange({
-        ...value,
-        buildings: next,
-        ...(commit ? { updated_at: new Date().toISOString() } : {}),
-      });
+      updateActiveScenario((scen) => {
+        const nextBuildings = scen.buildings.map((b) => {
+          if (b.id !== buildingId) return b;
+          if (index < 0 || index >= b.points.length) return b;
+          const newPoints = b.points.slice();
+          newPoints[index] = latlng;
+          return {
+            ...b,
+            points: newPoints,
+            area_sf: Math.round(polygonAreaSf(newPoints)),
+          };
+        });
+        return { ...scen, buildings: nextBuildings };
+      }, commit);
     },
-    [value, onChange]
+    [updateActiveScenario]
   );
 
   // insertBuildingVertex splices a new vertex into a building at `index`
@@ -375,24 +404,21 @@ export default function SitePlanGenerator({
   // handles to push a side in/out.
   const insertBuildingVertex = useCallback(
     (buildingId: string, index: number, latlng: SitePlanPoint) => {
-      const buildings = value.buildings || [];
-      const next = buildings.map((b) => {
-        if (b.id !== buildingId) return b;
-        const newPoints = b.points.slice();
-        newPoints.splice(index, 0, latlng);
-        return {
-          ...b,
-          points: newPoints,
-          area_sf: Math.round(polygonAreaSf(newPoints)),
-        };
-      });
-      onChange({
-        ...value,
-        buildings: next,
-        updated_at: new Date().toISOString(),
+      updateActiveScenario((scen) => {
+        const nextBuildings = scen.buildings.map((b) => {
+          if (b.id !== buildingId) return b;
+          const newPoints = b.points.slice();
+          newPoints.splice(index, 0, latlng);
+          return {
+            ...b,
+            points: newPoints,
+            area_sf: Math.round(polygonAreaSf(newPoints)),
+          };
+        });
+        return { ...scen, buildings: nextBuildings };
       });
     },
-    [value, onChange]
+    [updateActiveScenario]
   );
 
   // Rewrite every point of a building at once — used by the whole-polygon
@@ -401,23 +427,20 @@ export default function SitePlanGenerator({
   // authoritative if the caller passes reshaped points for any reason.
   const translateBuilding = useCallback(
     (buildingId: string, newPoints: SitePlanPoint[], commit: boolean) => {
-      const buildings = value.buildings || [];
-      const next = buildings.map((b) =>
-        b.id === buildingId
-          ? {
-              ...b,
-              points: newPoints,
-              area_sf: Math.round(polygonAreaSf(newPoints)),
-            }
-          : b
-      );
-      onChange({
-        ...value,
-        buildings: next,
-        ...(commit ? { updated_at: new Date().toISOString() } : {}),
-      });
+      updateActiveScenario((scen) => {
+        const nextBuildings = scen.buildings.map((b) =>
+          b.id === buildingId
+            ? {
+                ...b,
+                points: newPoints,
+                area_sf: Math.round(polygonAreaSf(newPoints)),
+              }
+            : b
+        );
+        return { ...scen, buildings: nextBuildings };
+      }, commit);
     },
-    [value, onChange]
+    [updateActiveScenario]
   );
 
   // Ref-backed translate state. A ref (not useState) is important so the
@@ -442,35 +465,39 @@ export default function SitePlanGenerator({
     }
     if (tool === "parcel") {
       const area = polygonAreaSf(points);
-      onChange({
-        ...value,
+      updateActiveScenario((scen) => ({
+        ...scen,
         parcel_points: points,
         parcel_area_sf: Math.round(area),
-        updated_at: new Date().toISOString(),
-      });
+      }));
     } else if (tool === "building") {
       const area = polygonAreaSf(points);
       // Auto-generate a label "Building N" where N is the next available
-      // integer that isn't already in use. Analysts can rename in sidebar.
-      const usedLabels = new Set((value.buildings || []).map(b => b.label));
-      let n = (value.buildings || []).length + 1;
-      while (usedLabels.has(`Building ${n}`)) n++;
-      const newBuilding: SitePlanBuilding = {
-        id: crypto.randomUUID?.() || `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        label: `Building ${n}`,
-        points,
-        area_sf: Math.round(area),
-      };
-      onChange({
-        ...value,
-        buildings: [...(value.buildings || []), newBuilding],
-        active_building_id: newBuilding.id,
-        updated_at: new Date().toISOString(),
+      // integer that isn't already in use within this scenario. Analysts
+      // can rename in the sidebar afterwards.
+      updateActiveScenario((scen) => {
+        const usedLabels = new Set(scen.buildings.map((b) => b.label));
+        let n = scen.buildings.length + 1;
+        while (usedLabels.has(`Building ${n}`)) n++;
+        const newBuilding: SitePlanBuilding = {
+          id:
+            (typeof crypto !== "undefined" && typeof (crypto as { randomUUID?: () => string }).randomUUID === "function"
+              ? (crypto as { randomUUID: () => string }).randomUUID()
+              : `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+          label: `Building ${n}`,
+          points,
+          area_sf: Math.round(area),
+        };
+        return {
+          ...scen,
+          buildings: [...scen.buildings, newBuilding],
+          active_building_id: newBuilding.id,
+        };
       });
     }
     setDraft([]);
     setTool("pan");
-  }, [draft, tool, value, onChange]);
+  }, [draft, tool, updateActiveScenario]);
 
   // Keyboard: Enter to finish, Escape/Backspace to undo last vertex, Esc twice to cancel.
   useEffect(() => {
@@ -499,13 +526,13 @@ export default function SitePlanGenerator({
   const existingVertices = useMemo<SitePlanPoint[]>(() => {
     const all: SitePlanPoint[] = [];
     if (tool === "parcel") {
-      for (const b of value.buildings || []) all.push(...b.points);
+      for (const b of buildings) all.push(...b.points);
     } else if (tool === "building") {
-      all.push(...value.parcel_points);
-      for (const b of value.buildings || []) all.push(...b.points);
+      all.push(...parcelPoints);
+      for (const b of buildings) all.push(...b.points);
     }
     return all;
-  }, [tool, value.parcel_points, value.buildings]);
+  }, [tool, parcelPoints, buildings]);
 
   // Live ghost polyline from last draft vertex → snapped cursor.
   const ghostLine = useMemo<SitePlanPoint[] | null>(() => {
@@ -591,9 +618,9 @@ export default function SitePlanGenerator({
   }, [setbacks]);
 
   const envelopePolygon = useMemo<SitePlanPoint[]>(() => {
-    if (!value.show_setbacks || maxSetbackFt <= 0 || value.parcel_points.length < 3) return [];
-    return insetPolygon(value.parcel_points, maxSetbackFt);
-  }, [value.show_setbacks, maxSetbackFt, value.parcel_points]);
+    if (!value.show_setbacks || maxSetbackFt <= 0 || parcelPoints.length < 3) return [];
+    return insetPolygon(parcelPoints, maxSetbackFt);
+  }, [value.show_setbacks, maxSetbackFt, parcelPoints]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -707,24 +734,30 @@ export default function SitePlanGenerator({
       <div className="absolute top-3 right-3 z-[500] flex flex-col gap-1.5">
         <div className="bg-background/95 backdrop-blur-sm border border-border/60 rounded-lg shadow-card p-1 flex items-center gap-1">
           <button
-            disabled={value.parcel_points.length === 0}
-            onClick={() => onChange({ ...value, parcel_points: [], parcel_area_sf: 0, updated_at: new Date().toISOString() })}
+            disabled={parcelPoints.length === 0}
+            onClick={() =>
+              updateActiveScenario((scen) => ({
+                ...scen,
+                parcel_points: [],
+                parcel_area_sf: 0,
+              }))
+            }
             className="h-7 px-2 flex items-center gap-1 rounded-md text-[10px] text-red-300 hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
             title="Clear parcel polygon"
           >
             <Trash2 className="h-3 w-3" /> Parcel
           </button>
-          {/* "Clear buildings" wipes every drawn building. The sidebar
-              surfaces per-building delete + rename for more surgical edits. */}
+          {/* "Clear buildings" wipes every drawn building in the active
+              scenario. The sidebar surfaces per-building delete + rename
+              for more surgical edits. Other scenarios are untouched. */}
           <button
-            disabled={(value.buildings || []).length === 0}
+            disabled={buildings.length === 0}
             onClick={() =>
-              onChange({
-                ...value,
+              updateActiveScenario((scen) => ({
+                ...scen,
                 buildings: [],
                 active_building_id: null,
-                updated_at: new Date().toISOString(),
-              })
+              }))
             }
             className="h-7 px-2 flex items-center gap-1 rounded-md text-[10px] text-blue-300 hover:bg-blue-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
             title="Clear all buildings"
@@ -811,9 +844,9 @@ export default function SitePlanGenerator({
         />
 
         {/* ── Parcel polygon ── */}
-        {value.parcel_points.length >= 3 && (
+        {parcelPoints.length >= 3 && (
           <Polygon
-            positions={value.parcel_points.map(toLatLng)}
+            positions={parcelPoints.map(toLatLng)}
             pathOptions={{
               color: PARCEL_COLOR,
               weight: 2.5,
@@ -824,7 +857,7 @@ export default function SitePlanGenerator({
           />
         )}
         {/* Parcel vertices */}
-        {value.parcel_points.map((p, i) => (
+        {parcelPoints.map((p, i) => (
           <CircleMarker
             key={`pv-${i}`}
             center={toLatLng(p)}
@@ -852,8 +885,8 @@ export default function SitePlanGenerator({
         )}
 
         {/* ── Buildings (one polygon per drawn structure) ── */}
-        {(value.buildings || []).map((b) => {
-          const isActive = b.id === value.active_building_id;
+        {buildings.map((b) => {
+          const isActive = b.id === activeBuildingId;
           return (
             <Polygon
               key={`b-${b.id}`}
@@ -869,11 +902,7 @@ export default function SitePlanGenerator({
                   // Click a building to select it (only when pan tool is
                   // active — avoids hijacking polygon-draw clicks).
                   if (tool === "pan") {
-                    onChange({
-                      ...value,
-                      active_building_id: b.id,
-                      updated_at: new Date().toISOString(),
-                    });
+                    updateActiveScenario((scen) => ({ ...scen, active_building_id: b.id }));
                   }
                 },
                 mousedown: (e) => {
@@ -882,7 +911,7 @@ export default function SitePlanGenerator({
                   // currently active building (non-active buildings still
                   // select-on-click via the handler above).
                   if (tool !== "pan") return;
-                  if (b.id !== value.active_building_id) return;
+                  if (b.id !== activeBuildingId) return;
                   const m = mapRef.current;
                   if (!m) return;
                   // Prevent the map from drag-panning while we translate,
@@ -913,8 +942,8 @@ export default function SitePlanGenerator({
               • Edge midpoint handles (between each pair of vertices) — drag
                 to insert a new vertex at the drop location, giving the
                 "push a side in/out" behaviour analysts expect from CAD. */}
-        {(value.buildings || []).flatMap((b) => {
-          if (b.id !== value.active_building_id) {
+        {buildings.flatMap((b) => {
+          if (b.id !== activeBuildingId) {
             return b.points.map((p, i) => (
               <CircleMarker
                 key={`bv-${b.id}-${i}`}
