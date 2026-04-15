@@ -1452,12 +1452,56 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           on Programming is unaffected. */}
       {isDev && (
         <Section title="Site Plan" icon={<MapIcon className="h-4 w-4 text-amber-400" />}>
-          <p className="text-xs text-muted-foreground mb-3">
-            Trace the parcel boundary, then draw the building footprint on the
-            satellite map. Setbacks from the zoning section above appear live
-            as a buildable envelope. The drawn footprint SF feeds the
-            Programming page&apos;s active massing scenario.
-          </p>
+          {/* Status strip: tells the analyst at-a-glance whether their
+              drawing is saved. Complements the page-level Save button;
+              clicking "Save now" flushes immediately instead of waiting
+              for the 2s autosave debounce. */}
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <p className="text-xs text-muted-foreground">
+              Trace the parcel boundary, then draw the building footprint on the
+              satellite map. Setbacks from the zoning section above appear live
+              as a buildable envelope. The drawn footprint SF feeds the
+              Programming page&apos;s active massing scenario.
+            </p>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ${
+                  saving
+                    ? "bg-blue-500/15 text-blue-300"
+                    : dirty
+                    ? "bg-amber-500/15 text-amber-300"
+                    : "bg-emerald-500/15 text-emerald-300"
+                }`}
+                title={
+                  saving
+                    ? "Saving changes…"
+                    : dirty
+                    ? "Unsaved — will autosave shortly, or click Save now"
+                    : "All changes saved"
+                }
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" /> Saving
+                  </>
+                ) : dirty ? (
+                  "Unsaved"
+                ) : (
+                  <>
+                    <Save className="h-2.5 w-2.5" /> Saved
+                  </>
+                )}
+              </span>
+              <Button size="sm" variant="outline" onClick={saveAll} disabled={saving || !dirty}>
+                {saving ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <Save className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                Save now
+              </Button>
+            </div>
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
             <SitePlanGenerator
               value={sitePlan}

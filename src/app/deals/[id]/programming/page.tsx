@@ -14,7 +14,7 @@ import type {
 import { COMMON_OTHER_INCOME } from "@/lib/types";
 import MassingSection from "@/components/massing/MassingSection";
 import AffordabilityPlanner from "@/components/AffordabilityPlanner";
-import { newBuildingProgram, computeMassingSummary } from "@/components/massing/massing-utils";
+import { newBuildingProgram, computeMassingSummary, newScenario } from "@/components/massing/massing-utils";
 import type { ZoningInputs } from "@/components/massing/massing-utils";
 import { splitUnitGroupsByAffordability } from "@/lib/affordability-split";
 
@@ -266,9 +266,22 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       const resNRSF = summary.nrsf_by_use.residential || 0;
       const wavg = mix.length > 0 ? mix.reduce((s: number, m: any) => s + m.avg_sf * (m.allocation_pct / 100), 0) : 0;
       const totalU = wavg > 0 ? Math.floor(resNRSF / wavg) : summary.total_units;
-      const newUnitGroups = mix.length > 0
+      // Multi-building push semantics:
+      //   • If this scenario is linked to a site-plan building, we tag each
+      //     new unit group with that building_id and KEEP any existing
+      //     unit groups that belong to other buildings. This lets analysts
+      //     push Building 1 and Building 2 independently without wiping
+      //     each other's rows.
+      //   • If the scenario is unlinked (classic as-of-right vs bonus
+      //     alternative flow), we replace the whole unit_groups list —
+      //     same behaviour as before.
+      const buildingId = scenario.site_plan_building_id || null;
+      const buildingLabel =
+        (buildingId && sitePlanBuildings.find(b => b.id === buildingId)?.label) || "";
+      const generated = mix.length > 0
         ? mix.map((m: any) => ({
-            id: uuidv4(), label: m.type_label,
+            id: uuidv4(),
+            label: buildingLabel ? `${buildingLabel} · ${m.type_label}` : m.type_label,
             unit_count: Math.round(totalU * (m.allocation_pct / 100)),
             renovation_count: 0, renovation_cost_per_unit: 0,
             unit_change: "none", unit_change_count: 0,
@@ -277,8 +290,20 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
             current_rent_per_sf: 0, market_rent_per_sf: 0, lease_type: "NNN", expense_reimbursement_per_sf: 0,
             current_rent_per_unit: 0, market_rent_per_unit: 0,
             beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 0,
+            ...(buildingId ? { site_plan_building_id: buildingId } : {}),
           }))
-        : current.unit_groups || [];
+        : [];
+      const newUnitGroups = (() => {
+        if (buildingId) {
+          const others = (current.unit_groups || []).filter(
+            (g: any) => g.site_plan_building_id !== buildingId
+          );
+          // Generated empty (no mix) → keep existing rows for this building.
+          if (generated.length === 0) return current.unit_groups || [];
+          return [...others, ...generated];
+        }
+        return generated.length > 0 ? generated : current.unit_groups || [];
+      })();
 
       // Detect mixed-use
       const useTypes: string[] = Array.from(new Set(scenario.floors.filter((f: any) => f.use_type !== "mechanical" && f.use_type !== "parking").map((f: any) => f.use_type as string)));
@@ -387,7 +412,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     } catch {
       toast.error("Failed to push to underwriting");
     }
-  }, [params.id, zoningInputs, buildingProgram, otherIncomeItems, commercialTenants]);
+  }, [params.id, zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanBuildings]);
 
   if (loading) return <div className="flex items-center justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
@@ -395,6 +420,63 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const activeScenario = buildingProgram.scenarios.find(s => s.id === buildingProgram.active_scenario_id) || buildingProgram.scenarios[0];
   const summary = activeScenario ? computeMassingSummary(activeScenario, zoningInputs) : null;
   const totalUnits = unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0) || summary?.total_units || 0;
+
+  // Multi-building UX: when the site plan has more than one building, we
+  // pivot the page into "tabs" where each tab is a dedicated massing
+  // scenario for one building. Clicking a tab either switches to the
+  // existing scenario for that building, or fabricates a fresh scenario
+  // seeded with that building's footprint and links it back via
+  // site_plan_building_id. Legacy single-building decks remain unchanged.
+  const selectBuilding = (buildingId: string) => {
+    const existing = buildingProgram.scenarios.find(
+      s => s.site_plan_building_id === buildingId
+    );
+    if (existing) {
+      setBuildingProgram({ ...buildingProgram, active_scenario_id: existing.id });
+      setDirty(true);
+      return;
+    }
+    const b = sitePlanBuildings.find(x => x.id === buildingId);
+    if (!b) return;
+    const fresh = newScenario(b.label);
+    fresh.site_plan_building_id = b.id;
+    fresh.footprint_sf = b.area_sf;
+    setBuildingProgram({
+      ...buildingProgram,
+      scenarios: [...buildingProgram.scenarios, fresh],
+      active_scenario_id: fresh.id,
+    });
+    setDirty(true);
+  };
+
+  // Small display helper: returns the SitePlanBuilding linked to the
+  // current active scenario, or null for scenarios not tied to a building.
+  const activeBuildingId = activeScenario?.site_plan_building_id ?? null;
+  const hasMultipleBuildings = sitePlanBuildings.length > 1;
+
+  // Project totals — summed across every scenario that is linked to a
+  // site-plan building. Used by the second summary strip when multi-
+  // building so the analyst can see the whole project at a glance
+  // without switching tabs. Not summed for non-linked scenarios (those
+  // are alternatives, not concurrent buildings).
+  const projectTotals = hasMultipleBuildings
+    ? buildingProgram.scenarios
+        .filter(s => s.site_plan_building_id)
+        .reduce(
+          (acc, s) => {
+            const sum = computeMassingSummary(s, zoningInputs);
+            return {
+              total_gsf: acc.total_gsf + sum.total_gsf,
+              total_nrsf: acc.total_nrsf + sum.total_nrsf,
+              total_units: acc.total_units + sum.total_units,
+              total_parking_spaces_est: acc.total_parking_spaces_est + sum.total_parking_spaces_est,
+              max_height_ft: Math.max(acc.max_height_ft, sum.total_height_ft),
+              buildings_count: acc.buildings_count + 1,
+            };
+          },
+          { total_gsf: 0, total_nrsf: 0, total_units: 0, total_parking_spaces_est: 0, max_height_ft: 0, buildings_count: 0 }
+        )
+    : null;
 
   // Commercial tenant totals
   const commercialGPR = commercialTenants.reduce((s, t) => s + t.sf * t.rent_per_sf, 0);
@@ -428,6 +510,74 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         </div>
       </div>
 
+      {/* Building tabs — only when the site plan has >1 building. Each
+          tab is a distinct massing scenario linked via
+          site_plan_building_id. Clicking a tab that has no scenario yet
+          creates one seeded with the building's footprint. */}
+      {hasMultipleBuildings && (
+        <div className="flex items-center gap-1 flex-wrap border-b border-border/40 pb-2">
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
+            Building
+          </span>
+          {sitePlanBuildings.map((b) => {
+            const linked = buildingProgram.scenarios.find(
+              s => s.site_plan_building_id === b.id
+            );
+            const isActive = activeBuildingId === b.id;
+            return (
+              <button
+                key={b.id}
+                onClick={() => selectBuilding(b.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                  isActive
+                    ? "bg-blue-500/15 border-blue-500/40 text-blue-200"
+                    : "bg-muted/20 border-border/40 text-muted-foreground hover:border-border/60 hover:text-foreground"
+                }`}
+                title={
+                  linked
+                    ? `Massing scenario: ${linked.name}`
+                    : "No scenario yet — click to create one for this building"
+                }
+              >
+                <Building2 className="h-3 w-3" />
+                <span className="font-medium">{b.label}</span>
+                <span className="text-[10px] text-muted-foreground/80">
+                  {b.area_sf.toLocaleString()} SF
+                </span>
+                {!linked && (
+                  <Plus className="h-3 w-3 text-muted-foreground/60" />
+                )}
+              </button>
+            );
+          })}
+          {/* Unlinked scenarios still get their own tab at the end so
+              the analyst can reach as-of-right / bonus alternatives if
+              they've been configured that way. */}
+          {buildingProgram.scenarios
+            .filter(s => !s.site_plan_building_id)
+            .map((s) => {
+              const isActive = activeScenario?.id === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setBuildingProgram({ ...buildingProgram, active_scenario_id: s.id });
+                    setDirty(true);
+                  }}
+                  className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                    isActive
+                      ? "bg-muted/40 border-border/60 text-foreground"
+                      : "bg-muted/10 border-border/30 text-muted-foreground hover:text-foreground"
+                  }`}
+                  title="Scenario not linked to a site-plan building"
+                >
+                  {s.name}
+                </button>
+              );
+            })}
+        </div>
+      )}
+
       {/* Summary Bar */}
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -454,8 +604,55 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         </div>
       )}
 
+      {/* Project totals — sums across every scenario linked to a site-plan
+          building. Only renders in multi-building projects, and only
+          when at least one building has a real scenario attached. Lets
+          the analyst sanity-check project-wide numbers without leaving
+          the current building tab. */}
+      {projectTotals && projectTotals.buildings_count > 0 && (
+        <div className="border border-primary/25 bg-primary/5 rounded-lg p-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] uppercase tracking-wide text-primary/80 font-medium">
+              Project Totals — {projectTotals.buildings_count} building{projectTotals.buildings_count > 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase">Total GSF</p>
+              <p className="text-lg font-bold tabular-nums">{fn(projectTotals.total_gsf)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase">Total NRSF</p>
+              <p className="text-lg font-bold tabular-nums">{fn(projectTotals.total_nrsf)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase">Res. Units</p>
+              <p className="text-lg font-bold tabular-nums">{fn(projectTotals.total_units)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase">Parking</p>
+              <p className="text-lg font-bold tabular-nums">{fn(projectTotals.total_parking_spaces_est)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase">Max Height</p>
+              <p className="text-lg font-bold tabular-nums">{projectTotals.max_height_ft.toFixed(0)} ft</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═══════════════════ BUILDING MASSING ═══════════════════ */}
-      <Section title="Building Massing" icon={<Layers className="h-4 w-4 text-blue-400" />}>
+      <Section
+        title={(() => {
+          // Scope the section title to the active building when multi-
+          // building so the analyst has a clear "I am editing Building
+          // 2" anchor as they move between tabs.
+          if (!hasMultipleBuildings) return "Building Massing";
+          const linked = sitePlanBuildings.find(b => b.id === activeBuildingId);
+          return linked ? `Building Massing — ${linked.label}` : "Building Massing";
+        })()}
+        icon={<Layers className="h-4 w-4 text-blue-400" />}
+      >
         <MassingSection
           program={buildingProgram}
           onChange={p => { setBuildingProgram(p); setDirty(true); }}

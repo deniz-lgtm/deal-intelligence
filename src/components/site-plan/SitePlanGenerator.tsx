@@ -17,6 +17,7 @@ import {
   Polygon,
   Polyline,
   CircleMarker,
+  Marker,
   Tooltip,
   ZoomControl,
   useMap,
@@ -63,6 +64,29 @@ export interface SitePlanGeneratorProps {
 }
 
 type Tool = "pan" | "parcel" | "building" | "measure";
+
+// ── Handle icons for the active-building resize handles ──────────────────────
+//
+// Corner handles (square): drag an existing vertex to move it.
+// Edge midpoint handles (circle): drag to insert a new vertex at that
+// position, pushing the side in/out.
+//
+// L.divIcon output is plain HTML so we can style with CSS-in-JS — no
+// external sprite needed. We build these once at module load.
+
+const VERTEX_HANDLE_ICON = L.divIcon({
+  className: "site-plan-vertex-handle",
+  html: `<div style="width:10px;height:10px;background:#fff;border:2px solid #3b82f6;border-radius:2px;box-shadow:0 0 0 1px rgba(0,0,0,0.35);cursor:grab"></div>`,
+  iconSize: [10, 10],
+  iconAnchor: [5, 5],
+});
+
+const EDGE_HANDLE_ICON = L.divIcon({
+  className: "site-plan-edge-handle",
+  html: `<div style="width:8px;height:8px;background:#3b82f6;border:1.5px solid #fff;border-radius:9999px;opacity:0.7;cursor:grab"></div>`,
+  iconSize: [8, 8],
+  iconAnchor: [4, 4],
+});
 
 // ── Leaflet tile style keeper ────────────────────────────────────────────────
 
@@ -275,6 +299,59 @@ export default function SitePlanGenerator({
   };
 
   // Commit the draft into either the parcel or a new building entry.
+  // ── Resize helpers ─────────────────────────────────────────────────────
+  // updateBuildingVertex moves vertex i of the given building to a new
+  // lat/lng. During drag (commit=false) we push state fast for a smooth
+  // polygon follow; on dragend (commit=true) we stamp updated_at so the
+  // dirty-detection in the host page picks it up.
+  const updateBuildingVertex = useCallback(
+    (buildingId: string, index: number, latlng: SitePlanPoint, commit: boolean) => {
+      const buildings = value.buildings || [];
+      const next = buildings.map((b) => {
+        if (b.id !== buildingId) return b;
+        if (index < 0 || index >= b.points.length) return b;
+        const newPoints = b.points.slice();
+        newPoints[index] = latlng;
+        return {
+          ...b,
+          points: newPoints,
+          area_sf: Math.round(polygonAreaSf(newPoints)),
+        };
+      });
+      onChange({
+        ...value,
+        buildings: next,
+        ...(commit ? { updated_at: new Date().toISOString() } : {}),
+      });
+    },
+    [value, onChange]
+  );
+
+  // insertBuildingVertex splices a new vertex into a building at `index`
+  // (so it's placed between index-1 and index). Used by the edge midpoint
+  // handles to push a side in/out.
+  const insertBuildingVertex = useCallback(
+    (buildingId: string, index: number, latlng: SitePlanPoint) => {
+      const buildings = value.buildings || [];
+      const next = buildings.map((b) => {
+        if (b.id !== buildingId) return b;
+        const newPoints = b.points.slice();
+        newPoints.splice(index, 0, latlng);
+        return {
+          ...b,
+          points: newPoints,
+          area_sf: Math.round(polygonAreaSf(newPoints)),
+        };
+      });
+      onChange({
+        ...value,
+        buildings: next,
+        updated_at: new Date().toISOString(),
+      });
+    },
+    [value, onChange]
+  );
+
   // For buildings we append; multi-building sites are just a list of these.
   // The newly-drawn building becomes active so the sidebar focuses it.
   const finish = useCallback(() => {
@@ -718,21 +795,117 @@ export default function SitePlanGenerator({
             </Polygon>
           );
         })}
-        {(value.buildings || []).flatMap((b) =>
-          b.points.map((p, i) => (
-            <CircleMarker
-              key={`bv-${b.id}-${i}`}
-              center={toLatLng(p)}
-              radius={b.id === value.active_building_id ? 4 : 3}
-              pathOptions={{
-                color: BUILDING_COLOR,
-                fillColor: "#fff",
-                fillOpacity: 1,
-                weight: 2,
-              }}
-            />
-          ))
-        )}
+        {/* ── Building vertices / resize handles ──
+            Non-active buildings render as passive CircleMarkers.
+            The active building instead gets draggable Marker handles:
+              • Corner handles (one per vertex) — drag to move that vertex
+              • Edge midpoint handles (between each pair of vertices) — drag
+                to insert a new vertex at the drop location, giving the
+                "push a side in/out" behaviour analysts expect from CAD. */}
+        {(value.buildings || []).flatMap((b) => {
+          if (b.id !== value.active_building_id) {
+            return b.points.map((p, i) => (
+              <CircleMarker
+                key={`bv-${b.id}-${i}`}
+                center={toLatLng(p)}
+                radius={3}
+                pathOptions={{
+                  color: BUILDING_COLOR,
+                  fillColor: "#fff",
+                  fillOpacity: 1,
+                  weight: 2,
+                }}
+              />
+            ));
+          }
+          // Active building — draggable handles.
+          const nodes: React.ReactElement[] = [];
+          b.points.forEach((p, i) => {
+            // Corner vertex drag handle
+            nodes.push(
+              <Marker
+                key={`bv-${b.id}-${i}`}
+                position={toLatLng(p)}
+                draggable
+                icon={VERTEX_HANDLE_ICON}
+                eventHandlers={{
+                  drag: (ev) => {
+                    // Live geometry update while dragging so the polygon
+                    // follows the cursor smoothly. We skip the onChange
+                    // roundtrip on every frame (area recalc is cheap) but
+                    // keep the draft polygon in sync via onChange because
+                    // react-leaflet's Polygon reads positions from props.
+                    const ll = (ev as any).latlng || (ev.target as L.Marker).getLatLng();
+                    updateBuildingVertex(b.id, i, { lat: ll.lat, lng: ll.lng }, /*commit*/ false);
+                  },
+                  dragend: (ev) => {
+                    const ll = (ev.target as L.Marker).getLatLng();
+                    updateBuildingVertex(b.id, i, { lat: ll.lat, lng: ll.lng }, /*commit*/ true);
+                  },
+                }}
+              />
+            );
+            // Edge-midpoint insert handle (between i and i+1, wrapping).
+            const next = b.points[(i + 1) % b.points.length];
+            const mid = { lat: (p.lat + next.lat) / 2, lng: (p.lng + next.lng) / 2 };
+            nodes.push(
+              <Marker
+                key={`be-${b.id}-${i}`}
+                position={toLatLng(mid)}
+                draggable
+                icon={EDGE_HANDLE_ICON}
+                eventHandlers={{
+                  dragstart: (ev) => {
+                    // Capture the insert index so subsequent drag/dragend
+                    // know where to place the new vertex.
+                    (ev.target as any).__insertIndex = i + 1;
+                    (ev.target as any).__buildingId = b.id;
+                    (ev.target as any).__inserted = false;
+                  },
+                  drag: (ev) => {
+                    const tgt = ev.target as L.Marker & {
+                      __insertIndex?: number;
+                      __buildingId?: string;
+                      __inserted?: boolean;
+                    };
+                    const ll = tgt.getLatLng();
+                    if (!tgt.__inserted && tgt.__insertIndex != null && tgt.__buildingId) {
+                      insertBuildingVertex(
+                        tgt.__buildingId,
+                        tgt.__insertIndex,
+                        { lat: ll.lat, lng: ll.lng }
+                      );
+                      tgt.__inserted = true;
+                    } else if (tgt.__insertIndex != null && tgt.__buildingId) {
+                      updateBuildingVertex(
+                        tgt.__buildingId,
+                        tgt.__insertIndex,
+                        { lat: ll.lat, lng: ll.lng },
+                        false
+                      );
+                    }
+                  },
+                  dragend: (ev) => {
+                    const tgt = ev.target as L.Marker & {
+                      __insertIndex?: number;
+                      __buildingId?: string;
+                    };
+                    if (tgt.__insertIndex != null && tgt.__buildingId) {
+                      const ll = tgt.getLatLng();
+                      updateBuildingVertex(
+                        tgt.__buildingId,
+                        tgt.__insertIndex,
+                        { lat: ll.lat, lng: ll.lng },
+                        true
+                      );
+                    }
+                  },
+                }}
+              />
+            );
+          });
+          return nodes;
+        })}
 
         {/* ── In-progress draft polygon / measure chain ── */}
         {draft.length >= 2 && (
