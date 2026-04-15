@@ -1144,6 +1144,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [saving, setSaving] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
   const [capexEstimating, setCapexEstimating] = useState(false);
+  // Site-plan building labels keyed by id. Populated from
+  // underwriting.data.site_plan on mount so the unit-groups table can
+  // insert per-building header rows when unit_groups carry a
+  // site_plan_building_id tag (set by Programming's pushToUW). Empty
+  // map (no site plan / all untagged) = flat table like before.
+  const [sitePlanBuildingLabels, setSitePlanBuildingLabels] = useState<Record<string, string>>({});
   const [capexPreview, setCapexPreview] = useState<Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string; selected: boolean }> | null>(null);
   const [opexEstimating, setOpexEstimating] = useState(false);
   const [loanSizing, setLoanSizing] = useState(false);
@@ -1254,6 +1260,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       if (ur.data?.data) {
         const raw = ur.data.data;
         const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+
+        // Extract site-plan building labels so the unit-groups table can
+        // surface per-building header rows. Covers both the current
+        // buildings[] shape and the legacy single-building shape (as a
+        // fallback id "legacy" matching the Programming page's migration).
+        const rawSp = parsed.site_plan as { buildings?: Array<{ id: string; label: string }>; building_points?: unknown } | undefined;
+        const labels: Record<string, string> = {};
+        if (rawSp?.buildings && Array.isArray(rawSp.buildings)) {
+          for (const b of rawSp.buildings) {
+            if (b?.id && b?.label) labels[b.id] = b.label;
+          }
+        } else if (rawSp && Array.isArray(rawSp.building_points) && rawSp.building_points.length >= 3) {
+          labels["legacy"] = "Building 1";
+        }
+        setSitePlanBuildingLabels(labels);
+
         // Merge defaults into each unit_group and capex_item for backward compat
         if (Array.isArray(parsed.unit_groups)) {
           parsed.unit_groups = parsed.unit_groups.map((g: Partial<UnitGroup>) => ({ ...newGroup(), ...g }));
@@ -2265,7 +2287,20 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleReorderUnits}>
             <SortableContext items={d.unit_groups.map(g => g.id)} strategy={verticalListSortingStrategy}>
             <tbody>
-              {d.unit_groups.map(g => {
+              {d.unit_groups.map((g, i) => {
+                // Insert a building header row whenever site_plan_building_id
+                // transitions from the previous row. We render the header
+                // inline (not a separate map) so React's key ordering and
+                // the DndContext sortable ids stay aligned with the raw
+                // unit_groups array. When no unit_groups carry a building
+                // tag, the header never renders and the table looks
+                // identical to before.
+                const curBid = (g as { site_plan_building_id?: string }).site_plan_building_id || null;
+                const prevBid = i > 0
+                  ? ((d.unit_groups[i - 1] as { site_plan_building_id?: string }).site_plan_building_id || null)
+                  : undefined; // `undefined` on first row forces a header render
+                const showBuildingHeader = curBid && curBid !== prevBid;
+                const buildingLabel = curBid ? (sitePlanBuildingLabels[curBid] || "Building") : null;
                 const ipAnnual = isSH
                   ? g.unit_count * g.beds_per_unit * g.current_rent_per_bed * 12
                   : isMF
@@ -2311,7 +2346,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   }
                 };
                 return (
-                  <SortableRow key={g.id} id={g.id}>
+                  <React.Fragment key={g.id}>
+                    {showBuildingHeader && (
+                      <tr className="bg-primary/5 border-t border-primary/30">
+                        <td colSpan={99} className="px-2 py-1.5 text-[10px] font-semibold text-primary/80 uppercase tracking-wide">
+                          <Building2 className="h-3 w-3 inline mr-1.5 -mt-0.5" />
+                          {buildingLabel}
+                        </td>
+                      </tr>
+                    )}
+                  <SortableRow id={g.id}>
                     {isSH ? (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 4BR/2BA" /></td>
                       <td className="px-2 py-1"><CellInput value={g.unit_count} onChange={v => updFn(g.id, { unit_count: v })} /></td>
@@ -2410,6 +2454,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <button onClick={() => del(g.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
                   </SortableRow>
+                  </React.Fragment>
                 );
               })}
               {d.unit_groups.length === 0 && (

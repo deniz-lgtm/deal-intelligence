@@ -132,6 +132,49 @@ function MapRefCapture({ onReady }: { onReady: (m: L.Map) => void }) {
   return null;
 }
 
+// ── Whole-polygon translate handler ──────────────────────────────────────────
+//
+// Reads the parent's translateRef on every mouse event. When a drag is in
+// progress it offsets all points of the active building by the distance
+// between the cursor and the mousedown anchor, then commits on mouseup.
+// Map panning is disabled by the polygon's mousedown so the translate
+// doesn't fight the built-in map drag.
+
+interface TranslateHandlerProps {
+  translateRef: React.MutableRefObject<{
+    buildingId: string;
+    startLatLng: L.LatLng;
+    origPoints: SitePlanPoint[];
+    lastPoints: SitePlanPoint[];
+    moved: boolean;
+  } | null>;
+  onTranslate: (buildingId: string, points: SitePlanPoint[], commit: boolean) => void;
+  onEnd: () => void;
+}
+
+function TranslateHandler({ translateRef, onTranslate, onEnd }: TranslateHandlerProps) {
+  useMapEvents({
+    mousemove(e) {
+      const t = translateRef.current;
+      if (!t) return;
+      const dLat = e.latlng.lat - t.startLatLng.lat;
+      const dLng = e.latlng.lng - t.startLatLng.lng;
+      const newPoints = t.origPoints.map((p) => ({ lat: p.lat + dLat, lng: p.lng + dLng }));
+      t.lastPoints = newPoints;
+      t.moved = true;
+      onTranslate(t.buildingId, newPoints, false);
+    },
+    mouseup() {
+      const t = translateRef.current;
+      if (!t) return;
+      if (t.moved) onTranslate(t.buildingId, t.lastPoints, true);
+      translateRef.current = null;
+      onEnd();
+    },
+  });
+  return null;
+}
+
 // ── Drawing surface: listens for map clicks and cursor moves ─────────────────
 
 interface DrawingSurfaceProps {
@@ -351,6 +394,43 @@ export default function SitePlanGenerator({
     },
     [value, onChange]
   );
+
+  // Rewrite every point of a building at once — used by the whole-polygon
+  // translate (drag the footprint body to move it). Area under pure
+  // translation is unchanged but we recompute anyway so the value stays
+  // authoritative if the caller passes reshaped points for any reason.
+  const translateBuilding = useCallback(
+    (buildingId: string, newPoints: SitePlanPoint[], commit: boolean) => {
+      const buildings = value.buildings || [];
+      const next = buildings.map((b) =>
+        b.id === buildingId
+          ? {
+              ...b,
+              points: newPoints,
+              area_sf: Math.round(polygonAreaSf(newPoints)),
+            }
+          : b
+      );
+      onChange({
+        ...value,
+        buildings: next,
+        ...(commit ? { updated_at: new Date().toISOString() } : {}),
+      });
+    },
+    [value, onChange]
+  );
+
+  // Ref-backed translate state. A ref (not useState) is important so the
+  // TranslateHandler's map event listeners can read the latest state
+  // without re-registering on every mouse move, which would tank drag
+  // smoothness.
+  const translateRef = useRef<{
+    buildingId: string;
+    startLatLng: L.LatLng;
+    origPoints: SitePlanPoint[];
+    lastPoints: SitePlanPoint[];
+    moved: boolean;
+  } | null>(null);
 
   // For buildings we append; multi-building sites are just a list of these.
   // The newly-drawn building becomes active so the sidebar focuses it.
@@ -708,6 +788,15 @@ export default function SitePlanGenerator({
         <TileUpdater style={value.map_style} />
         <CursorStyler tool={tool} />
         <MapRefCapture onReady={(m) => { mapRef.current = m; }} />
+        <TranslateHandler
+          translateRef={translateRef}
+          onTranslate={translateBuilding}
+          onEnd={() => {
+            // Re-enable map drag that was turned off during translate.
+            const m = mapRef.current;
+            if (m) m.dragging.enable();
+          }}
+        />
         <DrawingSurface
           tool={tool}
           draft={draft}
@@ -786,6 +875,28 @@ export default function SitePlanGenerator({
                       updated_at: new Date().toISOString(),
                     });
                   }
+                },
+                mousedown: (e) => {
+                  // Press-and-drag on the polygon body translates the
+                  // whole building. Only fires in pan mode AND only on the
+                  // currently active building (non-active buildings still
+                  // select-on-click via the handler above).
+                  if (tool !== "pan") return;
+                  if (b.id !== value.active_building_id) return;
+                  const m = mapRef.current;
+                  if (!m) return;
+                  // Prevent the map from drag-panning while we translate,
+                  // and swallow the event so the default Leaflet
+                  // click-to-select doesn't also fire.
+                  m.dragging.disable();
+                  L.DomEvent.stopPropagation(e.originalEvent as unknown as Event);
+                  translateRef.current = {
+                    buildingId: b.id,
+                    startLatLng: e.latlng,
+                    origPoints: b.points.slice(),
+                    lastPoints: b.points.slice(),
+                    moved: false,
+                  };
                 },
               }}
             >
