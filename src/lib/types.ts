@@ -1258,6 +1258,12 @@ export interface DevPhase {
    * user record so it can be anyone.
    */
   task_owner: string | null;
+  /**
+   * Documents from the deal's Documents tab linked to this task —
+   * typically the actual filed PDF for e.g. "Application Submittal" or
+   * "CEQA Review". Array of document ids; empty / null = no links.
+   */
+  linked_document_ids: string[] | null;
   pct_complete: number;
   budget: number | null;
   status: DevPhaseStatus;

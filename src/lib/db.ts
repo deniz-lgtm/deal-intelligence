@@ -202,6 +202,10 @@ export async function ensureColumns(): Promise<void> {
     // stakeholder name (project manager, architect, outside counsel…)
     // without needing a users lookup.
     "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS task_owner TEXT",
+    // Optional list of document IDs attached to a task so analysts can
+    // jump from "Application Submittal" to the actual filed PDF in the
+    // documents tab. JSONB array of strings; empty / null is fine.
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS linked_document_ids JSONB",
     // User-owned entitlement templates. Each row is a named list of
     // tasks the analyst can re-apply under any deal's entitlements
     // phase. Scoped to the creating user.
@@ -3746,8 +3750,8 @@ export const devPhaseQueries = {
   create: async (phase: Record<string, unknown>) => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, linked_document_ids, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, NOW(), NOW())
        RETURNING *`,
       [
         phase.id,
@@ -3762,6 +3766,9 @@ export const devPhaseQueries = {
         phase.parent_phase_id ?? null,
         phase.task_category ?? null,
         phase.task_owner ?? null,
+        phase.linked_document_ids != null
+          ? JSON.stringify(phase.linked_document_ids)
+          : null,
         phase.pct_complete ?? 0,
         phase.budget ?? null,
         phase.status ?? "not_started",
@@ -3782,6 +3789,12 @@ export const devPhaseQueries = {
       if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
+        idx++;
+      } else if (key === "linked_document_ids") {
+        // JSONB column — stringify on write; null-out when explicitly
+        // cleared so the row doesn't hang onto stale links.
+        setClauses.push(`linked_document_ids = $${idx}::jsonb`);
+        values.push(value == null ? null : JSON.stringify(value));
         idx++;
       }
     }

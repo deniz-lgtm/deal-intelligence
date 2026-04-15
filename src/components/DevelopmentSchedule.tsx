@@ -37,6 +37,12 @@ import {
   ArrowDown,
   BookmarkPlus,
   GripVertical,
+  Paperclip,
+  Wand2,
+  Download,
+  Sparkles,
+  Check,
+  X as XIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -158,8 +164,35 @@ export default function DevelopmentSchedule({ dealId }: Props) {
     task_category: "" as TaskCategory | "",
     // Free-text owner / assignee for child tasks.
     task_owner: "",
+    // Documents from the deal's Documents tab linked to this task.
+    // Stored as an array of document ids — the picker writes this, the
+    // child row renders a paperclip chip when it's non-empty.
+    linked_document_ids: [] as string[],
   });
   const [seedingEntitlements, setSeedingEntitlements] = useState(false);
+  // Deal documents — fetched once and used by the phase dialog's linker.
+  const [dealDocuments, setDealDocuments] = useState<
+    Array<{ id: string; name: string; original_name?: string | null; category?: string | null }>
+  >([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`/api/deals/${dealId}/documents`);
+        const json = await res.json();
+        if (res.ok && Array.isArray(json.data)) setDealDocuments(json.data);
+      } catch { /* no docs — the linker just shows empty state */ }
+    })();
+  }, [dealId]);
+  // AI-suggest state — a preview modal drives which tasks actually land
+  // on the schedule (we never auto-create).
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestTarget, setSuggestTarget] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<
+    Array<{ label: string; duration_days: number; category: TaskCategory; rationale: string }>
+  >([]);
+  const [suggestPicked, setSuggestPicked] = useState<Set<number>>(new Set());
+  const [suggestMeta, setSuggestMeta] = useState<{ jurisdiction: string; spottedBonuses: string[] } | null>(null);
   // Drag sensors for reordering entitlement child tasks. Pointer
   // activates after a small movement so regular clicks (like label
   // edit) still work.
@@ -278,7 +311,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
 
   // ── Phase CRUD ──
   const resetPhaseForm = () => {
-    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "", parent_phase_id: "", task_category: "", task_owner: "" });
+    setPhaseForm({ label: "", duration_days: 30, predecessor_id: "", lag_days: 0, start_date: "", pct_complete: 0, status: "not_started", notes: "", parent_phase_id: "", task_category: "", task_owner: "", linked_document_ids: [] });
   };
 
   const openCreatePhase = () => {
@@ -307,6 +340,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       parent_phase_id: parentPhaseId,
       task_category: "pre_submittal",
       task_owner: "",
+      linked_document_ids: [],
     });
     setPhaseDialogOpen(true);
   };
@@ -325,6 +359,9 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       parent_phase_id: p.parent_phase_id || "",
       task_category: p.task_category ?? "",
       task_owner: p.task_owner ?? "",
+      linked_document_ids: Array.isArray(p.linked_document_ids)
+        ? p.linked_document_ids
+        : [],
     });
     setPhaseDialogOpen(true);
   };
@@ -341,6 +378,9 @@ export default function DevelopmentSchedule({ dealId }: Props) {
       parent_phase_id: phaseForm.parent_phase_id || null,
       task_category: phaseForm.task_category || null,
       task_owner: phaseForm.task_owner?.trim() || null,
+      linked_document_ids: phaseForm.linked_document_ids.length > 0
+        ? phaseForm.linked_document_ids
+        : null,
       start_date: hasPredecessor ? null : (phaseForm.start_date || null),
       pct_complete: phaseForm.pct_complete,
       status: phaseForm.status,
@@ -663,6 +703,92 @@ export default function DevelopmentSchedule({ dealId }: Props) {
     } catch {
       toast.error("Failed to delete template");
     }
+  };
+
+  /**
+   * Open the AI-suggest modal. Reads the deal / jurisdiction context,
+   * asks Claude for a jurisdiction-specific task list, and shows a
+   * preview. The user ticks the ones they want; we then POST them as
+   * child tasks of the entitlements phase.
+   */
+  const handleAiSuggest = async (entitlementPhaseId: string) => {
+    setSuggestTarget(entitlementPhaseId);
+    setSuggestOpen(true);
+    setSuggesting(true);
+    setSuggestions([]);
+    setSuggestPicked(new Set());
+    setSuggestMeta(null);
+    try {
+      const res = await fetch(
+        `/api/deals/${dealId}/dev-schedule/suggest-entitlement-tasks`,
+        { method: "POST" }
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || "Failed to generate suggestions");
+        setSuggestOpen(false);
+        return;
+      }
+      const rows = Array.isArray(json.data?.tasks) ? json.data.tasks : [];
+      setSuggestions(rows);
+      // Default all suggestions to picked — analysts can untick the ones
+      // they don't want before clicking Add.
+      setSuggestPicked(new Set(rows.map((_: unknown, i: number) => i)));
+      setSuggestMeta({
+        jurisdiction: json.data?.jurisdiction || "Unknown",
+        spottedBonuses: Array.isArray(json.data?.spotted_bonuses)
+          ? json.data.spotted_bonuses
+          : [],
+      });
+    } catch (err) {
+      console.error("Failed to fetch suggestions:", err);
+      toast.error("Failed to generate suggestions");
+      setSuggestOpen(false);
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  /** Apply the picked AI suggestions as child tasks. */
+  const handleApplySuggestions = async () => {
+    if (!suggestTarget) return;
+    const picked = suggestions.filter((_, i) => suggestPicked.has(i));
+    if (picked.length === 0) {
+      toast.error("Pick at least one suggestion");
+      return;
+    }
+    const baseSort = phases
+      .filter((p) => p.parent_phase_id === suggestTarget)
+      .reduce((max, p) => Math.max(max, p.sort_order), 0);
+    let created = 0;
+    for (let i = 0; i < picked.length; i++) {
+      const t = picked[i];
+      const res = await fetch(`/api/deals/${dealId}/dev-schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: t.label,
+          duration_days: t.duration_days,
+          parent_phase_id: suggestTarget,
+          task_category: t.category,
+          sort_order: baseSort + i + 1,
+          notes: t.rationale,
+        }),
+      });
+      if (res.ok) created++;
+    }
+    toast.success(`Added ${created} AI-suggested task${created === 1 ? "" : "s"}`);
+    setSuggestOpen(false);
+    setSuggestTarget(null);
+    loadAll();
+  };
+
+  /** Download the schedule as CSV or ICS. */
+  const handleExportSchedule = (format: "csv" | "ics") => {
+    // Browser navigates to the export route with the proper Content-
+    // Disposition header — simplest cross-client path to "download file".
+    const url = `/api/deals/${dealId}/dev-schedule/export?format=${format}`;
+    window.open(url, "_blank");
   };
 
   /**
@@ -1114,6 +1240,15 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                   · {p.task_owner}
                                 </span>
                               )}
+                              {isChild && Array.isArray(p.linked_document_ids) && p.linked_document_ids.length > 0 && (
+                                <span
+                                  className="flex items-center gap-0.5 text-2xs text-primary/80 flex-shrink-0"
+                                  title={`${p.linked_document_ids.length} linked document${p.linked_document_ids.length === 1 ? "" : "s"}`}
+                                >
+                                  <Paperclip className="h-2.5 w-2.5" />
+                                  {p.linked_document_ids.length}
+                                </span>
+                              )}
                             </button>
                             {/* Bar */}
                             <div className={cn("col-span-7 relative rounded", isChild ? "h-3 bg-muted/20" : "h-5 bg-muted/30")}>
@@ -1296,6 +1431,21 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                   <Loader2 className="h-2.5 w-2.5 animate-spin text-muted-foreground" />
                                 )}
                               </div>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 text-2xs"
+                                onClick={() => handleAiSuggest(p.id)}
+                                disabled={suggesting || seedingEntitlements}
+                                title="Ask Claude for entitlement tasks specific to this jurisdiction, zoning, and any spotted programs. You pick which ones to add."
+                              >
+                                {suggesting ? (
+                                  <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
+                                ) : (
+                                  <Wand2 className="h-2.5 w-2.5 mr-1" />
+                                )}
+                                AI Suggest
+                              </Button>
                               {children.length > 0 && (
                                 <Button
                                   size="sm"
@@ -1303,10 +1453,29 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                                   className="h-6 text-2xs"
                                   onClick={() => handleSaveAsTemplate(p.id)}
                                   disabled={seedingEntitlements}
-                                  title="Save the current task list as a reusable template (stored on this browser). Apply it on any future deal from the Seed dropdown."
+                                  title="Save the current task list as a reusable template you can re-apply on any future deal."
                                 >
                                   <BookmarkPlus className="h-2.5 w-2.5 mr-1" /> Save as template
                                 </Button>
+                              )}
+                              {children.length > 0 && (
+                                <div className="flex items-center gap-1">
+                                  <Download className="h-2.5 w-2.5 text-muted-foreground" />
+                                  <select
+                                    value=""
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      e.target.value = "";
+                                      if (v === "csv" || v === "ics") handleExportSchedule(v);
+                                    }}
+                                    className="h-6 text-2xs bg-background border border-border/40 rounded px-1.5 outline-none hover:border-primary/40"
+                                    title="Export the full schedule for handoff to PM tools / calendars"
+                                  >
+                                    <option value="">Export…</option>
+                                    <option value="csv">CSV (Sheets / Excel)</option>
+                                    <option value="ics">ICS (Calendar)</option>
+                                  </select>
+                                </div>
                               )}
                               {children.length > 0 && (
                                 <Button
@@ -1590,15 +1759,40 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                 onChange={(e) => setPhaseForm({ ...phaseForm, predecessor_id: e.target.value })}
               >
                 <option value="">— None (anchor phase) —</option>
-                {phases
-                  .filter((p) => !editingPhase || p.id !== editingPhase.id)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>{p.label}</option>
-                  ))}
+                {(() => {
+                  // Group predecessor options: roots first, then each
+                  // root's children indented so the analyst can chain
+                  // child tasks ("CEQA Review → Planning Commission")
+                  // as easily as root phases.
+                  const roots = phases
+                    .filter((p) => !p.parent_phase_id && (!editingPhase || p.id !== editingPhase.id))
+                    .sort((a, b) => a.sort_order - b.sort_order);
+                  const byParent = new Map<string, DevPhase[]>();
+                  for (const p of phases) {
+                    if (!p.parent_phase_id) continue;
+                    if (editingPhase && p.id === editingPhase.id) continue;
+                    const list = byParent.get(p.parent_phase_id) || [];
+                    list.push(p);
+                    byParent.set(p.parent_phase_id, list);
+                  }
+                  return roots.flatMap((root) => {
+                    const kids = (byParent.get(root.id) || []).sort(
+                      (a, b) => a.sort_order - b.sort_order
+                    );
+                    return [
+                      <option key={root.id} value={root.id}>{root.label}</option>,
+                      ...kids.map((k) => (
+                        <option key={k.id} value={k.id}>
+                          {"\u00A0\u00A0\u00A0\u00A0"}↳ {k.label}
+                        </option>
+                      )),
+                    ];
+                  });
+                })()}
               </select>
               <p className="text-2xs text-muted-foreground mt-1">
                 {phaseForm.predecessor_id
-                  ? "Start date will be auto-computed from predecessor's end date + lag."
+                  ? "Start date will be auto-computed from predecessor's end date + lag. Use this to chain child tasks (e.g. CEQA → Planning Commission)."
                   : "Anchor phase — set its start date manually below."}
               </p>
             </div>
@@ -1675,6 +1869,62 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                     }
                   />
                 </div>
+              </div>
+            )}
+            {/* Document linker — child tasks only. Ties a task ("CEQA
+                Review", "Application Submittal") to the actual PDFs in
+                the deal's Documents tab so analysts can jump straight
+                to the filing from the schedule. */}
+            {phaseForm.parent_phase_id && (
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  Linked Documents
+                  {phaseForm.linked_document_ids.length > 0 && (
+                    <span className="text-[10px] text-muted-foreground/70 ml-1">
+                      ({phaseForm.linked_document_ids.length} linked)
+                    </span>
+                  )}
+                </label>
+                {dealDocuments.length === 0 ? (
+                  <p className="text-2xs text-muted-foreground/70 italic">
+                    No documents uploaded yet. Upload on the Documents tab then come back to link.
+                  </p>
+                ) : (
+                  <div className="max-h-32 overflow-y-auto border border-border rounded-md bg-background/60 p-1 space-y-0.5">
+                    {dealDocuments.map((doc) => {
+                      const checked = phaseForm.linked_document_ids.includes(doc.id);
+                      return (
+                        <label
+                          key={doc.id}
+                          className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-muted/30 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const curr = new Set(phaseForm.linked_document_ids);
+                              if (e.target.checked) curr.add(doc.id);
+                              else curr.delete(doc.id);
+                              setPhaseForm({
+                                ...phaseForm,
+                                linked_document_ids: Array.from(curr),
+                              });
+                            }}
+                            className="rounded"
+                          />
+                          <span className="truncate flex-1">
+                            {doc.original_name || doc.name}
+                          </span>
+                          {doc.category && (
+                            <span className="text-[10px] text-muted-foreground/70">
+                              {doc.category}
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
             <div>
@@ -1863,6 +2113,134 @@ export default function DevelopmentSchedule({ dealId }: Props) {
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" size="sm" onClick={() => setSettingsDialogOpen(false)}>Cancel</Button>
               <Button size="sm" onClick={handleSaveSettings}>Save</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── AI Suggest Preview ──
+          Separate dialog because the phase editor is busy already, and
+          the preview benefits from a wider checklist layout. Nothing is
+          persisted until the analyst clicks "Add N Tasks". */}
+      <Dialog open={suggestOpen} onOpenChange={setSuggestOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              AI-Suggested Entitlement Tasks
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {suggestMeta && (
+              <div className="text-2xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                <span>For <span className="text-foreground font-medium">{suggestMeta.jurisdiction}</span></span>
+                {suggestMeta.spottedBonuses.length > 0 && (
+                  <>
+                    <span>·</span>
+                    <span>Including filings for:</span>
+                    {suggestMeta.spottedBonuses.map((s) => (
+                      <span key={s} className="text-emerald-400">{s}</span>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+            {suggesting && (
+              <div className="flex items-center gap-2 py-6 justify-center text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Asking Claude for jurisdiction-specific tasks…
+              </div>
+            )}
+            {!suggesting && suggestions.length === 0 && (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                No suggestions returned. The AI may not have enough context
+                yet — try filling in the deal's address and zoning first.
+              </div>
+            )}
+            {!suggesting && suggestions.length > 0 && (
+              <>
+                <div className="flex items-center justify-between text-2xs text-muted-foreground">
+                  <span>{suggestPicked.size} of {suggestions.length} selected</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSuggestPicked(new Set(suggestions.map((_, i) => i)))}
+                      className="hover:text-foreground"
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSuggestPicked(new Set())}
+                      className="hover:text-foreground"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-[50vh] overflow-y-auto border border-border/40 rounded-md divide-y divide-border/40">
+                  {suggestions.map((s, i) => {
+                    const picked = suggestPicked.has(i);
+                    const catCfg = TASK_CATEGORY_CONFIG[s.category];
+                    return (
+                      <label
+                        key={i}
+                        className="flex items-start gap-2 px-3 py-2 hover:bg-muted/20 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={picked}
+                          onChange={(e) => {
+                            const next = new Set(suggestPicked);
+                            if (e.target.checked) next.add(i);
+                            else next.delete(i);
+                            setSuggestPicked(next);
+                          }}
+                          className="rounded mt-0.5"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span
+                              className={cn(
+                                "text-[9px] uppercase tracking-wide px-1 rounded border flex-shrink-0",
+                                catCfg.color,
+                                catCfg.bg,
+                                catCfg.border
+                              )}
+                            >
+                              {catCfg.label}
+                            </span>
+                            <span className="text-sm font-medium">{s.label}</span>
+                            <span className="text-2xs text-muted-foreground">{s.duration_days}d</span>
+                          </div>
+                          {s.rationale && (
+                            <p className="text-2xs text-muted-foreground mt-0.5">
+                              {s.rationale}
+                            </p>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSuggestOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleApplySuggestions}
+                disabled={suggesting || suggestPicked.size === 0}
+              >
+                <Check className="h-3.5 w-3.5 mr-1" />
+                Add {suggestPicked.size} Task{suggestPicked.size === 1 ? "" : "s"}
+              </Button>
             </div>
           </div>
         </DialogContent>
