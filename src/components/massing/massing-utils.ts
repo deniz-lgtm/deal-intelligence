@@ -141,9 +141,14 @@ export function computeMassingSummary(scenario: MassingScenario, zoning: ZoningI
 }
 
 // ── Quick Stack Generators ───────────────────────────────────────────────────
+//
+// All presets take the ACTIVE building's footprint (in SF) rather than
+// deriving one from the parcel area. This matters when a massing has
+// multiple buildings — each building has its own drawn footprint, and
+// "AI Generate" should shape *that* building, not the lot.
 
-export function quickStackPodium5over1(landSF: number, lotCovPct: number): BuildingFloor[] {
-  const footprint = Math.round(landSF * (lotCovPct / 100));
+export function quickStackPodium5over1(footprintSF: number): BuildingFloor[] {
+  const footprint = Math.max(Math.round(footprintSF), 0);
   const tower = Math.round(footprint * 0.85);
   const unitsPerFloor = Math.floor(tower * 0.80 / 850);
   return autoLabelFloors([
@@ -158,8 +163,8 @@ export function quickStackPodium5over1(landSF: number, lotCovPct: number): Build
   ]);
 }
 
-export function quickStackMidRise3over2(landSF: number, lotCovPct: number): BuildingFloor[] {
-  const footprint = Math.round(landSF * (lotCovPct / 100));
+export function quickStackMidRise3over2(footprintSF: number): BuildingFloor[] {
+  const footprint = Math.max(Math.round(footprintSF), 0);
   const unitsPerFloor = Math.floor(footprint * 0.80 / 850);
   return autoLabelFloors([
     newFloor("parking", footprint, 10, true),
@@ -172,8 +177,8 @@ export function quickStackMidRise3over2(landSF: number, lotCovPct: number): Buil
   ]);
 }
 
-export function quickStackHighRise(landSF: number, lotCovPct: number): BuildingFloor[] {
-  const podium = Math.round(landSF * (lotCovPct / 100));
+export function quickStackHighRise(footprintSF: number): BuildingFloor[] {
+  const podium = Math.max(Math.round(footprintSF), 0);
   const tower = Math.round(podium * 0.6);
   const unitsPerFloor = Math.floor(tower * 0.80 / 900);
   const floors: BuildingFloor[] = [
@@ -189,8 +194,8 @@ export function quickStackHighRise(landSF: number, lotCovPct: number): BuildingF
   return autoLabelFloors(floors);
 }
 
-export function quickStackGardenStyle(landSF: number, lotCovPct: number): BuildingFloor[] {
-  const footprint = Math.round(landSF * (lotCovPct / 100) * 0.5);
+export function quickStackGardenStyle(footprintSF: number): BuildingFloor[] {
+  const footprint = Math.max(Math.round(footprintSF), 0);
   const unitsPerFloor = Math.floor(footprint * 0.85 / 800);
   return autoLabelFloors([
     newFloor("lobby_amenity", footprint, 10, false),
@@ -201,24 +206,27 @@ export function quickStackGardenStyle(landSF: number, lotCovPct: number): Buildi
 }
 
 export function quickStackAutoFromZoning(
-  landSF: number, far: number, lotCovPct: number, heightLimitFt: number,
+  footprintSF: number, landSF: number, far: number, heightLimitFt: number,
 ): BuildingFloor[] {
-  if (landSF <= 0 || far <= 0) return [];
-  const maxFootprint = Math.round(landSF * (lotCovPct / 100));
-  const maxGSF = Math.round(landSF * far);
+  const footprint = Math.max(Math.round(footprintSF), 0);
+  if (footprint <= 0 || far <= 0) return [];
+  // GSF cap is still parcel-derived (FAR × land area). If the active
+  // building's footprint exceeds what a single-building fill would allow
+  // we still let the stack compute — the compliance banner will flag FAR
+  // over-runs. When a massing has multiple buildings the cap applies to
+  // each building independently here (callers can sum across buildings).
+  const maxGSF = landSF > 0 ? Math.round(landSF * far) : Infinity;
   const effectiveHeight = heightLimitFt > 0 ? heightLimitFt : 100;
-  // 1 retail (14ft) + N residential (9.5ft) + 1 mechanical (8ft)
   const maxResStories = Math.floor((effectiveHeight - 22) / 9.5);
-  // Check GSF constraint
-  const tower = Math.round(maxFootprint * 0.85);
+  const tower = Math.round(footprint * 0.85);
   let resStories = maxResStories;
-  while (resStories > 0 && (maxFootprint * 1 + tower * resStories + tower * 0.3) > maxGSF) resStories--;
+  while (resStories > 0 && (footprint + tower * resStories + tower * 0.3) > maxGSF) resStories--;
   if (resStories <= 0) resStories = 1;
 
   const unitsPerFloor = Math.floor(tower * 0.80 / 850);
   const floors: BuildingFloor[] = [
-    newFloor("parking", maxFootprint, 10, true),
-    newFloor("retail", maxFootprint, 14, false, 0, 95),
+    newFloor("parking", footprint, 10, true),
+    newFloor("retail", footprint, 14, false, 0, 95),
   ];
   for (let i = 0; i < resStories; i++) floors.push(newFloor("residential", tower, 9.5, false, unitsPerFloor));
   floors.push(newFloor("mechanical", Math.round(tower * 0.3), 8, false));
