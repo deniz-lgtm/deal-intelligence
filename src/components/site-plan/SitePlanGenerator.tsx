@@ -27,8 +27,10 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import {
   MousePointer2, Hexagon, Building2, Undo2, Trash2, Check, X, Ruler, Scissors,
-  Spline as LineIcon, Copy, CopyPlus,
+  Spline as LineIcon, Copy, CopyPlus, Camera, Loader2,
 } from "lucide-react";
+import { toPng } from "html-to-image";
+import { toast } from "sonner";
 import type { SitePlan, SitePlanPoint, SitePlanBuilding, SitePlanScenario, SitePlanCutout } from "@/lib/types";
 import { getTileConfig } from "@/lib/map-config";
 import {
@@ -67,6 +69,9 @@ export interface SitePlanGeneratorProps {
   fallbackCenter?: { lat: number; lng: number } | null;
   // Optional height
   height?: number;
+  // Deal ID — required to upload snapshots to the documents store.
+  // When omitted, the Snapshot button is hidden.
+  dealId?: string;
 }
 
 type Tool = "pan" | "parcel" | "building" | "cutout" | "frontage" | "measure";
@@ -395,7 +400,7 @@ const toLatLng = (p: SitePlanPoint): [number, number] => [p.lat, p.lng];
 // ── The full component ──────────────────────────────────────────────────────
 
 export default function SitePlanGenerator({
-  value, onChange, setbacks, fallbackCenter, height = 560,
+  value, onChange, setbacks, fallbackCenter, height = 560, dealId,
 }: SitePlanGeneratorProps) {
   const [tool, setTool] = useState<Tool>("pan");
   // Set when Mapbox tiles fail and we auto-fall-back to CARTO/Esri, so
@@ -403,6 +408,7 @@ export default function SitePlanGenerator({
   const [tilesFallback, setTilesFallback] = useState(false);
   const [draft, setDraft] = useState<SitePlanPoint[]>([]);
   const [cursor, setCursor] = useState<SitePlanPoint | null>(null);
+  const [snapshotting, setSnapshotting] = useState(false);
   const mapRef = useRef<L.Map | null>(null);
   // "Hold space to pan" override — a ref the DrawingSurface reads. We
   // mirror it into a piece of state (spaceHeld) only so we can render a
@@ -521,6 +527,51 @@ export default function SitePlanGenerator({
   // Clone a building with its points offset by (dxFt, dyFt) and its
   // cutouts carried along. Generates a fresh id/label. Used by the
   // Cmd+D duplicate shortcut and the array-duplicate helper.
+  // Capture the current map view as a PNG and upload it to the deal's
+  // Documents store. Uses html-to-image on the MapContainer DOM element
+  // so tile layers + vector overlays are both captured. Requires
+  // dealId prop to be set (parent page passes params.id).
+  const takeSnapshot = useCallback(async () => {
+    if (!dealId) return;
+    const map = mapRef.current;
+    if (!map) { toast.error("Map not ready"); return; }
+    const container = map.getContainer();
+    setSnapshotting(true);
+    try {
+      // useCORS on tile images — Mapbox / CARTO / Esri all send the
+      // right headers. skipFonts avoids a slow Google Fonts roundtrip
+      // that html-to-image tries by default.
+      const dataUrl = await toPng(container, {
+        cacheBust: true,
+        skipFonts: true,
+        pixelRatio: 2,
+      });
+      const blob = await (await fetch(dataUrl)).blob();
+      const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const scen = (value.scenarios || []).find((s) => s.id === value.active_scenario_id);
+      const scenName = scen?.name ? scen.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() : "base";
+      const file = new File([blob], `site-plan-${scenName}-${ts}.png`, { type: "image/png" });
+      const form = new FormData();
+      form.append("deal_id", dealId);
+      form.append("files", file);
+      const res = await fetch("/api/documents/upload", { method: "POST", body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Snapshot upload failed");
+        return;
+      }
+      toast.success(`Snapshot saved to Documents — ${file.name}`);
+    } catch (err) {
+      // Most common cause: a cross-origin tile failed to load into the
+      // canvas. We surface the generic error — no way to recover
+      // automatically without changing tile CORS.
+      console.error("Snapshot error", err);
+      toast.error("Snapshot failed — try again or refresh the map");
+    } finally {
+      setSnapshotting(false);
+    }
+  }, [dealId, value]);
+
   const duplicateBuilding = useCallback(
     (buildingId: string, offsetsFt: Array<[number, number]>) => {
       updateActiveScenario((scen) => {
@@ -939,6 +990,21 @@ export default function SitePlanGenerator({
             label="Measure"
             icon={<Ruler className="h-3.5 w-3.5 text-cyan-400" />}
           />
+          {/* Snapshot — captures the current map view and saves it to
+              the deal's Documents store. Disabled when no dealId is
+              wired (render site of SitePlanGenerator forgot to pass it). */}
+          {dealId && (
+            <ToolButton
+              active={false}
+              disabled={snapshotting}
+              onClick={takeSnapshot}
+              label={snapshotting ? "Saving..." : "Snapshot"}
+              icon={snapshotting
+                ? <Loader2 className="h-3.5 w-3.5 text-emerald-400 animate-spin" />
+                : <Camera className="h-3.5 w-3.5 text-emerald-400" />}
+              title="Save the current map view as a PNG to Documents"
+            />
+          )}
         </div>
 
         {/* Duplicate / Array — only shown when a building is selected

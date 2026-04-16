@@ -1872,6 +1872,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
               setbacks={sitePlanSetbacks}
               fallbackCenter={dealCenter}
               height={560}
+              dealId={params.id}
             />
             <SitePlanMetrics
               value={sitePlan}

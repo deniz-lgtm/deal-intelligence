@@ -2471,8 +2471,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
           const target = resNrsf > 0 ? resNrsf : totalNrsf;
           const nonRev = Math.max(0, gsf - (resNrsf + comNrsf));
-          const allocatedNRSF = d.unit_groups.reduce(
-            (s, g) => s + effectiveUnits(g) * (g.sf_per_unit || 0),
+          // Scope the "allocated" tally to just the unit groups tied to
+          // the active building. Without this, a 3-building massing would
+          // show allocated = sum across all buildings vs target = one
+          // building's residential NRSF, which always blew the budget.
+          const activeBid = (activeS as any)?.site_plan_building_id || null;
+          const buildingGroups = activeBid
+            ? d.unit_groups.filter((g: any) => (g.site_plan_building_id || null) === activeBid)
+            : d.unit_groups;
+          const allocatedNRSF = buildingGroups.reduce(
+            (s: number, g: UnitGroup) => s + effectiveUnits(g) * (g.sf_per_unit || 0),
             0
           );
           const remainingNRSF = target - allocatedNRSF;
@@ -2543,8 +2551,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">{isGroundUp ? "Rent/Bed" : "Market/Bed"}</th>
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma/Bed</th>}
-                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Notes</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Notes</th>
                   <th className="w-[32px]" />
                 </>) : isMF ? (<>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[140px]">Unit Type</th>
@@ -2557,8 +2565,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">{isGroundUp ? "Rent/Unit" : "Market Rent"}</th>
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma</th>}
-                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Notes</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Notes</th>
                   <th className="w-[32px]" />
                 </>) : (<>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[140px]">Unit / Space</th>
@@ -2570,9 +2578,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">{isGroundUp ? "Rent $/SF" : "Mkt $/SF"}</th>
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Proforma</th>}
-                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Notes</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Annual Rev</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">CAM $/SF</th>
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Notes</th>
                   <th className="w-[32px]" />
                 </>)}
               </tr>
@@ -2689,12 +2697,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                         </td>
                       )}
-                      <td className="px-1 py-1">
-                        <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[80px]" />
-                      </td>
                       <td className="px-2 py-1">
                         <p className="text-right text-sm tabular-nums font-medium">{fc(pfAnnual)}<span className="text-muted-foreground/60 text-[10px]">/yr</span></p>
+                      </td>
+                      <td className="px-1 py-1">
+                        <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
+                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
                       </td>
                     </>) : isMF ? (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 1BR/1BA" /></td>
@@ -2719,12 +2727,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                         </td>
                       )}
-                      <td className="px-1 py-1">
-                        <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[80px]" />
-                      </td>
                       <td className="px-2 py-1">
                         <p className="text-right text-sm tabular-nums font-medium">{fc(pfAnnual)}<span className="text-muted-foreground/60 text-[10px]">/yr</span></p>
+                      </td>
+                      <td className="px-1 py-1">
+                        <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
+                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
                       </td>
                     </>) : (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. Suite A" /></td>
@@ -2756,10 +2764,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{eu > 0 && g.sf_per_unit > 0 ? `$${(proformaAnnual / eu / g.sf_per_unit / 12).toFixed(2)}/mo` : ""}</p>
                         </td>
                       )}
-                      <td className="px-1 py-1">
-                        <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[80px]" />
-                      </td>
                       <td className="px-2 py-1">
                         <p className="text-right text-sm tabular-nums font-medium">{fc(pfAnnual)}<span className="text-muted-foreground/60 text-[10px]">/yr</span></p>
                       </td>
@@ -2772,6 +2776,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           if (camPerSF <= 0) return "—";
                           return <><span>${camPerSF.toFixed(2)}</span><p className="text-[10px] text-muted-foreground/60 tabular-nums">${(camPerSF / 12).toFixed(2)}/mo</p></>;
                         })()}
+                      </td>
+                      <td className="px-1 py-1">
+                        <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
+                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
                       </td>
                     </>)}
                     <td className="px-1 py-1">
@@ -2834,29 +2842,55 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 onClick={async () => {
                   setRentEstimating(true);
                   try {
+                    // Post the CURRENT unit groups (post-scenario-override) so
+                    // the AI estimates against what the analyst is actually
+                    // seeing, not the stale base data in the DB.
                     const res = await fetch(`/api/deals/${params.id}/ai-rents`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ unit_groups: d.unit_groups }),
                     });
                     const json = await res.json();
                     if (!res.ok) { toast.error(json.error || "AI rent estimation failed"); return; }
                     const rents: Array<{ id?: string; market_rent_per_unit?: number; market_rent_per_bed?: number; market_rent_per_sf?: number; notes?: string }> = json.rents || [];
-                    setData(p => ({
-                      ...p,
-                      unit_groups: p.unit_groups.map(g => {
-                        const match = rents.find(r => r.id === g.id);
-                        if (!match) return g;
+                    if (rents.length === 0) {
+                      toast.error("AI returned no rents — check console for details");
+                      console.warn("ai-rents empty response", json);
+                      return;
+                    }
+                    // Route writes through the same scenario-aware plumbing
+                    // as upd() so the values actually show up when an active
+                    // scenario override is in use.
+                    const applyToGroups = (groups: UnitGroup[]): UnitGroup[] => groups.map(g => {
+                      const match = rents.find(r => r.id === g.id);
+                      if (!match) return g;
+                      return {
+                        ...g,
+                        ...(match.market_rent_per_unit != null ? { market_rent_per_unit: match.market_rent_per_unit } : {}),
+                        ...(match.market_rent_per_bed != null ? { market_rent_per_bed: match.market_rent_per_bed } : {}),
+                        ...(match.market_rent_per_sf != null ? { market_rent_per_sf: match.market_rent_per_sf } : {}),
+                        notes: "AI generated",
+                      };
+                    });
+                    setData(p => {
+                      if (activeScenarioId) {
                         return {
-                          ...g,
-                          ...(match.market_rent_per_unit != null ? { market_rent_per_unit: match.market_rent_per_unit } : {}),
-                          ...(match.market_rent_per_bed != null ? { market_rent_per_bed: match.market_rent_per_bed } : {}),
-                          ...(match.market_rent_per_sf != null ? { market_rent_per_sf: match.market_rent_per_sf } : {}),
-                          notes: "AI generated",
+                          ...p,
+                          scenarios: (p.scenarios || []).map(s => {
+                            if (s.id !== activeScenarioId) return s;
+                            const base = s.overrides.unit_groups || p.unit_groups;
+                            return { ...s, overrides: { ...s.overrides, unit_groups: applyToGroups(base) } };
+                          }),
                         };
-                      }),
-                    }));
-                    toast.success(`AI estimated rents for ${rents.length} unit group${rents.length === 1 ? "" : "s"}`);
-                  } catch { toast.error("AI rent estimation failed"); } finally { setRentEstimating(false); }
+                      }
+                      return { ...p, unit_groups: applyToGroups(p.unit_groups) };
+                    });
+                    const matchCount = rents.filter(r => d.unit_groups.some(g => g.id === r.id)).length;
+                    toast.success(`AI estimated rents for ${matchCount}/${d.unit_groups.length} unit groups`);
+                  } catch (err) {
+                    console.error("ai-rents error", err);
+                    toast.error("AI rent estimation failed");
+                  } finally { setRentEstimating(false); }
                 }}
               >
                 {rentEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}

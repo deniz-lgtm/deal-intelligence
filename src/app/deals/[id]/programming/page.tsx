@@ -18,6 +18,10 @@ import { useViewMode } from "@/lib/use-view-mode";
 import ViewModeToggle from "@/components/ViewModeToggle";
 import { newBuildingProgram, computeMassingSummary, newScenario } from "@/components/massing/massing-utils";
 import type { ZoningInputs } from "@/components/massing/massing-utils";
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical } from "lucide-react";
 import { splitUnitGroupsByAffordability } from "@/lib/affordability-split";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -638,6 +642,55 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     }
   }, [params.id]);
 
+  // Reorder massings via drag-and-drop. Persists the new order to the
+  // underwriting.data.site_plan.scenarios array so Site & Zoning and
+  // Underwriting pick up the same ordering.
+  const reorderMassings = useCallback(async (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    const fromIdx = sitePlanMassings.findIndex((m) => m.id === fromId);
+    const toIdx = sitePlanMassings.findIndex((m) => m.id === toId);
+    if (fromIdx < 0 || toIdx < 0) return;
+
+    // Reorder the local list optimistically
+    const next = [...sitePlanMassings];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    setSitePlanMassings(next);
+
+    try {
+      const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+      const uwJson = await uwRes.json();
+      const current = uwJson.data?.data
+        ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
+        : {};
+      const sp = current.site_plan || {};
+      const existing: any[] = Array.isArray(sp.scenarios) ? sp.scenarios : [];
+      // Re-sort the persisted scenarios array by the new local order.
+      // Any scenarios the UI doesn't know about (shouldn't happen, but
+      // belt-and-braces) keep their trailing position.
+      const orderIndex: Record<string, number> = {};
+      next.forEach((m, i) => { orderIndex[m.id] = i; });
+      const sorted = [...existing].sort((a, b) => {
+        const ai = orderIndex[a.id] ?? 1e6;
+        const bi = orderIndex[b.id] ?? 1e6;
+        return ai - bi;
+      });
+      await fetch("/api/underwriting", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deal_id: params.id,
+          data: {
+            ...current,
+            site_plan: { ...sp, scenarios: sorted, updated_at: new Date().toISOString() },
+          },
+        }),
+      });
+    } catch {
+      toast.error("Failed to save massing order — refresh to see current order");
+    }
+  }, [params.id, sitePlanMassings]);
+
   const snapshotMassingToUw = useCallback(async (massingName: string) => {
     try {
       const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
@@ -830,69 +883,25 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           this page is read-only on the structure (it just edits the
           floor stacks within each cell). */}
       {hasMultipleMassings && (
-        <div className="flex items-center gap-1 flex-wrap border-b border-border/40 pb-2">
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
-            Massing
-          </span>
-          {sitePlanMassings.map((m) => {
-            const isActive = currentMassing?.id === m.id;
-            const isBase = !!m.is_base_case;
-            return (
-              // Wrapping div so the tab can host two clickable children
-              // (select + star). Nested buttons aren't valid HTML.
-              <div
-                key={m.id}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border transition-colors ${
-                  isActive
-                    ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
-                    : "bg-muted/20 border-border/40 text-muted-foreground hover:border-border/60 hover:text-foreground"
-                }`}
-                title="Site-plan massing"
-              >
-                {/* Star = base-case toggle. Shared with Site Plan; writes
-                    to underwriting.data.site_plan.scenarios[*].is_base_case. */}
-                <button
-                  type="button"
-                  onClick={() => toggleMassingBaseCase(m.id)}
-                  title={isBase ? "Base case — click to un-star" : "Mark as base case"}
-                  className={`${isBase ? "text-amber-300" : "text-muted-foreground/40 hover:text-amber-300"}`}
-                >
-                  <Star className={`h-3 w-3 ${isBase ? "fill-amber-300" : ""}`} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveMassingId(m.id);
-                    // When switching massings, jump to its first building
-                    const nextBuildingId = m.buildings[0]?.id || null;
-                    setActiveBuildingId(nextBuildingId);
-                    // Also sync buildingProgram.active_scenario_id so
-                    // MassingSection (which reads from the program) picks
-                    // up the right floor stack. Doing this in the click
-                    // handler avoids a hook-ordering trap we hit earlier
-                    // (useEffect declared after `if (loading) return`
-                    // triggered React error #310).
-                    const nextScenario = buildingProgram.scenarios.find(
-                      (s) =>
-                        s.site_plan_scenario_id === m.id &&
-                        s.site_plan_building_id === nextBuildingId
-                    );
-                    if (nextScenario && nextScenario.id !== buildingProgram.active_scenario_id) {
-                      setBuildingProgram((p) => ({ ...p, active_scenario_id: nextScenario.id }));
-                    }
-                  }}
-                  className="flex items-center gap-1.5"
-                >
-                  <Layers className="h-3 w-3" />
-                  <span className="font-medium">{m.name}</span>
-                  <span className="text-[10px] text-muted-foreground/80">
-                    {m.buildings.length} {m.buildings.length === 1 ? "building" : "buildings"}
-                  </span>
-                </button>
-              </div>
+        <MassingTabsRow
+          massings={sitePlanMassings}
+          activeMassingId={currentMassing?.id ?? null}
+          onReorder={reorderMassings}
+          onToggleBaseCase={toggleMassingBaseCase}
+          onSelect={(m) => {
+            setActiveMassingId(m.id);
+            const nextBuildingId = m.buildings[0]?.id || null;
+            setActiveBuildingId(nextBuildingId);
+            const nextScenario = buildingProgram.scenarios.find(
+              (s) =>
+                s.site_plan_scenario_id === m.id &&
+                s.site_plan_building_id === nextBuildingId,
             );
-          })}
-        </div>
+            if (nextScenario && nextScenario.id !== buildingProgram.active_scenario_id) {
+              setBuildingProgram((p) => ({ ...p, active_scenario_id: nextScenario.id }));
+            }
+          }}
+        />
       )}
 
       {/* Building tabs (within the active Massing) — driven by
@@ -1134,6 +1143,97 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       )}
 
       {/* Commercial Tenants and Other Income are now on the Underwriting page under Revenue */}
+    </div>
+  );
+}
+
+// ── Massing tabs row (draggable) ─────────────────────────────────────────────
+//
+// Extracted into its own component so the DndContext can own the pointer
+// sensor state without cluttering the main page render. The row lives
+// above the Massing editor and lets the analyst reorder site-plan
+// scenarios by dragging the grip handle at the left of each tab.
+interface MassingTabsRowProps {
+  massings: Array<{ id: string; name: string; is_base_case?: boolean; buildings: Array<{ id: string; label: string }> }>;
+  activeMassingId: string | null;
+  onSelect: (m: MassingTabsRowProps["massings"][number]) => void;
+  onToggleBaseCase: (id: string) => void;
+  onReorder: (fromId: string, toId: string) => void;
+}
+
+function MassingTabsRow({ massings, activeMassingId, onSelect, onToggleBaseCase, onReorder }: MassingTabsRowProps) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    onReorder(String(active.id), String(over.id));
+  };
+  return (
+    <div className="flex items-center gap-1 flex-wrap border-b border-border/40 pb-2">
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">Massing</span>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={massings.map((m) => m.id)} strategy={horizontalListSortingStrategy}>
+          <div className="flex items-center gap-1 flex-wrap">
+            {massings.map((m) => (
+              <SortableMassingTab
+                key={m.id}
+                massing={m}
+                isActive={activeMassingId === m.id}
+                onSelect={() => onSelect(m)}
+                onToggleBaseCase={() => onToggleBaseCase(m.id)}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
+}
+
+interface SortableMassingTabProps {
+  massing: MassingTabsRowProps["massings"][number];
+  isActive: boolean;
+  onSelect: () => void;
+  onToggleBaseCase: () => void;
+}
+
+function SortableMassingTab({ massing: m, isActive, onSelect, onToggleBaseCase }: SortableMassingTabProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: m.id });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  const isBase = !!m.is_base_case;
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-1 pl-1 pr-3 py-1.5 text-xs rounded-md border transition-colors ${
+        isActive
+          ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
+          : "bg-muted/20 border-border/40 text-muted-foreground hover:border-border/60 hover:text-foreground"
+      }`}
+      title="Drag to reorder · click to select"
+    >
+      {/* Grip handle for drag */}
+      <span {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing opacity-40 hover:opacity-80 px-0.5">
+        <GripVertical className="h-3 w-3" />
+      </span>
+      <button
+        type="button"
+        onClick={onToggleBaseCase}
+        title={isBase ? "Base case — click to un-star" : "Mark as base case"}
+        className={`${isBase ? "text-amber-300" : "text-muted-foreground/40 hover:text-amber-300"}`}
+      >
+        <Star className={`h-3 w-3 ${isBase ? "fill-amber-300" : ""}`} />
+      </button>
+      <button type="button" onClick={onSelect} className="flex items-center gap-1.5">
+        <Layers className="h-3 w-3" />
+        <span className="font-medium">{m.name}</span>
+        <span className="text-[10px] text-muted-foreground/80">
+          {m.buildings.length} {m.buildings.length === 1 ? "building" : "buildings"}
+        </span>
+      </button>
     </div>
   );
 }
