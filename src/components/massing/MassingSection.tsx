@@ -13,6 +13,7 @@ import type { BuildingFloor, BuildingProgram, MassingScenario, FloorUseType, Uni
 import {
   newFloor, computeMassingSummary, autoLabelFloors, seedUnitMix, normalizeFloors,
   quickStackPodium5over1, quickStackMidRise3over2, quickStackHighRise, quickStackGardenStyle, quickStackAutoFromZoning,
+  quickStackSFR, quickStackTownhouse, quickStackADU,
 } from "./massing-utils";
 import type { ZoningInputs } from "./massing-utils";
 import FloorRow from "./FloorRow";
@@ -173,12 +174,25 @@ export default function MassingSection({
                 Stacking on <span className="text-amber-300 font-medium">{activeLabel}</span> · footprint {fn(activeFootprint)} SF
               </div>
               {[
+                { section: "Stacked (mid/high-rise)" as const },
                 { label: "Podium 5-over-1", fn: () => quickStackPodium5over1(activeFootprint) },
                 { label: "Mid-Rise 3-over-2", fn: () => quickStackMidRise3over2(activeFootprint) },
                 { label: "High-Rise Mixed Use", fn: () => quickStackHighRise(activeFootprint) },
                 { label: "Garden-Style Walk-Up", fn: () => quickStackGardenStyle(activeFootprint) },
+                { section: "Horizontal (for-sale / BTR)" as const },
+                { label: "SFR (Single Family)", fn: () => quickStackSFR(activeFootprint) },
+                { label: "Townhouse", fn: () => quickStackTownhouse(activeFootprint) },
+                { label: "ADU", fn: () => quickStackADU(activeFootprint) },
+                { section: "Auto" as const },
                 { label: "Auto from Zoning", fn: () => quickStackAutoFromZoning(activeFootprint, zoning.land_sf, zoning.far, zoning.height_limit_ft) },
-              ].map(preset => {
+              ].map((preset, idx) => {
+                if ("section" in preset) {
+                  return (
+                    <div key={`section-${idx}`} className="px-3 pt-1.5 pb-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground/70 border-t first:border-t-0 mt-0.5 first:mt-0">
+                      {preset.section}
+                    </div>
+                  );
+                }
                 const isCurrent = preset.label === activeScenario.ai_template_label;
                 return (
                   <button

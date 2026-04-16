@@ -251,6 +251,54 @@ export function quickStackGardenStyle(footprintSF: number): BuildingFloor[] {
   ]);
 }
 
+// ── Horizontal (width × levels) presets ──────────────────────────────────────
+//
+// SFR / Townhouse / ADU don't have corridors or shared lobbies; each home
+// is self-contained. We still represent them as vertical "floors" in the
+// scenario so the rest of the massing math (GSF/NRSF/units) just works,
+// but:
+//   – efficiency = 100 (no common-area loss)
+//   – unit count sits on the top-most floor (attic/no-roof-deck) so the
+//     unit count aggregates correctly without double-counting per level
+//   – plate SF = N homes × home_depth × home_width — i.e. the *total*
+//     built area at that level across all side-by-side homes.
+
+export function quickStackSFR(footprintSF: number): BuildingFloor[] {
+  // Detached single-family. Typical 2-story, ~2,200 SF per home on a
+  // 3,500 SF lot. Plate uses footprint directly (one story footprint
+  // across all homes).
+  const footprint = Math.max(Math.round(footprintSF), 0);
+  const homeSf = 1100;        // per-home per-level
+  const homes = Math.max(1, Math.floor(footprint / homeSf));
+  return autoLabelFloors([
+    newFloor("residential", footprint, 10, false, 0, 100),        // level 1
+    newFloor("residential", footprint, 10, false, homes, 100),    // level 2 — holds unit count
+  ]);
+}
+
+export function quickStackTownhouse(footprintSF: number): BuildingFloor[] {
+  // Attached rowhomes, typical 3 levels, ~1,500 SF per home.
+  const footprint = Math.max(Math.round(footprintSF), 0);
+  const homeSf = 500;         // per-home per-level (3 levels → 1,500 SF home)
+  const homes = Math.max(1, Math.floor(footprint / homeSf));
+  return autoLabelFloors([
+    newFloor("residential", footprint, 10, false, 0, 100),
+    newFloor("residential", footprint, 10, false, 0, 100),
+    newFloor("residential", footprint, 10, false, homes, 100),
+  ]);
+}
+
+export function quickStackADU(footprintSF: number): BuildingFloor[] {
+  // Accessory dwelling units. Single story, ~500 SF each, no shared
+  // lobby. Good for infill / overlay massings.
+  const footprint = Math.max(Math.round(footprintSF), 0);
+  const unitSf = 500;
+  const units = Math.max(1, Math.floor(footprint / unitSf));
+  return autoLabelFloors([
+    newFloor("residential", footprint, 10, false, units, 100),
+  ]);
+}
+
 export function quickStackAutoFromZoning(
   footprintSF: number, landSF: number, far: number, heightLimitFt: number,
 ): BuildingFloor[] {
