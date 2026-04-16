@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import type {
-  FloorUseType, BuildingFloor, MassingScenario, MassingSummary, BuildingProgram, UnitMixEntry,
+  FloorUseType, BuildingFloor, FloorAdditionalUse, MassingScenario, MassingSummary, BuildingProgram, UnitMixEntry,
 } from "@/lib/types";
 import { FLOOR_HEIGHT_DEFAULTS, PARKING_ABOVE_GRADE_HEIGHT, FLOOR_USE_TYPE_LABELS, DEFAULT_UNIT_MIX } from "@/lib/types";
 
@@ -9,6 +9,10 @@ import { FLOOR_HEIGHT_DEFAULTS, PARKING_ABOVE_GRADE_HEIGHT, FLOOR_USE_TYPE_LABEL
 const EFFICIENCY_BY_USE: Record<FloorUseType, number> = {
   parking: 98, retail: 95, lobby_amenity: 60, residential: 80, mechanical: 0, office: 87,
 };
+
+export function efficiencyForUse(use: FloorUseType): number {
+  return EFFICIENCY_BY_USE[use] ?? 80;
+}
 
 export function newFloor(
   use_type: FloorUseType,
@@ -28,9 +32,51 @@ export function newFloor(
     units_on_floor,
     efficiency_pct: efficiency_pct ?? EFFICIENCY_BY_USE[use_type],
     sort_order: 0,
+    additional_uses: [],
+  };
+}
+
+// ── Normalize a floor ────────────────────────────────────────────────────────
+//
+// Legacy floors (pre-`additional_uses`) encode a single secondary use in
+// `secondary_use` + `secondary_sf`. Always pass floor data through
+// normalizeFloor before reading so downstream code only has to handle
+// the new shape.
+
+export function normalizeFloor(raw: BuildingFloor): BuildingFloor {
+  const additional: FloorAdditionalUse[] = Array.isArray(raw.additional_uses)
+    ? raw.additional_uses.filter(u => u && u.use_type && u.sf > 0).map(u => ({
+        id: u.id || uuidv4(),
+        use_type: u.use_type,
+        sf: Math.max(0, Math.round(u.sf)),
+      }))
+    : [];
+
+  // Fold legacy secondary into additional if present and not already there
+  if (raw.secondary_use && (raw.secondary_sf ?? 0) > 0) {
+    const alreadyMigrated = additional.some(u => u.use_type === raw.secondary_use && u.sf === raw.secondary_sf);
+    if (!alreadyMigrated) {
+      additional.push({ id: uuidv4(), use_type: raw.secondary_use, sf: Math.round(raw.secondary_sf!) });
+    }
+  }
+
+  return {
+    ...raw,
+    additional_uses: additional,
     secondary_use: null,
     secondary_sf: 0,
   };
+}
+
+export function normalizeFloors(floors: BuildingFloor[] | undefined | null): BuildingFloor[] {
+  if (!Array.isArray(floors)) return [];
+  return floors.map(normalizeFloor);
+}
+
+// Primary use SF = plate − Σ(additional uses)
+export function primarySF(f: BuildingFloor): number {
+  const additionalTotal = (f.additional_uses || []).reduce((s, u) => s + (u.sf || 0), 0);
+  return Math.max(0, f.floor_plate_sf - additionalTotal);
 }
 
 // ── Scenario factory ─────────────────────────────────────────────────────────
@@ -101,16 +147,16 @@ export function computeMassingSummary(scenario: MassingScenario, zoning: ZoningI
 
   const gsf_by_use: Partial<Record<FloorUseType, number>> = {};
   const nrsf_by_use: Partial<Record<FloorUseType, number>> = {};
-  for (const f of floors) {
-    // If floor has a secondary use, split SF between primary and secondary
-    const primarySF = f.secondary_use && f.secondary_sf > 0 ? f.floor_plate_sf - f.secondary_sf : f.floor_plate_sf;
-    gsf_by_use[f.use_type] = (gsf_by_use[f.use_type] || 0) + primarySF;
-    nrsf_by_use[f.use_type] = (nrsf_by_use[f.use_type] || 0) + Math.round(primarySF * (f.efficiency_pct / 100));
-    if (f.secondary_use && f.secondary_sf > 0) {
-      gsf_by_use[f.secondary_use] = (gsf_by_use[f.secondary_use] || 0) + f.secondary_sf;
-      // Use a reasonable efficiency for the secondary use
-      const secEff = f.secondary_use === "retail" ? 95 : f.secondary_use === "office" ? 87 : f.secondary_use === "parking" ? 98 : 80;
-      nrsf_by_use[f.secondary_use] = (nrsf_by_use[f.secondary_use] || 0) + Math.round(f.secondary_sf * (secEff / 100));
+  for (const rawFloor of floors) {
+    const f = normalizeFloor(rawFloor);
+    const primary_sf = primarySF(f);
+    gsf_by_use[f.use_type] = (gsf_by_use[f.use_type] || 0) + primary_sf;
+    nrsf_by_use[f.use_type] = (nrsf_by_use[f.use_type] || 0) + Math.round(primary_sf * (f.efficiency_pct / 100));
+    for (const u of (f.additional_uses || [])) {
+      if (!u.sf) continue;
+      gsf_by_use[u.use_type] = (gsf_by_use[u.use_type] || 0) + u.sf;
+      const eff = efficiencyForUse(u.use_type);
+      nrsf_by_use[u.use_type] = (nrsf_by_use[u.use_type] || 0) + Math.round(u.sf * (eff / 100));
     }
   }
 
