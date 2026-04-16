@@ -47,6 +47,9 @@ interface UnitGroup {
   current_rent_per_unit: number; market_rent_per_unit: number;
   // Student Housing (bed-based, monthly)
   beds_per_unit: number; current_rent_per_bed: number; market_rent_per_bed: number;
+  // Optional notes (AI-generated or analyst-entered) displayed in the
+  // Revenue table. Used by "AI Generate Rents" to explain its source.
+  notes?: string;
 }
 
 interface CapexItem { id: string; label: string; quantity: number; cost_per_unit: number; linked_unit_group_id?: string; }
@@ -1182,6 +1185,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [uwScenarios, setUwScenarios] = useState<UWScenarioType[]>([]);
   const [capexPreview, setCapexPreview] = useState<Array<{ label: string; quantity: number; unit: string; cost_per_unit: number; basis: string; selected: boolean }> | null>(null);
   const [opexEstimating, setOpexEstimating] = useState(false);
+  const [rentEstimating, setRentEstimating] = useState(false);
   const [loanSizing, setLoanSizing] = useState(false);
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [docs, setDocs] = useState<Array<{ id: string; original_name: string; mime_type?: string }>>([]);
@@ -1191,6 +1195,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [deal, setDeal] = useState<{ name: string; property_type?: string; business_plan_id?: string; investment_strategy?: string } | null>(null);
   const [businessPlan, setBusinessPlan] = useState<{ target_irr_min?: number; target_irr_max?: number; target_equity_multiple_min?: number; target_equity_multiple_max?: number; hold_period_min?: number; hold_period_max?: number } | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null); // null = baseline
+  const [activeMassingTab, setActiveMassingTab] = useState<string | null>(null); // id of building_program.scenario shown in the section-cut panel
   const [showScenarioWizard, setShowScenarioWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardType, setWizardType] = useState<ScenarioType>("custom");
@@ -2005,33 +2010,93 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      {/* Building Massing Reference (from Programming page) */}
+      {/* ── Massing Tabs — one per building in the active programming
+          scenario. Replaces the old single-card "Building Massing
+          Reference" with a tabbed view so the analyst can flip between
+          buildings and see each one's section-cut, GSF, units, and
+          parking totals. The selected tab also highlights which building
+          owns which unit-group rows in the Revenue table below.
+          Renders only for ground-up deals that have a massing pushed
+          from Programming. */}
       {isGroundUp && d.building_program?.scenarios?.length > 0 && (() => {
         const bp = d.building_program;
-        const activeS = bp.scenarios.find((s: any) => s.is_baseline) || bp.scenarios.find((s: any) => s.id === bp.active_scenario_id) || bp.scenarios[0];
-        if (!activeS) return null;
+        const scenarios: any[] = bp.scenarios || [];
+        if (scenarios.length === 0) return null;
+
         const MassingSectionCut = require("@/components/massing/MassingSectionCut").default;
-        const { computeMassingSummary } = require("@/components/massing/massing-utils");
+        const { computeMassingSummary: cms2 } = require("@/components/massing/massing-utils");
         const landSF = d.site_info?.land_sf || (deal as any)?.land_acres * 43560 || 0;
         const zi = { land_sf: landSF, far: d.far || 0, lot_coverage_pct: d.lot_coverage_pct || 0, height_limit_ft: d.height_limit_stories * 10 || 0, height_limit_stories: d.height_limit_stories || 0 };
-        const ms = computeMassingSummary(activeS, zi);
+
+        // The selected tab defaults to the baseline / active scenario if
+        // the state hasn't been set yet or references a now-deleted id.
+        const defaultId = (scenarios.find((s: any) => s.is_baseline) || scenarios.find((s: any) => s.id === bp.active_scenario_id) || scenarios[0]).id;
+        const selectedId = activeMassingTab && scenarios.some((s: any) => s.id === activeMassingTab)
+          ? activeMassingTab
+          : defaultId;
+        const selectedS = scenarios.find((s: any) => s.id === selectedId) || scenarios[0];
+        const ms = cms2(selectedS, zi);
+
+        // Resolve building labels from site plan → fall back to scenario
+        // name → generic "Building N".
+        const labelFor = (s: any, i: number) => {
+          if (s.site_plan_building_id && sitePlanBuildingLabels[s.site_plan_building_id]) {
+            return sitePlanBuildingLabels[s.site_plan_building_id];
+          }
+          return s.name || `Building ${i + 1}`;
+        };
+
         return (
-          <div className="border rounded-xl bg-card shadow-card p-4 mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
+          <div className="border rounded-xl bg-card shadow-card mb-4 overflow-hidden">
+            {/* Tab strip */}
+            <div className="flex items-center gap-0 border-b bg-muted/30 overflow-x-auto">
+              <div className="flex items-center gap-1 px-3 py-1.5 shrink-0">
                 <Layers className="h-4 w-4 text-blue-400" />
-                <h3 className="text-sm font-semibold">Building Massing — {activeS.name}</h3>
-                {activeS.is_baseline && <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded">Baseline</span>}
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Massing</span>
               </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span>{fn(ms.total_gsf)} GSF</span>
-                <span>{fn(ms.total_units)} units</span>
-                <span>{Math.round(ms.total_height_ft).toLocaleString()} ft</span>
-                <span>{fn(ms.total_parking_spaces_est)} parking</span>
-              </div>
+              {scenarios.map((s: any, i: number) => {
+                const isSelected = s.id === selectedId;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setActiveMassingTab(s.id)}
+                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors shrink-0 ${
+                      isSelected
+                        ? "border-blue-400 text-blue-400 bg-blue-400/5"
+                        : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                    }`}
+                  >
+                    {labelFor(s, i)}
+                    {s.is_baseline && <span className="ml-1.5 text-[9px] bg-primary/20 text-primary px-1 py-0.5 rounded">Base</span>}
+                  </button>
+                );
+              })}
             </div>
-            <div className="max-w-lg mx-auto">
-              <MassingSectionCut scenario={activeS} summary={ms} />
+            {/* Selected scenario detail */}
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold">{labelFor(selectedS, scenarios.indexOf(selectedS))}</h3>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums">
+                  <span>{fn(ms.total_gsf)} GSF</span>
+                  <span>{fn(ms.total_nrsf)} NRSF</span>
+                  <span>{fn(ms.total_units)} units</span>
+                  <span>{Math.round(ms.total_height_ft).toLocaleString()} ft</span>
+                  <span>{fn(ms.total_parking_spaces_est)} parking</span>
+                </div>
+              </div>
+              <div className="max-w-lg mx-auto">
+                <MassingSectionCut scenario={selectedS} summary={ms} />
+              </div>
+              {/* Per-use GSF breakdown chips */}
+              {Object.keys(ms.gsf_by_use || {}).length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {Object.entries(ms.gsf_by_use || {}).map(([use, sf]: [string, any]) => (
+                    <span key={use} className="text-[10px] px-2 py-0.5 rounded bg-muted/50 text-muted-foreground tabular-nums">
+                      {use}: {fn(sf)} GSF
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -2632,6 +2697,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <button onClick={() => del(g.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
                   </SortableRow>
+                  {/* Notes sub-row — always visible when notes exist; on hover
+                      when empty (so the analyst discovers the field). */}
+                  {(g.notes || "") !== "" && (
+                    <tr className="bg-muted/5 border-b">
+                      <td />
+                      <td colSpan={isSH ? 9 : isMF ? 11 : 11} className="px-2 py-0.5">
+                        <input
+                          type="text"
+                          value={g.notes || ""}
+                          onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
+                          placeholder="Notes (AI source, comp reference, etc.)"
+                          className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic"
+                        />
+                      </td>
+                    </tr>
+                  )}
                   </React.Fragment>
                 );
               })}
@@ -2675,10 +2756,48 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </tr>
             </tfoot>
           </table>
-          <div className="flex items-center gap-3 mt-3">
+          <div className="flex items-center gap-3 mt-3 flex-wrap">
             <Button variant="outline" size="sm" onClick={() => setData(p => ({ ...p, unit_groups: [...p.unit_groups, newGroup()] }))}>
               <Plus className="h-4 w-4 mr-2" /> Add Row
             </Button>
+            {d.unit_groups.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={rentEstimating}
+                className="border-amber-500/50 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                onClick={async () => {
+                  setRentEstimating(true);
+                  try {
+                    const res = await fetch(`/api/deals/${params.id}/ai-rents`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                    });
+                    const json = await res.json();
+                    if (!res.ok) { toast.error(json.error || "AI rent estimation failed"); return; }
+                    const rents: Array<{ id?: string; market_rent_per_unit?: number; market_rent_per_bed?: number; market_rent_per_sf?: number; notes?: string }> = json.rents || [];
+                    setData(p => ({
+                      ...p,
+                      unit_groups: p.unit_groups.map(g => {
+                        const match = rents.find(r => r.id === g.id);
+                        if (!match) return g;
+                        return {
+                          ...g,
+                          ...(match.market_rent_per_unit != null ? { market_rent_per_unit: match.market_rent_per_unit } : {}),
+                          ...(match.market_rent_per_bed != null ? { market_rent_per_bed: match.market_rent_per_bed } : {}),
+                          ...(match.market_rent_per_sf != null ? { market_rent_per_sf: match.market_rent_per_sf } : {}),
+                          notes: match.notes || g.notes || "",
+                        };
+                      }),
+                    }));
+                    toast.success(`AI estimated rents for ${rents.length} unit group${rents.length === 1 ? "" : "s"}`);
+                  } catch { toast.error("AI rent estimation failed"); } finally { setRentEstimating(false); }
+                }}
+              >
+                {rentEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                AI Generate Rents
+              </Button>
+            )}
           </div>
           {/* Parking Revenue (other income items managed below in dedicated section) */}
           <div className="mt-4 border-t pt-4">
