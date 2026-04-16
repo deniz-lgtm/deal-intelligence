@@ -66,7 +66,7 @@ export async function POST(
     const totalSF = groups.reduce((s: number, g: any) => s + (g.sf_per_unit || 0) * (g.unit_count || 0), 0);
     const purchasePrice = uw?.purchase_price || deal.asking_price || 0;
 
-    const isMF = ["multifamily", "student_housing"].includes(deal.property_type || "");
+    const isMF = ["multifamily", "sfr", "student_housing"].includes(deal.property_type || "");
 
     const dealInfo = [
       `Property Type: ${deal.property_type ?? "unknown"}`,

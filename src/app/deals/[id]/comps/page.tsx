@@ -499,6 +499,7 @@ export default function CompsPage({ params }: { params: { id: string } }) {
   const isStudent = subject?.property_type === "student_housing";
   const isMatrixMF =
     subject?.property_type === "multifamily" ||
+    subject?.property_type === "sfr" ||
     isStudent ||
     !subject?.property_type;
 

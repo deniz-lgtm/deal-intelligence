@@ -53,6 +53,7 @@ interface InboxItem {
 
 const PROPERTY_TYPE_OPTIONS: { value: PropertyType; label: string }[] = [
   { value: "multifamily", label: "Multifamily" },
+  { value: "sfr", label: "SFR" },
   { value: "student_housing", label: "Student Housing" },
   { value: "industrial", label: "Industrial" },
   { value: "office", label: "Office" },

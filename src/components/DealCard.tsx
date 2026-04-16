@@ -52,6 +52,7 @@ const PROPERTY_ICONS: Record<string, React.ElementType> = {
   retail: Store,
   hospitality: Hotel,
   multifamily: Building2,
+  sfr: Building2,
   mixed_use: Building2,
 };
 

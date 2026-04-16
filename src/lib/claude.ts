@@ -921,7 +921,7 @@ const DEAL_CHAT_TOOLS: Anthropic.Tool[] = [
             zip: { type: "string" },
             property_type: {
               type: "string",
-              enum: ["industrial", "office", "retail", "multifamily", "student_housing", "mixed_use", "land", "hospitality", "other"],
+              enum: ["industrial", "office", "retail", "multifamily", "sfr", "student_housing", "mixed_use", "land", "hospitality", "other"],
             },
             status: {
               type: "string",
@@ -1141,7 +1141,7 @@ const UNIVERSAL_CHAT_TOOLS: Anthropic.Tool[] = [
             zip: { type: "string" },
             property_type: {
               type: "string",
-              enum: ["industrial", "office", "retail", "multifamily", "student_housing", "mixed_use", "land", "hospitality", "other"],
+              enum: ["industrial", "office", "retail", "multifamily", "sfr", "student_housing", "mixed_use", "land", "hospitality", "other"],
             },
             status: {
               type: "string",

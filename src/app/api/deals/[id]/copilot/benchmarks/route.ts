@@ -37,6 +37,14 @@ const PROPERTY_TYPE_DEFAULTS: Record<
     rent_growth: 3,
     expense_growth: 3,
   },
+  sfr: {
+    vacancy_rate: 6,
+    expense_ratio: 40,
+    management_fee_pct: 8,
+    cap_rate: 5.5,
+    rent_growth: 3,
+    expense_growth: 3,
+  },
   student_housing: {
     vacancy_rate: 7,
     expense_ratio: 48,

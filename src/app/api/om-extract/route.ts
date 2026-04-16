@@ -72,7 +72,7 @@ Return ONLY a JSON object with these fields. Use null for anything you cannot fi
   "city": "city name or null",
   "state": "2-letter state code (e.g. 'CA') or null",
   "zip": "ZIP code or null",
-  "property_type": "one of: multifamily|student_housing|industrial|office|retail|mixed_use|land|hospitality|other — or null",
+  "property_type": "one of: multifamily|sfr|student_housing|industrial|office|retail|mixed_use|land|hospitality|other — or null",
   "year_built": 1985,
   "square_footage": 45000,
   "units": null,

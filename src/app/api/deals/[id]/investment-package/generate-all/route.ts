@@ -191,7 +191,7 @@ function buildSectionContext(
   compsAll: AnyRecord[] = [], submarketMetrics: AnyRecord | null = null,
   locationIntel: AnyRecord[] = []
 ): string {
-  const isMF = deal.property_type === "multifamily" || deal.property_type === "student_housing";
+  const isMF = deal.property_type === "multifamily" || deal.property_type === "sfr" || deal.property_type === "student_housing";
   const unitGroups = uw?.unit_groups || [];
 
   switch (sectionId) {

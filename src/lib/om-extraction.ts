@@ -154,7 +154,7 @@ Return ONLY a JSON object with this exact structure. Use null for any value you 
   "property_details": {
     "name": "property name or null",
     "address": "full street address or null",
-    "property_type": "industrial|office|retail|multifamily|mixed_use|hospitality|land|other or null",
+    "property_type": "industrial|office|retail|multifamily|sfr|student_housing|mixed_use|hospitality|land|other or null",
     "year_built": 2005,
     "sf": 45000,
     "unit_count": null
