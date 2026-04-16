@@ -91,6 +91,76 @@ export function polygonPerimeterFtOpen(points: SitePlanPoint[]): number {
   return total * FT_PER_M;
 }
 
+// ── Step distance for building clones ────────────────────────────────────────
+// Given a polygon, returns an (east, north) step in feet equal to the
+// polygon's bounding-box width/depth plus a 10ft gap. Used by
+// duplicate-building so clones sit edge-to-edge with the source without
+// overlapping — analysts can then drag to reposition.
+export function cloneStep(points: SitePlanPoint[]): { stepX: number; stepY: number } {
+  if (points.length === 0) return { stepX: 40, stepY: 40 };
+  const o = centroid(points);
+  const xy = points.map((p) => latLngToXY(p, o));
+  const minX = Math.min(...xy.map((q) => q.x));
+  const maxX = Math.max(...xy.map((q) => q.x));
+  const minY = Math.min(...xy.map((q) => q.y));
+  const maxY = Math.max(...xy.map((q) => q.y));
+  const widthFt = Math.max(10, (maxX - minX) * FT_PER_M);
+  const depthFt = Math.max(10, (maxY - minY) * FT_PER_M);
+  const gapFt = 10;
+  return { stepX: widthFt + gapFt, stepY: depthFt + gapFt };
+}
+
+// ── Offset a polygon by a feet-vector ────────────────────────────────────────
+// Translates every vertex by (dxFt east, dyFt north). Used by
+// copy/paste + array-duplicate to place the clone slightly offset from
+// the original.
+export function offsetPointsFt(
+  points: SitePlanPoint[],
+  dxFt: number,
+  dyFt: number,
+): SitePlanPoint[] {
+  if (points.length === 0) return [];
+  const o = centroid(points);
+  const dxM = dxFt / FT_PER_M;
+  const dyM = dyFt / FT_PER_M;
+  return points.map(p => {
+    const xy = latLngToXY(p, o);
+    return xyToLatLng({ x: xy.x + dxM, y: xy.y + dyM }, o);
+  });
+}
+
+// ── Nearest-edge insert index ────────────────────────────────────────────────
+// Given a polygon and a point, returns the index at which inserting the
+// point would produce the smallest detour (i.e. the nearest edge). Used
+// by the "right-click to add vertex" feature.
+export function nearestEdgeInsertIndex(
+  points: SitePlanPoint[],
+  target: SitePlanPoint,
+): number {
+  if (points.length < 2) return points.length;
+  const o = centroid(points);
+  const xy = points.map(p => latLngToXY(p, o));
+  const tx = latLngToXY(target, o);
+  let bestIdx = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < xy.length; i++) {
+    const j = (i + 1) % xy.length;
+    const ax = xy[i], bx = xy[j];
+    // Perpendicular distance from tx to segment ax→bx
+    const vx = bx.x - ax.x, vy = bx.y - ax.y;
+    const len2 = vx * vx + vy * vy;
+    let t = len2 > 0 ? ((tx.x - ax.x) * vx + (tx.y - ax.y) * vy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const px = ax.x + t * vx, py = ax.y + t * vy;
+    const d = Math.hypot(tx.x - px, tx.y - py);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = j; // insert BEFORE j (i.e. between i and j)
+    }
+  }
+  return bestIdx;
+}
+
 // ── Segment length in ft (for live drawing dimension labels) ─────────────────
 
 export function segmentLengthFt(a: SitePlanPoint, b: SitePlanPoint): number {

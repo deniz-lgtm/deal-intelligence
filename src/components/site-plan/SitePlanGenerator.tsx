@@ -27,7 +27,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import {
   MousePointer2, Hexagon, Building2, Undo2, Trash2, Check, X, Ruler, Scissors,
-  Spline as LineIcon,
+  Spline as LineIcon, Copy, CopyPlus,
 } from "lucide-react";
 import type { SitePlan, SitePlanPoint, SitePlanBuilding, SitePlanScenario, SitePlanCutout } from "@/lib/types";
 import { getTileConfig } from "@/lib/map-config";
@@ -41,6 +41,9 @@ import {
   snapToGrid,
   distanceFt,
   insetPolygon,
+  offsetPointsFt,
+  nearestEdgeInsertIndex,
+  cloneStep,
 } from "./site-plan-utils";
 
 // ── Props ────────────────────────────────────────────────────────────────────
@@ -261,11 +264,17 @@ interface DrawingSurfaceProps {
   snapGridFt: number;
   existingVertices: SitePlanPoint[];
   onFinish: () => void;
+  // When the user holds space mid-draw, this ref flips to true and the
+  // surface behaves like pan mode (no vertex placement, no cursor hint).
+  // Implemented as a ref so the keydown/keyup listeners don't have to
+  // re-register the map event handlers every time the state flips.
+  panOverrideRef: React.MutableRefObject<boolean>;
 }
 
 function DrawingSurface({
   tool, draft, setDraft, setCursor,
   snapRightAngleOn, snapVertexOn, snapGridFt, existingVertices, onFinish,
+  panOverrideRef,
 }: DrawingSurfaceProps) {
   const map = useMap();
 
@@ -325,7 +334,8 @@ function DrawingSurface({
 
   useMapEvents({
     click(e) {
-      if (tool === "pan") return;
+      // Space-held "pan while drawing" override — skip vertex placement.
+      if (tool === "pan" || panOverrideRef.current) return;
       const raw: SitePlanPoint = { lat: e.latlng.lat, lng: e.latlng.lng };
       // The native MouseEvent does reliably carry modifier state on click,
       // prefer it over the window-tracked ref when available.
@@ -348,7 +358,7 @@ function DrawingSurface({
       setDraft((prev) => [...prev, snapped]);
     },
     mousemove(e) {
-      if (tool === "pan") {
+      if (tool === "pan" || panOverrideRef.current) {
         setCursor(null);
         return;
       }
@@ -394,6 +404,12 @@ export default function SitePlanGenerator({
   const [draft, setDraft] = useState<SitePlanPoint[]>([]);
   const [cursor, setCursor] = useState<SitePlanPoint | null>(null);
   const mapRef = useRef<L.Map | null>(null);
+  // "Hold space to pan" override — a ref the DrawingSurface reads. We
+  // mirror it into a piece of state (spaceHeld) only so we can render a
+  // small hint in the drawing bar; the ref is what the map-event
+  // handlers actually check (state lags behind keydown by a frame).
+  const panOverrideRef = useRef(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
 
   // Derive map center/zoom. Prefer the saved site_plan center, else the deal
   // lat/lng, else a sensible default (middle of the US) — the user will pan
@@ -490,6 +506,74 @@ export default function SitePlanGenerator({
           if (b.id !== buildingId) return b;
           const newPoints = b.points.slice();
           newPoints.splice(index, 0, latlng);
+          return {
+            ...b,
+            points: newPoints,
+            area_sf: Math.round(polygonAreaSf(newPoints)),
+          };
+        });
+        return { ...scen, buildings: nextBuildings };
+      });
+    },
+    [updateActiveScenario]
+  );
+
+  // Clone a building with its points offset by (dxFt, dyFt) and its
+  // cutouts carried along. Generates a fresh id/label. Used by the
+  // Cmd+D duplicate shortcut and the array-duplicate helper.
+  const duplicateBuilding = useCallback(
+    (buildingId: string, offsetsFt: Array<[number, number]>) => {
+      updateActiveScenario((scen) => {
+        const src = scen.buildings.find((b) => b.id === buildingId);
+        if (!src) return scen;
+        const existingLabels = new Set(scen.buildings.map((b) => b.label));
+        let n = scen.buildings.length + 1;
+        const clones: SitePlanBuilding[] = [];
+        for (const [dx, dy] of offsetsFt) {
+          const newPoints = offsetPointsFt(src.points, dx, dy);
+          while (existingLabels.has(`Building ${n}`)) n++;
+          const label = `Building ${n}`;
+          existingLabels.add(label);
+          n++;
+          const genId = () =>
+            typeof crypto !== "undefined" && typeof (crypto as { randomUUID?: () => string }).randomUUID === "function"
+              ? (crypto as { randomUUID: () => string }).randomUUID()
+              : `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          clones.push({
+            id: genId(),
+            label,
+            points: newPoints,
+            area_sf: Math.round(polygonAreaSf(newPoints)),
+            cutouts: src.cutouts?.map((c) => ({
+              ...c,
+              id: genId(),
+              points: offsetPointsFt(c.points, dx, dy),
+              area_sf: Math.round(polygonAreaSf(offsetPointsFt(c.points, dx, dy))),
+            })),
+          });
+        }
+        return {
+          ...scen,
+          buildings: [...scen.buildings, ...clones],
+          active_building_id: clones[clones.length - 1]?.id ?? scen.active_building_id,
+        };
+      });
+    },
+    [updateActiveScenario]
+  );
+
+  // deleteBuildingVertex removes a vertex at `index`. Enforces a minimum
+  // of 3 vertices (a polygon can't degenerate into a line). Called from
+  // the right-click / context-menu handler on a vertex handle.
+  const deleteBuildingVertex = useCallback(
+    (buildingId: string, index: number) => {
+      updateActiveScenario((scen) => {
+        const nextBuildings = scen.buildings.map((b) => {
+          if (b.id !== buildingId) return b;
+          if (b.points.length <= 3) return b;
+          if (index < 0 || index >= b.points.length) return b;
+          const newPoints = b.points.slice();
+          newPoints.splice(index, 1);
           return {
             ...b,
             points: newPoints,
@@ -636,6 +720,66 @@ export default function SitePlanGenerator({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [tool, draft, finish]);
+
+  // Duplicate the active building: Cmd/Ctrl+D → single clone offset
+  // east by its own width + 10ft gap, Cmd/Ctrl+Shift+D → 2×2 grid.
+  // The step size adapts to the building's bounding box so a 20ft
+  // building clones at ~20ft and a 200ft building clones at ~200ft.
+  useEffect(() => {
+    function onDup(e: KeyboardEvent) {
+      if (e.key.toLowerCase() !== "d") return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const tag = (document.activeElement as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const src = buildings.find((b) => b.id === activeBuildingId);
+      if (!src) return;
+      e.preventDefault();
+      const { stepX, stepY } = cloneStep(src.points);
+      if (e.shiftKey) {
+        duplicateBuilding(src.id, [
+          [stepX, 0],
+          [0, -stepY],
+          [stepX, -stepY],
+        ]);
+      } else {
+        duplicateBuilding(src.id, [[stepX, 0]]);
+      }
+    }
+    window.addEventListener("keydown", onDup);
+    return () => window.removeEventListener("keydown", onDup);
+  }, [duplicateBuilding, buildings, activeBuildingId]);
+
+  // Hold space to pan mid-draw. Skip when focus is on a text input
+  // (typing a space shouldn't hijack the map), and stop propagation so
+  // we don't also scroll the page. The ref flips immediately for the
+  // map handlers; the state flip drives the UI hint.
+  useEffect(() => {
+    function onSpaceDown(e: KeyboardEvent) {
+      if (e.code !== "Space") return;
+      const tag = (document.activeElement as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (tool === "pan") return;
+      e.preventDefault();
+      if (!panOverrideRef.current) {
+        panOverrideRef.current = true;
+        setSpaceHeld(true);
+        setCursor(null);
+      }
+    }
+    function onSpaceUp(e: KeyboardEvent) {
+      if (e.code !== "Space") return;
+      if (panOverrideRef.current) {
+        panOverrideRef.current = false;
+        setSpaceHeld(false);
+      }
+    }
+    window.addEventListener("keydown", onSpaceDown);
+    window.addEventListener("keyup", onSpaceUp);
+    return () => {
+      window.removeEventListener("keydown", onSpaceDown);
+      window.removeEventListener("keyup", onSpaceUp);
+    };
+  }, [tool]);
 
   // Vertices the drawing surface may snap to — the other polygons that
   // are already on the map. When drawing the parcel we snap to any
@@ -797,6 +941,40 @@ export default function SitePlanGenerator({
           />
         </div>
 
+        {/* Duplicate / Array — only shown when a building is selected
+            and no draw is in progress. Keyboard alternates:
+            Cmd/Ctrl+D (single copy east) · Cmd/Ctrl+Shift+D (2×2 grid). */}
+        {tool === "pan" && activeBuildingId && (
+          <div className="bg-background/95 backdrop-blur-sm border border-border/60 rounded-lg shadow-card p-1 flex items-center gap-1">
+            <button
+              onClick={() => {
+                const src = buildings.find((b) => b.id === activeBuildingId);
+                if (!src) return;
+                const { stepX } = cloneStep(src.points);
+                duplicateBuilding(src.id, [[stepX, 0]]);
+              }}
+              title="Duplicate active building (⌘D) — places a copy one width east"
+              className="h-7 px-2 flex items-center gap-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/60"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Duplicate
+            </button>
+            <button
+              onClick={() => {
+                const src = buildings.find((b) => b.id === activeBuildingId);
+                if (!src) return;
+                const { stepX, stepY } = cloneStep(src.points);
+                duplicateBuilding(src.id, [[stepX, 0], [0, -stepY], [stepX, -stepY]]);
+              }}
+              title="Array (⌘⇧D) — 2×2 grid of the active building"
+              className="h-7 px-2 flex items-center gap-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/60"
+            >
+              <CopyPlus className="h-3.5 w-3.5" />
+              2×2
+            </button>
+          </div>
+        )}
+
         {tool !== "pan" && (
           <div className="bg-background/95 backdrop-blur-sm border border-border/60 rounded-lg shadow-card p-1 flex items-center gap-1">
             <button
@@ -945,11 +1123,16 @@ export default function SitePlanGenerator({
               : "Measuring distance"}
           </span>
           {tool === "measure" ? (
-            <>Click to add point · double-click to clear · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision (no snap)</>
+            <>Click to add point · double-click to clear · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision · hold Space to pan</>
           ) : tool === "frontage" ? (
-            <>Click to add point · double-click / Enter to finish · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision (no snap)</>
+            <>Click to add point · double-click / Enter to finish · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision · hold Space to pan</>
           ) : (
-            <>Click to add vertex · first-vertex / double-click / Enter to close · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision (no snap)</>
+            <>Click to add vertex · first-vertex / double-click / Enter to close · Backspace to undo · Esc to cancel · hold ⌥ / Ctrl for precision · hold Space to pan</>
+          )}
+          {spaceHeld && (
+            <span className="ml-2 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px] font-semibold uppercase tracking-wide">
+              Panning
+            </span>
           )}
           {tool !== "measure" && tool !== "frontage" && draft.length >= 3 && (
             <span className="ml-2 text-emerald-300 tabular-nums">
@@ -1007,6 +1190,7 @@ export default function SitePlanGenerator({
           snapGridFt={value.snap_grid_ft}
           existingVertices={existingVertices}
           onFinish={finish}
+          panOverrideRef={panOverrideRef}
         />
 
         {/* ── Parcel polygon ── */}
@@ -1102,6 +1286,22 @@ export default function SitePlanGenerator({
                     moved: false,
                   };
                 },
+                contextmenu: (e) => {
+                  // Right-click on the polygon body inserts a vertex at
+                  // the nearest edge. Only operates on the active building
+                  // (so the user first clicks to select, then right-clicks
+                  // to add vertices). Stop native context menu too.
+                  if (tool !== "pan") return;
+                  if (b.id !== activeBuildingId) {
+                    updateActiveScenario((scen) => ({ ...scen, active_building_id: b.id }));
+                    L.DomEvent.stop(e.originalEvent as unknown as Event);
+                    return;
+                  }
+                  const latlng: SitePlanPoint = { lat: e.latlng.lat, lng: e.latlng.lng };
+                  const idx = nearestEdgeInsertIndex(b.points, latlng);
+                  insertBuildingVertex(b.id, idx, latlng);
+                  L.DomEvent.stop(e.originalEvent as unknown as Event);
+                },
               }}
             >
               <Tooltip direction="center" className="site-plan-dim-label">
@@ -1156,6 +1356,12 @@ export default function SitePlanGenerator({
                   dragend: (ev) => {
                     const ll = (ev.target as L.Marker).getLatLng();
                     updateBuildingVertex(b.id, i, { lat: ll.lat, lng: ll.lng }, /*commit*/ true);
+                  },
+                  contextmenu: (ev) => {
+                    // Right-click a vertex handle to delete it (min 3
+                    // vertices enforced by deleteBuildingVertex).
+                    deleteBuildingVertex(b.id, i);
+                    L.DomEvent.stop(ev.originalEvent as unknown as Event);
                   },
                 }}
               />
