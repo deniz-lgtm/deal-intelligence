@@ -2748,6 +2748,51 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <Button variant="ghost" size="sm" onClick={() => setData(p => ({ ...p, commercial_tenants: [...(p.commercial_tenants || []), { id: uuidv4(), tenant_name: "", suite: "", use_type: "retail", sf: 0, rent_per_sf: 0, lease_type: "NNN", cam_reimbursement_pct: 100, ti_allowance_per_sf: 0, lc_pct: 6, free_rent_months: 0, rent_escalation_pct: 3, lease_start: "", lease_term_years: 10, notes: "" }] }))}>
               <Plus className="h-3.5 w-3.5 mr-1" /> Add Tenant
             </Button>
+            {/* Auto-populate retail tenant(s) from the active massing.
+                Creates one placeholder row per retail NRSF bucket when no
+                tenants exist, so the analyst starts with a reasonable
+                structure already wired to the building's programming. */}
+            {isGroundUp && d.building_program?.scenarios?.length > 0 && (() => {
+              const bp = d.building_program;
+              const activeS = bp.scenarios.find((s: any) => s.is_baseline) || bp.scenarios.find((s: any) => s.id === bp.active_scenario_id) || bp.scenarios[0];
+              if (!activeS) return null;
+              const landSF = d.site_info?.land_sf || ((deal as any)?.land_acres || 0) * 43560;
+              const zi = { land_sf: landSF, far: d.far || 0, lot_coverage_pct: d.lot_coverage_pct || 0, height_limit_ft: (d.height_limit_stories || 0) * 10, height_limit_stories: d.height_limit_stories || 0 };
+              const { computeMassingSummary: cms } = require("@/components/massing/massing-utils");
+              const ms = cms(activeS, zi);
+              const retailSf = ms.nrsf_by_use?.retail || 0;
+              const officeSf = ms.nrsf_by_use?.office || 0;
+              if (retailSf <= 0 && officeSf <= 0) return null;
+              return (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-2"
+                  onClick={() => {
+                    setData(p => {
+                      const existing = p.commercial_tenants || [];
+                      const add: any[] = [];
+                      if (retailSf > 0 && !existing.some((t: any) => (t.use_type || "retail") === "retail")) {
+                        add.push({ id: uuidv4(), tenant_name: "Retail Tenant (TBD)", suite: "", use_type: "retail", sf: Math.round(retailSf), rent_per_sf: 30, lease_type: "NNN", cam_reimbursement_pct: 100, ti_allowance_per_sf: 75, lc_pct: 6, free_rent_months: 3, rent_escalation_pct: 3, lease_start: "", lease_term_years: 10, notes: `Pre-filled from ${activeS.name} — retail NRSF` });
+                      }
+                      if (officeSf > 0 && !existing.some((t: any) => t.use_type === "office")) {
+                        add.push({ id: uuidv4(), tenant_name: "Office Tenant (TBD)", suite: "", use_type: "office", sf: Math.round(officeSf), rent_per_sf: 40, lease_type: "MG", cam_reimbursement_pct: 0, ti_allowance_per_sf: 60, lc_pct: 6, free_rent_months: 4, rent_escalation_pct: 3, lease_start: "", lease_term_years: 7, notes: `Pre-filled from ${activeS.name} — office NRSF` });
+                      }
+                      if (add.length === 0) {
+                        toast.info("Tenants already cover retail/office from the massing.");
+                        return p;
+                      }
+                      toast.success(`Added ${add.length} tenant placeholder${add.length === 1 ? "" : "s"} from massing`);
+                      return { ...p, commercial_tenants: [...existing, ...add] };
+                    });
+                  }}
+                  title="Create placeholder tenant rows sized to the massing's retail / office NRSF"
+                >
+                  <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-400" />
+                  From Massing ({fn(retailSf + officeSf)} SF)
+                </Button>
+              );
+            })()}
           </div>
 
           {/* ── Other Income (dynamic line items) ── */}
@@ -2791,6 +2836,54 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <Button variant="ghost" size="sm" onClick={() => setData(p => ({ ...p, other_income_items: [...(p.other_income_items || []), { id: uuidv4(), label: "", amount: 0, basis: "per_unit", unit_type_filter: "", notes: "" }] }))}>
               <Plus className="h-3.5 w-3.5 mr-1" /> Add Income Item
             </Button>
+            {/* Auto-populate a Parking Income row from the massing's
+                estimated parking-space count (computed from parking SF /
+                SF-per-space). Default $125/month/space — analyst tunes
+                per market. Skips if a Parking row already exists. */}
+            {isGroundUp && d.building_program?.scenarios?.length > 0 && (() => {
+              const bp = d.building_program;
+              const activeS = bp.scenarios.find((s: any) => s.is_baseline) || bp.scenarios.find((s: any) => s.id === bp.active_scenario_id) || bp.scenarios[0];
+              if (!activeS) return null;
+              const landSF = d.site_info?.land_sf || ((deal as any)?.land_acres || 0) * 43560;
+              const zi = { land_sf: landSF, far: d.far || 0, lot_coverage_pct: d.lot_coverage_pct || 0, height_limit_ft: (d.height_limit_stories || 0) * 10, height_limit_stories: d.height_limit_stories || 0 };
+              const { computeMassingSummary: cms } = require("@/components/massing/massing-utils");
+              const ms = cms(activeS, zi);
+              const spaces = ms.total_parking_spaces_est || 0;
+              if (spaces <= 0) return null;
+              return (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-2"
+                  onClick={() => {
+                    setData(p => {
+                      const existing = p.other_income_items || [];
+                      if (existing.some((it: any) => /parking/i.test(it.label || ""))) {
+                        toast.info("Parking income already in the list.");
+                        return p;
+                      }
+                      // Mirror the massing's space count into the top-
+                      // level parking field so the per-space multiplier
+                      // picks it up when rendering the Annual column.
+                      const nextParkingSpaces = spaces;
+                      toast.success(`Added Parking Income · ${spaces} spaces @ $125/mo`);
+                      return {
+                        ...p,
+                        parking_reserved_spaces: Math.max(nextParkingSpaces, p.parking_reserved_spaces || 0),
+                        other_income_items: [
+                          ...existing,
+                          { id: uuidv4(), label: "Parking Income", amount: 125, basis: "per_space", unit_type_filter: "", notes: `From ${activeS.name} — ${spaces} est. spaces` },
+                        ],
+                      };
+                    });
+                  }}
+                  title="Pre-fill a parking-income line item sized to the massing's estimated parking space count"
+                >
+                  <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-400" />
+                  From Massing ({fn(spaces)} spaces)
+                </Button>
+              );
+            })()}
           </div>
         </div>
       </Section>
@@ -3625,6 +3718,59 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </table>
           <div className="flex items-center gap-4 mt-3">
             <div className="p-3 bg-muted/50 rounded-lg flex-1"><p className="text-xs text-muted-foreground mb-1">EGI</p><p className="text-sm font-semibold">{fc(m.egi)}</p><p className="text-xs text-muted-foreground">{fc(m.vacancyLoss)} vacancy loss</p></div>
+            {(isMF || isSH) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => {
+                  // Industry-standard MF OpEx split = 30% of EGI excluding
+                  // management (~5%), giving a combined ~35% load.
+                  // Applied directly to the pro-forma column; in-place
+                  // figures are separately sourced from T12 and untouched.
+                  // If EGI is zero (revenue not yet entered), no-op with a
+                  // toast so the user understands why nothing changed.
+                  const egi = m.proformaEGI;
+                  if (egi <= 0) {
+                    toast.error("Enter pro forma revenue first — EGI is needed to split the 30% load.");
+                    return;
+                  }
+                  const pcts: Array<[keyof UWData, number]> = [
+                    ["taxes_annual", 0.08],
+                    ["insurance_annual", 0.03],
+                    ["repairs_annual", 0.06],
+                    ["utilities_annual", 0.04],
+                    ["ga_annual", 0.03],
+                    ["marketing_annual", 0.01],
+                    ["reserves_annual", 0.05],
+                  ];
+                  setData(p => {
+                    const patch: Partial<UWData> = {};
+                    for (const [k, pct] of pcts) {
+                      (patch as any)[k] = Math.round(egi * pct);
+                    }
+                    // Writes to the active scenario overrides if one is
+                    // active, otherwise to the base data (mirrors how set()
+                    // routes writes).
+                    if (activeScenarioId) {
+                      return {
+                        ...p,
+                        scenarios: (p.scenarios || []).map(s =>
+                          s.id === activeScenarioId
+                            ? { ...s, overrides: { ...s.overrides, ...patch } }
+                            : s
+                        ),
+                      };
+                    }
+                    return { ...p, ...patch };
+                  });
+                  toast.success("Applied MF default OpEx (30% of EGI, ~35% with mgmt)");
+                }}
+                title="Fill in Pro Forma OpEx at industry-standard multifamily ratios (30% of EGI + ~5% mgmt = 35% total load)"
+              >
+                MF Default (35%)
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={estimateOpex} disabled={opexEstimating} className="shrink-0">
               {opexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
               AI Estimate
