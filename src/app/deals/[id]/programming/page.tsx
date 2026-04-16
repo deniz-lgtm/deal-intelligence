@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
-  Loader2, Save, Plus, Trash2, Layers, Building2, Car, DollarSign,
+  Loader2, Save, Plus, Trash2, Layers, Building2, Car, DollarSign, Star,
   ChevronDown, ChevronRight, ArrowRight, Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -120,6 +120,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     Array<{
       id: string;
       name: string;
+      is_base_case?: boolean;
       buildings: Array<{ id: string; label: string; area_sf: number }>;
     }>
   >([]);
@@ -150,6 +151,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       const massings: Array<{
         id: string;
         name: string;
+        is_base_case?: boolean;
         buildings: Array<{ id: string; label: string; area_sf: number }>;
       }> = [];
       if (rawPlan && Array.isArray(rawPlan.scenarios) && rawPlan.scenarios.length > 0) {
@@ -157,6 +159,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           massings.push({
             id: sp.id,
             name: sp.name || "Massing",
+            is_base_case: !!sp.is_base_case,
             buildings: (Array.isArray(sp.buildings) ? sp.buildings : []).map((b: any) => ({
               id: b.id,
               label: b.label,
@@ -592,6 +595,49 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   // captures whatever is in the underwriting blob right NOW (after the
   // pushes have committed building_program + unit_groups), so the saved
   // scenario reflects the freshly-pushed numbers.
+  // Toggle the "base case" star on a massing. Writes to
+  // underwriting.data.site_plan.scenarios[*].is_base_case so the flag
+  // is shared with Site & Zoning. Only one massing can be base case
+  // at a time; the setter clears it on siblings.
+  const toggleMassingBaseCase = useCallback(async (massingId: string) => {
+    try {
+      const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+      const uwJson = await uwRes.json();
+      const current = uwJson.data?.data
+        ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
+        : {};
+      const sp = current.site_plan || {};
+      const scenarios = Array.isArray(sp.scenarios) ? sp.scenarios : [];
+      const wasBase = scenarios.find((s: any) => s.id === massingId)?.is_base_case === true;
+      const nextScenarios = scenarios.map((s: any) => ({
+        ...s,
+        is_base_case: s.id === massingId ? !wasBase : false,
+      }));
+      await fetch("/api/underwriting", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deal_id: params.id,
+          data: {
+            ...current,
+            site_plan: { ...sp, scenarios: nextScenarios, updated_at: new Date().toISOString() },
+          },
+        }),
+      });
+      // Update local state so the UI reflects the toggle immediately.
+      setSitePlanMassings((prev) =>
+        prev.map((m) => ({ ...m, is_base_case: m.id === massingId ? !wasBase : false }))
+      );
+      toast.success(
+        !wasBase
+          ? `Marked "${scenarios.find((s: any) => s.id === massingId)?.name}" as base case`
+          : "Cleared base case"
+      );
+    } catch {
+      toast.error("Failed to update base case");
+    }
+  }, [params.id]);
+
   const snapshotMassingToUw = useCallback(async (massingName: string) => {
     try {
       const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
@@ -790,29 +836,12 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           </span>
           {sitePlanMassings.map((m) => {
             const isActive = currentMassing?.id === m.id;
+            const isBase = !!m.is_base_case;
             return (
-              <button
+              // Wrapping div so the tab can host two clickable children
+              // (select + star). Nested buttons aren't valid HTML.
+              <div
                 key={m.id}
-                onClick={() => {
-                  setActiveMassingId(m.id);
-                  // When switching massings, jump to its first building
-                  const nextBuildingId = m.buildings[0]?.id || null;
-                  setActiveBuildingId(nextBuildingId);
-                  // Also sync buildingProgram.active_scenario_id so
-                  // MassingSection (which reads from the program) picks
-                  // up the right floor stack. Doing this in the click
-                  // handler avoids a hook-ordering trap we hit earlier
-                  // (useEffect declared after `if (loading) return`
-                  // triggered React error #310).
-                  const nextScenario = buildingProgram.scenarios.find(
-                    (s) =>
-                      s.site_plan_scenario_id === m.id &&
-                      s.site_plan_building_id === nextBuildingId
-                  );
-                  if (nextScenario && nextScenario.id !== buildingProgram.active_scenario_id) {
-                    setBuildingProgram((p) => ({ ...p, active_scenario_id: nextScenario.id }));
-                  }
-                }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border transition-colors ${
                   isActive
                     ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
@@ -820,12 +849,47 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
                 }`}
                 title="Site-plan massing"
               >
-                <Layers className="h-3 w-3" />
-                <span className="font-medium">{m.name}</span>
-                <span className="text-[10px] text-muted-foreground/80">
-                  {m.buildings.length} {m.buildings.length === 1 ? "building" : "buildings"}
-                </span>
-              </button>
+                {/* Star = base-case toggle. Shared with Site Plan; writes
+                    to underwriting.data.site_plan.scenarios[*].is_base_case. */}
+                <button
+                  type="button"
+                  onClick={() => toggleMassingBaseCase(m.id)}
+                  title={isBase ? "Base case — click to un-star" : "Mark as base case"}
+                  className={`${isBase ? "text-amber-300" : "text-muted-foreground/40 hover:text-amber-300"}`}
+                >
+                  <Star className={`h-3 w-3 ${isBase ? "fill-amber-300" : ""}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveMassingId(m.id);
+                    // When switching massings, jump to its first building
+                    const nextBuildingId = m.buildings[0]?.id || null;
+                    setActiveBuildingId(nextBuildingId);
+                    // Also sync buildingProgram.active_scenario_id so
+                    // MassingSection (which reads from the program) picks
+                    // up the right floor stack. Doing this in the click
+                    // handler avoids a hook-ordering trap we hit earlier
+                    // (useEffect declared after `if (loading) return`
+                    // triggered React error #310).
+                    const nextScenario = buildingProgram.scenarios.find(
+                      (s) =>
+                        s.site_plan_scenario_id === m.id &&
+                        s.site_plan_building_id === nextBuildingId
+                    );
+                    if (nextScenario && nextScenario.id !== buildingProgram.active_scenario_id) {
+                      setBuildingProgram((p) => ({ ...p, active_scenario_id: nextScenario.id }));
+                    }
+                  }}
+                  className="flex items-center gap-1.5"
+                >
+                  <Layers className="h-3 w-3" />
+                  <span className="font-medium">{m.name}</span>
+                  <span className="text-[10px] text-muted-foreground/80">
+                    {m.buildings.length} {m.buildings.length === 1 ? "building" : "buildings"}
+                  </span>
+                </button>
+              </div>
             );
           })}
         </div>
@@ -986,7 +1050,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
                 </div>
                 <div className="border rounded-lg p-3 bg-card">
                   <p className="text-[10px] text-muted-foreground uppercase">{heightLabel}</p>
-                  <p className="text-lg font-bold tabular-nums">{Math.round(t.max_height_ft)} ft</p>
+                  <p className="text-lg font-bold tabular-nums">{Math.round(t.max_height_ft).toLocaleString()} ft</p>
                 </div>
               </>
             );

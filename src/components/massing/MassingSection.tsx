@@ -496,8 +496,8 @@ export default function MassingSection({
             <div className="flex justify-between"><span>Total NRSF</span><span className="font-semibold tabular-nums">{fn(summary.total_nrsf)}</span></div>
             <div className="flex justify-between"><span>Residential Units</span><span className="font-semibold tabular-nums">{fn(summary.total_units)}</span></div>
             <div className="flex justify-between"><span>Est. Parking Spaces</span><span className="font-semibold tabular-nums">{fn(summary.total_parking_spaces_est)} <span className="text-muted-foreground text-xs">(@ {activeScenario.parking_sf_per_space || 350} SF/space)</span></span></div>
-            <div className="flex justify-between"><span>Building Height</span><span className="font-semibold tabular-nums">{summary.total_height_ft.toFixed(0)} ft ({summary.above_grade_floors} floors)</span></div>
-            {summary.below_grade_floors > 0 && <div className="flex justify-between"><span>Below Grade</span><span className="font-semibold tabular-nums">{summary.total_below_grade_ft.toFixed(0)} ft ({summary.below_grade_floors} levels)</span></div>}
+            <div className="flex justify-between"><span>Building Height</span><span className="font-semibold tabular-nums">{Math.round(summary.total_height_ft).toLocaleString()} ft ({summary.above_grade_floors} floors)</span></div>
+            {summary.below_grade_floors > 0 && <div className="flex justify-between"><span>Below Grade</span><span className="font-semibold tabular-nums">{Math.round(summary.total_below_grade_ft).toLocaleString()} ft ({summary.below_grade_floors} levels)</span></div>}
             <div className="flex justify-between"><span>Effective FAR</span><span className="font-semibold tabular-nums">{summary.effective_far.toFixed(2)}</span></div>
           </div>
         </div>

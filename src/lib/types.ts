@@ -2207,6 +2207,12 @@ export interface SitePlanScenario {
   buildings: SitePlanBuilding[];
   active_building_id: string | null;
   created_at: string;
+  // Star one massing as the project's "base case". Used by Programming
+  // + Underwriting as the default when nothing else is explicitly
+  // selected. Only one massing per site plan should carry the flag;
+  // the setter on the site-zoning + programming pages clears it on
+  // siblings before flipping this one on.
+  is_base_case?: boolean;
   // Optional frontage polyline (open, multi-segment) — used to feed
   // linear-SF of frontage into dev-budget line items that price by
   // curb cut / sidewalk / street improvements. Stored per massing so

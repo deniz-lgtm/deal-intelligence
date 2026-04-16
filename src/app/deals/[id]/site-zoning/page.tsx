@@ -7,7 +7,7 @@ import {
   Loader2, MapPin, Sparkles, RefreshCw, Download, Save,
   Building2, Ruler, Trees, ChevronDown, ChevronRight, FileText,
   Map as MapIcon, ExternalLink, CalendarClock, Wand2,
-  Pencil, Copy, Trash2,
+  Pencil, Copy, Trash2, Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -303,7 +303,7 @@ function SelectInput({ label, value, onChange, options, className = "" }: {
 // rename / duplicate / delete affordances. Rename is edit-in-place: click
 // the label to enter edit mode, Enter / blur commits, Esc cancels.
 function ScenarioTab({
-  scenario, isActive, canDelete, onSelect, onRename, onDelete, onDuplicate,
+  scenario, isActive, canDelete, onSelect, onRename, onDelete, onDuplicate, onToggleBaseCase,
 }: {
   scenario: SitePlanScenarioType;
   isActive: boolean;
@@ -312,10 +312,13 @@ function ScenarioTab({
   onRename: (name: string) => void;
   onDelete: () => void;
   onDuplicate: () => void;
+  onToggleBaseCase: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(scenario.name);
   useEffect(() => { setDraft(scenario.name); }, [scenario.name]);
+
+  const isBaseCase = !!scenario.is_base_case;
 
   return (
     <div
@@ -325,6 +328,17 @@ function ScenarioTab({
           : "bg-muted/10 border-border/40 text-muted-foreground hover:text-foreground hover:border-border"
       }`}
     >
+      {/* Star is always visible so analysts can see at a glance which
+          massing is the project's base case. Click toggles; only one
+          can be base case at a time — the setter above clears other
+          massings before flipping this one on. */}
+      <button
+        onClick={onToggleBaseCase}
+        title={isBaseCase ? "Base case — click to un-star" : "Mark as base case (shared with Programming & Underwriting)"}
+        className={`-ml-0.5 ${isBaseCase ? "text-amber-300" : "text-muted-foreground/40 hover:text-amber-300"}`}
+      >
+        <Star className={`h-3 w-3 ${isBaseCase ? "fill-amber-300" : ""}`} />
+      </button>
       {editing ? (
         <input
           autoFocus
@@ -1702,6 +1716,20 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                       ...sitePlan,
                       scenarios: [...(sitePlan.scenarios || []), copy],
                       active_scenario_id: copy.id,
+                      updated_at: new Date().toISOString(),
+                    });
+                  }}
+                  onToggleBaseCase={() => {
+                    // Toggle base case on this scenario, clearing the flag
+                    // from siblings so at most one massing is ever the
+                    // base case.
+                    const wasBase = !!s.is_base_case;
+                    updateSitePlan({
+                      ...sitePlan,
+                      scenarios: (sitePlan.scenarios || []).map((x) => ({
+                        ...x,
+                        is_base_case: x.id === s.id ? !wasBase : false,
+                      })),
                       updated_at: new Date().toISOString(),
                     });
                   }}
