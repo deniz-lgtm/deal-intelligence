@@ -128,7 +128,7 @@ function buildUWSummary(
   const pct = (v: number) => `${v.toFixed(2)}%`;
 
   const isSH = deal.property_type === "student_housing";
-  const isMF = deal.property_type === "multifamily" || isSH;
+  const isMF = deal.property_type === "multifamily" || deal.property_type === "sfr" || isSH;
 
   // --- Purchase & Financing ---
   const purchasePrice = n(uw.purchase_price);

@@ -136,7 +136,7 @@ export async function POST(
       documentQueries.getByDealId(params.id),
     ]);
 
-    const isMF = deal.property_type === "multifamily" || deal.property_type === "student_housing";
+    const isMF = deal.property_type === "multifamily" || deal.property_type === "sfr" || deal.property_type === "student_housing";
     const isSH = deal.property_type === "student_housing";
 
     // Build context

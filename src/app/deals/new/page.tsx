@@ -12,6 +12,7 @@ import { INVESTMENT_THESIS_LABELS, INVESTMENT_THESIS_DESCRIPTIONS } from "@/lib/
 
 const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
   { value: "multifamily", label: "Multifamily" },
+  { value: "sfr", label: "SFR" },
   { value: "student_housing", label: "Student Housing" },
   { value: "industrial", label: "Industrial" },
   { value: "office", label: "Office" },

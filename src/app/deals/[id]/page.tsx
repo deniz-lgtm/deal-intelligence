@@ -644,7 +644,7 @@ export default function DealOverviewPage({
           </div>
 
           {/* AMI reference — quick lookup for multifamily deals */}
-          {["multifamily", "student_housing"].includes(deal.property_type || "") && (
+          {["multifamily", "sfr", "student_housing"].includes(deal.property_type || "") && (
             <AmiReference dealId={params.id} />
           )}
         </div>
@@ -764,7 +764,7 @@ function SiteDevelopmentCard({ deal, underwriting, dealId, onUnderwritingUpdate 
   onUnderwritingUpdate: (updates: Partial<UnderwritingData>) => void;
 }) {
   const isIndustrial = deal.property_type === "industrial";
-  const isMF = ["multifamily", "student_housing"].includes(deal.property_type || "");
+  const isMF = ["multifamily", "sfr", "student_housing"].includes(deal.property_type || "");
   const landAcres = deal.land_acres || 0;
   const landSF = landAcres * 43560;
 
@@ -946,7 +946,7 @@ function computeHighlights(rawUw: any | null, deal: Deal): FinancialHighlights |
 
     // Determine property type for calc
     const mode: "commercial" | "multifamily" | "student_housing" =
-      deal.property_type === "multifamily" ? "multifamily" :
+      deal.property_type === "multifamily" || deal.property_type === "sfr" ? "multifamily" :
       deal.property_type === "student_housing" ? "student_housing" :
       "commercial";
 

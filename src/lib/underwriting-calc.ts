@@ -195,6 +195,10 @@ export const PROPERTY_OVERRIDES: Record<string, Partial<UWData>> = {
     vacancy_rate: 5, management_fee_pct: 4, exit_cap_rate: 5.5,
     rent_growth_pct: 3, expense_growth_pct: 3, lc_new_pct: 0, lc_renewal_pct: 0,
   },
+  sfr: {
+    vacancy_rate: 6, management_fee_pct: 8, exit_cap_rate: 5.5,
+    rent_growth_pct: 3, expense_growth_pct: 3, lc_new_pct: 0, lc_renewal_pct: 0,
+  },
   student_housing: {
     vacancy_rate: 7, management_fee_pct: 4, exit_cap_rate: 6.0,
     rent_growth_pct: 3, expense_growth_pct: 3, lc_new_pct: 0, lc_renewal_pct: 0,
@@ -225,7 +229,7 @@ export const PROPERTY_OVERRIDES: Record<string, Partial<UWData>> = {
 };
 
 export const EFFICIENCY_DEFAULTS: Record<string, number> = {
-  industrial: 98, multifamily: 80, student_housing: 78,
+  industrial: 98, multifamily: 80, sfr: 95, student_housing: 78,
   office: 87, retail: 95, mixed_use: 85, other: 90,
 };
 

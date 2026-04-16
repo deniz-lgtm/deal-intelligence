@@ -16,6 +16,7 @@ export type PropertyType =
   | "office"
   | "retail"
   | "multifamily"
+  | "sfr"
   | "student_housing"
   | "mixed_use"
   | "land"

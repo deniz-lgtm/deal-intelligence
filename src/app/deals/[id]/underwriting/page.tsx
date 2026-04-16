@@ -291,6 +291,10 @@ const PROPERTY_OVERRIDES: Record<string, Partial<UWData>> = {
     vacancy_rate: 5, management_fee_pct: 4, exit_cap_rate: 5.5,
     rent_growth_pct: 3, expense_growth_pct: 3, lc_new_pct: 0, lc_renewal_pct: 0,
   },
+  sfr: {
+    vacancy_rate: 6, management_fee_pct: 8, exit_cap_rate: 5.5,
+    rent_growth_pct: 3, expense_growth_pct: 3, lc_new_pct: 0, lc_renewal_pct: 0,
+  },
   student_housing: {
     vacancy_rate: 7, management_fee_pct: 4, exit_cap_rate: 6.0,
     rent_growth_pct: 3, expense_growth_pct: 3, lc_new_pct: 0, lc_renewal_pct: 0,
@@ -326,7 +330,7 @@ function getDefaultsForPropertyType(propertyType: string | undefined): UWData {
 }
 
 const EFFICIENCY_DEFAULTS: Record<string, number> = {
-  industrial: 98, multifamily: 80, student_housing: 78,
+  industrial: 98, multifamily: 80, sfr: 95, student_housing: 78,
   office: 87, retail: 95, mixed_use: 85, other: 90,
 };
 
@@ -1196,7 +1200,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const isLandDevResidential = (deal?.property_type === "land" || deal?.property_type === "other") &&
     (data.development_mode || deal?.investment_strategy === "ground_up") &&
     (massingHasResidential || unitGroupsLookResidential);
-  const isMF = deal?.property_type === "multifamily" || isSH || isMixedUseWithRes || isLandDevResidential;
+  const isMF = deal?.property_type === "multifamily" || deal?.property_type === "sfr" || isSH || isMixedUseWithRes || isLandDevResidential;
   const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
   const isGroundUp = deal?.investment_strategy === "ground_up";
 

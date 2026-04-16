@@ -54,6 +54,7 @@ const PROPERTY_TYPE_OPTIONS: { value: PropertyType; label: string }[] = [
   { value: "office", label: "Office" },
   { value: "retail", label: "Retail" },
   { value: "multifamily", label: "Multifamily" },
+  { value: "sfr", label: "SFR" },
   { value: "student_housing", label: "Student Housing" },
   { value: "mixed_use", label: "Mixed Use" },
   { value: "land", label: "Land" },

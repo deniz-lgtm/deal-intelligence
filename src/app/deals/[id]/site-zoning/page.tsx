@@ -883,7 +883,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   }
 
   const isIndustrial = deal?.property_type === "industrial";
-  const isMF = ["multifamily", "student_housing"].includes(deal?.property_type || "");
+  const isMF = ["multifamily", "sfr", "student_housing"].includes(deal?.property_type || "");
   const isGroundUp = deal?.investment_strategy === "ground_up";
   // Site plan is only relevant where the analyst is shaping a physical
   // program — ground-up, value-add (redevelopment), and opportunistic. Core /

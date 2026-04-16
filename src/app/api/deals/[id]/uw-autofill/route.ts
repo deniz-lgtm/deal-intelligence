@@ -83,7 +83,7 @@ export async function POST(
     } catch { /* body may be empty */ }
 
     const deal = await dealQueries.getById(params.id);
-    const isMF = deal.property_type === "multifamily" || deal.property_type === "student_housing";
+    const isMF = deal.property_type === "multifamily" || deal.property_type === "sfr" || deal.property_type === "student_housing";
 
     // ── Gather all documents that might contain rent roll / financial data ────
     // Priority order: dedicated rent roll > OM > other financial docs
