@@ -154,14 +154,30 @@ export default function MassingSection({
               : "AI Generate"}
             <ChevronDown className="h-3 w-3 ml-1" />
           </Button>
-          {quickStackOpen && (
-            <div className="absolute top-8 left-0 z-50 bg-card border rounded-md shadow-lg py-1 min-w-[260px]">
+          {quickStackOpen && (() => {
+            // AI Generate shapes the ACTIVE building's stack. The footprint
+            // comes from what the analyst drew on the Site Plan (or hand-
+            // entered in the Base Footprint input) — NOT from the parcel
+            // area. Presets produce a narrower tower on top of that
+            // footprint, so an accurate input is essential.
+            //
+            // Fallback: if the active scenario has no footprint set yet
+            // (brand-new scenario, no site plan drawing), derive one from
+            // parcel land × lot coverage so presets still work in isolation.
+            const fallbackFootprint = Math.round(zoning.land_sf * ((zoning.lot_coverage_pct || 50) / 100));
+            const activeFootprint = activeScenario.footprint_sf > 0 ? activeScenario.footprint_sf : fallbackFootprint;
+            const activeLabel = activeBuildingLabel || "this building";
+            return (
+            <div className="absolute top-8 left-0 z-50 bg-card border rounded-md shadow-lg py-1 min-w-[280px]">
+              <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-b mb-1">
+                Stacking on <span className="text-amber-300 font-medium">{activeLabel}</span> · footprint {fn(activeFootprint)} SF
+              </div>
               {[
-                { label: "Podium 5-over-1", fn: () => quickStackPodium5over1(zoning.land_sf, zoning.lot_coverage_pct || 50) },
-                { label: "Mid-Rise 3-over-2", fn: () => quickStackMidRise3over2(zoning.land_sf, zoning.lot_coverage_pct || 50) },
-                { label: "High-Rise Mixed Use", fn: () => quickStackHighRise(zoning.land_sf, zoning.lot_coverage_pct || 50) },
-                { label: "Garden-Style Walk-Up", fn: () => quickStackGardenStyle(zoning.land_sf, zoning.lot_coverage_pct || 50) },
-                { label: "Auto from Zoning", fn: () => quickStackAutoFromZoning(zoning.land_sf, zoning.far, zoning.lot_coverage_pct || 50, zoning.height_limit_ft) },
+                { label: "Podium 5-over-1", fn: () => quickStackPodium5over1(activeFootprint) },
+                { label: "Mid-Rise 3-over-2", fn: () => quickStackMidRise3over2(activeFootprint) },
+                { label: "High-Rise Mixed Use", fn: () => quickStackHighRise(activeFootprint) },
+                { label: "Garden-Style Walk-Up", fn: () => quickStackGardenStyle(activeFootprint) },
+                { label: "Auto from Zoning", fn: () => quickStackAutoFromZoning(activeFootprint, zoning.land_sf, zoning.far, zoning.height_limit_ft) },
               ].map(preset => {
                 const isCurrent = preset.label === activeScenario.ai_template_label;
                 return (
@@ -177,7 +193,8 @@ export default function MassingSection({
                 );
               })}
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
 
@@ -380,42 +397,26 @@ export default function MassingSection({
                 placeholder="350" />
               <p className="text-[10px] text-muted-foreground mt-0.5">Surface ~325 · Structured ~350 · Underground ~375</p>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Density Bonus (from Zoning)</label>
-              <select
-                value={activeScenario.density_bonus_applied || ""}
-                onChange={e => {
-                  const val = e.target.value;
-                  if (!val) {
-                    updateScenario(activeScenario.id, s => ({ ...s, density_bonus_applied: null, density_bonus_far_increase: 0, density_bonus_height_increase_ft: 0 }));
-                  } else {
-                    const bonus = densityBonuses.find(b => b.source === val);
-                    // Try to parse FAR increase from additional_density (e.g. "+35%" or "+0.5 FAR")
-                    const pctMatch = bonus?.additional_density?.match(/\+?(\d+(?:\.\d+)?)\s*%/);
-                    const farIncrease = pctMatch ? parseFloat(pctMatch[1]) / 100 : 0;
-                    updateScenario(activeScenario.id, s => ({ ...s, density_bonus_applied: val, density_bonus_far_increase: farIncrease }));
-                  }
-                }}
-                className="w-full border rounded-md px-2 py-1.5 text-sm bg-background text-foreground outline-none"
-              >
-                <option value="" className="bg-background text-foreground">None</option>
-                {densityBonuses.map((b, i) => (
-                  <option key={i} value={b.source} className="bg-background text-foreground">{b.source} — {b.description} ({b.additional_density})</option>
-                ))}
-                <option value="__custom" className="bg-background text-foreground">Custom...</option>
-              </select>
-              {activeScenario.density_bonus_applied === "__custom" && (
-                <div className="flex gap-2 mt-1">
-                  <input type="text" value="" onChange={e => updateScenario(activeScenario.id, s => ({ ...s, density_bonus_applied: e.target.value || null }))}
-                    className="flex-1 border rounded-md px-2 py-1.5 text-sm bg-background outline-none" placeholder="Bonus name" />
-                  <input type="text" inputMode="decimal" value={activeScenario.density_bonus_far_increase || ""}
-                    onChange={e => updateScenario(activeScenario.id, s => ({ ...s, density_bonus_far_increase: parseFloat(e.target.value) || 0 }))}
-                    className="w-[70px] border rounded-md px-2 py-1.5 text-sm bg-background outline-none" placeholder="+FAR" />
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-muted-foreground mb-1 flex items-center gap-2">
+                <span>Density Bonuses</span>
+                <span className="text-[9px] font-semibold tracking-wide uppercase text-muted-foreground/70">from Site &amp; Zoning</span>
+              </label>
+              {densityBonuses.length === 0 ? (
+                <div className="w-full border rounded-md px-2 py-1.5 text-xs bg-muted/20 text-muted-foreground italic">
+                  No density bonuses identified in the zoning report.
+                </div>
+              ) : (
+                <div className="w-full border rounded-md px-2 py-1.5 text-[11px] bg-muted/10 space-y-0.5 max-h-[80px] overflow-y-auto">
+                  {densityBonuses.map((b, i) => (
+                    <div key={i} className="flex items-baseline gap-1.5">
+                      <span className="text-emerald-400 font-medium tabular-nums shrink-0">{b.additional_density}</span>
+                      <span className="text-foreground/90 truncate" title={b.description}>{b.source}</span>
+                    </div>
+                  ))}
                 </div>
               )}
-              {activeScenario.density_bonus_applied && activeScenario.density_bonus_applied !== "__custom" && activeScenario.density_bonus_far_increase > 0 && (
-                <p className="text-[10px] text-emerald-400 mt-1">+{(activeScenario.density_bonus_far_increase * 100).toFixed(0)}% FAR increase applied</p>
-              )}
+              <p className="text-[10px] text-muted-foreground mt-1">Edit bonuses on Site &amp; Zoning · FAR/height compliance above uses base-zoning limits.</p>
             </div>
           </div>
 
