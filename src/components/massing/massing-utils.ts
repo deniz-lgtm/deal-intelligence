@@ -244,7 +244,6 @@ export function quickStackGardenStyle(footprintSF: number): BuildingFloor[] {
   const footprint = Math.max(Math.round(footprintSF), 0);
   const unitsPerFloor = Math.floor(footprint * 0.85 / 800);
   return autoLabelFloors([
-    newFloor("lobby_amenity", footprint, 10, false),
     newFloor("residential", footprint, 9.5, false, unitsPerFloor),
     newFloor("residential", footprint, 9.5, false, unitsPerFloor),
     newFloor("residential", footprint, 9.5, false, unitsPerFloor),

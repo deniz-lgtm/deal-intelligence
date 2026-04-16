@@ -1178,6 +1178,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   // site_plan_building_id tag (set by Programming's pushToUW). Empty
   // map (no site plan / all untagged) = flat table like before.
   const [sitePlanBuildingLabels, setSitePlanBuildingLabels] = useState<Record<string, string>>({});
+  // Map from site_plan scenario id → { name, is_base_case, buildingIds }
+  const [sitePlanScenarioMeta, setSitePlanScenarioMeta] = useState<Record<string, { name: string; is_base_case?: boolean; buildingIds: string[] }>>({});
   // Saved Underwriting Scenarios — named snapshots the analyst took via
   // "Save as UW Scenario" from the Site Plan section. We keep this as
   // its own state (rather than inside `data`) so it's cheap to
@@ -1195,7 +1197,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [deal, setDeal] = useState<{ name: string; property_type?: string; business_plan_id?: string; investment_strategy?: string } | null>(null);
   const [businessPlan, setBusinessPlan] = useState<{ target_irr_min?: number; target_irr_max?: number; target_equity_multiple_min?: number; target_equity_multiple_max?: number; hold_period_min?: number; hold_period_max?: number } | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null); // null = baseline
-  const [activeMassingTab, setActiveMassingTab] = useState<string | null>(null); // id of building_program.scenario shown in the section-cut panel
+  const [activeMassingScenarioId, setActiveMassingScenarioId] = useState<string | null>(null); // site_plan_scenario_id — which massing to view
+  const [activeMassingBuildingId, setActiveMassingBuildingId] = useState<string | null>(null); // building within that massing
   const [showScenarioWizard, setShowScenarioWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardType, setWizardType] = useState<ScenarioType>("custom");
@@ -1304,15 +1307,29 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         //   3. Legacy single-building: `site_plan.building_points[]`
         // (Matches the migration chain in Site & Zoning's load effect.)
         const rawSp = parsed.site_plan as {
-          scenarios?: Array<{ buildings?: Array<{ id: string; label: string }> }>;
+          scenarios?: Array<{ id?: string; name?: string; is_base_case?: boolean; buildings?: Array<{ id: string; label: string }> }>;
           buildings?: Array<{ id: string; label: string }>;
           building_points?: unknown;
+          active_scenario_id?: string;
         } | undefined;
         const labels: Record<string, string> = {};
+        const scenarioMeta: Record<string, { name: string; is_base_case?: boolean; buildingIds: string[] }> = {};
         if (rawSp?.scenarios && Array.isArray(rawSp.scenarios) && rawSp.scenarios.length > 0) {
           for (const sp of rawSp.scenarios) {
+            const spId = (sp as any).id || "";
+            const buildingIds: string[] = [];
             for (const b of sp.buildings || []) {
-              if (b?.id && b?.label) labels[b.id] = b.label;
+              if (b?.id && b?.label) {
+                labels[b.id] = b.label;
+                buildingIds.push(b.id);
+              }
+            }
+            if (spId) {
+              scenarioMeta[spId] = {
+                name: (sp as any).name || (sp as any).label || `Massing ${Object.keys(scenarioMeta).length + 1}`,
+                is_base_case: (sp as any).is_base_case,
+                buildingIds,
+              };
             }
           }
         } else if (rawSp?.buildings && Array.isArray(rawSp.buildings)) {
@@ -1323,6 +1340,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           labels["legacy"] = "Building 1";
         }
         setSitePlanBuildingLabels(labels);
+        setSitePlanScenarioMeta(scenarioMeta);
 
         // Saved Underwriting Scenarios — named snapshots.
         if (Array.isArray(parsed.uw_scenarios)) {
@@ -2010,36 +2028,51 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      {/* ── Massing Tabs — one per building in the active programming
-          scenario. Replaces the old single-card "Building Massing
-          Reference" with a tabbed view so the analyst can flip between
-          buildings and see each one's section-cut, GSF, units, and
-          parking totals. The selected tab also highlights which building
-          owns which unit-group rows in the Revenue table below.
-          Renders only for ground-up deals that have a massing pushed
-          from Programming. */}
+      {/* ── Massing Panel — two-level tabbed header:
+          Level 1: Site plan scenarios (massings) — lets the analyst flip
+                   between "Base Case", "Alt 1", etc.
+          Level 2: Buildings within the selected massing — each tab shows
+                   that building's section cut and stats.
+          Renders only for ground-up deals with pushed massing data. */}
       {isGroundUp && d.building_program?.scenarios?.length > 0 && (() => {
         const bp = d.building_program;
-        const scenarios: any[] = bp.scenarios || [];
-        if (scenarios.length === 0) return null;
+        const allScenarios: any[] = bp.scenarios || [];
+        if (allScenarios.length === 0) return null;
 
         const MassingSectionCut = require("@/components/massing/MassingSectionCut").default;
         const { computeMassingSummary: cms2 } = require("@/components/massing/massing-utils");
         const landSF = d.site_info?.land_sf || (deal as any)?.land_acres * 43560 || 0;
         const zi = { land_sf: landSF, far: d.far || 0, lot_coverage_pct: d.lot_coverage_pct || 0, height_limit_ft: d.height_limit_stories * 10 || 0, height_limit_stories: d.height_limit_stories || 0 };
 
-        // The selected tab defaults to the baseline / active scenario if
-        // the state hasn't been set yet or references a now-deleted id.
-        const defaultId = (scenarios.find((s: any) => s.is_baseline) || scenarios.find((s: any) => s.id === bp.active_scenario_id) || scenarios[0]).id;
-        const selectedId = activeMassingTab && scenarios.some((s: any) => s.id === activeMassingTab)
-          ? activeMassingTab
-          : defaultId;
-        const selectedS = scenarios.find((s: any) => s.id === selectedId) || scenarios[0];
-        const ms = cms2(selectedS, zi);
+        // Group building_program.scenarios by site_plan_scenario_id
+        const groups: Record<string, any[]> = {};
+        for (const s of allScenarios) {
+          const key = s.site_plan_scenario_id || "__default";
+          if (!groups[key]) groups[key] = [];
+          groups[key].push(s);
+        }
+        const massingIds = Object.keys(groups);
 
-        // Resolve building labels from site plan → fall back to scenario
-        // name → generic "Building N".
-        const labelFor = (s: any, i: number) => {
+        // Selected massing (level 1)
+        const selectedMassingId = activeMassingScenarioId && groups[activeMassingScenarioId]
+          ? activeMassingScenarioId
+          : massingIds[0];
+        const buildingsInMassing = groups[selectedMassingId] || [];
+
+        // Selected building (level 2)
+        const selectedBuildingScenario = buildingsInMassing.find((s: any) =>
+          s.site_plan_building_id === activeMassingBuildingId
+        ) || buildingsInMassing[0];
+        const ms = selectedBuildingScenario ? cms2(selectedBuildingScenario, zi) : null;
+
+        const massingLabel = (mid: string) => {
+          const meta = sitePlanScenarioMeta[mid];
+          if (meta?.name) return meta.name;
+          if (mid === "__default") return "Massing";
+          return `Massing ${massingIds.indexOf(mid) + 1}`;
+        };
+
+        const buildingLabel = (s: any, i: number) => {
           if (s.site_plan_building_id && sitePlanBuildingLabels[s.site_plan_building_id]) {
             return sitePlanBuildingLabels[s.site_plan_building_id];
           }
@@ -2048,56 +2081,70 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
         return (
           <div className="border rounded-xl bg-card shadow-card mb-4 overflow-hidden">
-            {/* Tab strip */}
-            <div className="flex items-center gap-0 border-b bg-muted/30 overflow-x-auto">
+            {/* Level 1 — Massing selector */}
+            <div className="flex items-center gap-0 border-b bg-muted/40 overflow-x-auto">
               <div className="flex items-center gap-1 px-3 py-1.5 shrink-0">
                 <Layers className="h-4 w-4 text-blue-400" />
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Massing</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Massing</span>
               </div>
-              {scenarios.map((s: any, i: number) => {
-                const isSelected = s.id === selectedId;
+              {massingIds.map(mid => {
+                const isSelected = mid === selectedMassingId;
+                const meta = sitePlanScenarioMeta[mid];
                 return (
                   <button
-                    key={s.id}
-                    onClick={() => setActiveMassingTab(s.id)}
-                    className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors shrink-0 ${
+                    key={mid}
+                    onClick={() => { setActiveMassingScenarioId(mid); setActiveMassingBuildingId(null); }}
+                    className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors shrink-0 ${
                       isSelected
-                        ? "border-blue-400 text-blue-400 bg-blue-400/5"
+                        ? "border-amber-400 text-amber-300 bg-amber-400/5"
                         : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
                     }`}
                   >
-                    {labelFor(s, i)}
-                    {s.is_baseline && <span className="ml-1.5 text-[9px] bg-primary/20 text-primary px-1 py-0.5 rounded">Base</span>}
+                    {massingLabel(mid)}
+                    {meta?.is_base_case && <span className="ml-1.5 text-[9px] bg-amber-500/20 text-amber-300 px-1 py-0.5 rounded">★</span>}
                   </button>
                 );
               })}
             </div>
-            {/* Selected scenario detail */}
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold">{labelFor(selectedS, scenarios.indexOf(selectedS))}</h3>
-                <div className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums">
-                  <span>{fn(ms.total_gsf)} GSF</span>
-                  <span>{fn(ms.total_nrsf)} NRSF</span>
-                  <span>{fn(ms.total_units)} units</span>
-                  <span>{Math.round(ms.total_height_ft).toLocaleString()} ft</span>
-                  <span>{fn(ms.total_parking_spaces_est)} parking</span>
+            {/* Level 2 — Building tabs within the selected massing */}
+            {buildingsInMassing.length > 1 && (
+              <div className="flex items-center gap-0 border-b bg-muted/20 overflow-x-auto pl-6">
+                {buildingsInMassing.map((s: any, i: number) => {
+                  const isSelected = s === selectedBuildingScenario;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => setActiveMassingBuildingId(s.site_plan_building_id || s.id)}
+                      className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors shrink-0 ${
+                        isSelected
+                          ? "border-blue-400 text-blue-400 bg-blue-400/5"
+                          : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                      }`}
+                    >
+                      {buildingLabel(s, i)}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {/* Selected building detail */}
+            {selectedBuildingScenario && ms && (
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold">{buildingLabel(selectedBuildingScenario, buildingsInMassing.indexOf(selectedBuildingScenario))}</h3>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums">
+                    <span>{fn(ms.total_gsf)} GSF</span>
+                    <span>{fn(ms.total_nrsf)} NRSF</span>
+                    <span>{fn(ms.total_units)} units</span>
+                    <span>{Math.round(ms.total_height_ft).toLocaleString()} ft</span>
+                    <span>{fn(ms.total_parking_spaces_est)} parking</span>
+                  </div>
+                </div>
+                <div className="max-w-lg mx-auto">
+                  <MassingSectionCut scenario={selectedBuildingScenario} summary={ms} />
                 </div>
               </div>
-              <div className="max-w-lg mx-auto">
-                <MassingSectionCut scenario={selectedS} summary={ms} />
-              </div>
-              {/* Per-use GSF breakdown chips */}
-              {Object.keys(ms.gsf_by_use || {}).length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-3">
-                  {Object.entries(ms.gsf_by_use || {}).map(([use, sf]: [string, any]) => (
-                    <span key={use} className="text-[10px] px-2 py-0.5 rounded bg-muted/50 text-muted-foreground tabular-nums">
-                      {use}: {fn(sf)} GSF
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
+            )}
           </div>
         );
       })()}
@@ -2496,6 +2543,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">{isGroundUp ? "Rent/Bed" : "Market/Bed"}</th>
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma/Bed</th>}
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Notes</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
                   <th className="w-[32px]" />
                 </>) : isMF ? (<>
@@ -2509,6 +2557,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">{isGroundUp ? "Rent/Unit" : "Market Rent"}</th>
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma</th>}
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Notes</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
                   <th className="w-[32px]" />
                 </>) : (<>
@@ -2521,6 +2570,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">{isGroundUp ? "Rent $/SF" : "Mkt $/SF"}</th>
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Proforma</th>}
+                  <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">Notes</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Annual Rev</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">CAM $/SF</th>
                   <th className="w-[32px]" />
@@ -2590,14 +2640,33 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 };
                 return (
                   <React.Fragment key={g.id}>
-                    {showBuildingHeader && (
-                      <tr className="bg-primary/5 border-t border-primary/30">
-                        <td colSpan={99} className="px-2 py-1.5 text-[10px] font-semibold text-primary/80 uppercase tracking-wide">
-                          <Building2 className="h-3 w-3 inline mr-1.5 -mt-0.5" />
-                          {buildingLabel}
-                        </td>
-                      </tr>
-                    )}
+                    {showBuildingHeader && (() => {
+                      // Subtotal: sum annual rev for all unit groups with
+                      // the same site_plan_building_id as this header.
+                      const bid = curBid;
+                      const groupsInBuilding = d.unit_groups.filter((gg: any) => (gg.site_plan_building_id || null) === bid);
+                      const buildingUnits = groupsInBuilding.reduce((s: number, gg: UnitGroup) => s + effectiveUnits(gg), 0);
+                      const buildingRev = groupsInBuilding.reduce((s: number, gg: UnitGroup) => {
+                        const eu2 = effectiveUnits(gg);
+                        return s + (isSH
+                          ? eu2 * gg.beds_per_unit * gg.market_rent_per_bed * 12
+                          : isMF
+                          ? eu2 * gg.market_rent_per_unit * 12
+                          : eu2 * gg.sf_per_unit * gg.market_rent_per_sf);
+                      }, 0);
+                      return (
+                        <tr className="bg-primary/5 border-t border-primary/30">
+                          <td colSpan={2} className="px-2 py-1.5 text-[10px] font-semibold text-primary/80 uppercase tracking-wide">
+                            <Building2 className="h-3 w-3 inline mr-1.5 -mt-0.5" />
+                            {buildingLabel}
+                          </td>
+                          <td className="px-2 py-1.5 text-[10px] text-primary/60 tabular-nums">{buildingUnits} units</td>
+                          <td colSpan={95} className="px-2 py-1.5 text-[10px] text-primary/60 tabular-nums text-right">
+                            {buildingRev > 0 ? `${fc(buildingRev)}/yr` : ""}
+                          </td>
+                        </tr>
+                      );
+                    })()}
                   <SortableRow id={g.id}>
                     {isSH ? (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 4BR/2BA" /></td>
@@ -2620,6 +2689,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                         </td>
                       )}
+                      <td className="px-1 py-1">
+                        <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
+                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[80px]" />
+                      </td>
                       <td className="px-2 py-1">
                         <p className="text-right text-sm tabular-nums font-medium">{fc(pfAnnual)}<span className="text-muted-foreground/60 text-[10px]">/yr</span></p>
                       </td>
@@ -2646,6 +2719,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{fc(proformaAnnual)}/yr</p>
                         </td>
                       )}
+                      <td className="px-1 py-1">
+                        <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
+                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[80px]" />
+                      </td>
                       <td className="px-2 py-1">
                         <p className="text-right text-sm tabular-nums font-medium">{fc(pfAnnual)}<span className="text-muted-foreground/60 text-[10px]">/yr</span></p>
                       </td>
@@ -2679,6 +2756,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{eu > 0 && g.sf_per_unit > 0 ? `$${(proformaAnnual / eu / g.sf_per_unit / 12).toFixed(2)}/mo` : ""}</p>
                         </td>
                       )}
+                      <td className="px-1 py-1">
+                        <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
+                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[80px]" />
+                      </td>
                       <td className="px-2 py-1">
                         <p className="text-right text-sm tabular-nums font-medium">{fc(pfAnnual)}<span className="text-muted-foreground/60 text-[10px]">/yr</span></p>
                       </td>
@@ -2697,22 +2778,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <button onClick={() => del(g.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
                   </SortableRow>
-                  {/* Notes sub-row — always visible when notes exist; on hover
-                      when empty (so the analyst discovers the field). */}
-                  {(g.notes || "") !== "" && (
-                    <tr className="bg-muted/5 border-b">
-                      <td />
-                      <td colSpan={isSH ? 9 : isMF ? 11 : 11} className="px-2 py-0.5">
-                        <input
-                          type="text"
-                          value={g.notes || ""}
-                          onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="Notes (AI source, comp reference, etc.)"
-                          className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic"
-                        />
-                      </td>
-                    </tr>
-                  )}
                   </React.Fragment>
                 );
               })}
@@ -2786,7 +2851,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           ...(match.market_rent_per_unit != null ? { market_rent_per_unit: match.market_rent_per_unit } : {}),
                           ...(match.market_rent_per_bed != null ? { market_rent_per_bed: match.market_rent_per_bed } : {}),
                           ...(match.market_rent_per_sf != null ? { market_rent_per_sf: match.market_rent_per_sf } : {}),
-                          notes: match.notes || g.notes || "",
+                          notes: "AI generated",
                         };
                       }),
                     }));
