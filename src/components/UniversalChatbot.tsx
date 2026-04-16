@@ -510,13 +510,21 @@ function UWCoPilotPane({
           )}
           Analyze
         </Button>
-        {data && typeof data === "object" && "analysis" in data ? (
-          <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-2">
-            <p className="text-xs text-foreground/90">
-              {(data as { analysis: string }).analysis}
-            </p>
-          </div>
-        ) : null}
+        {(() => {
+          // `data` is typed unknown; narrow it through a local type
+          // guard so the JSX child has a concrete string, not unknown.
+          // Prior attempts relied on TS narrowing the ternary result,
+          // which Railway's build chain was unhappy with.
+          if (!data || typeof data !== "object") return null;
+          const record = data as Record<string, unknown>;
+          const analysis = record.analysis;
+          if (typeof analysis !== "string") return null;
+          return (
+            <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-2">
+              <p className="text-xs text-foreground/90">{analysis}</p>
+            </div>
+          );
+        })()}
       </div>
     );
   }
@@ -534,7 +542,7 @@ function UWCoPilotPane({
         )}
         Load Benchmarks
       </Button>
-      {data && typeof data === "object" ? (
+      {data !== null && typeof data === "object" ? (
         <div className="text-[10px] space-y-1 text-muted-foreground">
           <p>Benchmarks loaded (see full comparison in UW Co-Pilot sidebar)</p>
         </div>
