@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { BONUS_CATALOG, findBonusCard } from "@/lib/bonus-catalog";
+import { BONUS_CATALOG, findBonusCard, defaultApplicability } from "@/lib/bonus-catalog";
 import type { BonusScope } from "@/lib/bonus-catalog";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -507,7 +507,12 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         height_limits: uw?.zoning_info?.height_limits?.length > 0
           ? uw.zoning_info.height_limits.map(migrateHeightLimit)
           : DEFAULT_ZONING.height_limits,
-        bonus_applicability: uw?.zoning_info?.bonus_applicability || {},
+        // Location defaults (NYC programs → N/A for CA deals, etc.) go
+        // first; AI/user overrides layer on top so they always win.
+        bonus_applicability: {
+          ...defaultApplicability(d?.state),
+          ...(uw?.zoning_info?.bonus_applicability || {}),
+        },
         future_legislation: uw?.zoning_info?.future_legislation || [],
         source_url: uw?.zoning_info?.source_url || "",
       });

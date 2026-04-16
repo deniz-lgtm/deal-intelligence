@@ -59,16 +59,16 @@ export interface BonusCard {
   description: string;
   additional_density: string;
   effects?: BonusCardEffects;
-  // Geographic scope + specific jurisdiction that administers the program.
-  // scope drives the label color / category; jurisdiction is the concrete
-  // location (e.g. "Federal", "California", "New York City"). If the
-  // program varies by city, jurisdiction can be a generic "Varies by city".
   scope: BonusScope;
   jurisdiction: string;
-  // Longer-form body for the "Learn more" info modal. Markdown-lite —
-  // rendered as plain paragraphs / line breaks. Should cover eligibility,
-  // key mechanics, and how the program impacts underwriting.
   details: string;
+  // US state abbreviations where this program is available (e.g. ["CA"],
+  // ["NY"]). Omit for federal programs and broadly-local programs that
+  // exist in many jurisdictions (e.g. "Local Inclusionary Zoning",
+  // "PILOT Agreement"). The Site & Zoning page uses this to pre-classify
+  // cards as "Doesn't Apply" when the deal's state doesn't match —
+  // before the AI report has a chance to run. Users can still override.
+  applicableStates?: string[];
 }
 
 export const BONUS_CATALOG: BonusCard[] = [
@@ -79,6 +79,7 @@ export const BONUS_CATALOG: BonusCard[] = [
     additional_density: "+20% to +50% units",
     scope: "state",
     jurisdiction: "California",
+    applicableStates: ["CA"],
     details:
       "Gov. Code §65915. Grants a density bonus, concessions/incentives, waivers of development standards, and reduced parking in exchange for providing a minimum share of affordable units on site. The bonus sizing scales with both the percentage of affordable units and the AMI tier targeted (Very Low, Low, Moderate, or 100% affordable). Recent amendments (AB 1287, AB 2334) stack additional bonuses for projects serving Very Low Income or 100% affordable projects in high-resource areas, and can take the total bonus to +80% or more. Applies to residential projects of 5+ units.",
     effects: {
@@ -94,6 +95,7 @@ export const BONUS_CATALOG: BonusCard[] = [
     additional_density: "By-right",
     scope: "state",
     jurisdiction: "California",
+    applicableStates: ["CA"],
     details:
       "Gov. Code §65913.4. Provides streamlined, ministerial (non-discretionary, no CEQA) approval for multifamily projects that meet objective standards in jurisdictions that have not met their RHNA targets. The affordable threshold is 10% of units for most jurisdictions behind on above-moderate RHNA, or 50% for those behind on lower-income RHNA. Labor standards (prevailing wage, skilled-and-trained workforce for large projects) apply. Extended and expanded by SB 423 through 2036.",
     effects: {
@@ -164,6 +166,7 @@ export const BONUS_CATALOG: BonusCard[] = [
     additional_density: "Tax abatement 25–35 yrs",
     scope: "local",
     jurisdiction: "New York City",
+    applicableStates: ["NY"],
     details:
       "RPTL §421-a. Partial property-tax exemption on new multifamily construction that meets affordability set-asides. The program sunset for new construction starting after June 2022, but a successor (485-x / Affordable Neighborhoods for New Yorkers) was enacted in 2024. Existing 421-a projects under options A–G continue their benefit schedule (typically 25–35 years of exemption, phasing out at the end). Affordability requirements range from 25% @ 80% AMI (Option A) to deeper set-asides for larger projects.",
     effects: {
@@ -179,6 +182,7 @@ export const BONUS_CATALOG: BonusCard[] = [
     additional_density: "Tax abatement",
     scope: "local",
     jurisdiction: "New York City",
+    applicableStates: ["NY"],
     details:
       "NYC Admin Code §11-243. Property-tax abatement (offsets rehab costs) plus exemption (freezes assessed value) for qualifying renovation, conversion, or moderate/gut rehab projects that bring units into rent regulation. The original J-51 lapsed in 2022; a replacement program (J-51 Reform, enacted 2024) restarted eligibility with updated income and affordability criteria. Benefits typically run up to 34 years.",
     effects: {
@@ -244,6 +248,7 @@ export const BONUS_CATALOG: BonusCard[] = [
     additional_density: "Entitlement shield",
     scope: "state",
     jurisdiction: "California",
+    applicableStates: ["CA"],
     details:
       "Gov. Code §65589.5 / §65941.1. The Housing Crisis Act of 2019 (extended through 2030 by SB 8) caps the number of public hearings (max 5), caps processing time, prohibits downzoning housing sites, and — most powerfully — vests a project under the ordinances, policies, and standards in effect at the time a Preliminary Application (SB 330 App) is filed. This protects against hostile mid-entitlement zoning changes. Applies to projects with 2/3 residential use.",
     effects: {
@@ -260,6 +265,29 @@ export const BONUS_CATALOG: BonusCard[] = [
 /** Look up a catalog card by its `source` name. */
 export function findBonusCard(source: string): BonusCard | undefined {
   return BONUS_CATALOG.find((b) => b.source === source);
+}
+
+/**
+ * Given the deal's US state abbreviation (e.g. "CA", "NY"), return a
+ * default applicability map for every catalog card.  State/local
+ * programs that don't match the deal's state get "not_applicable";
+ * everything else gets "may_apply". The map is used as the fallback
+ * before the AI report has run — once the AI returns
+ * `bonus_applicability`, those values take precedence.
+ */
+export function defaultApplicability(
+  dealState?: string | null
+): Record<string, "applies" | "may_apply" | "not_applicable"> {
+  const norm = (dealState || "").toUpperCase().trim();
+  const out: Record<string, "applies" | "may_apply" | "not_applicable"> = {};
+  for (const card of BONUS_CATALOG) {
+    if (card.applicableStates && card.applicableStates.length > 0 && norm) {
+      out[card.source] = card.applicableStates.includes(norm) ? "may_apply" : "not_applicable";
+    } else {
+      out[card.source] = "may_apply";
+    }
+  }
+  return out;
 }
 
 import type { TaskCategory } from "./types";
