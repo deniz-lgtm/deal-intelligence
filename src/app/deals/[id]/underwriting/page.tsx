@@ -29,6 +29,8 @@ import {
   PARKING_TYPE_LABELS, PARKING_COST_DEFAULTS,
   MIXED_USE_COMPONENT_LABELS,
 } from "@/lib/types";
+import { useViewMode } from "@/lib/use-view-mode";
+import ViewModeToggle from "@/components/ViewModeToggle";
 
 type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 
@@ -1144,6 +1146,8 @@ function DCFRow({ label, yr0, yr1to5, muted, bold, hi, isPct }: {
 }
 
 export default function UnderwritingPage({ params }: { params: { id: string } }) {
+  const [viewMode, setViewMode] = useViewMode();
+  const isBasic = viewMode === "basic";
   const [data, setData] = useState<UWData>(DEFAULT);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1741,6 +1745,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <p className="text-sm text-muted-foreground">{deal?.name}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <ViewModeToggle mode={viewMode} onChange={setViewMode} />
           <Button variant="outline" size="sm" onClick={openDocViewer}>
             <Eye className="h-4 w-4 mr-2" />Docs
           </Button>
@@ -2169,7 +2174,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           effect below). */}
 
 
-      {/* ═══════════════════ REDEVELOPMENT OVERLAY ═══════════════════ */}
+      {/* ═══════════════════ REDEVELOPMENT OVERLAY ═══════════════════
+          Hidden in Basic — only relevant for value-add / redevelopment
+          plays where existing improvements are demolished or repositioned.
+          Already collapsed by default in Advanced. */}
+      {!isBasic && (
       <Section title="Redevelopment Overlay" icon={<Building2 className="h-4 w-4 text-rose-400" />} open={false}>
         <div className="mt-3">
           {(() => {
@@ -2274,6 +2283,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           })()}
         </div>
       </Section>
+      )}
 
       <Section title="Revenue — Unit / Space Mix" icon={<Calculator className="h-4 w-4 text-indigo-400" />}>
         {/* NRSF Budget — Ground-Up Only.
@@ -3685,7 +3695,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           Shown for ground-up (residential absorption) OR any deal with
           commercial components that need per-component leasing terms
           (TI / LC / free rent / escalation). */}
-      {(isGroundUp || (d.mixed_use?.enabled && (d.mixed_use?.components || []).some(
+      {/* Absorption / Lease-Up — Advanced. Drives the timing of NOI
+          ramp on ground-up / heavy-renovation deals; not needed for a
+          back-of-envelope IRR estimate. Hidden in Basic, and only
+          shown when the deal type requires it (ground-up or mixed-use
+          with retail/office components). */}
+      {!isBasic && (isGroundUp || (d.mixed_use?.enabled && (d.mixed_use?.components || []).some(
         c => c.component_type === "retail" || c.component_type === "office"
       ))) && (
       <Section title="Absorption / Lease-Up" icon={<ArrowDownUp className="h-4 w-4 text-green-400" />}>
@@ -3805,8 +3820,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </Section>
       )}
 
-      {/* ═══════════════════ CONSTRUCTION FINANCING ═══════════════════ */}
-      {isGroundUp && (
+      {/* ═══════════════════ CONSTRUCTION FINANCING ═══════════════════
+          Hidden in Basic — analysts running back-of-envelope numbers
+          can use the simpler Acquisition Financing block below; the
+          construction loan modeling is for dialed-in ground-up UWs. */}
+      {!isBasic && isGroundUp && (
       <Section title="Construction Financing" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
         <div className="mt-3">
           {(() => {
