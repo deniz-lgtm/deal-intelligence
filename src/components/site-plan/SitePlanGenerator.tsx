@@ -92,13 +92,55 @@ const EDGE_HANDLE_ICON = L.divIcon({
 });
 
 // ── Leaflet tile style keeper ────────────────────────────────────────────────
+//
+// Mapbox tiles can fail to load for a handful of reasons that are
+// specific to the viewing user rather than the deploy:
+//   • Ad blockers (uBlock Origin, Brave Shields, Pi-hole) block
+//     api.mapbox.com by default.
+//   • Corporate / VPN firewalls block Mapbox.
+//   • Mapbox token URL whitelist doesn't include the user's hostname.
+//   • Token is over quota.
+//
+// When any of these trigger, Mapbox returns 401 / 403 / net-err and
+// Leaflet renders a blank map. Below we detect the first tile error
+// and swap the whole layer to CARTO (free, no-auth) so users always
+// see SOMETHING. The satellite fallback uses CARTO's voyager basemap
+// since CARTO doesn't ship a free satellite layer.
 
-function TileUpdater({ style }: { style: SitePlan["map_style"] }) {
+const CARTO_FALLBACK: Record<SitePlan["map_style"], { url: string; attribution: string; subdomains: string[] }> = {
+  dark: {
+    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: ["a", "b", "c", "d"],
+  },
+  light: {
+    url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: ["a", "b", "c", "d"],
+  },
+  streets: {
+    url: "https://{s}.basemaps.cartocdn.com/voyager/{z}/{x}/{y}{r}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: ["a", "b", "c", "d"],
+  },
+  satellite: {
+    // CARTO has no free satellite tiles — fall back to the Esri World
+    // Imagery layer, which allows attribution-only usage.
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attribution: 'Tiles &copy; Esri — World Imagery',
+    subdomains: [],
+  },
+};
+
+function TileUpdater({
+  style,
+  onFallback,
+}: {
+  style: SitePlan["map_style"];
+  onFallback: () => void;
+}) {
   const map = useMap();
   useEffect(() => {
-    // Map our SitePlan.map_style values onto the shared tile config.
-    // Satellite is the primary use-case; the other options mirror the rest
-    // of the app's map components for consistency.
     const cfg = getTileConfig(style);
     map.eachLayer((layer) => {
       if ((layer as L.TileLayer).getTileUrl) map.removeLayer(layer);
@@ -110,8 +152,36 @@ function TileUpdater({ style }: { style: SitePlan["map_style"] }) {
       ...(cfg.zoomOffset != null ? { zoomOffset: cfg.zoomOffset } : {}),
       maxZoom: 22,
     });
+
+    // Track tile errors. One stray 404 happens normally at the edge of
+    // the world; we only swap the layer if the viewport sees multiple
+    // failures in quick succession (typical of a blocked host).
+    let errorCount = 0;
+    let swapped = false;
+    const onTileError = () => {
+      errorCount++;
+      if (errorCount < 3 || swapped) return;
+      swapped = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[site-plan-map] Mapbox tiles failed repeatedly — falling back to CARTO/Esri."
+      );
+      map.removeLayer(layer);
+      const fallback = CARTO_FALLBACK[style] || CARTO_FALLBACK.dark;
+      const fallbackLayer = L.tileLayer(fallback.url, {
+        attribution: fallback.attribution,
+        ...(fallback.subdomains.length > 0 ? { subdomains: fallback.subdomains } : {}),
+        maxZoom: 20,
+      });
+      fallbackLayer.addTo(map);
+      onFallback();
+    };
+    layer.on("tileerror", onTileError);
     layer.addTo(map);
-  }, [map, style]);
+    return () => {
+      layer.off("tileerror", onTileError);
+    };
+  }, [map, style, onFallback]);
   return null;
 }
 
@@ -318,6 +388,9 @@ export default function SitePlanGenerator({
   value, onChange, setbacks, fallbackCenter, height = 560,
 }: SitePlanGeneratorProps) {
   const [tool, setTool] = useState<Tool>("pan");
+  // Set when Mapbox tiles fail and we auto-fall-back to CARTO/Esri, so
+  // we can show an in-map hint to the user.
+  const [tilesFallback, setTilesFallback] = useState(false);
   const [draft, setDraft] = useState<SitePlanPoint[]>([]);
   const [cursor, setCursor] = useState<SitePlanPoint | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -850,6 +923,17 @@ export default function SitePlanGenerator({
         </div>
       </div>
 
+      {/* Tile fallback hint — shown when Mapbox tiles failed and we
+          auto-swapped to the free CARTO/Esri layers. The analyst still
+          sees a map; this just explains why it might look different
+          (e.g. lower-res or non-satellite). Most common cause is an
+          ad blocker or corporate firewall blocking api.mapbox.com. */}
+      {tilesFallback && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-amber-500/15 border border-amber-500/40 text-amber-100 rounded-lg shadow-card px-3 py-1 text-[11px]">
+          Using fallback tiles — Mapbox blocked (ad blocker / firewall?).
+        </div>
+      )}
+
       {/* Drawing hint */}
       {tool !== "pan" && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[500] bg-background/95 backdrop-blur-sm border border-border/60 rounded-lg shadow-card px-3 py-1.5 text-[11px] text-muted-foreground">
@@ -897,7 +981,10 @@ export default function SitePlanGenerator({
         {/* Zoom control placed in the bottom-left out of the way of the
             top toolbars and the bottom-center drawing hint. */}
         <ZoomControl position="bottomleft" />
-        <TileUpdater style={value.map_style} />
+        <TileUpdater
+          style={value.map_style}
+          onFallback={() => setTilesFallback(true)}
+        />
         <CursorStyler tool={tool} />
         <MapRefCapture onReady={(m) => { mapRef.current = m; }} />
         <TranslateHandler
