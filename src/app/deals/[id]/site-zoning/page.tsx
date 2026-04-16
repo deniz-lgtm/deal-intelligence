@@ -12,6 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { BONUS_CATALOG } from "@/lib/bonus-catalog";
+import { useViewMode } from "@/lib/use-view-mode";
+import ViewModeToggle from "@/components/ViewModeToggle";
 import type {
   SitePlan as SitePlanType,
   SitePlanScenario as SitePlanScenarioType,
@@ -403,6 +405,8 @@ function CheckboxGroup({ label, options, selected, onChange }: {
 // ── Main Page ────────────────────────────────────────────────────────────────
 
 export default function SiteZoningPage({ params }: { params: { id: string } }) {
+  const [viewMode, setViewMode] = useViewMode();
+  const isBasic = viewMode === "basic";
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -932,16 +936,21 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {narrative && (
+          <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+          {/* Zoning Report buttons hidden in Basic mode — they're a
+              communication artifact for memos, not part of the model. */}
+          {!isBasic && narrative && (
             <Button variant="outline" size="sm" onClick={exportWord} disabled={exporting}>
               {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
               Export Word
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={runZoningReport} disabled={generating}>
-            {generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
-            {narrative ? "Refresh AI Report" : "Run AI Zoning Report"}
-          </Button>
+          {!isBasic && (
+            <Button variant="outline" size="sm" onClick={runZoningReport} disabled={generating}>
+              {generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+              {narrative ? "Refresh AI Report" : "Run AI Zoning Report"}
+            </Button>
+          )}
           <Button size="sm" onClick={saveAll} disabled={saving || !dirty}>
             {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
             Save
@@ -1007,45 +1016,64 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             { value: "Zone D", label: "Zone D (Undetermined)" },
           ]} />
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-          <SelectInput label="Topography" value={siteInfo.topography} onChange={v => updateSite("topography", v)} options={[
-            { value: "", label: "Select..." },
-            { value: "Flat", label: "Flat" },
-            { value: "Gently Sloped", label: "Gently Sloped" },
-            { value: "Moderately Sloped", label: "Moderately Sloped" },
-            { value: "Steep", label: "Steep" },
-            { value: "Varied / Irregular", label: "Varied / Irregular" },
-          ]} />
-          <SelectInput label="Environmental Status" value={siteInfo.environmental_status || ""} onChange={v => updateSite("environmental_status", v)} options={[
-            { value: "", label: "Select..." },
-            { value: "Not Started", label: "Not Started" },
-            { value: "Phase I Clean", label: "Phase I — Clean" },
-            { value: "Phase I RECs Found", label: "Phase I — RECs Found" },
-            { value: "Phase II In Progress", label: "Phase II In Progress" },
-            { value: "Phase II Clean", label: "Phase II — Clean" },
-            { value: "Remediation Needed", label: "Remediation Needed" },
-            { value: "Remediation Complete", label: "Remediation Complete" },
-            { value: "Cleared", label: "Cleared / No Issues" },
-          ]} />
-          <SelectInput label="Soil Type" value={siteInfo.soil_type || ""} onChange={v => updateSite("soil_type", v)} options={[
-            { value: "", label: "Select..." },
-            { value: "Rock / Bedrock", label: "Rock / Bedrock" },
-            { value: "Gravel", label: "Gravel" },
-            { value: "Sand", label: "Sand" },
-            { value: "Clay", label: "Clay" },
-            { value: "Silt", label: "Silt" },
-            { value: "Fill / Engineered", label: "Fill / Engineered" },
-            { value: "Expansive", label: "Expansive Soil" },
-            { value: "Unknown", label: "Unknown — Geotech Needed" },
-          ]} />
-        </div>
+        {/* Environmental + Geotech — Advanced only. These fields rarely
+            move the model; they exist for the Zoning Report export and
+            site-walk planning. Hidden in Basic to keep the page tight. */}
+        {!isBasic && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+            <SelectInput label="Topography" value={siteInfo.topography} onChange={v => updateSite("topography", v)} options={[
+              { value: "", label: "Select..." },
+              { value: "Flat", label: "Flat" },
+              { value: "Gently Sloped", label: "Gently Sloped" },
+              { value: "Moderately Sloped", label: "Moderately Sloped" },
+              { value: "Steep", label: "Steep" },
+              { value: "Varied / Irregular", label: "Varied / Irregular" },
+            ]} />
+            <SelectInput label="Environmental Status" value={siteInfo.environmental_status || ""} onChange={v => updateSite("environmental_status", v)} options={[
+              { value: "", label: "Select..." },
+              { value: "Not Started", label: "Not Started" },
+              { value: "Phase I Clean", label: "Phase I — Clean" },
+              { value: "Phase I RECs Found", label: "Phase I — RECs Found" },
+              { value: "Phase II In Progress", label: "Phase II In Progress" },
+              { value: "Phase II Clean", label: "Phase II — Clean" },
+              { value: "Remediation Needed", label: "Remediation Needed" },
+              { value: "Remediation Complete", label: "Remediation Complete" },
+              { value: "Cleared", label: "Cleared / No Issues" },
+            ]} />
+            <SelectInput label="Soil Type" value={siteInfo.soil_type || ""} onChange={v => updateSite("soil_type", v)} options={[
+              { value: "", label: "Select..." },
+              { value: "Rock / Bedrock", label: "Rock / Bedrock" },
+              { value: "Gravel", label: "Gravel" },
+              { value: "Sand", label: "Sand" },
+              { value: "Clay", label: "Clay" },
+              { value: "Silt", label: "Silt" },
+              { value: "Fill / Engineered", label: "Fill / Engineered" },
+              { value: "Expansive", label: "Expansive Soil" },
+              { value: "Unknown", label: "Unknown — Geotech Needed" },
+            ]} />
+          </div>
+        )}
         <div className="mt-4">
           <CheckboxGroup label="Utilities Available" options={["Water", "Sewer", "Gas", "Electric", "Fiber/Telecom", "Storm Drain", "Reclaimed Water"]}
             selected={siteInfo.utilities_available || []} onChange={v => updateSite("utilities_available", v)} />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-          <TextArea label="Current Improvements" value={siteInfo.current_improvements} onChange={v => updateSite("current_improvements", v)} placeholder="Existing structures, parking, etc." />
-          <TextArea label="Additional Site Notes" value={siteInfo.environmental_notes} onChange={v => updateSite("environmental_notes", v)} placeholder="Additional environmental, geotechnical, or site notes..." />
+          <TextArea
+            label="Current Improvements (shown in Zoning Report export)"
+            value={siteInfo.current_improvements}
+            onChange={v => updateSite("current_improvements", v)}
+            placeholder="Existing structures, parking, etc."
+          />
+          {/* Site notes — Advanced only. The field is included in the
+              Zoning Report Word export but rarely needed in Basic mode. */}
+          {!isBasic && (
+            <TextArea
+              label="Site Conditions & Environmental Notes (shown in Zoning Report export)"
+              value={siteInfo.environmental_notes}
+              onChange={v => updateSite("environmental_notes", v)}
+              placeholder="Additional environmental, geotechnical, or site notes..."
+            />
+          )}
         </div>
       </Section>
 
@@ -1067,15 +1095,22 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           ) : null
         }
       >
+        {/* Anchor sentence so analysts see why these inputs matter
+            without scrolling to other pages. */}
+        <p className="text-[11px] text-muted-foreground -mt-1 mb-3">
+          These values drive the Programming massing and Underwriting calcs.
+          Edit here and the rest of the model updates downstream.
+        </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <FieldInput label="Zoning Designation" value={zoning.zoning_designation} onChange={v => updateZoning("zoning_designation", v)} placeholder="e.g. M-1, PD-123" className="col-span-2" />
           <FieldInput label="FAR (Floor Area Ratio)" value={zoning.far ?? ""} onChange={v => updateZoning("far", parseFloat(v) || null)} type="number" />
           <FieldInput label="Max Lot Coverage" value={zoning.lot_coverage_pct ?? ""} onChange={v => updateZoning("lot_coverage_pct", parseFloat(v) || null)} type="number" suffix="%" />
         </div>
 
-        {/* Source page URL — editable so analysts can paste or fix the link
-            the AI found. Rendered as a clickable "Source" chip in the
-            section header when set. */}
+        {/* Source page URL — Advanced only. Reference link for the
+            jurisdiction's zoning page; useful but doesn't drive the
+            model. */}
+        {!isBasic && (
         <div className="mt-4">
           <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Jurisdiction Source Page (URL)</label>
           <div className="flex items-center border border-border/40 rounded-lg bg-muted/20 overflow-hidden">
@@ -1102,8 +1137,12 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             Link to the actual jurisdiction&apos;s zoning page. Auto-populated by the AI Zoning Report.
           </p>
         </div>
+        )}
 
-        {/* Overlays */}
+        {/* Overlays — Advanced only. Drives Programming chips but is rarely
+            mission-critical in Basic mode where the analyst is iterating
+            on the FAR / coverage / setbacks core. */}
+        {!isBasic && (
         <div className="mt-4">
           <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Overlay Districts</label>
           <div className="flex flex-wrap gap-2 mb-2">
@@ -1122,8 +1161,11 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             >+ Add</button>
           </div>
         </div>
+        )}
 
-        {/* Permitted Uses */}
+        {/* Permitted Uses — Advanced. Reference list for the analyst,
+            not consumed by the financial model. */}
+        {!isBasic && (
         <div className="mt-4">
           <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Permitted Uses</label>
           <div className="flex flex-wrap gap-1.5 mb-2">
@@ -1142,8 +1184,10 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             >+ Add</button>
           </div>
         </div>
+        )}
 
-        {/* Setbacks Table */}
+        {/* Setbacks Table — kept in Basic. Drives the buildable
+            envelope on Site Plan + the development calc downstream. */}
         <div className="mt-4">
           <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Setbacks</label>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1280,17 +1324,21 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
-        {/* Open Space (structured) */}
+        {/* Open Space requirements — Advanced. Display-only on
+            Programming via the Site Plan envelope; doesn't drive
+            unit count or NRSF math. */}
+        {!isBasic && (
         <div className="mt-4">
           <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-2">Open Space Requirements</label>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <FieldInput label="Open Space % of Lot" value={zoning.open_space_pct ?? ""} onChange={v => updateZoning("open_space_pct", parseFloat(v) || null)} type="number" suffix="%" />
             <FieldInput label="Or: Fixed SF Required" value={zoning.open_space_sf ?? ""} onChange={v => updateZoning("open_space_sf", parseFloat(v) || null)} type="number" suffix="SF" />
             <div className="col-span-2">
-              <TextArea label="Open Space Notes" value={zoning.open_space_requirements} onChange={v => updateZoning("open_space_requirements", v)} placeholder="Common open space, private balconies, rooftop, ground-level..." rows={2} />
+              <TextArea label="Open Space Notes (shown in Zoning Report export)" value={zoning.open_space_requirements} onChange={v => updateZoning("open_space_requirements", v)} placeholder="Common open space, private balconies, rooftop, ground-level..." rows={2} />
             </div>
           </div>
         </div>
+        )}
 
         {/* Density Bonuses & Incentives — one unified card grid.
             - Cards in `density_bonuses` (i.e. clicked / applied) render at
@@ -1300,6 +1348,10 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
               (By-Right → Possible → Doesn't Apply).
             - Clicking any card toggles it on/off — applied cards move up
               top, catalog cards move down. Same visual format throughout. */}
+        {/* Density Bonuses — Advanced. Applied bonuses still render
+            as chips on Programming for the active massing, so analysts
+            can see what's in play without expanding to Advanced. */}
+        {!isBasic && (
         <div className="mt-4">
           <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Density Bonuses & Incentives</label>
           <p className="text-[10px] text-muted-foreground/80 mb-3">
@@ -1487,8 +1539,11 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             className="mt-2 text-xs text-muted-foreground hover:text-foreground"
           >+ Add custom program</button>
         </div>
+        )}
 
-        {/* Zone Change / Rezone */}
+        {/* Zone Change / Rezone — Advanced. Edge-case workflow; doesn't
+            affect by-right massing math. */}
+        {!isBasic && (
         <div className="mt-4">
           <label className="flex items-center gap-2 text-xs mb-2">
             <input type="checkbox" checked={zoning.zone_change_needed} onChange={e => updateZoning("zone_change_needed", e.target.checked)} className="accent-primary" />
@@ -1513,11 +1568,15 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             </div>
           )}
         </div>
+        )}
 
-        {/* Zoning Notes → saved to deal context */}
+        {/* Zoning Strategy Notes — Advanced. Saved to deal context for
+            AI prompts. Hidden in Basic to keep the form short. */}
+        {!isBasic && (
         <div className="mt-4">
-          <TextArea label="Zoning Strategy Notes (saves to Deal Context)" value={zoning.additional_notes} onChange={v => updateZoning("additional_notes", v)} placeholder="Key zoning considerations, local legislation (CCHS, SB 35, density bonuses), entitlement strategy..." rows={3} />
+          <TextArea label="Zoning Strategy Notes (saved to Deal Context for AI)" value={zoning.additional_notes} onChange={v => updateZoning("additional_notes", v)} placeholder="Key zoning considerations, local legislation (CCHS, SB 35, density bonuses), entitlement strategy..." rows={3} />
         </div>
+        )}
       </Section>
 
       {/* ── Site Plan (parcel + building footprint on satellite) ──────────── */}
@@ -1689,38 +1748,21 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         </Section>
       )}
 
-      {/* ── Development Summary (read-only, data from Zoning + Programming) ── */}
-      {isGroundUp && (
-        <Section title="Development Summary" icon={<Ruler className="h-4 w-4 text-purple-400" />}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="p-3 bg-muted/30 rounded-lg">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">FAR (from zoning)</p>
-              <p className="text-lg font-bold tabular-nums">{devParams.far || zoning.far || "u2014"}</p>
-            </div>
-            <div className="p-3 bg-muted/30 rounded-lg">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Max GSF</p>
-              <p className="text-lg font-bold tabular-nums">{computedDev.max_gsf > 0 ? fn(computedDev.max_gsf) : "u2014"}</p>
-            </div>
-            <div className="p-3 bg-primary/10 rounded-lg">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Max NRSF</p>
-              <p className="text-lg font-bold text-primary tabular-nums">{computedDev.max_nrsf > 0 ? fn(computedDev.max_nrsf) : "u2014"}</p>
-              <p className="text-[10px] text-muted-foreground">{devParams.efficiency_pct}% eff.</p>
-            </div>
-            <div className="p-3 bg-muted/30 rounded-lg">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Lot Coverage</p>
-              <p className="text-lg font-bold tabular-nums">{devParams.lot_coverage_pct || zoning.lot_coverage_pct || "u2014"}%</p>
-            </div>
-          </div>
-          <p className="text-[10px] text-muted-foreground mt-2">Configure building program on the <a href={`/deals/${params.id}/programming`} className="text-primary hover:underline">Programming page</a></p>
-        </Section>
-      )}
+      {/* The old "Development Summary" tiles (FAR / Max GSF / Max NRSF /
+          Lot Coverage) have moved to the Programming page's headline
+          summary so analysts have a single source of truth. The tiles
+          here just duplicated what Programming already shows, so we
+          dropped them. */}
 
-      {/* Building Program moved to /deals/[id]/programming page */}
-
-
-      {/* ── AI Zoning Report Narrative ────────────────────────────────── */}
-      {narrative && (
-        <Section title="AI Zoning Report" icon={<Sparkles className="h-4 w-4 text-amber-400" />}>
+      {/* ── Zoning Report (Export Only) ─ Advanced view ────────────────── */}
+      {!isBasic && narrative && (
+        <Section title="Zoning Report — Export Only" icon={<Sparkles className="h-4 w-4 text-amber-400" />}>
+          <p className="text-[11px] text-muted-foreground mb-3">
+            Auto-generated narrative for investment memos. Not an input to
+            the model — the structured fields above drive all downstream
+            calcs. Use the export buttons to drop into Word or save to the
+            deal&apos;s Documents.
+          </p>
           <div className="prose prose-sm prose-invert max-w-none
             prose-headings:text-foreground prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
             prose-p:text-muted-foreground prose-p:leading-relaxed prose-p:mb-2
@@ -1758,11 +1800,13 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         </Section>
       )}
 
-      {/* ── Future Legislation ─────────────────────────────────────────
-          Upcoming bonuses, incentives, and general plan changes that could
-          affect housing on this site. Auto-populated by the AI Zoning Report
-          and editable by the analyst. Shown after the zoning report so it
-          reads as "here's what could change next". */}
+      {/* ── Future Legislation ─ Advanced view only ─────────────────────
+          Upcoming bonuses, incentives, and general plan changes that
+          could affect housing on this site. Auto-populated by the AI
+          Zoning Report and editable by the analyst. Hidden in Basic
+          mode since it's a forward-looking deal-context list, not a
+          model input. */}
+      {!isBasic && (
       <Section title="Future Legislation & Plan Changes" icon={<CalendarClock className="h-4 w-4 text-purple-400" />}>
         <p className="text-[11px] text-muted-foreground mb-3">
           Upcoming state or local legislation and general plan changes that could affect this project —
@@ -1878,6 +1922,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           className="text-xs text-muted-foreground hover:text-foreground"
         >+ Add legislation</button>
       </Section>
+      )}
 
       {/* Empty state */}
       {!narrative && !zoning.zoning_designation && (

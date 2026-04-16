@@ -14,6 +14,8 @@ import type {
 import { COMMON_OTHER_INCOME } from "@/lib/types";
 import MassingSection from "@/components/massing/MassingSection";
 import AffordabilityPlanner from "@/components/AffordabilityPlanner";
+import { useViewMode } from "@/lib/use-view-mode";
+import ViewModeToggle from "@/components/ViewModeToggle";
 import { newBuildingProgram, computeMassingSummary, newScenario } from "@/components/massing/massing-utils";
 import type { ZoningInputs } from "@/components/massing/massing-utils";
 import { splitUnitGroupsByAffordability } from "@/lib/affordability-split";
@@ -83,6 +85,8 @@ function ZoningChip({
 
 // ── Main Page ────────────────────────────────────────────────────────────────
 export default function ProgrammingPage({ params }: { params: { id: string } }) {
+  const [viewMode, setViewMode] = useViewMode();
+  const isBasic = viewMode === "basic";
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -747,6 +751,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <ViewModeToggle mode={viewMode} onChange={setViewMode} />
           <Button variant="outline" size="sm" onClick={saveAll} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
@@ -1011,7 +1016,12 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         />
       </Section>
 
-      {/* ═══════════════════ AFFORDABILITY ═══════════════════ */}
+      {/* ═══════════════════ AFFORDABILITY ═══════════════════
+          Hidden in Basic mode — analysts running back-of-envelope
+          numbers don't need the per-tier affordable mix planner.
+          Their affordability_config persists in state and re-appears
+          when they switch back to Advanced. */}
+      {!isBasic && (
       <AffordabilityPlanner
         dealId={params.id}
         totalUnits={(() => {
@@ -1057,6 +1067,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         availableBuildings={currentMassing?.buildings.map((b) => ({ id: b.id, label: b.label })) || []}
         onConfigChange={(cfg) => { setAffordabilityConfig(cfg); setDirty(true); }}
       />
+      )}
 
       {/* Commercial Tenants and Other Income are now on the Underwriting page under Revenue */}
     </div>
