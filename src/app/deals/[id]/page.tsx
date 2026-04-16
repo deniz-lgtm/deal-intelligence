@@ -42,7 +42,9 @@ import {
   DEAL_STAGE_LABELS,
   STAGE_GATES,
   INVESTMENT_THESIS_LABELS,
+  DEAL_SCOPE_LABELS,
 } from "@/lib/types";
+import type { DealScope } from "@/lib/types";
 import { calc, getDefaultsForPropertyType, type UWData } from "@/lib/underwriting-calc";
 import AmiReference from "@/components/AmiReference";
 
@@ -80,7 +82,7 @@ export default function DealOverviewPage({
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [underwriting, setUnderwriting] = useState<UnderwritingData | null>(null);
   const [editingProperty, setEditingProperty] = useState(false);
-  const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null }>({ year_built: null, land_acres: null, investment_strategy: null });
+  const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null; deal_scope: DealScope | null }>({ year_built: null, land_acres: null, investment_strategy: null, deal_scope: null });
 
   const [lastActivity, setLastActivity] = useState<Record<string, string>>({});
 
@@ -333,6 +335,11 @@ export default function DealOverviewPage({
                     {INVESTMENT_THESIS_LABELS[deal.investment_strategy as InvestmentThesis] || titleCase(deal.investment_strategy)}
                   </span>
                 )}
+                {deal.deal_scope && (
+                  <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/20">
+                    {DEAL_SCOPE_LABELS[deal.deal_scope]}
+                  </span>
+                )}
                 {deal.loi_executed && <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">LOI ✓</span>}
                 {deal.psa_executed && <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">PSA ✓</span>}
               </div>
@@ -526,11 +533,11 @@ export default function DealOverviewPage({
               <h3 className="font-display text-sm">Property Details</h3>
               {editingProperty ? (
                 <div className="flex items-center gap-1.5">
-                  <Button variant="ghost" size="sm" className="text-2xs h-6" onClick={() => { setEditingProperty(false); setEditFields({ year_built: deal.year_built, land_acres: deal.land_acres, investment_strategy: deal.investment_strategy }); }}>Cancel</Button>
+                  <Button variant="ghost" size="sm" className="text-2xs h-6" onClick={() => { setEditingProperty(false); setEditFields({ year_built: deal.year_built, land_acres: deal.land_acres, investment_strategy: deal.investment_strategy, deal_scope: deal.deal_scope ?? null }); }}>Cancel</Button>
                   <Button size="sm" className="text-2xs h-6 gap-1" onClick={savePropertyEdits}><Edit2 className="h-3 w-3" /> Save</Button>
                 </div>
               ) : (
-                <Button variant="outline" size="sm" className="text-2xs h-6 gap-1" onClick={() => { setEditFields({ year_built: deal.year_built, land_acres: deal.land_acres, investment_strategy: deal.investment_strategy }); setEditingProperty(true); }}><Edit2 className="h-3 w-3" /> Edit</Button>
+                <Button variant="outline" size="sm" className="text-2xs h-6 gap-1" onClick={() => { setEditFields({ year_built: deal.year_built, land_acres: deal.land_acres, investment_strategy: deal.investment_strategy, deal_scope: deal.deal_scope ?? null }); setEditingProperty(true); }}><Edit2 className="h-3 w-3" /> Edit</Button>
               )}
             </div>
             <div className="p-4">
@@ -590,12 +597,28 @@ export default function DealOverviewPage({
                     <p className="text-sm font-semibold">{deal.investment_strategy ? INVESTMENT_THESIS_LABELS[deal.investment_strategy as InvestmentThesis] || titleCase(deal.investment_strategy) : "—"}</p>
                   )}
                 </div>
+                {/* Deal Scope — editable. Drives which sections (Programming / Site & Zoning) are emphasized. */}
+                <div className="col-span-2 md:col-span-1">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Scope</p>
+                  {editingProperty ? (
+                    <select value={editFields.deal_scope || ""} onChange={e => setEditFields(p => ({ ...p, deal_scope: (e.target.value || null) as DealScope | null }))}
+                      className="w-full text-sm font-semibold bg-muted/30 border border-border/50 rounded px-2 py-0.5 outline-none focus:border-primary/50">
+                      <option value="">Not set</option>
+                      {(Object.keys(DEAL_SCOPE_LABELS) as DealScope[]).map(s => (
+                        <option key={s} value={s}>{DEAL_SCOPE_LABELS[s]}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-sm font-semibold">{deal.deal_scope ? DEAL_SCOPE_LABELS[deal.deal_scope] : "—"}</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Site & Development — Ground-Up Only */}
-          {deal.investment_strategy === "ground_up" && (
+          {/* Site & Development — any scope that adds new SF (ground-up or value-add expansion). */}
+          {(deal.deal_scope === "ground_up" || deal.deal_scope === "value_add_expansion" ||
+            (deal.deal_scope == null && deal.investment_strategy === "ground_up")) && (
             <SiteDevelopmentCard deal={deal} underwriting={underwriting} dealId={params.id} onUnderwritingUpdate={(updates) => setUnderwriting(prev => prev ? { ...prev, ...updates } : updates as any)} />
           )}
 

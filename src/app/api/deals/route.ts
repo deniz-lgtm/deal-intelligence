@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
       notes: body.notes ?? null,
       land_acres: body.land_acres ?? null,
       investment_strategy: body.investment_strategy ?? null,
+      deal_scope: body.deal_scope ?? null,
       loi_executed: false,
       psa_executed: false,
       business_plan_id: body.business_plan_id ?? null,

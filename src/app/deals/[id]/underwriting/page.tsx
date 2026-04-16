@@ -1350,8 +1350,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           const hc = (merged.hard_cost_per_sf || 0) * (merged.max_gsf || 0);
           merged.soft_cost_pct = hc > 0 ? (legacySoft / hc) * 100 : 25;
         }
-        // Auto-set development_mode for ground-up deals
-        if (dr.data?.investment_strategy === "ground_up" && !parsed.development_mode) {
+        // Auto-set development_mode when the deal adds new SF. deal_scope is
+        // the preferred signal; investment_strategy is the legacy fallback for
+        // deals created before the scope field existed.
+        const scopeAddsSF =
+          dr.data?.deal_scope === "ground_up" ||
+          dr.data?.deal_scope === "value_add_expansion";
+        const legacyGroundUp =
+          dr.data?.deal_scope == null && dr.data?.investment_strategy === "ground_up";
+        if ((scopeAddsSF || legacyGroundUp) && !parsed.development_mode) {
           merged.development_mode = true;
           // Set efficiency default by property type if not already set
           if (merged.efficiency_pct === 100 && dr.data?.property_type) {

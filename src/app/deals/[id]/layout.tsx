@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
-import type { DealStatus, ExecutionPhase } from "@/lib/types";
+import type { DealStatus, DealScope, ExecutionPhase } from "@/lib/types";
 import { useAuth } from "@clerk/nextjs";
 import ShareDealDialog from "@/components/ShareDealDialog";
 import { usePermissions } from "@/lib/usePermissions";
@@ -53,11 +53,20 @@ interface Deal {
   starred: boolean;
   owner_id: string | null;
   execution_phase: ExecutionPhase | null;
+  deal_scope: DealScope | null;
 }
+
+type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  muted?: boolean;
+  mutedReason?: string;
+};
 
 type NavGroup = {
   label: string | null;
-  items: { href: string; label: string; icon: typeof LayoutDashboard }[];
+  items: NavItem[];
 };
 
 const BASE_NAV_GROUPS: NavGroup[] = [
@@ -119,12 +128,37 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
   ],
 };
 
-function getNavGroups(executionPhase: ExecutionPhase | null): NavGroup[] {
-  if (!executionPhase) return BASE_NAV_GROUPS;
-  // Insert Construction group after Execution (index 3)
-  const groups = [...BASE_NAV_GROUPS];
-  groups.splice(4, 0, CONSTRUCTION_NAV_GROUP);
-  return groups;
+// Acquisition deals don't add new SF, so Programming (unit mix / massing) and
+// Site & Zoning (density bonuses / site plan drawing) are rarely needed. We
+// keep the nav items clickable but de-emphasize them so users aren't funneled
+// into ground-up workflows for a straight buy-and-operate deal.
+const ACQUISITION_MUTED_HREFS = new Set(["/programming", "/site-zoning"]);
+const MUTED_REASON_ACQUISITION = "Not typically used for acquisition deals.";
+
+function applyScopeGating(groups: NavGroup[], dealScope: DealScope | null): NavGroup[] {
+  if (dealScope !== "acquisition") return groups;
+  return groups.map((group) => ({
+    ...group,
+    items: group.items.map((item) =>
+      ACQUISITION_MUTED_HREFS.has(item.href)
+        ? { ...item, muted: true, mutedReason: MUTED_REASON_ACQUISITION }
+        : item
+    ),
+  }));
+}
+
+function getNavGroups(
+  executionPhase: ExecutionPhase | null,
+  dealScope: DealScope | null
+): NavGroup[] {
+  const base = executionPhase
+    ? (() => {
+        const groups = [...BASE_NAV_GROUPS];
+        groups.splice(4, 0, CONSTRUCTION_NAV_GROUP);
+        return groups;
+      })()
+    : BASE_NAV_GROUPS;
+  return applyScopeGating(base, dealScope);
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -264,7 +298,7 @@ export default function DealLayout({
           )}
         >
           <nav className="py-3 px-2 flex flex-col gap-4 min-h-full">
-            {getNavGroups(deal?.execution_phase ?? null).map((group, gi) => (
+            {getNavGroups(deal?.execution_phase ?? null, deal?.deal_scope ?? null).map((group, gi) => (
               <div key={gi} className="flex flex-col gap-0.5">
                 {group.label && !sidebarCollapsed && (
                   <div className="px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 font-medium">
@@ -282,14 +316,22 @@ export default function DealLayout({
                       : pathname.startsWith(fullPath);
                   const Icon = item.icon;
 
+                  const linkTitle = item.muted
+                    ? `${item.label} — ${item.mutedReason ?? ""}`.trim()
+                    : sidebarCollapsed
+                    ? item.label
+                    : undefined;
+
                   return (
-                    <Link key={item.href} href={fullPath} title={sidebarCollapsed ? item.label : undefined}>
+                    <Link key={item.href} href={fullPath} title={linkTitle}>
                       <button
                         className={cn(
                           "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
                           sidebarCollapsed && "justify-center",
                           isActive
                             ? "gradient-gold text-primary-foreground shadow-sm"
+                            : item.muted
+                            ? "text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/30"
                             : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                         )}
                       >
