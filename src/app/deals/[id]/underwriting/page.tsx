@@ -1695,14 +1695,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     });
   };
 
-  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
-
+  // ── Metrics + page context ─────────────────────────────────────────────
+  // Compute metrics and publish the page context to the universal chatbot
+  // BEFORE the `if (loading) return` guard so useSetPageContext runs on
+  // every render. Hooks declared after the guard crash with React error
+  // #310 the moment loading flips false ("Rendered more hooks than during
+  // the previous render"). calc() is a top-level pure function so calling
+  // it during the loading phase is harmless — effectiveData just starts
+  // as the default UWData shape.
   const m = calc(effectiveData, calcMode);
   const baselineM = activeScenario ? calc(data, calcMode) : m;
   // d = display data — use this for all input bindings so scenarios work
   const d = effectiveData;
 
-  // Publish this page's context to the universal chatbot
   useSetPageContext(
     {
       dealId: params.id,
@@ -1720,6 +1725,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     },
     [params.id, deal?.name, d.purchase_price, d.vacancy_rate, d.exit_cap_rate, d.hold_period_years]
   );
+
+  if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
   return (
     <div className={`flex gap-4 ${docViewerOpen ? "" : ""}`}>
