@@ -718,13 +718,13 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const hasMultipleBuildings = (currentMassing?.buildings.length || 0) > 1;
   const hasMultipleMassings = sitePlanMassings.length > 1;
 
-  // Keep buildingProgram.active_scenario_id in sync with the selection
-  // so other components that still read it (legacy AffordabilityPlanner,
-  // etc) keep working.
-  useEffect(() => {
-    if (!activeScenario || activeScenario.id === buildingProgram.active_scenario_id) return;
-    setBuildingProgram((p) => ({ ...p, active_scenario_id: activeScenario.id }));
-  }, [activeScenario, buildingProgram.active_scenario_id]);
+  // The load effect already keeps buildingProgram.active_scenario_id
+  // in sync with the active massing/building pair. A previous
+  // follow-up useEffect here caused React error #310 ("Rendered more
+  // hooks than during the previous render") because it was declared
+  // after an `if (loading) return` early-return — the Rules of Hooks
+  // forbid that. Removed; no runtime regression because tab clicks
+  // set active_scenario_id directly.
 
   // Commercial tenant totals
   const commercialGPR = commercialTenants.reduce((s, t) => s + t.sf * t.rent_per_sf, 0);
@@ -791,7 +791,22 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
                 onClick={() => {
                   setActiveMassingId(m.id);
                   // When switching massings, jump to its first building
-                  setActiveBuildingId(m.buildings[0]?.id || null);
+                  const nextBuildingId = m.buildings[0]?.id || null;
+                  setActiveBuildingId(nextBuildingId);
+                  // Also sync buildingProgram.active_scenario_id so
+                  // MassingSection (which reads from the program) picks
+                  // up the right floor stack. Doing this in the click
+                  // handler avoids a hook-ordering trap we hit earlier
+                  // (useEffect declared after `if (loading) return`
+                  // triggered React error #310).
+                  const nextScenario = buildingProgram.scenarios.find(
+                    (s) =>
+                      s.site_plan_scenario_id === m.id &&
+                      s.site_plan_building_id === nextBuildingId
+                  );
+                  if (nextScenario && nextScenario.id !== buildingProgram.active_scenario_id) {
+                    setBuildingProgram((p) => ({ ...p, active_scenario_id: nextScenario.id }));
+                  }
                 }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border transition-colors ${
                   isActive
@@ -824,7 +839,21 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
             return (
               <button
                 key={b.id}
-                onClick={() => setActiveBuildingId(b.id)}
+                onClick={() => {
+                  setActiveBuildingId(b.id);
+                  // Sync active_scenario_id so MassingSection picks up
+                  // the right floor stack — same reasoning as the
+                  // massing tab handler above.
+                  if (!currentMassing) return;
+                  const nextScenario = buildingProgram.scenarios.find(
+                    (s) =>
+                      s.site_plan_scenario_id === currentMassing.id &&
+                      s.site_plan_building_id === b.id
+                  );
+                  if (nextScenario && nextScenario.id !== buildingProgram.active_scenario_id) {
+                    setBuildingProgram((p) => ({ ...p, active_scenario_id: nextScenario.id }));
+                  }
+                }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border transition-colors ${
                   isActive
                     ? "bg-blue-500/15 border-blue-500/40 text-blue-200"
