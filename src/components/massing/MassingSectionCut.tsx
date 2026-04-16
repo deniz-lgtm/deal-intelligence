@@ -153,7 +153,7 @@ export default function MassingSectionCut({ scenario, summary }: Props) {
             stroke="#a3a3a3" strokeWidth="0.5" />
           <text x={BODY_L - 30} y={gradeY - aboveH / 2 + 3} fill="#a3a3a3" fontSize="8" textAnchor="middle"
             transform={`rotate(-90, ${BODY_L - 38}, ${gradeY - aboveH / 2})`}>
-            {totalAboveFt.toFixed(0)} ft
+            {Math.round(totalAboveFt).toLocaleString()} ft
           </text>
         </>
       )}

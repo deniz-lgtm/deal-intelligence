@@ -30,11 +30,41 @@ const MAPBOX_STYLES: Record<MapStyle, { url: string; attribution: string }> = {
   },
 };
 
-// CARTO fallback (free, no key)
-const CARTO_DARK = {
-  url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-  subdomains: ["a", "b", "c", "d"],
+// CARTO fallback tile layers (free, no key). We keep one per logical
+// style so the tile-style picker works even without a Mapbox token —
+// the previous version collapsed everything to CARTO_DARK which made
+// the switcher look broken.
+const CARTO_FALLBACKS: Record<MapStyle, {
+  url: string;
+  attribution: string;
+  subdomains: string[];
+}> = {
+  dark: {
+    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: ["a", "b", "c", "d"],
+  },
+  light: {
+    url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: ["a", "b", "c", "d"],
+  },
+  streets: {
+    url: "https://{s}.basemaps.cartocdn.com/voyager/{z}/{x}/{y}{r}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: ["a", "b", "c", "d"],
+  },
+  satellite: {
+    // CARTO has no free satellite tiles; Esri allows attribution-only.
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attribution: 'Tiles &copy; Esri — World Imagery',
+    subdomains: [],
+  },
+  outdoors: {
+    url: "https://{s}.basemaps.cartocdn.com/voyager/{z}/{x}/{y}{r}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: ["a", "b", "c", "d"],
+  },
 };
 
 export const MAP_STYLE_OPTIONS: Array<{ value: MapStyle; label: string }> = [
@@ -63,6 +93,6 @@ export function getTileConfig(style: MapStyle = "dark"): {
       zoomOffset: -1,
     };
   }
-  // Fallback to CARTO dark
-  return CARTO_DARK;
+  // Fallback per-style so the switcher actually switches.
+  return CARTO_FALLBACKS[style] || CARTO_FALLBACKS.dark;
 }

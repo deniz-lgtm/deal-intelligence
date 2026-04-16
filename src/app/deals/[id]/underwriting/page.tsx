@@ -1275,13 +1275,26 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         const raw = ur.data.data;
         const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
 
-        // Extract site-plan building labels so the unit-groups table can
-        // surface per-building header rows. Covers both the current
-        // buildings[] shape and the legacy single-building shape (as a
-        // fallback id "legacy" matching the Programming page's migration).
-        const rawSp = parsed.site_plan as { buildings?: Array<{ id: string; label: string }>; building_points?: unknown } | undefined;
+        // Extract site-plan building labels so the unit-groups table
+        // can surface per-building header rows. Handles THREE shapes in
+        // priority order:
+        //   1. Current: `site_plan.scenarios[].buildings[]`
+        //   2. Flat multi-building: `site_plan.buildings[]`
+        //   3. Legacy single-building: `site_plan.building_points[]`
+        // (Matches the migration chain in Site & Zoning's load effect.)
+        const rawSp = parsed.site_plan as {
+          scenarios?: Array<{ buildings?: Array<{ id: string; label: string }> }>;
+          buildings?: Array<{ id: string; label: string }>;
+          building_points?: unknown;
+        } | undefined;
         const labels: Record<string, string> = {};
-        if (rawSp?.buildings && Array.isArray(rawSp.buildings)) {
+        if (rawSp?.scenarios && Array.isArray(rawSp.scenarios) && rawSp.scenarios.length > 0) {
+          for (const sp of rawSp.scenarios) {
+            for (const b of sp.buildings || []) {
+              if (b?.id && b?.label) labels[b.id] = b.label;
+            }
+          }
+        } else if (rawSp?.buildings && Array.isArray(rawSp.buildings)) {
           for (const b of rawSp.buildings) {
             if (b?.id && b?.label) labels[b.id] = b.label;
           }
@@ -1997,7 +2010,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span>{fn(ms.total_gsf)} GSF</span>
                 <span>{fn(ms.total_units)} units</span>
-                <span>{ms.total_height_ft.toFixed(0)} ft</span>
+                <span>{Math.round(ms.total_height_ft).toLocaleString()} ft</span>
                 <span>{fn(ms.total_parking_spaces_est)} parking</span>
               </div>
             </div>
@@ -2179,7 +2192,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           plays where existing improvements are demolished or repositioned.
           Already collapsed by default in Advanced. */}
       {!isBasic && (
-      <Section title="Redevelopment Overlay" icon={<Building2 className="h-4 w-4 text-rose-400" />} open={false}>
+      <Section title="Redevelopment Overlay" icon={<Building2 className="h-4 w-4 text-rose-400" />}>
         <div className="mt-3">
           {(() => {
             const rd = d.redevelopment || defaultRedevelopment();
@@ -2842,7 +2855,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         />
       )}
 
-      <Section title={isGroundUp ? "Development Budget" : "Capital Expenditures"} icon={<Hammer className="h-4 w-4 text-orange-400" />} open={isGroundUp}>
+      <Section title={isGroundUp ? "Development Budget" : "Capital Expenditures"} icon={<Hammer className="h-4 w-4 text-orange-400" />}>
         <div className="mt-3 overflow-x-auto">
           {isGroundUp ? (
             <>
@@ -3936,7 +3949,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
-      <Section title="Exit Analysis" icon={<RefreshCw className="h-4 w-4 text-teal-600" />} open={false}>
+      <Section title="Exit Analysis" icon={<RefreshCw className="h-4 w-4 text-teal-600" />}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
           <NumInput label="Exit Cap Rate" value={d.exit_cap_rate} onChange={v => set("exit_cap_rate", v)} suffix="%" decimals={2} />
           <NumInput label="Hold Period" value={d.hold_period_years} onChange={v => set("hold_period_years", v)} suffix="yrs" />
