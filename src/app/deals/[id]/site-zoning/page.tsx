@@ -6,12 +6,16 @@ import ReactMarkdown from "react-markdown";
 import {
   Loader2, MapPin, Sparkles, RefreshCw, Download, Save,
   Building2, Ruler, Trees, ChevronDown, ChevronRight, FileText,
-  Map as MapIcon, ExternalLink, CalendarClock, Wand2,
+  Map as MapIcon, ExternalLink, CalendarClock, Wand2, Info,
   Pencil, Copy, Trash2, Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { BONUS_CATALOG } from "@/lib/bonus-catalog";
+import { BONUS_CATALOG, findBonusCard } from "@/lib/bonus-catalog";
+import type { BonusScope } from "@/lib/bonus-catalog";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
 import { useViewMode } from "@/lib/use-view-mode";
 import ViewModeToggle from "@/components/ViewModeToggle";
 import type {
@@ -443,6 +447,20 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     notes: string;
     attempted: boolean;
   }>({ loading: false, source_url: null, confidence: null, notes: "", attempted: false });
+
+  // Info-modal state — which bonus catalog card's "Learn more" is open.
+  // Null when closed. Keyed by BonusCard.source so we can look up the full
+  // catalog entry (or fall back to the spotted density_bonus row if the
+  // source isn't in the catalog, e.g. AI-generated or custom entries).
+  const [infoBonus, setInfoBonus] = useState<{
+    source: string;
+    description: string;
+    additional_density: string;
+    scope?: BonusScope;
+    jurisdiction?: string;
+    details?: string;
+    applySummary?: string;
+  } | null>(null);
 
   // ── Load data ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1373,6 +1391,30 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           </p>
 
           {(() => {
+            // Short display label for a program's scope, shown as a small
+            // chip on every card. Format: "Federal" / "State · CA" /
+            // "Local · NYC" so the analyst can see at a glance whether the
+            // program is nationally available or restricted to a geography.
+            const scopeLabel = (scope?: BonusScope, jurisdiction?: string) => {
+              if (!scope) return null;
+              const base =
+                scope === "federal" ? "Federal"
+                  : scope === "state" ? "State"
+                    : scope === "regional" ? "Regional"
+                      : "Local";
+              // Federal programs don't need a jurisdiction suffix unless
+              // the catalog explicitly disambiguates (e.g. "Federal (HUD)").
+              if (scope === "federal" && (!jurisdiction || jurisdiction === "Federal")) return base;
+              if (!jurisdiction) return base;
+              return `${base} · ${jurisdiction}`;
+            };
+            const scopeAccent = (scope?: BonusScope) =>
+              scope === "federal" ? "text-blue-400 bg-blue-500/10 border-blue-500/30"
+                : scope === "state" ? "text-violet-400 bg-violet-500/10 border-violet-500/30"
+                  : scope === "regional" ? "text-cyan-400 bg-cyan-500/10 border-cyan-500/30"
+                    : scope === "local" ? "text-orange-400 bg-orange-500/10 border-orange-500/30"
+                      : "text-muted-foreground bg-muted/20 border-border/40";
+
             // Small reusable card renderer so applied + catalog cards share
             // exactly the same visual format (user's ask: "same grid
             // format"). `applied` controls the emerald accent + the
@@ -1382,6 +1424,9 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
               description: string;
               additional_density: string;
               applySummary?: string;
+              scope?: BonusScope;
+              jurisdiction?: string;
+              details?: string;
               applied: boolean;
               // Allow the 3-way applicability picker to appear only on
               // non-applied (catalog) cards — applied cards don't need it
@@ -1393,6 +1438,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
               const setApp = (next: BonusApplicability) => {
                 updateZoning("bonus_applicability", { ...zoning.bonus_applicability, [args.source]: next });
               };
+              const scopeText = scopeLabel(args.scope, args.jurisdiction);
               return (
                 <button
                   type="button"
@@ -1406,10 +1452,58 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-xs font-medium text-foreground">{args.source || "(custom)"}</span>
-                    <span className={`text-[10px] whitespace-nowrap ${args.applied ? "text-emerald-400" : "text-primary/70"}`}>
-                      {args.applied ? "✓ Applied" : args.additional_density}
-                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={`text-[10px] whitespace-nowrap ${args.applied ? "text-emerald-400" : "text-primary/70"}`}>
+                        {args.applied ? "✓ Applied" : args.additional_density}
+                      </span>
+                      {/* Info icon — opens the "Learn more" modal for this
+                          program. stopPropagation so clicking the icon
+                          doesn't also toggle apply/remove. Hidden for
+                          custom rows that have no details to show. */}
+                      {(args.details || args.scope) && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Learn more about ${args.source}`}
+                          title="Learn more"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setInfoBonus({
+                              source: args.source,
+                              description: args.description,
+                              additional_density: args.additional_density,
+                              scope: args.scope,
+                              jurisdiction: args.jurisdiction,
+                              details: args.details,
+                              applySummary: args.applySummary,
+                            });
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.stopPropagation();
+                              setInfoBonus({
+                                source: args.source,
+                                description: args.description,
+                                additional_density: args.additional_density,
+                                scope: args.scope,
+                                jurisdiction: args.jurisdiction,
+                                details: args.details,
+                                applySummary: args.applySummary,
+                              });
+                            }
+                          }}
+                          className="inline-flex items-center justify-center h-4 w-4 rounded-full border border-border/40 text-muted-foreground/70 hover:text-primary hover:border-primary/40 cursor-pointer"
+                        >
+                          <Info className="h-2.5 w-2.5" />
+                        </span>
+                      )}
+                    </div>
                   </div>
+                  {scopeText && (
+                    <span className={`inline-flex items-center self-start mt-1 px-1.5 py-0.5 rounded border text-[9px] uppercase tracking-wide ${scopeAccent(args.scope)}`}>
+                      {scopeText}
+                    </span>
+                  )}
                   <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{args.description}</p>
                   {args.applySummary && (
                     <p className="text-[10px] text-primary/80 mt-1">
@@ -1445,13 +1539,16 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
 
             // ── Applied section (top) ─────────────────────────────────
             const appliedCards = zoning.density_bonuses.map((b, i) => {
-              const catalogMatch = BONUS_CATALOG.find(c => c.source === b.source);
+              const catalogMatch = findBonusCard(b.source);
               return {
                 index: i,
                 source: b.source,
                 description: b.description || catalogMatch?.description || "",
                 additional_density: b.additional_density || catalogMatch?.additional_density || "",
                 applySummary: catalogMatch?.effects?.applySummary,
+                scope: catalogMatch?.scope,
+                jurisdiction: catalogMatch?.jurisdiction,
+                details: catalogMatch?.details,
               };
             });
 
@@ -1491,6 +1588,9 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                         description: card.description,
                         additional_density: card.additional_density,
                         applySummary: card.applySummary,
+                        scope: card.scope,
+                        jurisdiction: card.jurisdiction,
+                        details: card.details,
                         applied: true,
                         showApplicability: false,
                         onToggle: () => updateZoning(
@@ -1519,6 +1619,9 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                           description: b.description,
                           additional_density: b.additional_density,
                           applySummary: b.effects?.applySummary,
+                          scope: b.scope,
+                          jurisdiction: b.jurisdiction,
+                          details: b.details,
                           applied: false,
                           showApplicability: true,
                           onToggle: () => updateZoning("density_bonuses", [
@@ -1966,6 +2069,57 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           </Button>
         </div>
       )}
+
+      {/* "Learn more" modal for density-bonus cards. Opens when the (i)
+          icon on any card is clicked. Shows the full catalog details —
+          eligibility, mechanics, jurisdiction — so analysts can learn
+          about a program without leaving the page. */}
+      <Dialog open={!!infoBonus} onOpenChange={(open) => { if (!open) setInfoBonus(null); }}>
+        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+          {infoBonus && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="pr-8">{infoBonus.source}</DialogTitle>
+                <DialogDescription className="flex items-center gap-2 flex-wrap pt-1">
+                  {infoBonus.scope && (
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] uppercase tracking-wide ${
+                      infoBonus.scope === "federal" ? "text-blue-400 bg-blue-500/10 border-blue-500/30"
+                        : infoBonus.scope === "state" ? "text-violet-400 bg-violet-500/10 border-violet-500/30"
+                          : infoBonus.scope === "regional" ? "text-cyan-400 bg-cyan-500/10 border-cyan-500/30"
+                            : "text-orange-400 bg-orange-500/10 border-orange-500/30"
+                    }`}>
+                      {infoBonus.scope === "federal" ? "Federal"
+                        : infoBonus.scope === "state" ? "State"
+                          : infoBonus.scope === "regional" ? "Regional" : "Local"}
+                      {infoBonus.jurisdiction && infoBonus.jurisdiction !== "Federal" ? ` · ${infoBonus.jurisdiction}` : ""}
+                    </span>
+                  )}
+                  {infoBonus.additional_density && (
+                    <span className="text-xs text-primary/80">{infoBonus.additional_density}</span>
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p className="text-muted-foreground">{infoBonus.description}</p>
+                {infoBonus.details && (
+                  <div className="pt-2 border-t border-border/30">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-2">Program Details</p>
+                    <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-line">
+                      {infoBonus.details}
+                    </p>
+                  </div>
+                )}
+                {infoBonus.applySummary && (
+                  <div className="pt-2 border-t border-border/30">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">One-Click Apply on Programming</p>
+                    <p className="text-xs text-primary/80">{infoBonus.applySummary}</p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
