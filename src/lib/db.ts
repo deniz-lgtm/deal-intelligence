@@ -697,6 +697,29 @@ export async function ensureColumns(): Promise<void> {
       console.warn("ensureColumns warning:", (err as Error).message?.slice(0, 120));
     }
   }
+
+  // One-time backfill: assign any orphaned (NULL owner_id) deals and business
+  // plans to the instance's earliest user. This closes a hole where NULL-owner
+  // rows were historically visible to every signed-in user via the
+  // `owner_id IS NULL OR owner_id = $1` escape clauses.
+  try {
+    const { rows } = await pool.query<{ id: string }>(
+      "SELECT id FROM users ORDER BY created_at ASC LIMIT 1"
+    );
+    const fallbackOwnerId = rows[0]?.id;
+    if (fallbackOwnerId) {
+      await pool.query(
+        "UPDATE deals SET owner_id = $1 WHERE owner_id IS NULL",
+        [fallbackOwnerId]
+      );
+      await pool.query(
+        "UPDATE business_plans SET owner_id = $1 WHERE owner_id IS NULL",
+        [fallbackOwnerId]
+      );
+    }
+  } catch (err) {
+    console.warn("owner_id backfill warning:", (err as Error).message?.slice(0, 120));
+  }
 }
 
 // ─── Schema Init ──────────────────────────────────────────────────────────────
@@ -1350,10 +1373,10 @@ export const dealQueries = {
       return res.rows;
     }
     const res = await pool.query(
-      `SELECT DISTINCT d.*, ${totalCostExpr} FROM deals d
+      `SELECT DISTINCT d.*, ds.permission AS share_permission, ${totalCostExpr} FROM deals d
        LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
        LEFT JOIN underwriting u ON u.deal_id = d.id
-       WHERE d.owner_id IS NULL OR d.owner_id = $1 OR ds.deal_id IS NOT NULL
+       WHERE d.owner_id = $1 OR ds.deal_id IS NOT NULL
        ORDER BY d.starred DESC, d.updated_at DESC`,
       [userId]
     );
@@ -1366,14 +1389,16 @@ export const dealQueries = {
     return res.rows[0] ?? null;
   },
 
-  // Access-checked variant: returns deal only if user is owner, has a share, or deal has no owner (legacy)
+  // Access-checked variant: returns the deal only if the user is the owner or
+  // has been explicitly shared on it. Also surfaces the share permission
+  // ('view' | 'edit') as `share_permission` so callers can gate writes.
   getByIdWithAccess: async (id: string, userId: string) => {
     const pool = getPool();
     const res = await pool.query(
-      `SELECT DISTINCT d.* FROM deals d
+      `SELECT DISTINCT d.*, ds.permission AS share_permission FROM deals d
        LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $2
        WHERE d.id = $1
-         AND (d.owner_id IS NULL OR d.owner_id = $2 OR ds.deal_id IS NOT NULL)`,
+         AND (d.owner_id = $2 OR ds.deal_id IS NOT NULL)`,
       [id, userId]
     );
     return res.rows[0] ?? null;
@@ -2268,7 +2293,7 @@ export const compQueries = {
       OR c.deal_id IN (
         SELECT DISTINCT d.id FROM deals d
         LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
-        WHERE d.owner_id IS NULL OR d.owner_id = $1 OR ds.deal_id IS NOT NULL
+        WHERE d.owner_id = $1 OR ds.deal_id IS NOT NULL
       )
     )`);
 
@@ -2989,7 +3014,7 @@ export const businessPlanQueries = {
       return res.rows;
     }
     const res = await pool.query(
-      "SELECT * FROM business_plans WHERE owner_id IS NULL OR owner_id = $1 ORDER BY is_default DESC, name ASC",
+      "SELECT * FROM business_plans WHERE owner_id = $1 ORDER BY is_default DESC, name ASC",
       [userId]
     );
     return res.rows;
@@ -3004,7 +3029,7 @@ export const businessPlanQueries = {
   getByIdWithAccess: async (id: string, userId: string): Promise<BusinessPlanRow | null> => {
     const pool = getPool();
     const res = await pool.query(
-      "SELECT * FROM business_plans WHERE id = $1 AND (owner_id IS NULL OR owner_id = $2)",
+      "SELECT * FROM business_plans WHERE id = $1 AND owner_id = $2",
       [id, userId]
     );
     return res.rows[0] ?? null;
@@ -3019,7 +3044,7 @@ export const businessPlanQueries = {
       return res.rows[0] ?? null;
     }
     const res = await pool.query(
-      "SELECT * FROM business_plans WHERE is_default = true AND (owner_id IS NULL OR owner_id = $1) LIMIT 1",
+      "SELECT * FROM business_plans WHERE is_default = true AND owner_id = $1 LIMIT 1",
       [userId]
     );
     return res.rows[0] ?? null;
@@ -3163,7 +3188,7 @@ export const businessPlanQueries = {
     const pool = getPool();
     // Clear all defaults for this user first, then set the target
     if (userId) {
-      await pool.query("UPDATE business_plans SET is_default = false, updated_at = NOW() WHERE is_default = true AND (owner_id IS NULL OR owner_id = $1)", [userId]);
+      await pool.query("UPDATE business_plans SET is_default = false, updated_at = NOW() WHERE is_default = true AND owner_id = $1", [userId]);
     } else {
       await pool.query("UPDATE business_plans SET is_default = false, updated_at = NOW() WHERE is_default = true");
     }

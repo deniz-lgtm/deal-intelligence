@@ -39,8 +39,9 @@ export async function requireAuth(): Promise<
 
 /**
  * Asserts the request is authenticated AND the user can access the given deal
- * (owner, shared with, or legacy deal with no owner).
- * Returns the deal record or a 401/404 response.
+ * (owner or explicitly shared). Returns the deal record or a 404 response.
+ * The deal includes `share_permission` ('view' | 'edit' | null) when the user
+ * is not the owner — null means the user is the owner (full access).
  */
 export async function requireDealAccess(
   dealId: string,
@@ -54,6 +55,34 @@ export async function requireDealAccess(
     return {
       deal: null,
       errorResponse: NextResponse.json({ error: "Deal not found" }, { status: 404 }),
+    };
+  }
+  return { deal, errorResponse: null };
+}
+
+/**
+ * Like requireDealAccess, but also requires write privileges: the caller must
+ * be the deal owner or have a share with permission='edit'. Users with a
+ * view-only share get a 403.
+ */
+export async function requireDealEditAccess(
+  dealId: string,
+  userId: string
+): Promise<
+  { deal: Record<string, unknown>; errorResponse: null } |
+  { deal: null; errorResponse: NextResponse }
+> {
+  const { deal, errorResponse } = await requireDealAccess(dealId, userId);
+  if (errorResponse) return { deal: null, errorResponse };
+  const isOwner = deal.owner_id === userId;
+  const sharePermission = deal.share_permission as string | null | undefined;
+  if (!isOwner && sharePermission !== "edit") {
+    return {
+      deal: null,
+      errorResponse: NextResponse.json(
+        { error: "You only have view access to this deal" },
+        { status: 403 }
+      ),
     };
   }
   return { deal, errorResponse: null };

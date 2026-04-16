@@ -39,7 +39,7 @@ export async function GET() {
          FROM deal_permits WHERE deal_id = d.id
        ) pm ON true
        WHERE d.execution_phase IS NOT NULL
-         AND (d.owner_id IS NULL OR d.owner_id = $1 OR ds.deal_id IS NOT NULL)
+         AND (d.owner_id = $1 OR ds.deal_id IS NOT NULL)
        ORDER BY d.updated_at DESC`,
       [userId]
     );

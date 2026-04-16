@@ -41,8 +41,8 @@ export async function POST(
   const { deal, errorResponse: accessError } = await requireDealAccess(params.id, userId);
   if (accessError) return accessError;
 
-  // Only the owner can share (or anyone with edit permission for legacy null-owner deals)
-  if (deal.owner_id && deal.owner_id !== userId) {
+  // Only the owner can share
+  if (deal.owner_id !== userId) {
     return NextResponse.json({ error: "Only the deal owner can manage sharing" }, { status: 403 });
   }
 
@@ -105,7 +105,7 @@ export async function DELETE(
   }
 
   // Owner can remove anyone; users can remove themselves
-  if (deal.owner_id && deal.owner_id !== userId && targetUserId !== userId) {
+  if (deal.owner_id !== userId && targetUserId !== userId) {
     return NextResponse.json({ error: "Only the deal owner can remove other users" }, { status: 403 });
   }
 
