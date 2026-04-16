@@ -2084,19 +2084,32 @@ export const FLOOR_HEIGHT_DEFAULTS: Record<FloorUseType, number> = {
 
 export const PARKING_ABOVE_GRADE_HEIGHT = 11;
 
-export interface BuildingFloor {
+export interface FloorAdditionalUse {
   id: string;
   use_type: FloorUseType;
+  sf: number;
+}
+
+export interface BuildingFloor {
+  id: string;
+  use_type: FloorUseType;  // primary use
   label: string;
-  floor_plate_sf: number;
+  floor_plate_sf: number;  // TOTAL plate SF (primary + all additional uses)
   floor_to_floor_ft: number;
   is_below_grade: boolean;
   units_on_floor: number;
   efficiency_pct: number;
   sort_order: number;
-  // Multi-use floor support: split a floor between two uses
-  secondary_use: FloorUseType | null;
-  secondary_sf: number;  // SF allocated to secondary use (remainder goes to primary)
+  // Multi-use floor support (N uses). Each additional use carves its own
+  // SF out of the plate; the PRIMARY use gets the remainder
+  // (floor_plate_sf − Σ additional_uses.sf). Legacy rows may still have
+  // the deprecated secondary_use/secondary_sf fields — they are
+  // normalized into this array on load via normalizeFloor().
+  additional_uses?: FloorAdditionalUse[];
+  /** @deprecated use additional_uses[] instead */
+  secondary_use?: FloorUseType | null;
+  /** @deprecated use additional_uses[] instead */
+  secondary_sf?: number;
 }
 
 export interface UnitMixEntry {

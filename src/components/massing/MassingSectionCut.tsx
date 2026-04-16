@@ -3,6 +3,7 @@
 import React from "react";
 import type { MassingScenario, MassingSummary, FloorUseType } from "@/lib/types";
 import { FLOOR_USE_COLORS, FLOOR_USE_TYPE_LABELS } from "@/lib/types";
+import { normalizeFloors } from "./massing-utils";
 
 interface Props {
   scenario: MassingScenario;
@@ -19,8 +20,11 @@ const BOTTOM_MARGIN = 40;
 const LABEL_X = BODY_R + 15;
 
 export default function MassingSectionCut({ scenario, summary }: Props) {
-  const aboveFloors = scenario.floors.filter(f => !f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
-  const belowFloors = scenario.floors.filter(f => f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
+  // Normalize legacy floors (secondary_use/secondary_sf → additional_uses[])
+  // so the renderer only has to handle the new shape.
+  const allFloors = normalizeFloors(scenario.floors);
+  const aboveFloors = allFloors.filter(f => !f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
+  const belowFloors = allFloors.filter(f => f.is_below_grade).sort((a, b) => a.sort_order - b.sort_order);
 
   const totalAboveFt = summary.total_height_ft;
   const totalBelowFt = summary.total_below_grade_ft;
@@ -39,7 +43,7 @@ export default function MassingSectionCut({ scenario, summary }: Props) {
   const gradeY = TOP_MARGIN + aboveH;
   const svgH = TOP_MARGIN + aboveH + belowH + BOTTOM_MARGIN;
 
-  const maxPlate = Math.max(...scenario.floors.map(f => f.floor_plate_sf), 1);
+  const maxPlate = Math.max(...allFloors.map(f => f.floor_plate_sf), 1);
 
   // Height limit line
   const heightLimitFt = summary.max_allowed_height_ft;
@@ -73,8 +77,11 @@ export default function MassingSectionCut({ scenario, summary }: Props) {
     cursorY += h;
   }
 
-  // Collect unique use types for legend
-  const useTypes = Array.from(new Set(scenario.floors.map(f => f.use_type)));
+  // Collect unique use types for legend (primary + all additional)
+  const useTypes = Array.from(new Set([
+    ...allFloors.map(f => f.use_type),
+    ...allFloors.flatMap(f => (f.additional_uses || []).map(u => u.use_type)),
+  ]));
 
   const fc = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(0)}K` : `${n}`;
 
@@ -98,29 +105,43 @@ export default function MassingSectionCut({ scenario, summary }: Props) {
         </>
       )}
 
-      {/* Floor rectangles */}
+      {/* Floor rectangles — each floor is split into N segments: the
+          primary use (left) plus one segment per entry in
+          additional_uses, sized proportionally to their SF. */}
       {floorRects.map(({ floor, x, y, w, h }) => {
-        const color = FLOOR_USE_COLORS[floor.use_type as FloorUseType];
+        const primaryColor = FLOOR_USE_COLORS[floor.use_type as FloorUseType];
         const showLabel = h >= 14;
-        const hasSecondary = floor.secondary_use && floor.secondary_sf > 0;
-        const primarySF = hasSecondary ? floor.floor_plate_sf - floor.secondary_sf : floor.floor_plate_sf;
-        const primaryW = hasSecondary ? (primarySF / floor.floor_plate_sf) * w : w;
-        const secondaryW = hasSecondary ? (floor.secondary_sf / floor.floor_plate_sf) * w : 0;
-        const secondaryColor = hasSecondary ? FLOOR_USE_COLORS[floor.secondary_use as FloorUseType] : null;
+        const additional = floor.additional_uses || [];
+        const totalSF = floor.floor_plate_sf || 1;
+        const additionalTotal = additional.reduce((s, u) => s + (u.sf || 0), 0);
+        const primary_sf = Math.max(0, floor.floor_plate_sf - additionalTotal);
+        // Width of each segment proportional to its SF share of total plate
+        const segments: Array<{ use_type: FloorUseType; sf: number; w: number; color: typeof primaryColor }> = [];
+        segments.push({ use_type: floor.use_type, sf: primary_sf, w: (primary_sf / totalSF) * w, color: primaryColor });
+        for (const u of additional) {
+          segments.push({ use_type: u.use_type, sf: u.sf, w: (u.sf / totalSF) * w, color: FLOOR_USE_COLORS[u.use_type] });
+        }
+
+        let segX = x;
+        const secondaryLabels = additional.map(u => FLOOR_USE_TYPE_LABELS[u.use_type]).join(" + ");
+
         return (
           <g key={floor.id}>
-            {/* Primary use rect */}
-            <rect x={x} y={y} width={primaryW} height={h} fill={color.fill} opacity={0.6} stroke={color.fill} strokeWidth="1" rx="1" />
-            {/* Secondary use rect (right side) */}
-            {hasSecondary && secondaryColor && (
-              <rect x={x + primaryW} y={y} width={secondaryW} height={h} fill={secondaryColor.fill} opacity={0.6} stroke={secondaryColor.fill} strokeWidth="1" rx="1" />
-            )}
+            {segments.map((seg, i) => {
+              if (seg.w <= 0) return null;
+              const rect = (
+                <rect key={`${floor.id}-seg-${i}`} x={segX} y={y} width={seg.w} height={h}
+                  fill={seg.color.fill} opacity={0.6} stroke={seg.color.fill} strokeWidth="1" rx="1" />
+              );
+              segX += seg.w;
+              return rect;
+            })}
             {floor.is_below_grade && <rect x={x} y={y} width={w} height={h} fill="url(#hatch)" />}
             {showLabel && (
               <>
                 <text x={x + 6} y={y + h / 2 - 3} fill="white" fontSize="9" fontWeight="500" opacity="0.9">
                   {floor.label || FLOOR_USE_TYPE_LABELS[floor.use_type]}
-                  {hasSecondary ? ` + ${FLOOR_USE_TYPE_LABELS[floor.secondary_use as FloorUseType]}` : ""}
+                  {secondaryLabels ? ` + ${secondaryLabels}` : ""}
                 </text>
                 <text x={x + 6} y={y + h / 2 + 8} fill="white" fontSize="7" opacity="0.6">
                   {fc(floor.floor_plate_sf)} SF · {floor.floor_to_floor_ft}ft
@@ -129,7 +150,7 @@ export default function MassingSectionCut({ scenario, summary }: Props) {
               </>
             )}
             {!showLabel && (
-              <text x={LABEL_X} y={y + h / 2 + 3} fill={color.fill} fontSize="7" opacity="0.8">
+              <text x={LABEL_X} y={y + h / 2 + 3} fill={primaryColor.fill} fontSize="7" opacity="0.8">
                 {floor.label || floor.use_type} · {fc(floor.floor_plate_sf)}
               </text>
             )}

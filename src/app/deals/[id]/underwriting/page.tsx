@@ -455,9 +455,18 @@ function seedMixedUseFromProgram(
   if (!activeScenario || !activeScenario.floors) return existing ?? null;
 
   // Tally NRSF per use type from the floors directly (keeps this function
-  // dependency-free — we don't import massing-utils here).
+  // dependency-free — we don't import massing-utils here). Handles both
+  // the current multi-use shape (additional_uses[]) and the legacy
+  // secondary_use/secondary_sf shape.
   const nrsfByUse: Record<string, number> = {};
   let totalGsf = 0;
+  const effFor = (t?: string) =>
+    t === "retail" ? 0.95
+      : t === "office" ? 0.87
+      : t === "parking" ? 0.98
+      : t === "lobby_amenity" ? 0.60
+      : t === "mechanical" ? 0
+      : 0.80;
   for (const fRaw of activeScenario.floors) {
     const f = fRaw as {
       use_type?: string;
@@ -465,24 +474,31 @@ function seedMixedUseFromProgram(
       floor_plate_sf?: number;
       secondary_sf?: number;
       efficiency_pct?: number;
+      additional_uses?: Array<{ use_type?: string; sf?: number }>;
     };
     const plate = Number(f.floor_plate_sf || 0);
     totalGsf += plate;
     const eff = Number(f.efficiency_pct || 80) / 100;
-    const secondarySf = Number(f.secondary_sf || 0);
-    const primarySf =
-      f.secondary_use && secondarySf > 0 ? plate - secondarySf : plate;
+
+    // Normalize additional uses (with legacy secondary fallback)
+    const additional: Array<{ use_type: string; sf: number }> = [];
+    if (Array.isArray(f.additional_uses)) {
+      for (const u of f.additional_uses) {
+        if (u?.use_type && Number(u.sf || 0) > 0) additional.push({ use_type: u.use_type, sf: Number(u.sf) });
+      }
+    }
+    if (additional.length === 0 && f.secondary_use && Number(f.secondary_sf || 0) > 0) {
+      additional.push({ use_type: f.secondary_use, sf: Number(f.secondary_sf) });
+    }
+
+    const additionalTotal = additional.reduce((s, u) => s + u.sf, 0);
+    const primarySf = Math.max(0, plate - additionalTotal);
+
     if (f.use_type) {
       nrsfByUse[f.use_type] = (nrsfByUse[f.use_type] || 0) + Math.round(primarySf * eff);
     }
-    if (f.secondary_use && secondarySf > 0) {
-      const secEff =
-        f.secondary_use === "retail" ? 0.95
-          : f.secondary_use === "office" ? 0.87
-          : f.secondary_use === "parking" ? 0.98
-          : 0.80;
-      nrsfByUse[f.secondary_use] =
-        (nrsfByUse[f.secondary_use] || 0) + Math.round(secondarySf * secEff);
+    for (const u of additional) {
+      nrsfByUse[u.use_type] = (nrsfByUse[u.use_type] || 0) + Math.round(u.sf * effFor(u.use_type));
     }
   }
 

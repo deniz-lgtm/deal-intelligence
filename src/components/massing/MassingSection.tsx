@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { BuildingFloor, BuildingProgram, MassingScenario, FloorUseType, UnitMixEntry } from "@/lib/types";
 import {
-  newFloor, computeMassingSummary, autoLabelFloors, seedUnitMix,
+  newFloor, computeMassingSummary, autoLabelFloors, seedUnitMix, normalizeFloors,
   quickStackPodium5over1, quickStackMidRise3over2, quickStackHighRise, quickStackGardenStyle, quickStackAutoFromZoning,
 } from "./massing-utils";
 import type { ZoningInputs } from "./massing-utils";
@@ -61,7 +61,7 @@ export default function MassingSection({
   // editor which the analyst can fill.
   const activeScenario: typeof activeScenarioRaw = {
     ...activeScenarioRaw,
-    floors: Array.isArray(activeScenarioRaw.floors) ? activeScenarioRaw.floors : [],
+    floors: normalizeFloors(activeScenarioRaw.floors),
     unit_mix: Array.isArray(activeScenarioRaw.unit_mix) ? activeScenarioRaw.unit_mix : [],
   };
 
