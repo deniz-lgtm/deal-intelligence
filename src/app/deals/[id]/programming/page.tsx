@@ -867,16 +867,19 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
             <ZoningChip color="blue">Coverage ≤ {zoningInputs.lot_coverage_pct}%</ZoningChip>
           )}
           {zoningContext.height_limits
-            .filter((h) => h.value?.trim())
+            .filter((h) => typeof h?.value === "string" && h.value.trim() !== "")
             .slice(0, 2)
             .map((h, i) => (
-              <ZoningChip key={`hl-${i}`} color="blue" title={h.label}>
-                {h.value}
+              <ZoningChip key={`hl-${i}`} color="blue" title={typeof h.label === "string" ? h.label : undefined}>
+                {String(h.value)}
               </ZoningChip>
             ))}
-          {zoningContext.overlays.slice(0, 3).map((o, i) => (
-            <ZoningChip key={`ov-${i}`} color="slate">{o}</ZoningChip>
-          ))}
+          {zoningContext.overlays
+            .filter((o) => typeof o === "string" && o.trim() !== "")
+            .slice(0, 3)
+            .map((o, i) => (
+              <ZoningChip key={`ov-${i}`} color="slate">{String(o)}</ZoningChip>
+            ))}
           {densityBonuses.length > 0 && (
             <>
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground mx-1">
@@ -886,10 +889,12 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
                 <ZoningChip
                   key={`db-${i}`}
                   color="emerald"
-                  title={b.description}
+                  title={typeof b?.description === "string" ? b.description : undefined}
                 >
-                  {b.source}
-                  {b.additional_density ? ` · ${b.additional_density}` : ""}
+                  {String(b?.source || "")}
+                  {typeof b?.additional_density === "string" && b.additional_density
+                    ? ` · ${b.additional_density}`
+                    : ""}
                 </ZoningChip>
               ))}
             </>
