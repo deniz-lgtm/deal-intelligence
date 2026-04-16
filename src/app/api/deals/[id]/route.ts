@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries } from "@/lib/db";
-import { requireAuth, requireDealAccess, requirePermission } from "@/lib/auth";
+import { requireAuth, requireDealAccess, requireDealEditAccess, requirePermission } from "@/lib/auth";
 import { geocodeAddress, buildCompAddress } from "@/lib/geocode";
 
 export async function GET(
@@ -28,7 +28,7 @@ export async function PATCH(
   if (errorResponse) return errorResponse;
 
   try {
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
 
     const body = await req.json();
@@ -76,7 +76,7 @@ export async function DELETE(
     // Only the owner can delete a deal
     const deal = await dealQueries.getByIdWithAccess(params.id, userId);
     if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    if (deal.owner_id && deal.owner_id !== userId) {
+    if (deal.owner_id !== userId) {
       return NextResponse.json({ error: "Only the deal owner can delete it" }, { status: 403 });
     }
 

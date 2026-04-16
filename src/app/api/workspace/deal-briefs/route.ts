@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
   const accessibleDeals = `(
     SELECT DISTINCT d.id FROM deals d
     LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
-    WHERE d.owner_id IS NULL OR d.owner_id = $1 OR ds.deal_id IS NOT NULL
+    WHERE d.owner_id = $1 OR ds.deal_id IS NOT NULL
   )`;
 
   try {

@@ -23,10 +23,8 @@ async function userCanAccessComp(compId: string, userId: string): Promise<{ ok: 
      WHERE c.id = $1
        AND (
          c.deal_id IS NULL
-         OR d_attached.owner_id IS NULL
          OR d_attached.owner_id = $2
          OR s_attached.deal_id IS NOT NULL
-         OR d_source.owner_id IS NULL
          OR d_source.owner_id = $2
          OR s_source.deal_id IS NOT NULL
        )`,

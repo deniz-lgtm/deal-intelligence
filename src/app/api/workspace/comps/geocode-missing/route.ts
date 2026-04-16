@@ -36,10 +36,8 @@ export async function POST() {
        WHERE (c.lat IS NULL OR c.lng IS NULL)
          AND (
            c.deal_id IS NULL
-           OR d_attached.owner_id IS NULL
            OR d_attached.owner_id = $1
            OR s_attached.deal_id IS NOT NULL
-           OR d_source.owner_id IS NULL
            OR d_source.owner_id = $1
            OR s_source.deal_id IS NOT NULL
          )
