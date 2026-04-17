@@ -10,18 +10,34 @@
  *     re-run the split after dialing in the per-BR mix on the mix
  *     surface, without needing to jump back to Programming).
  *
+ * Two allocation models (picked via `config.allocation_mode`):
+ *   • "replacement" (default) — the typical US inclusionary-zoning
+ *     pattern (NYC MIH, most California local IZ, Boston IDP).
+ *     Affordable units carve OUT of the market-rate share; total unit
+ *     count is preserved.
+ *   • "additive" — density-bonus jurisdictions (CA State Density
+ *     Bonus Law, NYC Voluntary IH with bonus, MA 40B, NJ COAH RDP).
+ *     Affordable units are ADDED on top of the market baseline; total
+ *     unit count grows by the sum of affordable units.
+ *
  * Rules kept deliberately boring:
  *   • Each affordable row gets its own group (cloned from the matching
  *     market template) so the analyst can adjust sf_per_unit etc.
  *     independently — affordable units are typically smaller.
- *   • Market groups are scaled down by exactly the number of units
- *     claimed in their BR bucket. Preserves total unit count.
+ *   • Replacement mode: market groups are scaled down by exactly the
+ *     number of units claimed in their BR bucket.
+ *   • Additive mode: market rows are left untouched; affordable rows
+ *     stack on top.
  *   • Any unclaimed BR bucket stays untouched. 4BR+ falls back to the
  *     first market group's template when the building doesn't have a
  *     4BR group (bedrooms defaults to 4 in that case).
- *   • Idempotent on re-split: we filter out any previous
- *     `is_affordable` rows before recomputing, so running the split
- *     twice doesn't double-count.
+ *   • Idempotent on re-split: any previous `is_affordable` rows are
+ *     folded back into the matching market rows (same building + BR)
+ *     before recomputing, so running the split twice with a DIFFERENT
+ *     tier configuration doesn't silently drop units. In replacement
+ *     mode the restored baseline becomes the new capacity; in additive
+ *     mode the restored baseline becomes the "market baseline" on top
+ *     of which the new affordable requirement is layered.
  */
 
 import { v4 as uuidv4 } from "uuid";
@@ -50,6 +66,17 @@ interface LooseUnitGroup {
 
 interface AffordabilityConfigLite {
   enabled?: boolean;
+  /**
+   * How affordable units relate to the market baseline.
+   *   "replacement" (default) — affordable units carve out of the
+   *       market share; total unit count is preserved.
+   *   "additive" — affordable units are added on top of the market
+   *       baseline (density-bonus / 40B-style); total unit count
+   *       grows by sum of affordable units.
+   * Undefined / any other value is treated as "replacement" so the
+   * change is safe for legacy configs that don't carry this field.
+   */
+  allocation_mode?: "replacement" | "additive";
   tiers?: Array<{
     ami_pct: number;
     units_studio?: number;
@@ -113,12 +140,111 @@ export function splitUnitGroupsByAffordability<T extends LooseUnitGroup>(
     return unitGroups;
   }
 
-  // Start from the "market-only" view by dropping any prior affordable
-  // rows — makes repeated calls idempotent.
-  const marketOnly = unitGroups.filter((g) => !g.is_affordable);
+  const NO_BUILDING = "__no_building__";
+  const mode: "replacement" | "additive" =
+    config.allocation_mode === "additive" ? "additive" : "replacement";
+
+  // Recover the pre-split market baseline when the previous split was
+  // in REPLACEMENT mode — repeated calls with a DIFFERENT tier
+  // configuration would otherwise shrink the market baseline each
+  // time (e.g. 100 → 80 → 50 …). We fold each existing affordable row
+  // back into a matching market row (same building + BR), recreating
+  // a synthetic market row when no match exists.
+  //
+  // In ADDITIVE mode affordable rows were net-new on top of market,
+  // so we just discard them — the market rows already represent the
+  // correct baseline and re-adding affordable counts would inflate
+  // the market side on every re-split.
+  const marketOnlyRaw = unitGroups.filter((g) => !g.is_affordable);
+  const existingAffordable = unitGroups.filter((g) => g.is_affordable);
+
+  // Clone market rows so we can mutate unit_count during restore
+  // without touching the caller's objects.
+  const marketOnly: T[] = marketOnlyRaw.map((g) => ({ ...g }));
+
+  if (mode === "replacement" && existingAffordable.length > 0) {
+    // Sum existing affordable counts + stash a template row per
+    // (building, BR) for the "no matching market row" fallback.
+    const affordableCountByBuildingBr: Record<string, Record<BrKey, number>> = {};
+    const affordableTemplateByBuildingBr: Record<string, Partial<Record<BrKey, T>>> = {};
+    for (const g of existingAffordable) {
+      const b = (g.site_plan_building_id || NO_BUILDING) as string;
+      const k = bedroomsToKey(g.bedrooms || 0);
+      if (!affordableCountByBuildingBr[b]) {
+        affordableCountByBuildingBr[b] = {
+          studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0,
+        };
+      }
+      affordableCountByBuildingBr[b][k] += g.unit_count || 0;
+      if (!affordableTemplateByBuildingBr[b]) affordableTemplateByBuildingBr[b] = {};
+      if (!affordableTemplateByBuildingBr[b][k]) affordableTemplateByBuildingBr[b][k] = g;
+    }
+
+    // Current market sums (to drive proportional restore within buckets).
+    const marketSumByBuildingBr: Record<string, Record<BrKey, number>> = {};
+    for (const g of marketOnly) {
+      const b = (g.site_plan_building_id || NO_BUILDING) as string;
+      const k = bedroomsToKey(g.bedrooms || 0);
+      if (!marketSumByBuildingBr[b]) {
+        marketSumByBuildingBr[b] = {
+          studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0,
+        };
+      }
+      marketSumByBuildingBr[b][k] += g.unit_count || 0;
+    }
+
+    // Fold the affordable counts back into the matching market rows.
+    for (const [b, byBr] of Object.entries(affordableCountByBuildingBr)) {
+      for (const k of ["studio", "one_br", "two_br", "three_br", "four_br_plus"] as BrKey[]) {
+        const toRestore = byBr[k];
+        if (toRestore <= 0) continue;
+        const marketSum = marketSumByBuildingBr[b]?.[k] || 0;
+        if (marketSum > 0) {
+          // Distribute restored units across the matching market rows
+          // proportional to each row's current share, with the last
+          // row absorbing any rounding remainder.
+          const matchingRows = marketOnly.filter(
+            (g) =>
+              ((g.site_plan_building_id || NO_BUILDING) as string) === b &&
+              bedroomsToKey(g.bedrooms || 0) === k
+          );
+          let restoredSoFar = 0;
+          matchingRows.forEach((row, i) => {
+            const isLast = i === matchingRows.length - 1;
+            const share = isLast
+              ? toRestore - restoredSoFar
+              : Math.round((toRestore * (row.unit_count || 0)) / marketSum);
+            row.unit_count = (row.unit_count || 0) + share;
+            restoredSoFar += share;
+          });
+        } else {
+          // No matching market row — synthesize one from the
+          // affordable template so this (building, BR) bucket is
+          // represented in the new capacity baseline. Strips the
+          // affordability-specific fields.
+          const template = affordableTemplateByBuildingBr[b]?.[k];
+          if (template) {
+            const cleanLabel = (template.label || "")
+              .replace(/\s*\(Affordable.*\)/gi, "")
+              .trim() || "Market";
+            marketOnly.push({
+              ...template,
+              id: uuidv4(),
+              label: cleanLabel,
+              unit_count: toRestore,
+              is_affordable: false,
+              ami_pct: undefined,
+            } as T);
+          }
+        }
+      }
+    }
+  }
+
   if (marketOnly.length === 0) return unitGroups;
 
-  // Map each BR bucket to a template group pulled from the market rows.
+  // Map each BR bucket to a template group pulled from the restored
+  // market rows.
   const marketBaseByBr: Partial<Record<BrKey, T>> = {};
   for (const g of marketOnly) {
     const key = bedroomsToKey(g.bedrooms || 0);
@@ -133,11 +259,13 @@ export function splitUnitGroupsByAffordability<T extends LooseUnitGroup>(
   // every building that has market units in that BR, proportional to
   // the building's market count (so legacy / single-building projects
   // behave exactly like before).
-  const NO_BUILDING = "__no_building__";
   const claimedByBuildingBr: Record<string, Record<BrKey, number>> = {};
   // Capacity per (building, BR) = how many market units exist there
-  // right now. We clamp tier allocations to this so an aggressive
-  // tier can't "take" more affordable units than the building offers.
+  // right now, AFTER restoring prior affordable rows. In replacement
+  // mode we clamp tier allocations to this so an aggressive tier can't
+  // "take" more affordable units than the building offers. In additive
+  // mode the clamp is skipped (affordable units stack on top rather
+  // than carving out).
   const capacityByBuildingBr: Record<string, Record<BrKey, number>> = {};
   for (const g of marketOnly) {
     const b = (g.site_plan_building_id || NO_BUILDING) as string;
@@ -165,25 +293,37 @@ export function splitUnitGroupsByAffordability<T extends LooseUnitGroup>(
     for (const b of BR_BUCKETS) {
       const want = Number((tier as unknown as Record<string, unknown>)[b.unitsField] || 0);
       if (want <= 0) continue;
-      // Cap total capacity across the effective targets.
       const totalCap = effectiveTargets.reduce(
         (s, id) => s + (capacityByBuildingBr[id]?.[b.key] || 0),
         0
       );
-      if (totalCap <= 0) continue;
-      const assigned = Math.min(want, totalCap);
-      // Distribute proportionally to each target's remaining capacity.
+      // In additive mode a bucket with zero capacity is fine — the
+      // affordable units are net-new. In replacement mode we skip it
+      // because there's nothing to carve from.
+      if (mode === "replacement" && totalCap <= 0) continue;
+      // Replacement: clamp to available capacity (can't take more
+      // than exists). Additive: take exactly what the tier asks for.
+      const assigned = mode === "replacement" ? Math.min(want, totalCap) : want;
+      // Distribute proportionally to each target's capacity. If
+      // capacity is zero across the targets (additive, new bucket),
+      // spread evenly across the effective targets so the affordable
+      // rows still land on a building.
       let assignedSoFar = 0;
+      const evenSpread = totalCap <= 0;
       effectiveTargets.forEach((id, i) => {
         const cap = capacityByBuildingBr[id]?.[b.key] || 0;
         const isLast = i === effectiveTargets.length - 1;
         let share: number;
         if (isLast) {
           share = assigned - assignedSoFar; // absorb rounding remainder
+        } else if (evenSpread) {
+          share = Math.round(assigned / effectiveTargets.length);
         } else {
           share = Math.round((assigned * cap) / totalCap);
         }
-        share = Math.min(share, cap);
+        if (mode === "replacement") {
+          share = Math.min(share, cap);
+        }
         tierAssign[id][b.key] = share;
         assignedSoFar += share;
       });
@@ -200,14 +340,25 @@ export function splitUnitGroupsByAffordability<T extends LooseUnitGroup>(
     }
   }
 
-  // Scale each market group down by units claimed against THIS building
-  // + BR bucket. This lets Building 2's market rows stay fully intact
-  // when a tier targeted only Building 3, and scales all buildings in
-  // multi-building deals with no targeting (legacy behaviour).
+  // Replacement mode: scale each market group down by units claimed
+  // against THIS (building, BR) bucket. Preserves total unit count.
+  // Additive mode: market rows pass through untouched — the affordable
+  // units are net-new, total grows by the sum of affordable.
   const marketGroups = marketOnly
     .map((g) => {
       const b = (g.site_plan_building_id || NO_BUILDING) as string;
       const k = bedroomsToKey(g.bedrooms || 0);
+      const cleanLabel = (g.label || "")
+        .replace(/\s*\(Market\)|\s*\(Affordable.*\)/gi, "")
+        .trim();
+      if (mode === "additive") {
+        return {
+          ...g,
+          id: g.id || uuidv4(),
+          label: `${cleanLabel} (Market)`,
+          is_affordable: false,
+        };
+      }
       const totalClaimed = claimedByBuildingBr[b]?.[k] || 0;
       const totalCap = capacityByBuildingBr[b]?.[k] || 0;
       // Proportional scale within the building's bucket: if two market
@@ -216,9 +367,6 @@ export function splitUnitGroupsByAffordability<T extends LooseUnitGroup>(
       const share = totalCap > 0 ? (g.unit_count || 0) / totalCap : 0;
       const claimed = Math.round(totalClaimed * share);
       const remaining = Math.max(0, (g.unit_count || 0) - claimed);
-      const cleanLabel = (g.label || "")
-        .replace(/\s*\(Market\)|\s*\(Affordable.*\)/gi, "")
-        .trim();
       return {
         ...g,
         id: g.id || uuidv4(),
