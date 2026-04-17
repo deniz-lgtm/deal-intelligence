@@ -1688,20 +1688,39 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "OpEx estimation failed"); return; }
       const est = json.data;
-      setData(p => ({
-        ...p,
-        vacancy_rate: est.vacancy_rate ?? p.vacancy_rate,
-        management_fee_pct: est.management_fee_pct ?? p.management_fee_pct,
-        taxes_annual: est.taxes_annual ?? p.taxes_annual,
-        insurance_annual: est.insurance_annual ?? p.insurance_annual,
-        repairs_annual: est.repairs_annual ?? p.repairs_annual,
-        utilities_annual: est.utilities_annual ?? p.utilities_annual,
-        ga_annual: est.ga_annual ?? p.ga_annual,
-        marketing_annual: est.marketing_annual ?? p.marketing_annual,
-        reserves_annual: est.reserves_annual ?? p.reserves_annual,
-        other_expenses_annual: est.other_expenses_annual ?? p.other_expenses_annual,
-        opex_narrative: est.basis || est.narrative || "",
-      }));
+      setData(p => {
+        // Apply Contracts / Staff into the default custom_opex rows that
+        // every UW blob seeds with (default-contracts / default-staff).
+        // Match by label (case-insensitive) so rows users have renamed
+        // still pick up the estimate; only touch pf_annual so in-place
+        // columns stay user-owned. Leaves unrelated custom rows alone.
+        const custom = p.custom_opex || [];
+        const nextCustom = custom.map(row => {
+          const label = (row.label || "").toLowerCase();
+          if (label.includes("contract") && est.contracts_annual != null) {
+            return { ...row, pf_annual: est.contracts_annual };
+          }
+          if (label === "staff" && est.staff_annual != null) {
+            return { ...row, pf_annual: est.staff_annual };
+          }
+          return row;
+        });
+        return {
+          ...p,
+          vacancy_rate: est.vacancy_rate ?? p.vacancy_rate,
+          management_fee_pct: est.management_fee_pct ?? p.management_fee_pct,
+          taxes_annual: est.taxes_annual ?? p.taxes_annual,
+          insurance_annual: est.insurance_annual ?? p.insurance_annual,
+          repairs_annual: est.repairs_annual ?? p.repairs_annual,
+          utilities_annual: est.utilities_annual ?? p.utilities_annual,
+          ga_annual: est.ga_annual ?? p.ga_annual,
+          marketing_annual: est.marketing_annual ?? p.marketing_annual,
+          reserves_annual: est.reserves_annual ?? p.reserves_annual,
+          other_expenses_annual: est.other_expenses_annual ?? p.other_expenses_annual,
+          custom_opex: nextCustom,
+          opex_narrative: est.basis || est.narrative || "",
+        };
+      });
       toast.success(est.basis ? `OpEx estimated — ${est.basis}` : "Operating expenses estimated");
     } catch { toast.error("OpEx estimation failed"); }
     finally { setOpexEstimating(false); }
