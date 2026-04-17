@@ -1196,6 +1196,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [businessPlan, setBusinessPlan] = useState<{ target_irr_min?: number; target_irr_max?: number; target_equity_multiple_min?: number; target_equity_multiple_max?: number; hold_period_min?: number; hold_period_max?: number } | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null); // null = baseline
   const [activeMassingTab, setActiveMassingTab] = useState<string | null>(null); // id of building_program.scenario shown in the section-cut panel
+  const [massingPanelOpen, setMassingPanelOpen] = useState(false); // read-only massing reference starts collapsed — analysts rarely need it while editing rents/expenses
   const [showScenarioWizard, setShowScenarioWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardType, setWizardType] = useState<ScenarioType>("custom");
@@ -2017,14 +2018,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      {/* ── Massing Tabs — one per building in the active programming
-          scenario. Replaces the old single-card "Building Massing
-          Reference" with a tabbed view so the analyst can flip between
-          buildings and see each one's section-cut, GSF, units, and
-          parking totals. The selected tab also highlights which building
-          owns which unit-group rows in the Revenue table below.
-          Renders only for ground-up deals that have a massing pushed
-          from Programming. */}
+      {/* ── Massing Reference — read-only snapshot of the programming
+          scenario(s), collapsed by default. Analysts editing rents /
+          opex / debt don't need the section-cut open; a compact header
+          shows totals so they know it exists. Expanding reveals the
+          full tabbed view with per-building section cuts.
+          Ground-up only with a massing pushed from Programming. */}
       {isGroundUp && d.building_program?.scenarios?.length > 0 && (() => {
         const bp = d.building_program;
         const scenarios: any[] = bp.scenarios || [];
@@ -2053,8 +2052,40 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           return s.name || `Building ${i + 1}`;
         };
 
+        // Summed totals across all scenarios for the collapsed header.
+        const allTotals = scenarios.reduce(
+          (acc, s) => {
+            const x = cms2(s, zi);
+            return {
+              gsf: acc.gsf + (x.total_gsf || 0),
+              units: acc.units + (x.total_units || 0),
+              parking: acc.parking + (x.total_parking_spaces_est || 0),
+            };
+          },
+          { gsf: 0, units: 0, parking: 0 },
+        );
+
         return (
           <div className="border rounded-xl bg-card shadow-card mb-4 overflow-hidden">
+            {/* Disclosure header — always visible */}
+            <button
+              onClick={() => setMassingPanelOpen((o) => !o)}
+              className={`w-full flex items-center gap-2 px-3 py-2 bg-muted/20 hover:bg-muted/30 transition-colors text-left ${massingPanelOpen ? "border-b" : ""}`}
+            >
+              {massingPanelOpen ? (
+                <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+              )}
+              <Layers className="h-4 w-4 text-blue-400 shrink-0" />
+              <span className="text-xs font-semibold uppercase tracking-wide">Massing Reference</span>
+              {!massingPanelOpen && (
+                <span className="ml-2 text-[11px] text-muted-foreground/80 tabular-nums truncate">
+                  {scenarios.length} {scenarios.length === 1 ? "building" : "buildings"} · {fn(allTotals.gsf)} GSF · {fn(allTotals.units)} units · {fn(allTotals.parking)} parking
+                </span>
+              )}
+            </button>
+            {massingPanelOpen && (<>
             {/* Tab strip */}
             <div className="flex items-center gap-0 border-b bg-muted/30 overflow-x-auto">
               <div className="flex items-center gap-1 px-3 py-1.5 shrink-0">
@@ -2105,6 +2136,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </div>
               )}
             </div>
+            </>)}
           </div>
         );
       })()}
