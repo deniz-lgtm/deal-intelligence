@@ -331,6 +331,31 @@ export default function MassingSection({
             </table>
             </div>
             {Math.abs(totalAllocPct - 100) > 0.1 && <p className="text-xs text-red-400 mb-1">Allocation must equal 100% (currently {totalAllocPct.toFixed(0)}%)</p>}
+            {/* NRSF budget check — sum of (unit count × avg SF) vs the
+                residential NRSF from the floor stack. When allocation is
+                100% the two reconcile to within a rounding unit; bigger
+                gaps mean unit counts / avg SFs have drifted from what
+                the massing's residential floors can fit. Previously this
+                check lived as a full budget bar on Underwriting; moving
+                it here is less noisy and fixes it where it's caused. */}
+            {(() => {
+              if (resNRSF <= 0) return null;
+              const allocatedSF = mix.reduce((s, m) => {
+                const uc = totalUnitsFromMix > 0 ? Math.round(totalUnitsFromMix * (m.allocation_pct / 100)) : 0;
+                return s + uc * m.avg_sf;
+              }, 0);
+              const diff = allocatedSF - resNRSF;
+              const pct = Math.abs(diff) / resNRSF;
+              if (pct < 0.02) return null;
+              const over = diff > 0;
+              return (
+                <p className={`text-xs mb-1 ${over ? "text-red-400" : "text-amber-400"}`}>
+                  Unit mix allocates {fn(allocatedSF)} NRSF — {over ? `${fn(diff)} over` : `${fn(-diff)} short of`} the
+                  {" "}{fn(resNRSF)} residential NRSF from the floor stack ({(pct * 100).toFixed(1)}%).
+                  Adjust unit counts, avg SF, or residential floor area to reconcile.
+                </p>
+              );
+            })()}
             <div className="flex gap-2 flex-wrap">
               <Button variant="ghost" size="sm" className="text-xs" onClick={addMixType}>
                 <Plus className="h-3 w-3 mr-1" /> Add Unit Type

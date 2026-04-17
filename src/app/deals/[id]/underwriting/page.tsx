@@ -2682,116 +2682,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       <div className={tabCls("revenue_ops")}>
       <Section title="Revenue — Unit / Space Mix" icon={<Calculator className="h-4 w-4 text-indigo-400" />}>
-        {/* NRSF Budget — Ground-Up Only.
-            Pass-through from Programming: uses the active massing scenario's
-            GSF / NRSF directly (with max_gsf / max_nrsf as the fallback for
-            deals whose massing hasn't been re-saved). The old logic treated
-            max_nrsf as the target for residential-only unit allocation,
-            which over-counted on mixed-use deals because max_nrsf on the UW
-            blob is the TOTAL NRSF. We now split explicitly:
-               • Rev NRSF  = residential + commercial (from nrsf_by_use)
-               • Target    = residential NRSF (what the unit-mix table below
-                             actually budgets against)
-               • Non-Rev   = GSF − Rev NRSF (lobbies, circulation, mechanical,
-                             common area, etc.) */}
-        {isGroundUp && (() => {
-          const bp = d.building_program;
-          const activeS: { id?: string; is_baseline?: boolean; floors?: unknown[] } | undefined =
-            bp?.scenarios?.find((s: { is_baseline?: boolean }) => s.is_baseline) ||
-            bp?.scenarios?.find((s: { id?: string }) => s.id === bp.active_scenario_id) ||
-            bp?.scenarios?.[0];
-          let gsf = d.max_gsf || 0;
-          let totalNrsf = d.max_nrsf || 0;
-          let resNrsf = 0;
-          let comNrsf = 0;
-          if (activeS?.floors) {
-            // Lazy-import to avoid a top-level cycle with massing-utils.
-            const { computeMassingSummary } = require("@/components/massing/massing-utils");
-            const landSF = d.site_info?.land_sf || (deal as { land_acres?: number })?.land_acres ?
-              ((d.site_info?.land_sf || 0) || ((deal as { land_acres?: number }).land_acres! * 43560)) : 0;
-            const zi = { land_sf: landSF, far: d.far || 0, lot_coverage_pct: d.lot_coverage_pct || 0, height_limit_ft: (d.height_limit_stories || 0) * 10, height_limit_stories: d.height_limit_stories || 0 };
-            const summary = computeMassingSummary(activeS, zi);
-            gsf = summary.total_gsf || gsf;
-            totalNrsf = summary.total_nrsf || totalNrsf;
-            resNrsf = summary.nrsf_by_use?.residential || 0;
-            const retail = summary.nrsf_by_use?.retail || 0;
-            const office = summary.nrsf_by_use?.office || 0;
-            comNrsf = retail + office;
-          }
-          // If the massing didn't split by use (or there's no building_program
-          // yet), fall back to treating all NRSF as residential for MF/SH so
-          // the block still shows something useful.
-          if (resNrsf === 0 && comNrsf === 0 && totalNrsf > 0) resNrsf = totalNrsf;
-          if (gsf === 0 && totalNrsf === 0) return null;
-
-          const target = resNrsf > 0 ? resNrsf : totalNrsf;
-          const nonRev = Math.max(0, gsf - (resNrsf + comNrsf));
-          // Scope the "allocated" tally to just the unit groups tied to
-          // the active building. Without this, a 3-building massing would
-          // show allocated = sum across all buildings vs target = one
-          // building's residential NRSF, which always blew the budget.
-          const activeBid = (activeS as any)?.site_plan_building_id || null;
-          const buildingGroups = activeBid
-            ? d.unit_groups.filter((g: any) => (g.site_plan_building_id || null) === activeBid)
-            : d.unit_groups;
-          const allocatedNRSF = buildingGroups.reduce(
-            (s: number, g: UnitGroup) => s + effectiveUnits(g) * (g.sf_per_unit || 0),
-            0
-          );
-          const remainingNRSF = target - allocatedNRSF;
-          const pctUsed = target > 0 ? (allocatedNRSF / target) * 100 : 0;
-          const barColor = pctUsed > 100 ? "bg-red-500" : pctUsed > 90 ? "bg-amber-500" : "bg-emerald-500";
-
-          return (
-            <div className="mt-3 mb-4 p-4 border border-primary/30 rounded-lg bg-primary/5">
-              <div className="flex items-start justify-between mb-2 gap-4 flex-wrap">
-                <div>
-                  <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">NRSF Budget from Building Massing</h4>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    All values carry over from Programming. Adjust unit sizes
-                    or counts below so the residential NRSF target matches.
-                  </p>
-                </div>
-                <div className="text-right">
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Residential NRSF Target</div>
-                  <div className="text-lg font-bold text-primary tabular-nums">{fn(target)} <span className="text-xs text-muted-foreground">NRSF</span></div>
-                </div>
-              </div>
-
-              {/* Compact GSF / NRSF / Non-Rev breakdown carried from massing */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-[11px]">
-                <div className="px-2 py-1.5 rounded bg-background/60 border border-border/40">
-                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Total GSF</div>
-                  <div className="tabular-nums font-semibold">{fn(gsf)}</div>
-                </div>
-                <div className="px-2 py-1.5 rounded bg-background/60 border border-border/40">
-                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Residential NRSF</div>
-                  <div className="tabular-nums font-semibold">{fn(resNrsf)}</div>
-                </div>
-                <div className="px-2 py-1.5 rounded bg-background/60 border border-border/40">
-                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Commercial NRSF</div>
-                  <div className="tabular-nums font-semibold">{comNrsf > 0 ? fn(comNrsf) : "—"}</div>
-                </div>
-                <div className="px-2 py-1.5 rounded bg-background/60 border border-border/40">
-                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Non-Rev Space</div>
-                  <div className="tabular-nums font-semibold">{fn(nonRev)}</div>
-                  <div className="text-[9px] text-muted-foreground/80">GSF − NRSF</div>
-                </div>
-              </div>
-
-              <div className="h-3 bg-muted rounded-full overflow-hidden relative">
-                <div className={`h-full ${barColor} transition-all duration-300 rounded-full`} style={{ width: `${Math.min(pctUsed, 100)}%` }} />
-                <div className="absolute top-0 bottom-0 w-0.5 bg-primary" style={{ left: "100%" }} />
-              </div>
-              <div className="flex items-center justify-between mt-1.5 text-xs tabular-nums">
-                <span className="text-muted-foreground">Allocated: <span className="font-semibold text-foreground">{fn(allocatedNRSF)}</span> NRSF ({pctUsed.toFixed(1)}%)</span>
-                <span className={`font-semibold ${remainingNRSF < 0 ? "text-red-400" : remainingNRSF === 0 ? "text-emerald-400" : "text-amber-400"}`}>
-                  {remainingNRSF > 0 ? `${fn(remainingNRSF)} NRSF remaining` : remainingNRSF === 0 ? "Matches target" : `${fn(Math.abs(remainingNRSF))} NRSF over`}
-                </span>
-              </div>
-            </div>
-          );
-        })()}
+        {/* The NRSF Budget bar used to live here — a pass-through tally
+            showing residential NRSF target vs. allocated, pulled from
+            Programming's massing. It was mostly noise: Programming
+            already derives units from residential NRSF ÷ weighted avg
+            unit size, so the two sides always reconcile. If they drift
+            (manual unit_groups edits on UW, allocation %% ≠ 100 on
+            Programming), the warning lives on Programming where the
+            fix belongs — not here. */}
         <div className="mt-3 overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
