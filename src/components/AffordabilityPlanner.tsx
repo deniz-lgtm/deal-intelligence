@@ -59,11 +59,28 @@ export interface AmiTier {
   target_building_ids?: string[];
 }
 
+/**
+ * How the affordable units relate to the market baseline.
+ *   "replacement" — affordable units carve out of market-rate units;
+ *                   total unit count stays fixed. Standard inclusionary
+ *                   zoning (NYC MIH, most CA local IZ, Boston IDP).
+ *   "additive"    — affordable units are added on top of the market
+ *                   baseline; total unit count grows. Density-bonus
+ *                   jurisdictions (CA State Density Bonus Law, NYC
+ *                   Voluntary IH w/ bonus, MA 40B, NJ COAH RDP).
+ */
+export type AllocationMode = "replacement" | "additive";
+
 export interface AffordabilityConfig {
   enabled: boolean;
   tiers: AmiTier[];
   total_units: number;
   market_rate_units: number;
+  /**
+   * Allocation model. Defaults to "replacement" so legacy configs keep
+   * their existing behaviour (carve affordable out of market).
+   */
+  allocation_mode: AllocationMode;
   density_bonus_pct: number;        // additional density bonus earned
   density_bonus_source: string;     // e.g., "CA SB 1818", "Local IZ ordinance"
   tax_exemption_enabled: boolean;
@@ -140,6 +157,7 @@ interface InitialConfigLoose {
   >;
   total_units?: number;
   market_rate_units?: number;
+  allocation_mode?: AllocationMode;
   density_bonus_pct?: number;
   density_bonus_source?: string;
   tax_exemption_enabled?: boolean;
@@ -463,6 +481,7 @@ export default function AffordabilityPlanner({
     tiers: hydrateTiers(initialConfig?.tiers, buildingUnitMix),
     total_units: initialConfig?.total_units ?? totalUnits,
     market_rate_units: initialConfig?.market_rate_units ?? totalUnits,
+    allocation_mode: initialConfig?.allocation_mode ?? "replacement",
     density_bonus_pct: initialConfig?.density_bonus_pct ?? 0,
     density_bonus_source: initialConfig?.density_bonus_source ?? "",
     tax_exemption_enabled: initialConfig?.tax_exemption_enabled ?? false,
@@ -472,13 +491,32 @@ export default function AffordabilityPlanner({
     notes: initialConfig?.notes ?? "",
   });
 
-  // Update total units when prop changes
+  // Keep total / market-rate in sync when the parent's unit count
+  // changes. The semantics depend on the allocation mode:
+  //   replacement: parent `totalUnits` = market + affordable. Market
+  //                rate is what's left after carving out affordable.
+  //   additive:    parent `totalUnits` already reflects the additive
+  //                total (it counts affordable rows pushed to the unit
+  //                mix). Market baseline = total − affordable.
   useEffect(() => {
-    setConfig((prev) => ({
-      ...prev,
-      total_units: totalUnits,
-      market_rate_units: totalUnits - prev.tiers.reduce((s, t) => s + t.units_count, 0),
-    }));
+    setConfig((prev) => {
+      const affordable = prev.tiers.reduce((s, t) => s + t.units_count, 0);
+      const isAdditive = prev.allocation_mode === "additive";
+      // Parent's `totalUnits` counts every row in unit_groups (market +
+      // affordable). In additive mode we strip the affordable to recover
+      // the market baseline; in replacement mode the total IS the
+      // baseline (affordable rows were carved out of it).
+      const baseline = isAdditive
+        ? Math.max(0, totalUnits - affordable)
+        : totalUnits;
+      return {
+        ...prev,
+        total_units: baseline,
+        market_rate_units: isAdditive
+          ? baseline
+          : Math.max(0, baseline - affordable),
+      };
+    });
   }, [totalUnits]);
 
   // Fetch AMI data
@@ -505,12 +543,21 @@ export default function AffordabilityPlanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Recompute when tiers change
+  // Recompute when tiers change.
+  //
+  // Replacement: market = baseline − affordable (carve-out).
+  // Additive:    market = baseline (affordable stacks on top).
+  //
+  // In both modes `total_units` holds the MARKET-RATE BASELINE so the
+  // math stays consistent as the user toggles between modes.
   function updateConfig(newConfig: Partial<AffordabilityConfig>) {
     setConfig((prev) => {
       const next = { ...prev, ...newConfig };
       const affordableUnits = next.tiers.reduce((s, t) => s + t.units_count, 0);
-      next.market_rate_units = Math.max(0, next.total_units - affordableUnits);
+      next.market_rate_units =
+        next.allocation_mode === "additive"
+          ? next.total_units
+          : Math.max(0, next.total_units - affordableUnits);
       onConfigChange(next);
       return next;
     });
@@ -518,7 +565,11 @@ export default function AffordabilityPlanner({
 
   function addTier(amiPct: number = 60) {
     const rents = getMaxRents(amiPct);
-    const units = Math.round(totalUnits * 0.1);
+    // Size new tiers off the market baseline so additive mode behaves
+    // like replacement (10% of 100-unit baseline = 10 units, regardless
+    // of affordable rows already in the mix).
+    const baseline = config.total_units || totalUnits;
+    const units = Math.round(baseline * 0.1);
     // Seed the new tier's mix from the building's BR distribution when we
     // have it — that's the most common default. Users can rebalance freely.
     const seedMix = buildingUnitMix
@@ -552,7 +603,8 @@ export default function AffordabilityPlanner({
       // If the total target units changed, re-solve the mix so the BR
       // breakdown still sums to the requested total.
       if (changes.units_pct != null) {
-        updated.units_count = Math.round(totalUnits * (updated.units_pct / 100));
+        const baseline = config.total_units || totalUnits;
+        updated.units_count = Math.round(baseline * (updated.units_pct / 100));
         resolveTierMixInPlace(updated, buildingUnitMix);
       }
       // Recompute rents if AMI level changed
@@ -627,9 +679,10 @@ export default function AffordabilityPlanner({
   }
 
   function applyPreset(preset: typeof AMI_PRESETS[0]) {
+    const baseline = config.total_units || totalUnits;
     const tiers: AmiTier[] = preset.tiers.map((p) => {
       const rents = getMaxRents(p.ami);
-      const units = Math.round(totalUnits * (p.pct / 100));
+      const units = Math.round(baseline * (p.pct / 100));
       const seedMix = buildingUnitMix
         ? solveMatchBuilding(units, buildingUnitMix)
         : { studio: 0, one_br: units, two_br: 0, three_br: 0, four_br_plus: 0 };
@@ -705,7 +758,8 @@ export default function AffordabilityPlanner({
           (t) => t.ami_pct === ami_pct && t.units_pct === units_pct
         );
         if (!already) {
-          const units = Math.round(totalUnits * (units_pct / 100));
+          const baseline = prev.total_units || totalUnits;
+          const units = Math.round(baseline * (units_pct / 100));
           const seedMix = buildingUnitMix
             ? solveMatchBuilding(units, buildingUnitMix)
             : { studio: 0, one_br: units, two_br: 0, three_br: 0, four_br_plus: 0 };
@@ -762,10 +816,13 @@ export default function AffordabilityPlanner({
         tax_exemption_pct: nextTaxPct,
         tax_exemption_years: nextTaxYears,
         tax_exemption_type: nextTaxType,
-        market_rate_units: Math.max(
-          0,
-          prev.total_units - nextTiers.reduce((s, t) => s + t.units_count, 0)
-        ),
+        market_rate_units:
+          prev.allocation_mode === "additive"
+            ? prev.total_units
+            : Math.max(
+                0,
+                prev.total_units - nextTiers.reduce((s, t) => s + t.units_count, 0)
+              ),
       };
       onConfigChange(next);
       return next;
@@ -945,7 +1002,13 @@ export default function AffordabilityPlanner({
 
   // Revenue impact calculations
   const affordableUnits = config.tiers.reduce((s, t) => s + t.units_count, 0);
-  const affordablePct = totalUnits > 0 ? (affordableUnits / totalUnits) * 100 : 0;
+  // Show affordable share against the final project size. In additive
+  // mode the final size is baseline + affordable, not just baseline.
+  const affordablePctDenom =
+    config.allocation_mode === "additive"
+      ? config.total_units + affordableUnits
+      : config.total_units || totalUnits;
+  const affordablePct = affordablePctDenom > 0 ? (affordableUnits / affordablePctDenom) * 100 : 0;
 
   const affordableAnnualRevenue = config.tiers.reduce(
     (s, t) => s + tierAnnualRevenue(t),
@@ -957,17 +1020,24 @@ export default function AffordabilityPlanner({
 
   // Revenue comparison — market-rate units at avg market rent, affordable
   // units at their actual per-BR mix (no more 2BR-proxy approximation).
-  const marketGPR = totalUnits * avgMarketRent * 12;
+  // projectTotal == the project's final unit count:
+  //   replacement: == config.total_units (total is fixed; affordable carves in)
+  //   additive:    == config.total_units + affordableUnits (affordable on top)
+  // Using projectTotal keeps the "what if everything were market rate?"
+  // comparison stable before and after the split is pushed to unit mix.
+  const projectTotal =
+    config.allocation_mode === "additive"
+      ? config.total_units + affordableUnits
+      : config.total_units;
+  const marketGPR = projectTotal * avgMarketRent * 12;
   const blendedGPR =
     config.market_rate_units * avgMarketRent * 12 + affordableAnnualRevenue;
   const revenueImpact = marketGPR - blendedGPR;
   const revenueImpactPct = marketGPR > 0 ? (revenueImpact / marketGPR) * 100 : 0;
 
-  // Tax savings — pro-rata by unit count
-  // Example: 100 units total, 20 affordable, $100k total taxes, 100% exemption
-  //          → (20/100) × $100k × 100% = $20k savings
-  const taxSavings = config.tax_exemption_enabled && totalUnits > 0
-    ? (affordableUnits / totalUnits) * currentTaxes * (config.tax_exemption_pct / 100)
+  // Tax savings — pro-rata by unit count (affordable share of final project)
+  const taxSavings = config.tax_exemption_enabled && projectTotal > 0
+    ? (affordableUnits / projectTotal) * currentTaxes * (config.tax_exemption_pct / 100)
     : 0;
 
   return (
@@ -998,6 +1068,69 @@ export default function AffordabilityPlanner({
 
       {open && (
         <div className="px-5 py-4 space-y-4">
+          {/* Allocation mode — jurisdictional model. Replacement is the
+              default (most US inclusionary zoning: NYC MIH, CA local IZ,
+              Boston IDP). Additive covers density-bonus programs where
+              affordable units are added ON TOP of the market baseline
+              (CA State Density Bonus Law, NYC Voluntary IH w/ bonus,
+              MA 40B). Picking the wrong model makes the unit math lie.
+              Editable on the type / full surface; read-only on the mix
+              surface (Underwriting) — the analyst picks the model in
+              Programming. */}
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+              Allocation Model
+            </div>
+            {showTypeControls ? (
+              <div className="flex gap-1.5">
+                {(
+                  [
+                    {
+                      value: "replacement" as const,
+                      label: "Replacement",
+                      help: "Affordable carves out of market. Total unit count stays fixed. Typical IZ (NYC MIH, CA local IZ, Boston IDP).",
+                    },
+                    {
+                      value: "additive" as const,
+                      label: "Additive (Density Bonus)",
+                      help: "Affordable adds on top of market. Total grows by sum of affordable. CA State Density Bonus Law, NYC Voluntary IH w/ bonus, MA 40B.",
+                    },
+                  ]
+                ).map((opt) => {
+                  const active = config.allocation_mode === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      title={opt.help}
+                      onClick={() => updateConfig({ allocation_mode: opt.value })}
+                      className={
+                        "text-[10px] px-2.5 py-1 rounded-full border transition-colors " +
+                        (active
+                          ? "border-primary/50 bg-primary/10 text-foreground"
+                          : "border-border/40 text-muted-foreground hover:text-foreground hover:border-primary/30")
+                      }
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                {config.allocation_mode === "additive"
+                  ? "Additive (Density Bonus)"
+                  : "Replacement"}
+                <span className="text-muted-foreground/60"> — set in Programming</span>
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground/70 mt-1.5">
+              {config.allocation_mode === "additive"
+                ? `Affordable units add on top of the ${config.total_units}-unit market baseline → project total ${config.total_units + affordableUnits}.`
+                : `Affordable units carve out of the ${config.total_units}-unit project → ${config.market_rate_units} market + ${affordableUnits} affordable.`}
+            </p>
+          </div>
+
+
           {/* AMI info */}
           {ami ? (
             <div className="flex items-center gap-3 p-2.5 rounded-lg bg-primary/5 border border-primary/20 text-xs">
