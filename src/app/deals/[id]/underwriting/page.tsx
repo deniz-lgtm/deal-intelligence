@@ -4657,6 +4657,44 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       <div className={tabCls("returns")}>
       <Section title="Exit Analysis" icon={<RefreshCw className="h-4 w-4 text-teal-600" />}>
+        {(() => {
+          // Blended exit cap = NOI-weighted harmonic mean of the
+          // per-component cap rates. Uses component sf_allocation as the
+          // NOI-share proxy (per-component NOI isn't separately tracked
+          // on the UW blob today). The harmonic form is the valuation-
+          // correct one: applying the blended cap to total NOI reproduces
+          // the sum of each component's NOI-share ÷ its own cap — i.e.
+          // the exit value you'd get by appraising each component on its
+          // own yield and summing. Non-mixed-use (or single-component)
+          // deals fall through to the analyst-entered rate below.
+          const comps = (d.mixed_use?.components || []).filter(
+            (c) => c.cap_rate > 0 && c.sf_allocation > 0,
+          );
+          if (!d.mixed_use?.enabled || comps.length < 2) return null;
+          const totalSF = comps.reduce((s, c) => s + c.sf_allocation, 0);
+          if (totalSF <= 0) return null;
+          const denom = comps.reduce((s, c) => s + c.sf_allocation / (c.cap_rate / 100), 0);
+          const blended = denom > 0 ? (totalSF / denom) : 0;
+          if (!blended || Math.abs(blended - d.exit_cap_rate) < 0.01) return null;
+          return (
+            <div className="mb-3 flex items-center gap-2 p-2 rounded-md bg-teal-500/10 border border-teal-500/30 text-xs">
+              <RefreshCw className="h-3.5 w-3.5 text-teal-400 shrink-0" />
+              <span className="text-teal-200">
+                Blended exit cap from per-component rates:{" "}
+                <span className="font-semibold tabular-nums">{blended.toFixed(2)}%</span>
+                <span className="text-muted-foreground ml-1">
+                  (weighted by NOI share, approximated by SF)
+                </span>
+              </span>
+              <button
+                onClick={() => set("exit_cap_rate", Number(blended.toFixed(2)))}
+                className="ml-auto px-2 py-0.5 rounded border border-teal-500/40 text-teal-200 hover:bg-teal-500/20 transition-colors text-[11px] font-medium shrink-0"
+              >
+                Apply
+              </button>
+            </div>
+          );
+        })()}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
           <NumInput label="Exit Cap Rate" value={d.exit_cap_rate} onChange={v => set("exit_cap_rate", v)} suffix="%" decimals={2} />
           <NumInput label="Hold Period" value={d.hold_period_years} onChange={v => set("hold_period_years", v)} suffix="yrs" />
@@ -4675,10 +4713,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         </div>
 
-        {/* Per-component cap rates (formerly on the Mixed-Use Section). The
-            primary "Exit Cap Rate" above still drives the single-property
-            valuation; per-component rates let analysts track different
-            yields by use type for their own memos / waterfalls. */}
+        {/* Per-component cap rates (formerly on the Mixed-Use Section).
+            Edit these and the blended-cap banner above surfaces the
+            weighted rate; click "Apply" there to push it into the
+            primary Exit Cap Rate that drives valuation. Leaving caps
+            different per component (without applying) is still fine —
+            analysts sometimes want the blended display but a hand-set
+            top-level rate for sensitivities. */}
         {d.mixed_use?.enabled && (d.mixed_use?.components?.length ?? 0) > 0 && (
           <div className="mt-4 border-t pt-3">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
