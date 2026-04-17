@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries, compQueries, submarketMetricsQueries, locationIntelligenceQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import {
+  buildUnderwritingSummary,
+  buildOmSummary,
+  buildMarketSummary,
+} from "@/lib/deal-analytics-context";
 
 const MODEL = "claude-sonnet-4-6";
 let _client: Anthropic | null = null;
@@ -102,8 +107,30 @@ export async function POST(
     const n = (v: unknown) => typeof v === "number" ? v : 0;
     const fc = (v: number) => `$${Math.round(v).toLocaleString()}`;
 
-    // Build master deal context
-    const dealContext = buildDealContext(deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, businessPlan as AnyRecord | null);
+    // Pull analyst deal notes so they can flow into the UW summary (thesis,
+    // risk, context buckets) instead of only landing in the section prompts.
+    const allDealNotes = await dealNoteQueries.getByDealId(params.id) as Array<{ text: string; category: string }>;
+
+    // Build the full computed UW / OM / market analytics blocks ONCE so
+    // every section prompt sees the same NOI, cap rate, yield on cost,
+    // DSCR, debt yield, loss-to-lease, OpEx build, comp-set averages, and
+    // submarket demographics. Previously the investment-package prompts
+    // only saw raw inputs and had to re-derive returns themselves, which
+    // the model did inconsistently section-to-section.
+    const uwSummary = buildUnderwritingSummary(uw, deal, allDealNotes);
+    const omSummary = buildOmSummary(omAnalysis);
+    const marketSummary = buildMarketSummary(
+      submarketMetrics as AnyRecord | null,
+      compsAll as AnyRecord[],
+      locationIntelRows as AnyRecord[]
+    );
+
+    // Build master deal context — now enriched with full UW + OM + market.
+    const dealContext = buildDealContext(
+      deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[],
+      photos, businessPlan as AnyRecord | null,
+      uwSummary, omSummary, marketSummary
+    );
 
     // Build per-section context
     const sectionContexts: Record<string, string> = {};
@@ -277,7 +304,18 @@ function summarizeSiteAndMassing(uw: AnyRecord | null): string {
   return lines.join("\n");
 }
 
-function buildDealContext(deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord | null, docs: AnyRecord[], checklist: AnyRecord[], photos: AnyRecord[], bp: AnyRecord | null): string {
+function buildDealContext(
+  deal: AnyRecord,
+  uw: AnyRecord | null,
+  om: AnyRecord | null,
+  docs: AnyRecord[],
+  checklist: AnyRecord[],
+  photos: AnyRecord[],
+  bp: AnyRecord | null,
+  uwSummary?: string,
+  omSummary?: string,
+  marketSummary?: string
+): string {
   const lines: string[] = [];
   lines.push(`Deal: ${deal.name}`);
   lines.push(`Address: ${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}`);
@@ -304,10 +342,24 @@ function buildDealContext(deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord |
     lines.push(bpLines.join("\n"));
   }
 
-  if (uw?.purchase_price) lines.push(`Purchase Price: $${Number(uw.purchase_price).toLocaleString()}`);
-  if (om?.summary) lines.push(`OM Summary: ${om.summary}`);
-  if (deal.context_notes) lines.push(`Analyst Notes: ${deal.context_notes}`);
+  if (deal.context_notes) lines.push(`\nAnalyst Memory: ${deal.context_notes}`);
   lines.push(`Documents: ${docs.length} uploaded | Photos: ${photos.length} | Checklist: ${checklist.length} items`);
+
+  // Full computed underwriting (stabilized NOI, cap rate, yield on cost,
+  // exit value, DSCR, debt yield, loss-to-lease, per-unit basis). Every
+  // section prompt receives this so sections like exec_summary and
+  // returns_analysis can cite the actual model outputs instead of trying
+  // to re-derive them from scratch.
+  if (uwSummary) lines.push(`\n━━━ INTERNAL UNDERWRITING MODEL ━━━\n${uwSummary}`);
+
+  // Seller's representations from the OM — useful for highlighting any
+  // delta between pitched metrics and our internal view.
+  if (omSummary) lines.push(`\n━━━ OM ANALYSIS (SELLER'S REPRESENTATIONS) ━━━\n${omSummary}`);
+
+  // Submarket metrics + sale / rent comp averages + demographics + growth
+  // projections, so sections (location_market, exec_summary, exit_strategy,
+  // risk_factors) can contextualize the deal against the actual market.
+  if (marketSummary) lines.push(`\n━━━ MARKET & SUBMARKET CONTEXT ━━━\n${marketSummary}`);
 
   return lines.join("\n");
 }
