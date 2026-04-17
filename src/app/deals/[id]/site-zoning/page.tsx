@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/dialog";
 import { useViewMode } from "@/lib/use-view-mode";
 import ViewModeToggle from "@/components/ViewModeToggle";
+import type { Document } from "@/lib/types";
+import { DocCoverageChip } from "@/components/ai";
 import type {
   SitePlan as SitePlanType,
   SitePlanScenario as SitePlanScenarioType,
@@ -429,6 +431,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [documents, setDocuments] = useState<Document[]>([]);
   const [deal, setDeal] = useState<any>(null);
 
   const [siteInfo, setSiteInfo] = useState<SiteInfo>(DEFAULT_SITE_INFO);
@@ -715,6 +718,16 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     return () => clearTimeout(t);
   }, [dirty, loading, saveAll]);
 
+  // Load documents so the <DocCoverageChip> next to the zoning report
+  // button can surface whether zoning letters / entitlement docs back
+  // the run vs. it being pure-AI inference from the address.
+  useEffect(() => {
+    fetch(`/api/deals/${params.id}/documents`)
+      .then((r) => r.json())
+      .then((j) => setDocuments(j.data || []))
+      .catch(() => {});
+  }, [params.id]);
+
   // ── AI Zoning Report ───────────────────────────────────────────────────
   const runZoningReport = async () => {
     setGenerating(true);
@@ -983,10 +996,13 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             </Button>
           )}
           {!isBasic && (
-            <Button variant="outline" size="sm" onClick={runZoningReport} disabled={generating}>
-              {generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
-              {narrative ? "Refresh AI Report" : "Run AI Zoning Report"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={runZoningReport} disabled={generating}>
+                {generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                {narrative ? "Refresh AI Report" : "Run AI Zoning Report"}
+              </Button>
+              <DocCoverageChip documents={documents} section="zoning" />
+            </div>
           )}
           <Button size="sm" onClick={saveAll} disabled={saving || !dirty}>
             {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
