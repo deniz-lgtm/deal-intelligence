@@ -592,7 +592,7 @@ function defaultLeaseUp(): LeaseUpConfig {
 }
 
 function defaultConstructionLoan(): ConstructionLoanConfig {
-  return { ltc_pct: 65, rate: 7.5, term_months: 24, draw_schedule: [] };
+  return { ltc_pct: 65, rate: 7.5, term_months: 24, draw_curve: "s_curve", draw_std_dev_months: 6, draw_schedule: [] };
 }
 
 function newMixedUseComponent(type: MixedUseComponentType): MixedUseComponent {
@@ -723,6 +723,53 @@ function annualPayment(principal: number, rate: number, years: number): number {
   if (rate === 0) return principal / years;  // 0% interest: straight principal paydown
   const r = rate / 100 / 12, n = years * 12;
   return (principal * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1)) * 12;
+}
+
+// Cumulative draw % schedule (length = term_months). Default "s_curve"
+// generates a bell-curve monthly draw (Gaussian centered at mid-term with
+// σ = draw_std_dev_months). Its cumulative is the S-curve construction
+// projects actually follow. "linear" = equal tranches. "custom" = honor
+// the explicit draw_schedule array.
+function buildCumulativeDrawSchedule(cl: ConstructionLoanConfig): number[] {
+  const n = Math.max(0, Math.floor(cl.term_months || 0));
+  if (n === 0) return [];
+  const curve = cl.draw_curve ?? (cl.draw_schedule?.length ? "custom" : "s_curve");
+  if (curve === "custom" && cl.draw_schedule && cl.draw_schedule.length > 0) {
+    const out: number[] = [];
+    let last = 0;
+    for (let m = 1; m <= n; m++) {
+      const draw = cl.draw_schedule.find(dp => dp.month === m);
+      if (draw) last = draw.cumulative_pct;
+      else {
+        const prior = cl.draw_schedule.filter(dp => dp.month <= m).pop();
+        if (prior) last = prior.cumulative_pct;
+      }
+      out.push(last);
+    }
+    return out;
+  }
+  if (curve === "linear") {
+    const out: number[] = [];
+    for (let m = 1; m <= n; m++) out.push((m / n) * 100);
+    return out;
+  }
+  const mean = (n + 1) / 2;
+  const sigma = Math.max(0.5, cl.draw_std_dev_months ?? n / 4);
+  const weights: number[] = [];
+  let total = 0;
+  for (let m = 1; m <= n; m++) {
+    const z = (m - mean) / sigma;
+    const w = Math.exp(-0.5 * z * z);
+    weights.push(w);
+    total += w;
+  }
+  const out: number[] = [];
+  let cum = 0;
+  for (let m = 0; m < n; m++) {
+    cum += (weights[m] / total) * 100;
+    out.push(cum);
+  }
+  return out;
 }
 
 /**
@@ -938,29 +985,30 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const totalHardCosts = d.development_mode
     ? (hasItemizedBudget ? itemizedHardBase : d.hard_cost_per_sf * (d.max_gsf || 0))
     : 0;
-  const softCostsTotal = d.development_mode
+  const softCostsBase = d.development_mode
     ? (hasItemizedBudget ? itemizedSoftBase : totalHardCosts * (d.soft_cost_pct / 100))
     : 0;
 
-  // Construction interest carry
+  // Construction interest carry — the Construction-Acquisition Loan
+  // funds both land takedown and improvements as one facility, so cap
+  // interest uses the acq loan's rate + LTC. The draw curve defaults to
+  // an S-curve (bell per-month, S-shape cumulative).
   let capitalizedInterest = 0;
   const cl = d.construction_loan;
-  if (d.development_mode && cl && cl.rate > 0 && cl.term_months > 0) {
-    const totalBudget = totalHardCosts + softCostsTotal + (d.development_mode ? totalParkingCost : 0);
-    const loanAmount = totalBudget * (cl.ltc_pct / 100);
-    const monthlyRate = cl.rate / 100 / 12;
-    if (cl.draw_schedule.length > 0) {
-      // Use explicit draw schedule
-      for (let m = 1; m <= cl.term_months; m++) {
-        const draw = cl.draw_schedule.find(dp => dp.month === m);
-        const cumPct = draw ? draw.cumulative_pct / 100 : (cl.draw_schedule.filter(dp => dp.month <= m).pop()?.cumulative_pct || 0) / 100;
-        capitalizedInterest += loanAmount * cumPct * monthlyRate;
-      }
-    } else {
-      // Linear draw: average 50% outstanding
-      capitalizedInterest = loanAmount * 0.5 * monthlyRate * cl.term_months;
+  if (d.development_mode && cl && cl.term_months > 0 && d.acq_interest_rate > 0 && d.has_financing) {
+    const totalBudget = totalHardCosts + softCostsBase + totalParkingCost;
+    const ltc = d.acq_pp_ltv ?? d.acq_ltc ?? 0;
+    const loanAmount = totalBudget * (ltc / 100);
+    const monthlyRate = d.acq_interest_rate / 100 / 12;
+    const cumPcts = buildCumulativeDrawSchedule(cl);
+    for (let mo = 1; mo <= cl.term_months; mo++) {
+      capitalizedInterest += loanAmount * ((cumPcts[mo - 1] || 0) / 100) * monthlyRate;
     }
   }
+
+  // Roll cap interest into soft costs so the dev budget footer matches
+  // the "Construction Interest Carry" line shown in the soft-costs table.
+  const softCostsTotal = softCostsBase + capitalizedInterest;
 
   // Redevelopment costs
   const redev = d.redevelopment;
@@ -970,7 +1018,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   let closingCosts: number, totalCost: number;
   if (d.development_mode) {
     closingCosts = d.land_cost * (d.closing_costs_pct / 100);
-    totalCost = d.land_cost + totalHardCosts + softCostsTotal + totalParkingCost + capitalizedInterest + closingCosts + demolitionCosts;
+    totalCost = d.land_cost + totalHardCosts + softCostsTotal + totalParkingCost + closingCosts + demolitionCosts;
   } else {
     closingCosts = d.purchase_price * (d.closing_costs_pct / 100);
     totalCost = d.purchase_price + closingCosts + capexTotal;
@@ -3639,9 +3687,17 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <tbody>
                         <tr><td className="py-1">Land Acquisition</td><td className="text-right tabular-nums">{fc(d.land_cost)}</td></tr>
                         <tr><td className="py-1">Total Hard Costs</td><td className="text-right tabular-nums">{fc(m.totalHardCosts)}</td></tr>
-                        <tr><td className="py-1">Total Soft Costs</td><td className="text-right tabular-nums">{fc(m.softCostsTotal)}</td></tr>
+                        <tr>
+                          <td className="py-1">Total Soft Costs</td>
+                          <td className="text-right tabular-nums">{fc(m.softCostsTotal)}</td>
+                        </tr>
+                        {m.capitalizedInterest > 0 && (
+                          <tr className="text-muted-foreground text-xs">
+                            <td className="py-0.5 pl-3">↳ incl. Capitalized Interest</td>
+                            <td className="text-right tabular-nums">{fc(m.capitalizedInterest)}</td>
+                          </tr>
+                        )}
                         {m.totalParkingCost > 0 && <tr><td className="py-1">Parking Structure</td><td className="text-right tabular-nums">{fc(m.totalParkingCost)}</td></tr>}
-                        {m.capitalizedInterest > 0 && <tr><td className="py-1">Capitalized Interest</td><td className="text-right tabular-nums">{fc(m.capitalizedInterest)}</td></tr>}
                         {m.demolitionCosts > 0 && <tr><td className="py-1">Demolition / Abatement</td><td className="text-right tabular-nums">{fc(m.demolitionCosts)}</td></tr>}
                         <tr><td className="py-1">Closing Costs</td><td className="text-right tabular-nums">{fc(m.closingCosts)}</td></tr>
                         <tr className="border-t font-semibold text-base">
@@ -4534,35 +4590,74 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       )}
       </div>
 
-      {/* ═══════════════════ CONSTRUCTION FINANCING ═══════════════════
-          Hidden in Basic — analysts running back-of-envelope numbers
-          can use the simpler Acquisition Financing block below; the
-          construction loan modeling is for dialed-in ground-up UWs. */}
+      {/* ═══════════════════ CONSTRUCTION PERIOD ═══════════════════
+          For ground-up deals the construction loan and acquisition loan
+          are the same facility — see the Construction-Acquisition Loan
+          section below. This block captures the construction timeline
+          (term + draws) that drives capitalized interest. */}
       <div className={tabCls("capital")}>
       {!isBasic && isGroundUp && (
-      <Section title="Construction Financing" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
+      <Section title="Construction Period" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
         <div className="mt-3">
           {(() => {
             const cl = d.construction_loan || defaultConstructionLoan();
             const setCL = (upd: Partial<ConstructionLoanConfig>) => setData(p => ({ ...p, construction_loan: { ...(p.construction_loan || defaultConstructionLoan()), ...upd } }));
-            const loanAmt = m.totalCost * (cl.ltc_pct / 100);
-            const monthlyRate = cl.rate / 100 / 12;
-            const avgInterest = loanAmt * 0.5 * monthlyRate * cl.term_months;
+            const ltc = d.acq_pp_ltv ?? d.acq_ltc ?? 0;
+            const loanAmt = m.totalCost * (ltc / 100);
+            const curve = cl.draw_curve ?? (cl.draw_schedule?.length ? "custom" : "s_curve");
+            const defaultSigma = Math.max(1, Math.round((cl.term_months || 24) / 4));
+            const sigma = cl.draw_std_dev_months ?? defaultSigma;
+            const cumPcts = buildCumulativeDrawSchedule({ ...cl, draw_curve: curve, draw_std_dev_months: sigma });
+            // Peak monthly draw %, for the UI to give a feel of the ramp.
+            let peakMonthPct = 0, peakMonth = 0;
+            for (let i = 0; i < cumPcts.length; i++) {
+              const monthly = cumPcts[i] - (i === 0 ? 0 : cumPcts[i - 1]);
+              if (monthly > peakMonthPct) { peakMonthPct = monthly; peakMonth = i + 1; }
+            }
             return (
               <>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                  <NumInput label="Loan-to-Cost (LTC)" value={cl.ltc_pct} onChange={v => setCL({ ltc_pct: v })} suffix="%" decimals={1} />
-                  <NumInput label="Interest Rate" value={cl.rate} onChange={v => setCL({ rate: v })} suffix="%" decimals={2} />
                   <NumInput label="Term (months)" value={cl.term_months} onChange={v => setCL({ term_months: v })} />
                   <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Draw Curve</label>
+                    <select
+                      value={curve}
+                      onChange={e => setCL({ draw_curve: e.target.value as "s_curve" | "linear" | "custom" })}
+                      className="w-full h-8 rounded-md border bg-background px-2 text-sm"
+                    >
+                      <option value="s_curve">S-Curve (Bell)</option>
+                      <option value="linear">Linear</option>
+                      <option value="custom">Custom Schedule</option>
+                    </select>
+                  </div>
+                  {curve === "s_curve" && (
+                    <NumInput
+                      label="Bell Width (σ, months)"
+                      value={sigma}
+                      onChange={v => setCL({ draw_std_dev_months: v })}
+                      decimals={1}
+                    />
+                  )}
+                  <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">Loan Amount</label>
-                    <p className="text-sm font-semibold py-1.5">{fc(loanAmt)}</p>
+                    <p className="text-sm font-semibold py-1.5">{d.has_financing ? fc(loanAmt) : "—"}</p>
                   </div>
                 </div>
                 <div className="border rounded-md bg-muted/10 p-3 text-sm space-y-1">
-                  <div className="flex justify-between"><span>Estimated Capitalized Interest (avg 50% draw)</span><span className="font-semibold tabular-nums">{fc(avgInterest)}</span></div>
-                  <div className="flex justify-between"><span>Computed Cap. Interest (from calc)</span><span className="font-semibold tabular-nums text-primary">{fc(m.capitalizedInterest)}</span></div>
-                  <p className="text-xs text-muted-foreground mt-1">Interest carry is auto-included in the Development Budget soft costs and total project cost.</p>
+                  <div className="flex justify-between"><span>Loan Rate (from Construction-Acquisition Loan)</span><span className="font-semibold tabular-nums">{d.has_financing ? `${(d.acq_interest_rate || 0).toFixed(2)}%` : "—"}</span></div>
+                  <div className="flex justify-between"><span>Loan-to-Cost (from Construction-Acquisition Loan)</span><span className="font-semibold tabular-nums">{d.has_financing ? `${ltc.toFixed(1)}%` : "—"}</span></div>
+                  {curve === "s_curve" && peakMonthPct > 0 && (
+                    <div className="flex justify-between"><span>Peak Draw (month {peakMonth})</span><span className="font-semibold tabular-nums">{peakMonthPct.toFixed(1)}% / mo</span></div>
+                  )}
+                  <div className="flex justify-between border-t pt-1 mt-1"><span>Computed Capitalized Interest</span><span className="font-semibold tabular-nums text-primary">{fc(m.capitalizedInterest)}</span></div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {curve === "s_curve"
+                      ? "Monthly draws follow a bell curve centered at mid-term. Lower σ = steeper ramp, higher σ = flatter / more spread out."
+                      : curve === "linear"
+                        ? "Equal monthly draws over the construction period."
+                        : "Uses the explicit draw_schedule array. Edit data to override."}
+                    {" "}Interest carry is auto-included in Soft Costs &amp; total project cost.
+                  </p>
                 </div>
               </>
             );
@@ -4571,13 +4666,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </Section>
       )}
 
-      <Section title="Financing" icon={<TrendingUp className="h-4 w-4 text-purple-400" />}>
+      <Section title={isGroundUp ? "Construction-Acquisition Loan" : "Financing"} icon={<TrendingUp className="h-4 w-4 text-purple-400" />}>
         <div className="mt-3 space-y-5">
           <div>
             <div className="flex items-center justify-between mb-3">
               <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold">
                 <input type="checkbox" checked={d.has_financing} onChange={e => set("has_financing", e.target.checked)} className="rounded" />
-                Acquisition Loan
+                {isGroundUp ? "Construction-Acquisition Loan" : "Acquisition Loan"}
               </label>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={estimateLoan} disabled={loanSizing}>
@@ -4589,8 +4684,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </div>
             {d.has_financing && (<>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <NumInput label="Purchase Price LTV" value={d.acq_pp_ltv} onChange={v => set("acq_pp_ltv", v)} suffix="%" decimals={1} />
-                <NumInput label="CapEx LTV" value={d.acq_capex_ltv} onChange={v => set("acq_capex_ltv", v)} suffix="%" decimals={1} />
+                <NumInput label={isGroundUp ? "Loan-to-Cost" : "Purchase Price LTV"} value={d.acq_pp_ltv} onChange={v => set("acq_pp_ltv", v)} suffix="%" decimals={1} />
+                {!isGroundUp && <NumInput label="CapEx LTV" value={d.acq_capex_ltv} onChange={v => set("acq_capex_ltv", v)} suffix="%" decimals={1} />}
                 <NumInput label="Interest Rate" value={d.acq_interest_rate} onChange={v => set("acq_interest_rate", v)} suffix="%" decimals={3} />
                 <div className="p-3 bg-primary/5 rounded-lg border border-primary/15">
                   <p className="text-xs text-muted-foreground mb-1">Blended LTC</p>

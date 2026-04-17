@@ -240,6 +240,57 @@ export function getDefaultsForPropertyType(propertyType: string | undefined): UW
 
 export function ipOr(ip: number, _pf: number): number { return ip || 0; }
 
+// Generate a cumulative-draw % schedule (length = term_months) for a
+// construction loan. Default is an S-curve: per-month draws are sampled
+// from a Gaussian centered at mid-term with σ = draw_std_dev_months
+// (defaults to term / 4). The *cumulative* of those draws is the S-curve
+// that real construction projects follow — slow start, ramp through the
+// middle, slow tail. "linear" draws equal monthly tranches. "custom" uses
+// the explicit draw_schedule array (falling back to the Gaussian if empty).
+export function buildCumulativeDrawSchedule(cl: ConstructionLoanConfig): number[] {
+  const n = Math.max(0, Math.floor(cl.term_months || 0));
+  if (n === 0) return [];
+  // Back-compat: if no curve is set but an explicit schedule exists, honor it.
+  const curve = cl.draw_curve ?? (cl.draw_schedule?.length ? "custom" : "s_curve");
+  if (curve === "custom" && cl.draw_schedule && cl.draw_schedule.length > 0) {
+    const out: number[] = [];
+    let last = 0;
+    for (let m = 1; m <= n; m++) {
+      const draw = cl.draw_schedule.find(dp => dp.month === m);
+      if (draw) last = draw.cumulative_pct;
+      else {
+        const prior = cl.draw_schedule.filter(dp => dp.month <= m).pop();
+        if (prior) last = prior.cumulative_pct;
+      }
+      out.push(last);
+    }
+    return out;
+  }
+  if (curve === "linear") {
+    const out: number[] = [];
+    for (let m = 1; m <= n; m++) out.push((m / n) * 100);
+    return out;
+  }
+  // s_curve (default): Gaussian monthly draws → cumulative is an S.
+  const mean = (n + 1) / 2;
+  const sigma = Math.max(0.5, cl.draw_std_dev_months ?? n / 4);
+  const weights: number[] = [];
+  let total = 0;
+  for (let m = 1; m <= n; m++) {
+    const z = (m - mean) / sigma;
+    const w = Math.exp(-0.5 * z * z);
+    weights.push(w);
+    total += w;
+  }
+  const out: number[] = [];
+  let cum = 0;
+  for (let m = 0; m < n; m++) {
+    cum += (weights[m] / total) * 100;
+    out.push(cum);
+  }
+  return out;
+}
+
 export function annualPayment(principal: number, rate: number, years: number): number {
   if (principal <= 0 || rate === 0) return principal > 0 ? principal / years : 0;
   const r = rate / 100 / 12, n = years * 12;
@@ -384,26 +435,30 @@ export function calc(d: UWData, mode: "commercial" | "multifamily" | "student_ho
   const totalHardCosts = d.development_mode
     ? (hasItemizedBudget ? itemizedHardBase : d.hard_cost_per_sf * (d.max_gsf || 0))
     : 0;
-  const softCostsTotal = d.development_mode
+  const softCostsBase = d.development_mode
     ? (hasItemizedBudget ? itemizedSoftBase : totalHardCosts * (d.soft_cost_pct / 100))
     : 0;
 
   let capitalizedInterest = 0;
   const cl = d.construction_loan;
-  if (d.development_mode && cl && cl.rate > 0 && cl.term_months > 0) {
-    const totalBudget = totalHardCosts + softCostsTotal + (d.development_mode ? totalParkingCost : 0);
-    const loanAmount = totalBudget * (cl.ltc_pct / 100);
-    const monthlyRate = cl.rate / 100 / 12;
-    if (cl.draw_schedule.length > 0) {
-      for (let m = 1; m <= cl.term_months; m++) {
-        const draw = cl.draw_schedule.find(dp => dp.month === m);
-        const cumPct = draw ? draw.cumulative_pct / 100 : (cl.draw_schedule.filter(dp => dp.month <= m).pop()?.cumulative_pct || 0) / 100;
-        capitalizedInterest += loanAmount * cumPct * monthlyRate;
-      }
-    } else {
-      capitalizedInterest = loanAmount * 0.5 * monthlyRate * cl.term_months;
+  // Construction-Acquisition Loan: in ground-up deals the acquisition loan IS the
+  // construction loan — it takes down the land and funds improvements as one
+  // facility. We use the acq loan's rate and LTC for capitalized interest during
+  // the construction period; construction_loan now only carries the draw profile.
+  if (d.development_mode && cl && cl.term_months > 0 && d.acq_interest_rate > 0 && d.has_financing) {
+    const totalBudget = totalHardCosts + softCostsBase + totalParkingCost;
+    const ltc = d.acq_pp_ltv ?? d.acq_ltc ?? 0;
+    const loanAmount = totalBudget * (ltc / 100);
+    const monthlyRate = d.acq_interest_rate / 100 / 12;
+    const cumPcts = buildCumulativeDrawSchedule(cl);
+    for (let m = 1; m <= cl.term_months; m++) {
+      capitalizedInterest += loanAmount * (cumPcts[m - 1] / 100) * monthlyRate;
     }
   }
+
+  // Roll cap interest into soft costs so the dev budget totals match the
+  // "Construction Interest Carry" line shown in the UI.
+  const softCostsTotal = softCostsBase + capitalizedInterest;
 
   const redev = d.redevelopment;
   const demolitionCosts = redev?.enabled ? (redev.demolition_items || []).reduce((s, i) => s + i.amount, 0) : 0;
@@ -412,7 +467,7 @@ export function calc(d: UWData, mode: "commercial" | "multifamily" | "student_ho
   let closingCosts: number, totalCost: number;
   if (d.development_mode) {
     closingCosts = d.land_cost * (d.closing_costs_pct / 100);
-    totalCost = d.land_cost + totalHardCosts + softCostsTotal + totalParkingCost + capitalizedInterest + closingCosts + demolitionCosts;
+    totalCost = d.land_cost + totalHardCosts + softCostsTotal + totalParkingCost + closingCosts + demolitionCosts;
   } else {
     closingCosts = d.purchase_price * (d.closing_costs_pct / 100);
     totalCost = d.purchase_price + closingCosts + capexTotal;
