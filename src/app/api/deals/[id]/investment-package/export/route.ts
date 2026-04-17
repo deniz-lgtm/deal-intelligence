@@ -61,10 +61,25 @@ export async function POST(
     const TEXT = "1E293B";
     const MUTED = "64748B";
 
+    // Pre-compute the list of sections with meaningful content so the TOC
+    // and page numbers line up with what actually renders.
+    const renderableSections = sections.filter(
+      (s) => s.generatedContent || s.notes.filter(n => n.text?.trim()).length > 0
+    );
+
     // --- Cover Slide ---
     const cover = pptx.addSlide();
     cover.background = { color: PRIMARY };
-    cover.addText("INVESTMENT PACKAGE", {
+
+    // Confidentiality strip (top-left, institutional convention)
+    cover.addText("STRICTLY CONFIDENTIAL", {
+      x: 0.8, y: 0.5, w: 5, h: 0.3,
+      fontSize: 10, color: "FF7A7A",
+      fontFace: headerFont, bold: true,
+      charSpacing: 8,
+    });
+
+    cover.addText("INVESTMENT COMMITTEE MATERIALS", {
       x: 0.8, y: 1.5, w: 11.5, h: 0.6,
       fontSize: 14, color: "94A3B8",
       fontFace: headerFont, bold: false,
@@ -75,13 +90,13 @@ export async function POST(
       fontSize: 36, color: "FFFFFF",
       fontFace: headerFont, bold: true,
     });
-    cover.addText(new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" }), {
+    cover.addShape(pptx.ShapeType.rect, {
+      x: 0.8, y: 3.2, w: 2, h: 0.04, fill: { color: ACCENT },
+    });
+    cover.addText(new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }), {
       x: 0.8, y: 3.5, w: 11.5, h: 0.4,
       fontSize: 14, color: "94A3B8",
       fontFace: headerFont,
-    });
-    cover.addShape(pptx.ShapeType.rect, {
-      x: 0.8, y: 3.2, w: 2, h: 0.04, fill: { color: ACCENT },
     });
 
     // Company branding on cover slide
@@ -108,9 +123,46 @@ export async function POST(
       }
     }
 
+    // --- Table of Contents ---
+    if (renderableSections.length > 1) {
+      const toc = pptx.addSlide();
+      toc.background = { color: "FFFFFF" };
+      toc.addShape(pptx.ShapeType.rect, {
+        x: 0, y: 0, w: 13.33, h: 0.9, fill: { color: PRIMARY },
+      });
+      toc.addText("TABLE OF CONTENTS", {
+        x: 0.8, y: 0.15, w: 11.5, h: 0.6,
+        fontSize: 18, color: "FFFFFF",
+        fontFace: headerFont, bold: true,
+        charSpacing: 2,
+      });
+      const tocEntries = renderableSections.map((s, i) => ({
+        text: `${String(i + 1).padStart(2, "0")}    ${s.title}\n`,
+        options: { fontSize: 14, color: TEXT, paraSpaceBefore: 10, breakType: "none" as const },
+      }));
+      toc.addText(
+        tocEntries,
+        { x: 1.2, y: 1.4, w: 10.5, h: 5.5, valign: "top", fontFace: bodyFont }
+      );
+      toc.addShape(pptx.ShapeType.rect, {
+        x: 0.8, y: 6.9, w: 11.5, h: 0.01, fill: { color: ACCENT + "66" },
+      });
+      toc.addText(footerText, {
+        x: 0.8, y: 7.0, w: 5, h: 0.3,
+        fontSize: 8, color: MUTED, fontFace: bodyFont,
+      });
+      toc.addText(companyName || dealName, {
+        x: 7, y: 7.0, w: 5.5, h: 0.3,
+        fontSize: 8, color: MUTED, fontFace: bodyFont,
+        align: "right",
+      });
+    }
+
     // --- Content Slides ---
+    let slideIdx = 0;
     for (const section of sections) {
       if (!section.generatedContent && section.notes.filter(n => n.text?.trim()).length === 0) continue;
+      slideIdx += 1;
 
       const slide = pptx.addSlide();
       slide.background = { color: "FFFFFF" };
@@ -119,8 +171,14 @@ export async function POST(
       slide.addShape(pptx.ShapeType.rect, {
         x: 0, y: 0, w: 13.33, h: 0.9, fill: { color: PRIMARY },
       });
+      // Section number badge (e.g. "01", "02") — institutional deck convention
+      slide.addText(String(slideIdx).padStart(2, "0"), {
+        x: 0.8, y: 0.15, w: 0.8, h: 0.6,
+        fontSize: 22, color: ACCENT,
+        fontFace: headerFont, bold: true,
+      });
       slide.addText(section.title.toUpperCase(), {
-        x: 0.8, y: 0.15, w: 11.5, h: 0.6,
+        x: 1.7, y: 0.15, w: 10.6, h: 0.6,
         fontSize: 18, color: "FFFFFF",
         fontFace: headerFont, bold: true,
         charSpacing: 2,
@@ -178,16 +236,21 @@ export async function POST(
         }
       }
 
-      // Footer with branding
+      // Footer with branding + page number
       slide.addShape(pptx.ShapeType.rect, {
         x: 0.8, y: 6.9, w: 11.5, h: 0.01, fill: { color: ACCENT + "66" },
       });
       slide.addText(footerText, {
-        x: 0.8, y: 7.0, w: 5, h: 0.3,
+        x: 0.8, y: 7.0, w: 4, h: 0.3,
         fontSize: 8, color: MUTED, fontFace: bodyFont,
       });
       slide.addText(companyName || dealName, {
-        x: 7, y: 7.0, w: 5.5, h: 0.3,
+        x: 4.8, y: 7.0, w: 4, h: 0.3,
+        fontSize: 8, color: MUTED, fontFace: bodyFont,
+        align: "center",
+      });
+      slide.addText(`${slideIdx} / ${renderableSections.length}`, {
+        x: 10.5, y: 7.0, w: 1.8, h: 0.3,
         fontSize: 8, color: MUTED, fontFace: bodyFont,
         align: "right",
       });
@@ -258,7 +321,11 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
 
   // Cover page
   children.push(new Paragraph({
-    children: [new TextRun({ text: "INVESTMENT PACKAGE", size: 28, color: "6B7280", font: hFont })],
+    children: [new TextRun({ text: "STRICTLY CONFIDENTIAL", size: 18, color: "C2410C", bold: true, font: hFont })],
+    spacing: { after: 80 },
+  }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: "INVESTMENT COMMITTEE MATERIALS", size: 28, color: "6B7280", font: hFont })],
     spacing: { after: 100 },
   }));
   children.push(new Paragraph({
@@ -266,7 +333,7 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
     spacing: { after: 200 },
   }));
   children.push(new Paragraph({
-    children: [new TextRun({ text: new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" }), size: 24, color: "6B7280", font: bFont })],
+    children: [new TextRun({ text: new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }), size: 24, color: "6B7280", font: bFont })],
     spacing: { after: 200 },
   }));
   children.push(new Paragraph({
@@ -278,14 +345,48 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
     spacing: { after: 600 },
   }));
 
+  // Table of contents — institutional memos always paginate this
+  const renderable = sections.filter(
+    (s) => (s.generatedContent || s.notes?.filter(n => n.text?.trim()).length)
+  );
+  if (renderable.length > 1) {
+    children.push(new Paragraph({
+      children: [new TextRun({ text: "TABLE OF CONTENTS", size: 24, bold: true, color: cSecondary, font: hFont })],
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 200, after: 200 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: cPrimary + "40" } },
+    }));
+    renderable.forEach((s, i) => {
+      const num = String(i + 1).padStart(2, "0");
+      children.push(new Paragraph({
+        children: [
+          new TextRun({ text: `${num}   `, size: 22, bold: true, color: cPrimary, font: hFont }),
+          new TextRun({ text: s.title, size: 22, color: "1E293B", font: bFont }),
+        ],
+        spacing: { after: 80 },
+      }));
+    });
+    children.push(new Paragraph({
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "E5E7EB" } },
+      spacing: { before: 200, after: 400 },
+    }));
+  }
+
   // Section pages
+  let sectionIdx = 0;
   for (const section of sections) {
     const content = section.generatedContent || section.notes?.filter(n => n.text?.trim()).map(n => `• ${n.text}`).join("\n") || "";
     if (!content) continue;
+    sectionIdx += 1;
 
-    // Section heading
+    // Section heading — numbered (01, 02, ...) so readers can cross-reference
+    // back to the table of contents.
+    const sectionNum = String(sectionIdx).padStart(2, "0");
     children.push(new Paragraph({
-      children: [new TextRun({ text: section.title.toUpperCase(), size: 28, bold: true, color: cSecondary, font: hFont })],
+      children: [
+        new TextRun({ text: `${sectionNum}   `, size: 28, bold: true, color: cPrimary, font: hFont }),
+        new TextRun({ text: section.title.toUpperCase(), size: 28, bold: true, color: cSecondary, font: hFont }),
+      ],
       heading: HeadingLevel.HEADING_2,
       spacing: { before: 400, after: 200 },
       border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: cPrimary + "40" } },

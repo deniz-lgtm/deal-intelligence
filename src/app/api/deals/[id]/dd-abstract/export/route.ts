@@ -156,6 +156,11 @@ function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Reco
   // Cover title
   children.push(
     new Paragraph({
+      children: [new TextRun({ text: "STRICTLY CONFIDENTIAL  ·  IC PRE-READ", size: 18, bold: true, color: "C2410C", font: headerFont })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 100 },
+    }),
+    new Paragraph({
       children: [new TextRun({ text: "Due Diligence Abstract", size: 36, bold: true, color: secondaryColor, font: headerFont })],
       heading: HeadingLevel.TITLE,
       alignment: AlignmentType.CENTER,
@@ -167,7 +172,7 @@ function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Reco
       spacing: { after: 240 },
     }),
     new Paragraph({
-      children: [new TextRun({ text: `Generated: ${new Date().toLocaleDateString("en-US", {
+      children: [new TextRun({ text: `Prepared: ${new Date().toLocaleDateString("en-US", {
         month: "long",
         day: "numeric",
         year: "numeric",

@@ -1521,15 +1521,24 @@ export interface UnderwritingSnapshot {
 }
 
 const SECTION_PROMPTS: Record<string, string> = {
-  executive_summary: "**Executive Summary** (2-3 sentences synthesizing the deal thesis)",
-  property_overview: "**Property Overview** (key facts from all sources)",
-  underwriting_summary: "**Underwriting Summary** (use the COMPUTED RETURNS from the internal model — show cap rate, NOI, yield on cost, financing terms, CapEx budget, hold period, exit assumptions. Note: all percentage values are already in percent form, do NOT multiply by 100)",
-  revenue_expense: "**Revenue & Expense Analysis** (unit mix, in-place vs market rents, operating expenses breakdown)",
-  document_review: "**Document Review Status** (what's been received, what's outstanding)",
-  key_findings: "**Key Findings** (organized by category — title, environmental, financial, physical, legal)",
-  red_flags: "**Red Flags & Issues** (anything requiring attention, including checklist items marked as issues)",
-  outstanding_items: "**Outstanding Items** (what's still needed to complete diligence)",
-  recommendation: "**Recommendation** (proceed / proceed with conditions / do not proceed — with brief rationale)",
+  executive_summary:
+    "**Executive Summary** — IC-grade thesis opening. Lead with the one-sentence investment thesis, then a bulleted metrics table (purchase price, basis $/unit or $/SF, going-in cap, stabilized yield-on-cost, levered IRR, equity multiple, hold, total equity). Close with the 2-3 reasons this deal works and the 1-2 reasons it could fail. No marketing language.",
+  property_overview:
+    "**Property Overview** — Physical description tight enough for an IC member who has never seen the site. Cover: address / submarket / year built / land area / rentable SF or unit count, construction type, condition, parking, zoning classification, current occupancy, and any site plan / massing / buildable envelope facts if this is a ground-up or redevelopment deal. Flag gaps in physical due diligence explicitly.",
+  underwriting_summary:
+    "**Underwriting Summary** — Show the COMPUTED RETURNS from the internal model in a structured bullet list: purchase price, total capitalization, stabilized NOI, going-in cap, stabilized yield-on-cost, untrended YoC, cash-on-cash, levered IRR, equity multiple, DSCR at stabilization, refi proceeds (if modeled), exit cap, hold. Immediately follow with the 3-5 assumptions that drive the return (rent growth, exit cap compression/expansion, LTC, CapEx timing, lease-up speed) and flag which look aggressive vs. consensus. All percentage values are already in percent form — do NOT multiply by 100.",
+  revenue_expense:
+    "**Revenue & Expense Analysis** — Unit mix with in-place vs. market rents and the implied loss-to-lease, other income line items, vacancy/credit loss assumptions vs. submarket, OpEx build-up with $/unit or $/SF benchmarks, payroll and management load, real estate taxes (flag reassessment risk post-close), insurance at current hard-market rates, R&M adequacy. Call out any expense ratio that is more than ~10% outside submarket norms.",
+  document_review:
+    "**Document Review Status** — What has been received and reviewed, what is outstanding, and what is materially impairing diligence. Organize by workstream (title, survey, zoning, environmental, engineering, financial, legal, tax, insurance). Be specific — don't just say 'title pending', say 'Prelim title report not yet received; exceptions and easements unknown'.",
+  key_findings:
+    "**Key Findings** — Organize by workstream: Title & Survey, Zoning & Entitlements, Environmental, Physical / PCA, Financial, Legal, Tax & Insurance, Market. For each, state what was verified and what the finding means for value, closing, or the business plan. Quantify impact in $ or bps where possible.",
+  red_flags:
+    "**Red Flags & Issues** — Rank each risk by severity (HIGH / MEDIUM / LOW) and category. For each: the risk, the dollar or probability impact, and the proposed mitigant (rep, escrow, price reduction, carve-out, walk). This is the section an IC member reads first — be direct, prioritized, and specific.",
+  outstanding_items:
+    "**Outstanding Items & Path to Closing** — A closing checklist: open items, owner, target date, and which are CPs to close vs. post-close. Flag anything that could push timing or require re-trade.",
+  recommendation:
+    "**Recommendation** — Open with: PROCEED / PROCEED WITH CONDITIONS / RE-TRADE / DO NOT PROCEED. Follow with the rationale in 3-5 crisp bullets tying back to thesis and risks. If conditions, list them (price, reps, escrows, carve-outs, debt terms). State the go / no-go decision point the committee is being asked to approve.",
 };
 
 function buildSectionInstructions(sections?: string[]): string {
@@ -1584,9 +1593,16 @@ export async function generateDDAbstract(
 
   const prompt = `${CONCISE_STYLE}
 
-You are a senior real estate investment analyst conducting critical due diligence review. Your tone should be SKEPTICAL, ANALYTICAL, and CRITICAL — identify weaknesses, flag assumptions that seem aggressive, question gaps in data, and highlight risks prominently. This memo is for internal decision-makers who need an honest, unvarnished assessment — not a sales pitch. Err on the side of caution and be direct about concerns. Within each section use bullet points (markdown "-") instead of paragraphs.
+ROLE: You are a senior real estate investment professional writing the Due Diligence Abstract that precedes a Blackstone-style Investment Committee memo. Your reader is a Managing Director who will spend less than ten minutes on this document before the IC. They already understand real estate — they need signal, not explanation.
 
-Write a comprehensive due diligence abstract memo that synthesizes ALL available deal information — the OM analysis, the underwriting model, document reviews, checklist progress, and analyst notes.
+VOICE: Skeptical, analytical, institutional. Challenge every assumption: rent growth, exit cap, lease-up, basis, insurance, taxes post-reassessment. Distinguish what is UNDERWRITTEN (in the model), what is VERIFIED (in diligence), and what is ASSUMED (neither). Quantify risk in dollars or basis points. Absolutely no marketing language, no hedging boilerplate, no "it is important to note".
+
+FORMAT:
+- Markdown. H2 for each section header. Bullets (leading "-") inside sections, not paragraphs.
+- Lead each section with the bottom line. Supporting detail follows.
+- Cite the specific number AND where it came from (OM, rent roll, T-12, model, broker, comp). If the source is missing, flag it.
+- Use $/unit, $/SF, bps, % deltas vs. submarket — not vague words like "strong" or "healthy".
+- If a data input is missing, write "UNDERWRITTEN BUT NOT VERIFIED" or "DATA GAP — [what's needed]". Do not invent.
 ${memorySection}
 DEAL: ${deal.name}
 Address: ${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}
@@ -1599,11 +1615,16 @@ ${docContext || "No documents with summaries yet."}
 DILIGENCE CHECKLIST STATUS:
 ${checklistSummary || "Checklist not yet completed."}
 
-Write a professional due diligence abstract in markdown format with ONLY the following requested sections:
+Write the due diligence abstract in markdown with ONLY the following requested sections, in this order:
 ${buildSectionInstructions(sections)}
 
-IMPORTANT: Use the actual underwriting data provided. All rates (vacancy, cap rate, interest rate, etc.) are already expressed as percentages — do NOT multiply them by 100. For example, a vacancy_rate of 5 means 5%, not 500%.
-Be factual, concise, and investment-focused. If information is missing, note it as outstanding.`;
+NUMERIC CONVENTION: all rates (vacancy, cap rate, interest rate, IRR, etc.) in the underwriting block are ALREADY in percent form — 5 means 5%, not 500%. Do not multiply by 100.
+
+ANTI-PATTERNS TO AVOID:
+- Restating the OM. The reader has read it.
+- Generic statements ("the property is well-located"). Replace with: drive time to top employer, submarket rent growth %, comp cap rates, specific demographics.
+- Burying risk. If something is HIGH severity, it goes in the first bullet of the relevant section, not the last.
+- Recommending "proceed with further diligence" as a default. Take a position.`;
 
   const response = await getClient().messages.create({
     model: await getActiveModel(),

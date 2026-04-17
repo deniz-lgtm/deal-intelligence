@@ -11,16 +11,42 @@ function getClient() {
 }
 
 const AUDIENCE_TONES: Record<string, string> = {
-  lp_investor: "Your audience is Limited Partners / outside equity investors. Tone: formal, return-focused, highlight risk mitigants, institutional quality. Emphasize projected returns, downside protection, and sponsor track record.",
-  investment_committee: "Your audience is an internal Investment Committee. Tone: analytical, balanced risk/return, assumption-driven, concise. Focus on deal thesis, key assumptions, and sensitivity analysis.",
-  lender: "Your audience is a lender or debt partner. Tone: conservative, coverage-focused, emphasize collateral value, stable cash flows, and debt service coverage. Highlight property quality and market stability.",
-  internal_review: "Your audience is internal team for deal screening. Tone: direct, efficient, flag concerns prominently, less polish needed. Focus on go/no-go factors.",
+  lp_investor:
+    "AUDIENCE: Institutional Limited Partners (public pensions, sovereigns, endowments, insurance co's, large family offices). They evaluate dozens of funds and deals per quarter and will benchmark this investment against their entire portfolio.\n" +
+    "VOICE: Formal, institutional, return-focused — but not promotional. Lead with the thesis in one sentence. Emphasize gross/net returns, DPI/MOIC pacing, downside protection, alignment (GP co-invest, fee structure), sponsor track record with specific prior realizations, and exit optionality. Every return figure gets a matching downside scenario. Risk is addressed head-on with mitigants — never buried. Use $-denominated numbers, bps, and comps. No adjectives (no 'irreplaceable', 'premier', 'world-class').",
+  investment_committee:
+    "AUDIENCE: Internal Investment Committee at a top-tier institutional manager (Blackstone / KKR / Starwood / Oaktree caliber). Readers include Managing Directors, the Head of Acquisitions, a Chief Investment Officer, and Risk. They have 15 minutes with this memo before a 45-minute discussion. They do not need education — they need the sharp edges.\n" +
+    "VOICE: Analytical, blunt, assumption-driven. Open with the deal in ONE sentence (strategy / size / basis / yield on cost / IRR / hold). Follow with the three reasons this deal works and the three reasons it could fail. Separate UNDERWRITTEN from VERIFIED from ASSUMED. Show a base / downside / upside sensitivity on the two most important variables (rent growth and exit cap for stabilized; cost and lease-up for ground-up). Quantify every risk in dollars or bps. Compare basis to recent submarket comps and flag the spread. Take a position — do not hedge. No marketing language. No 'important to note'.",
+  lender:
+    "AUDIENCE: Senior lender / debt capital markets counterparty (balance-sheet bank, debt fund, agency, life co). They underwrite the collateral and the sponsor, not the equity return.\n" +
+    "VOICE: Conservative, coverage-focused. Lead with: loan request, LTV/LTC, DSCR at stabilization, debt yield, recourse posture. Emphasize collateral quality, in-place cash flow stability, rent roll granularity, tenant credit (if commercial), environmental/physical condition, and sponsor guarantee capacity. Stress test DSCR and debt yield against +100/+200 bps rate moves and -10% NOI. Address any prior workouts or modifications on sponsor's portfolio directly.",
+  internal_review:
+    "AUDIENCE: Internal acquisitions / asset management team doing initial screen. Purpose is a pre-IC go/no-go.\n" +
+    "VOICE: Direct, efficient, engineer-style. Flag blockers in the first paragraph. State the bid strategy, the walk price, and the re-trade triggers. Polish is not needed — signal is. If the deal is a pass, say so and list the three dispositive reasons.",
 };
 
 const FORMAT_INSTRUCTIONS: Record<string, string> = {
-  pitch_deck: "Format: Slide deck / pitch presentation. Keep content bullet-heavy, visual, concise. Each section should be 3-6 key bullet points with supporting detail. Suitable for PowerPoint slides.",
-  investment_memo: "Format: Narrative investment memo. Write in full prose with detailed analysis. Each section should be 3-5 paragraphs. Suitable for Word/PDF document.",
-  one_pager: "Format: One-page teaser / executive summary. Extremely concise — 2-3 sentences per topic. Focus on headline metrics and investment thesis only.",
+  pitch_deck:
+    "FORMAT: Board-ready slide deck.\n" +
+    "- 3-6 bullet points per slide, each bullet ≤ 15 words.\n" +
+    "- Lead bullet is the takeaway / headline metric. Supporting bullets are evidence.\n" +
+    "- Use markdown: `## Subheader` (max 2 per slide), `-` for bullets, `**bold**` for the key metric inside each bullet.\n" +
+    "- Prefer numbers to adjectives. Never write 'strong demand' — write 'Submarket vacancy 4.8%, 130 bps below MSA'.\n" +
+    "- No paragraphs, no run-on sentences, no filler.",
+  investment_memo:
+    "FORMAT: Institutional investment memo (Word / PDF).\n" +
+    "- Open each section with a 1-sentence bottom-line / takeaway in bold.\n" +
+    "- Follow with 2-4 focused paragraphs (3-5 sentences each) of supporting analysis. Each paragraph makes ONE point.\n" +
+    "- Mix prose with tight bullet lists when showing metrics, comps, or sensitivities — don't bury numbers in prose.\n" +
+    "- Use markdown `##` for section headers, `###` for sub-topics (e.g. 'Supply Pipeline', 'Rent Growth Drivers').\n" +
+    "- Cite sources inline: '(per T-12)', '(CoStar Q3 2024)', '(broker OM)'. If the source is missing, flag it as 'UNVERIFIED'.\n" +
+    "- Always show base case with at least one downside sensitivity for the numbers that matter.",
+  one_pager:
+    "FORMAT: Single-page teaser / executive summary.\n" +
+    "- Total length ≤ 350 words across ALL sections combined.\n" +
+    "- Each section = 1 headline sentence + at most 2 bullets with the 3-4 numbers that matter.\n" +
+    "- Focus: thesis, basis ($/unit or $/SF), going-in and stabilized yield, levered IRR, equity multiple, hold, total equity check.\n" +
+    "- No narrative. No adjectives. Just the numbers and the thesis.",
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -136,12 +162,24 @@ Write the "${SECTION_TITLES[sectionId] || sectionId}" section. Use the deal data
 }
 
 const SECTION_TITLES: Record<string, string> = {
-  cover: "Cover Page", exec_summary: "Executive Summary", property_overview: "Property Overview",
-  location_market: "Location & Market Analysis", financial_summary: "Financial Summary",
-  unit_mix: "Unit Mix & Revenue", rent_comps: "Rent Comp Analysis", value_add: "Value-Add Strategy",
-  operating_plan: "Operating Plan", capital_structure: "Capital Structure",
-  returns_analysis: "Returns Analysis", exit_strategy: "Exit Strategy",
-  risk_factors: "Risk Factors & Mitigants", photos: "Property Photos", appendix: "Appendix",
+  cover: "Cover Page",
+  exec_summary: "Executive Summary & Investment Thesis",
+  property_overview: "Property Overview",
+  site_massing: "Site Plan, Massing & Buildable Program",
+  location_market: "Market & Submarket Analysis",
+  financial_summary: "Transaction Summary & Sources / Uses",
+  unit_mix: "Unit Mix, Revenue & Loss-to-Lease",
+  rent_comps: "Rent & Sales Comp Analysis",
+  value_add: "Business Plan & Value Creation",
+  operating_plan: "Operating Plan & OpEx Build-Up",
+  capital_structure: "Capital Structure & Debt Strategy",
+  returns_analysis: "Returns & Sensitivity Analysis",
+  exit_strategy: "Exit Strategy & Residual Value",
+  development_schedule: "Development Schedule & Critical Path",
+  predev_budget: "Pre-Development Budget & Approvals",
+  risk_factors: "Risk Factors & Mitigants",
+  photos: "Property Photos",
+  appendix: "Appendix",
 };
 
 const THESIS_LABELS: Record<string, string> = {
@@ -152,12 +190,103 @@ const THESIS_LABELS: Record<string, string> = {
   opportunistic: "Opportunistic",
 };
 
+// ── Site Plan + Massing summary helper ──────────────────────────────────────
+// The site plan lives at uw.site_plan and the massing/building program at
+// uw.building_program. Both are JSONB blobs shaped per src/lib/types.ts.
+// We produce a compact, IC-ready text summary so Claude can reference the
+// actual drawn parcel, footprint, floor stack, unit mix, and parking.
+function summarizeSiteAndMassing(uw: AnyRecord | null): string {
+  if (!uw) return "";
+  const sp = (uw.site_plan || {}) as AnyRecord;
+  const bp = (uw.building_program || {}) as AnyRecord;
+  const lines: string[] = [];
+
+  // Site plan scenarios (parcel + building footprints drawn on satellite)
+  const scenarios: AnyRecord[] = Array.isArray(sp.scenarios) ? sp.scenarios : [];
+  const active = scenarios.find(s => s.is_base_case)
+    || scenarios.find(s => s.id === sp.active_scenario_id)
+    || scenarios[0];
+  if (active) {
+    const parcelAc = active.parcel_area_sf ? (Number(active.parcel_area_sf) / 43560).toFixed(2) : null;
+    const bldgs: AnyRecord[] = Array.isArray(active.buildings) ? active.buildings : [];
+    const totalFootprint = bldgs.reduce((s, b) => s + Number(b.area_sf || 0), 0);
+    const cov = (active.parcel_area_sf && totalFootprint)
+      ? ((totalFootprint / Number(active.parcel_area_sf)) * 100).toFixed(1)
+      : null;
+    lines.push(`Site Plan (base case "${active.name || "Massing 1"}"):`);
+    if (active.parcel_area_sf) lines.push(`  Parcel: ${Number(active.parcel_area_sf).toLocaleString()} SF (${parcelAc} ac)`);
+    if (bldgs.length) {
+      lines.push(`  Buildings drawn: ${bldgs.length} | Combined footprint: ${totalFootprint.toLocaleString()} SF${cov ? ` (${cov}% lot coverage)` : ""}`);
+      for (const b of bldgs.slice(0, 6)) {
+        lines.push(`    - ${b.label || "Building"}: ${Number(b.area_sf || 0).toLocaleString()} SF footprint${b.cutouts?.length ? ` (${b.cutouts.length} cutout${b.cutouts.length > 1 ? "s" : ""})` : ""}`);
+      }
+    }
+    if (active.frontage_length_ft) lines.push(`  Street frontage: ${Math.round(active.frontage_length_ft).toLocaleString()} LF`);
+    if (scenarios.length > 1) lines.push(`  Alternative massings drawn: ${scenarios.length - 1}`);
+  }
+
+  // Building program / massing scenarios (the floor stack)
+  const massings: AnyRecord[] = Array.isArray(bp.scenarios) ? bp.scenarios : [];
+  const baseMassing = massings.find(m => m.is_baseline) || massings.find(m => m.id === bp.active_scenario_id) || massings[0];
+  if (baseMassing) {
+    const floors: AnyRecord[] = Array.isArray(baseMassing.floors) ? baseMassing.floors : [];
+    const above = floors.filter(f => !f.is_below_grade);
+    const below = floors.filter(f => f.is_below_grade);
+    const totalGSF = floors.reduce((s, f) => s + Number(f.floor_plate_sf || 0), 0);
+    const totalNRSF = floors.reduce((s, f) => s + Math.round(Number(f.floor_plate_sf || 0) * (Number(f.efficiency_pct || 0) / 100)), 0);
+    const totalUnits = floors.reduce((s, f) => s + Number(f.units_on_floor || 0), 0);
+    const heightFt = above.reduce((s, f) => s + Number(f.floor_to_floor_ft || 0), 0);
+
+    const byUse: Record<string, number> = {};
+    for (const f of floors) {
+      const u = String(f.use_type || "other");
+      byUse[u] = (byUse[u] || 0) + Number(f.floor_plate_sf || 0);
+    }
+    const useMix = Object.entries(byUse)
+      .sort((a, b) => b[1] - a[1])
+      .map(([u, sf]) => `${u} ${Math.round(sf).toLocaleString()} SF`)
+      .join(", ");
+
+    const parkSF = byUse.parking || 0;
+    const parkSpaces = Math.floor(parkSF / (Number(baseMassing.parking_sf_per_space) || 350));
+
+    lines.push(`Massing (base case "${baseMassing.name || "Massing 1"}"):`);
+    lines.push(`  ${above.length} above-grade + ${below.length} below-grade floors | ~${Math.round(heightFt)} ft total height`);
+    lines.push(`  Total GSF: ${totalGSF.toLocaleString()} | Total NRSF: ${totalNRSF.toLocaleString()} | Efficiency: ${totalGSF ? Math.round((totalNRSF / totalGSF) * 100) : 0}%`);
+    if (totalUnits) lines.push(`  Residential Units: ${totalUnits}`);
+    if (parkSpaces) lines.push(`  Parking: ~${parkSpaces.toLocaleString()} spaces (${Math.round(parkSF).toLocaleString()} SF parking GSF)`);
+    if (useMix) lines.push(`  Program Mix (GSF by use): ${useMix}`);
+
+    // Unit mix
+    const unitMix: AnyRecord[] = Array.isArray(baseMassing.unit_mix) ? baseMassing.unit_mix : [];
+    if (unitMix.length && totalUnits) {
+      const mixLines = unitMix.map(u => {
+        const ct = Math.round((Number(u.allocation_pct || 0) / 100) * totalUnits);
+        return `${u.type_label || "?"}: ${u.allocation_pct || 0}% (~${ct}u, avg ${u.avg_sf || 0} SF)`;
+      });
+      lines.push(`  Unit Mix: ${mixLines.join(" | ")}`);
+    }
+
+    if (baseMassing.density_bonus_applied) {
+      lines.push(`  Density Bonus Applied: ${baseMassing.density_bonus_applied} (+${Number(baseMassing.density_bonus_far_increase || 0) * 100}% FAR, +${baseMassing.density_bonus_height_increase_ft || 0} ft)`);
+    }
+    if (baseMassing.ai_template_label) lines.push(`  Stack Template: ${baseMassing.ai_template_label}`);
+    if (massings.length > 1) lines.push(`  Alternative floor stacks modeled: ${massings.length - 1}`);
+  }
+
+  return lines.join("\n");
+}
+
 function buildDealContext(deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord | null, docs: AnyRecord[], checklist: AnyRecord[], photos: AnyRecord[], bp: AnyRecord | null): string {
   const lines: string[] = [];
   lines.push(`Deal: ${deal.name}`);
   lines.push(`Address: ${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}`);
   lines.push(`Type: ${deal.property_type} | Status: ${deal.status}`);
   lines.push(`Asking: ${deal.asking_price ? `$${Number(deal.asking_price).toLocaleString()}` : "TBD"} | Units: ${deal.units ?? "N/A"} | SF: ${deal.square_footage?.toLocaleString() ?? "N/A"} | Year Built: ${deal.year_built ?? "N/A"}`);
+
+  // Site plan + massing (ground-up / redevelopment context)
+  const siteMassing = summarizeSiteAndMassing(uw);
+  if (siteMassing) lines.push(siteMassing);
 
   // Business Plan context
   if (bp) {
@@ -205,14 +334,33 @@ function buildSectionContext(
         deal.context_notes ? `Analyst Notes: ${deal.context_notes}` : "",
       ].filter(Boolean).join("\n");
 
-    case "property_overview":
+    case "property_overview": {
+      const siteMassing = summarizeSiteAndMassing(uw);
       return [
         `Name: ${deal.name}`,
         `Address: ${[deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ")}`,
         `Type: ${deal.property_type} | Year Built: ${deal.year_built} | Units: ${deal.units} | SF: ${deal.square_footage?.toLocaleString()}`,
         om?.property_type ? `OM Property Type: ${om.property_type}` : "",
+        siteMassing ? `\n[SITE PLAN & MASSING — drawn to scale on satellite imagery + programmed floor stack]\n${siteMassing}` : "",
         ...docs.filter((d: AnyRecord) => d.ai_summary && (d.category === "om" || d.category === "marketing")).map((d: AnyRecord) => `Doc (${d.name}): ${d.ai_summary}`),
       ].filter(Boolean).join("\n");
+    }
+
+    case "site_massing": {
+      const siteMassing = summarizeSiteAndMassing(uw);
+      if (!siteMassing) return "No site plan or massing has been drawn for this deal. If this is a ground-up or redevelopment project, note that the physical program has not yet been formally drawn/programmed and the buildable envelope is an assumption.";
+      const strategy = deal.investment_strategy ? `Investment Strategy: ${deal.investment_strategy}` : "";
+      return [
+        strategy,
+        "",
+        "[Drawn Site Plan — parcel polygon, building footprints, and frontage have been traced on to-scale satellite imagery.]",
+        "[Programmed Massing — floor stack with primary + secondary uses per floor, unit mix, efficiency, and parking ratio is modeled.]",
+        "",
+        siteMassing,
+        "",
+        "GUIDANCE: Treat GSF / NRSF / unit count / parking as the BUILDABLE PROGRAM driving the underwriting. Call out lot coverage, FAR implied by above-grade GSF / parcel SF, any density-bonus assumptions, and whether parking ratio is in line with submarket norms for the product type. If more than one massing exists, compare the base case to the alternatives.",
+      ].filter(Boolean).join("\n");
+    }
 
     case "location_market": {
       const lines: string[] = [];
@@ -303,15 +451,33 @@ function buildSectionContext(
       const capex = (uw.capex_items || []).reduce((s: number, c: AnyRecord) => s + n(c.quantity) * n(c.cost_per_unit), 0);
       const closingCosts = n(uw.purchase_price) * (n(uw.closing_costs_pct) / 100);
       const totalCost = n(uw.purchase_price) + closingCosts + capex;
+      const units = n(deal.units);
+      const sf = n(deal.square_footage) || n(uw.max_gsf);
+      const perUnit = units > 0 ? Math.round(totalCost / units) : 0;
+      const perSF = sf > 0 ? (totalCost / sf) : 0;
+      const ppUnit = units > 0 ? Math.round(n(uw.purchase_price) / units) : 0;
+      const ppSF = sf > 0 ? (n(uw.purchase_price) / sf) : 0;
+      const loan = uw.has_financing ? n(uw.purchase_price) * (n(uw.acq_ltc) / 100) : 0;
+      const equity = Math.max(0, totalCost - loan);
       return [
-        `Purchase Price: ${fc(n(uw.purchase_price))}`,
+        `[BASIS]`,
+        `Purchase Price: ${fc(n(uw.purchase_price))}${ppUnit ? ` | $${ppUnit.toLocaleString()}/unit` : ""}${ppSF ? ` | $${ppSF.toFixed(0)}/SF` : ""}`,
         `Closing Costs: ${n(uw.closing_costs_pct)}% (${fc(closingCosts)})`,
-        `Total CapEx: ${fc(capex)}`,
-        `Total Investment: ${fc(totalCost)}`,
-        `Vacancy: ${uw.vacancy_rate}% (pro forma) | ${uw.in_place_vacancy_rate}% (in-place)`,
+        `Total CapEx / Development: ${fc(capex)}`,
+        `Total Capitalization: ${fc(totalCost)}${perUnit ? ` | $${perUnit.toLocaleString()}/unit` : ""}${perSF ? ` | $${perSF.toFixed(0)}/SF` : ""}`,
+        ``,
+        `[SOURCES & USES]`,
+        uw.has_financing ? `Senior Debt: ${fc(loan)} @ ${uw.acq_ltc}% LTC / ${uw.acq_interest_rate}% / ${uw.acq_amort_years}yr amort${n(uw.acq_io_years) > 0 ? ` / ${uw.acq_io_years}yr I/O` : ""}` : "Senior Debt: NONE — all-cash basis",
+        `Equity Check: ${fc(equity)}`,
+        uw.has_refi ? `Refi Year ${uw.refi_year}: ${uw.refi_ltv}% LTV @ ${uw.refi_rate}% / ${uw.refi_amort_years}yr amort` : "",
+        ``,
+        `[OPERATING ASSUMPTIONS]`,
+        `Vacancy: ${uw.vacancy_rate}% pro forma | ${uw.in_place_vacancy_rate}% in-place`,
         `Exit Cap: ${uw.exit_cap_rate}% | Hold: ${uw.hold_period_years} years`,
-        uw.has_financing ? `Financing: ${uw.acq_ltc}% LTC, ${uw.acq_interest_rate}% rate, ${uw.acq_amort_years}yr amort` : "All cash basis",
-      ].join("\n");
+        ``,
+        `[GUIDANCE FOR WRITER]`,
+        `Open with the one-sentence trade: strategy, size, basis, stabilized yield on cost, levered IRR, equity multiple, hold. Then show the sources-and-uses and total cap in a clean list. Compare implied basis ($/unit or $/SF) to the selected sale comps and state the spread. Flag whether closing costs, CapEx reserve, and financing fees are adequately reserved.`,
+      ].filter(l => l !== undefined && l !== null).join("\n");
     }
 
     case "unit_mix": {
@@ -396,12 +562,25 @@ function buildSectionContext(
     case "value_add": {
       const capexItems = uw?.capex_items || [];
       const renos = unitGroups.filter((g: AnyRecord) => g.will_renovate);
+      const totalCapex = capexItems.reduce((s: number, c: AnyRecord) => s + n(c.quantity) * n(c.cost_per_unit), 0);
+      const units = n(deal.units);
+      const isGroundUp = deal.investment_strategy === "ground_up";
+      const capexPerUnit = units > 0 && totalCapex > 0 ? Math.round(totalCapex / units) : 0;
+      const siteMassing = isGroundUp ? summarizeSiteAndMassing(uw) : "";
       return [
         bp ? `Business Plan: ${bp.name} — ${(bp.investment_theses || []).map((t: string) => THESIS_LABELS[t] || t).join(", ")}` : "",
-        bp?.description ? `Strategy: ${bp.description}` : "",
-        renos.length > 0 ? `Renovating ${renos.length} unit types` : "",
-        capexItems.length > 0 ? `CapEx items: ${capexItems.map((c: AnyRecord) => `${c.label}: ${n(c.quantity)} × ${fc(n(c.cost_per_unit))}`).join(", ")}` : "",
-        deal.context_notes ? `Strategy notes: ${deal.context_notes}` : "",
+        bp?.description ? `Strategy Narrative: ${bp.description}` : "",
+        deal.investment_strategy ? `Deal-level Strategy: ${deal.investment_strategy}` : "",
+        renos.length > 0 ? `Unit Renovation Scope: ${renos.length} unit types flagged for renovation — ${renos.map((r: AnyRecord) => r.label).join(", ")}` : "",
+        capexItems.length > 0 ? `CapEx / Development Line Items (${capexItems.length}):\n${capexItems.map((c: AnyRecord) => `  - ${c.label}: ${n(c.quantity)} × ${fc(n(c.cost_per_unit))} = ${fc(n(c.quantity) * n(c.cost_per_unit))}`).join("\n")}` : "",
+        totalCapex > 0 ? `Total CapEx / Development Budget: ${fc(totalCapex)}${capexPerUnit ? ` ($${capexPerUnit.toLocaleString()}/unit)` : ""}` : "",
+        siteMassing ? `\n[GROUND-UP PROGRAM]\n${siteMassing}` : "",
+        deal.context_notes ? `\nAnalyst Strategy Notes: ${deal.context_notes}` : "",
+        ``,
+        `[GUIDANCE FOR WRITER]`,
+        isGroundUp
+          ? `This is a ground-up development. Open with the program (buildable GSF, unit count, parking, use mix from the massing). Then lay out the critical-path milestones (entitlement, permit, GMP, construction start, TCO, stabilization) and the budget (hard $/GSF, soft as % of hard, contingency). Quantify the value-creation spread: development yield on cost vs. exit cap, implied untrended spread in bps, and the comp basis that prices the finished product.`
+          : `Lay out the value-creation thesis in 3 steps: (1) what we're buying and what's broken / under-managed, (2) the specific interventions (capex, re-tenanting, re-branding, operational lift), and (3) the resulting NOI lift and yield-on-cost uplift. Quantify $/unit in CapEx, expected rent lift $/unit, implied ROC on CapEx, and timing to stabilization.`,
       ].filter(Boolean).join("\n");
     }
 
@@ -423,14 +602,46 @@ function buildSectionContext(
         uw.has_refi ? `Refi in Year ${uw.refi_year}: ${uw.refi_ltv}% LTV, ${uw.refi_rate}% rate, ${uw.refi_amort_years}yr amort` : "",
       ].filter(Boolean).join("\n");
 
-    case "returns_analysis":
+    case "returns_analysis": {
+      if (!uw) return "";
+      const targetIrr = bp?.target_irr_min || bp?.target_irr_max
+        ? `Target IRR per business plan: ${bp?.target_irr_min ?? "?"}–${bp?.target_irr_max ?? "?"}%`
+        : "";
+      const targetEM = bp?.target_equity_multiple_min || bp?.target_equity_multiple_max
+        ? `Target Equity Multiple per business plan: ${bp?.target_equity_multiple_min ?? "?"}x–${bp?.target_equity_multiple_max ?? "?"}x`
+        : "";
       return [
-        uw ? `Exit Cap: ${uw.exit_cap_rate}% | Hold: ${uw.hold_period_years} years` : "",
-        deal.context_notes ? `Context: ${deal.context_notes}` : "",
+        `[MODEL INPUTS DRIVING RETURNS]`,
+        `Exit Cap: ${uw.exit_cap_rate}% | Hold: ${uw.hold_period_years} years`,
+        uw.has_financing ? `Leverage: ${uw.acq_ltc}% LTC @ ${uw.acq_interest_rate}%${n(uw.acq_io_years) > 0 ? `, ${uw.acq_io_years}yr I/O` : ""}` : "Unlevered / all-cash",
+        uw.vacancy_rate != null ? `Stabilized Vacancy: ${uw.vacancy_rate}%` : "",
+        targetIrr,
+        targetEM,
+        deal.context_notes ? `Analyst Context: ${deal.context_notes}` : "",
+        ``,
+        `[GUIDANCE FOR WRITER]`,
+        `Present returns in a BASE / DOWNSIDE / UPSIDE frame. Base = model output. Downside = 50 bps exit cap expansion AND rent growth 150 bps below plan. Upside = 50 bps cap compression AND rent growth 150 bps above plan. For each scenario list: levered IRR, equity multiple, stabilized yield-on-cost, and DSCR at stabilization. Identify the TWO variables the return is most sensitive to and quantify the break-even on each. If business-plan targets are set, state whether the base case hits the bottom, middle, or top of that band.`,
       ].filter(Boolean).join("\n");
+    }
 
-    case "exit_strategy":
-      return uw ? `Exit Cap Rate: ${uw.exit_cap_rate}% | Hold Period: ${uw.hold_period_years} years` : "";
+    case "exit_strategy": {
+      if (!uw) return "";
+      const saleComps = compsAll.filter((c: AnyRecord) => c.comp_type === "sale" && c.selected !== false);
+      const avgCompCap = saleComps.length
+        ? saleComps.filter(c => c.cap_rate != null).reduce((s: number, c: AnyRecord, _i, arr) => s + Number(c.cap_rate) / arr.length, 0)
+        : 0;
+      const avgCompPPU = saleComps.length
+        ? saleComps.filter(c => c.price_per_unit != null).reduce((s: number, c: AnyRecord, _i, arr) => s + Number(c.price_per_unit) / arr.length, 0)
+        : 0;
+      return [
+        `Underwritten Exit Cap Rate: ${uw.exit_cap_rate}% | Hold Period: ${uw.hold_period_years} years`,
+        avgCompCap ? `Sale Comp Average Cap: ${avgCompCap.toFixed(2)}% (across ${saleComps.length} selected comps)` : "",
+        avgCompPPU ? `Sale Comp Average $/Unit: $${Math.round(avgCompPPU).toLocaleString()}` : "",
+        ``,
+        `[GUIDANCE FOR WRITER]`,
+        `Frame exit with: (1) underwritten exit cap vs. trailing-12 comp-set average (state the spread in bps — expansion or compression), (2) expected buyer profile (institutional core, value-add follow-on, private capital, 1031), (3) optionality — refi/recap at year N, partial sale, partnership buyout. Always include one "break-in-case-of-emergency" exit at a stressed cap. Never assume exit cap < going-in cap without explicit rate-environment justification.`,
+      ].filter(Boolean).join("\n");
+    }
 
     case "development_schedule": {
       if (devPhases.length === 0) {
