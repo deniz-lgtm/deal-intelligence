@@ -22,6 +22,7 @@ const ALL_SECTIONS = [
   { id: "location_market", title: "Location & Market Analysis", description: "Submarket, comps, rent growth, demand drivers" },
   { id: "financial_summary", title: "Financial Summary", description: "Purchase price, NOI, cap rate, debt terms, returns" },
   { id: "unit_mix", title: "Unit Mix & Revenue", description: "Unit types, in-place vs market rents, projections" },
+  { id: "affordability_strategy", title: "Affordability & Incentives", description: "AMI tiers, tax exemptions, density bonuses, entitlement programs" },
   { id: "rent_comps", title: "Rent Comp Analysis", description: "Comparable properties, market positioning" },
   { id: "value_add", title: "Value-Add Strategy", description: "Renovation plan, CapEx budget, rent premium targets" },
   { id: "operating_plan", title: "Operating Plan", description: "Management, expense reduction, occupancy targets" },
@@ -36,6 +37,9 @@ const ALL_SECTIONS = [
 ];
 
 const FORMAT_SECTIONS: Record<string, string[]> = {
+  // Affordability is off the default pitch-deck outline (users toggle it
+  // on for affordable / mixed-income deals) but always in the memo since
+  // memos are exhaustive.
   pitch_deck: ["cover", "exec_summary", "property_overview", "financial_summary", "unit_mix", "value_add", "capital_structure", "returns_analysis", "development_schedule", "predev_budget", "exit_strategy", "photos"],
   investment_memo: ALL_SECTIONS.map(s => s.id),
   one_pager: ["exec_summary", "financial_summary", "photos"],

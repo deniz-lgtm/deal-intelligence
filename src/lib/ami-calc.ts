@@ -14,8 +14,14 @@
 //   1p=70%, 2p=80%, 3p=90%, 4p=100%, 5p=108%, 6p=116%, 7p=124%, 8p=132%
 //
 // Max rent by unit size (LIHTC standard: 1.5 persons per bedroom):
-//   studio=1 person, 1BR=1.5, 2BR=3, 3BR=4.5
+//   studio=1 person, 1BR=1.5, 2BR=3, 3BR=4.5, 4BR=6
 //   Max rent = 30% of monthly income limit for that household size.
+// Note: this is the GROSS rent cap. If tenants pay their own utilities,
+// the collectible (net) rent is gross cap MINUS the published utility
+// allowance for that jurisdiction. We don't bake a UA in here — the
+// operating-expense side of the pro forma should carry utilities if
+// it's an all-bills-paid deal, or the analyst should subtract a UA
+// in the per-tier max rent override if tenants pay.
 
 export const HH_SIZE_ADJUSTMENT: number[] = [0.70, 0.80, 0.90, 1.00, 1.08, 1.16, 1.24, 1.32];
 
@@ -24,6 +30,7 @@ export const HH_SIZE_FOR_UNIT: Record<string, number> = {
   one_br: 1.5,
   two_br: 3,
   three_br: 4.5,
+  four_br_plus: 6,
 };
 
 /** Derive 1-8p income limits from the 4-person limit using HUD's family-size factors. */
@@ -60,12 +67,12 @@ export interface AmiComputed {
     moderate_120: number[];
   };
   max_rents: {
-    ami_30: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_50: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_60: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_80: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_100: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_120: { studio: number; one_br: number; two_br: number; three_br: number };
+    ami_30: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_50: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_60: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_80: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_100: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_120: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
   };
 }
 
@@ -107,6 +114,7 @@ export function buildAmiTables(
     one_br: computeMaxRent(limits, "one_br"),
     two_br: computeMaxRent(limits, "two_br"),
     three_br: computeMaxRent(limits, "three_br"),
+    four_br: computeMaxRent(limits, "four_br_plus"),
   });
 
   return {

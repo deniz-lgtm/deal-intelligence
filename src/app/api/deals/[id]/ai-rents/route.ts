@@ -34,9 +34,19 @@ export async function POST(
   if (accessResult.errorResponse) return accessResult.errorResponse;
   const deal = accessResult.deal as Record<string, any>;
 
-  const uwRow = await underwritingQueries.getByDealId(params.id);
-  const uwData = uwRow?.data || {};
-  const unitGroups: Array<{ id: string; label: string; unit_count: number; bedrooms?: number; bathrooms?: number; sf_per_unit?: number; beds_per_unit?: number }> = uwData.unit_groups || [];
+  // Prefer unit_groups from the request body (what the analyst is seeing
+  // right now, including any scenario overrides). Fall back to the DB
+  // rows when the client doesn't send any (legacy behaviour).
+  let unitGroups: Array<{ id: string; label: string; unit_count: number; bedrooms?: number; bathrooms?: number; sf_per_unit?: number; beds_per_unit?: number }> = [];
+  try {
+    const body = await request.json().catch(() => ({}));
+    if (Array.isArray(body?.unit_groups)) unitGroups = body.unit_groups;
+  } catch { /* empty body — fall through to DB read */ }
+  if (unitGroups.length === 0) {
+    const uwRow = await underwritingQueries.getByDealId(params.id);
+    const uwData = uwRow?.data || {};
+    unitGroups = uwData.unit_groups || [];
+  }
   if (unitGroups.length === 0) {
     return NextResponse.json({ error: "No unit groups to estimate rents for — add units first." }, { status: 400 });
   }
@@ -62,25 +72,22 @@ export async function POST(
     ? "market_rent_per_unit (monthly per unit)"
     : "market_rent_per_sf (annual per SF)";
 
-  const prompt = `You are a real estate market analyst. Given the property and unit mix below, estimate current market rents for each unit group.
+  const prompt = `You are a real estate market analyst. Estimate current market rents for each unit group.
 
 Property: ${deal.name || "Unnamed"}
 Location: ${location}
-Property type: ${deal.property_type || "multifamily"}
+Type: ${deal.property_type || "multifamily"}
 
 Unit groups:
 ${groupsDesc}
 
-For each unit group, estimate the ${rentField} and provide a brief note (1 sentence) explaining the basis — e.g. "Based on typical ${city || "metro"} ${deal.property_type || "MF"} rents for this unit size" or citing a comparable range.
-
-Return a JSON array with one object per unit group (same order), each having:
-- "id": the group id string (provided below)
+Return a JSON array (same order) with:
+- "id": group id
 - "${isSH ? "market_rent_per_bed" : isMF ? "market_rent_per_unit" : "market_rent_per_sf"}": number
-- "notes": string (1 sentence explaining source/basis)
 
-Group IDs in order: ${unitGroups.map(g => `"${g.id}"`).join(", ")}
+Group IDs: ${unitGroups.map(g => `"${g.id}"`).join(", ")}
 
-Return ONLY the JSON array, no markdown fences, no extra text.`;
+JSON array only, no markdown, no extra text.`;
 
   try {
     const client = getClient();

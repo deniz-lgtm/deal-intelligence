@@ -98,7 +98,19 @@ export default function FloorRow({ floor, onChange, onDelete }: FloorRowProps) {
           </div>
         </td>
         <td className="px-1 py-1">
-          <CellInput value={floor.floor_plate_sf} onChange={v => onChange({ floor_plate_sf: v })} width="w-[85px]" />
+          {additional.length > 0 ? (
+            <CellInput
+              value={primary_sf}
+              onChange={v => {
+                // User edits the PRIMARY use's SF. Total plate = primary + Σ additional.
+                const newPlate = v + additionalTotal;
+                onChange({ floor_plate_sf: newPlate });
+              }}
+              width="w-[85px]"
+            />
+          ) : (
+            <CellInput value={floor.floor_plate_sf} onChange={v => onChange({ floor_plate_sf: v })} width="w-[85px]" />
+          )}
         </td>
         <td className="px-1 py-1"><CellInput value={floor.floor_to_floor_ft} onChange={v => onChange({ floor_to_floor_ft: v })} suffix="ft" decimals={1} width="w-[65px]" /></td>
         <td className="px-1 py-1">
@@ -149,9 +161,9 @@ export default function FloorRow({ floor, onChange, onDelete }: FloorRowProps) {
             </td>
             <td className="px-1 py-1"><CellInput value={u.sf} onChange={v => updateUse(u.id, { sf: v })} width="w-[85px]" /></td>
             <td colSpan={2} className="px-1 py-1 text-xs text-muted-foreground">
-              {idx === 0 ? (
+              {idx === additional.length - 1 ? (
                 <span className={overAllocated ? "text-red-400" : ""}>
-                  {overAllocated ? "⚠ " : ""}Primary: {primary_sf.toLocaleString()} SF
+                  {overAllocated ? "⚠ over-allocated · " : ""}Total plate: {floor.floor_plate_sf.toLocaleString()} SF
                 </span>
               ) : ""}
             </td>
