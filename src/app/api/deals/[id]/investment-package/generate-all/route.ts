@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries, compQueries, submarketMetricsQueries, locationIntelligenceQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries, compQueries, submarketMetricsQueries, locationIntelligenceQueries, marketReportsQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import {
@@ -78,7 +78,7 @@ export async function POST(
     const { audience, format, sections, existingNotes = {} } = body;
 
     // Fetch ALL deal data in parallel
-    const [deal, uwRow, omAnalysis, docs, checklist, photosRes, devPhases, preDevCosts, compsAll, submarketMetrics, locationIntelRows] = await Promise.all([
+    const [deal, uwRow, omAnalysis, docs, checklist, photosRes, devPhases, preDevCosts, compsAll, submarketMetrics, locationIntelRows, marketReports] = await Promise.all([
       dealQueries.getById(params.id),
       underwritingQueries.getByDealId(params.id),
       omAnalysisQueries.getByDealId(params.id),
@@ -90,6 +90,7 @@ export async function POST(
       compQueries.getByDealId(params.id).catch(() => []),
       submarketMetricsQueries.getByDealId(params.id).catch(() => null),
       locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
+      marketReportsQueries.getByDealId(params.id).catch(() => []),
     ]);
 
     // Use deal notes for context instead of legacy context_notes
@@ -122,7 +123,8 @@ export async function POST(
     const marketSummary = buildMarketSummary(
       submarketMetrics as AnyRecord | null,
       compsAll as AnyRecord[],
-      locationIntelRows as AnyRecord[]
+      locationIntelRows as AnyRecord[],
+      marketReports as AnyRecord[]
     );
 
     // Build master deal context — now enriched with full UW + OM + market.

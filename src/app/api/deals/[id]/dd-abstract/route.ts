@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries, omAnalysisQueries, locationIntelligenceQueries, compQueries, submarketMetricsQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries, omAnalysisQueries, locationIntelligenceQueries, compQueries, submarketMetricsQueries, marketReportsQueries } from "@/lib/db";
 import { generateDDAbstract } from "@/lib/claude";
 import type { Document, ChecklistItem, Deal } from "@/lib/types";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
@@ -25,7 +25,7 @@ export async function POST(
 
     const deal = await dealQueries.getById(params.id);
 
-    const [documents, checklist, uwRow, omAnalysis, locationIntelRows, compsAll, submarketMetrics] = await Promise.all([
+    const [documents, checklist, uwRow, omAnalysis, locationIntelRows, compsAll, submarketMetrics, marketReports] = await Promise.all([
       documentQueries.getByDealId(params.id) as Promise<Document[]>,
       checklistQueries.getByDealId(params.id) as Promise<ChecklistItem[]>,
       underwritingQueries.getByDealId(params.id),
@@ -33,6 +33,7 @@ export async function POST(
       locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
       compQueries.getByDealId(params.id).catch(() => []),
       submarketMetricsQueries.getByDealId(params.id).catch(() => null),
+      marketReportsQueries.getByDealId(params.id).catch(() => []),
     ]);
 
     // Parse raw UW data — it's stored as JSONB, may be string or object
@@ -53,7 +54,8 @@ export async function POST(
       buildMarketSummary(
         submarketMetrics as Record<string, unknown> | null,
         compsAll as Array<Record<string, unknown>>,
-        locationIntelRows as Array<Record<string, unknown>>
+        locationIntelRows as Array<Record<string, unknown>>,
+        marketReports as Array<Record<string, unknown>>
       ),
     ].filter(Boolean).join("\n\n");
 

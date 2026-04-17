@@ -293,9 +293,109 @@ export function buildOmSummary(om: OmAnalysisRow | null): string {
 export function buildMarketSummary(
   submarketMetrics: AnyRec | null,
   compsAll: AnyRec[],
-  locationIntel: AnyRec[]
+  locationIntel: AnyRec[],
+  marketReports: AnyRec[] = []
 ): string {
   const lines: string[] = [];
+
+  // AI-extracted broker research — this block captures the submarket's
+  // CBRE / JLL / C&W / Newmark / M&M / Berkadia view so every section
+  // prompt can cite the specific publication and vintage. Reports are
+  // already ordered newest first (as_of_date DESC NULLS LAST).
+  if (marketReports && marketReports.length > 0) {
+    lines.push("BROKER RESEARCH (AI-extracted, latest first):");
+    // Show the latest in detail and the trailing ones abbreviated.
+    const latest = marketReports[0];
+    const latestMetrics: AnyRec = typeof latest.metrics === "string"
+      ? JSON.parse(latest.metrics || "{}")
+      : (latest.metrics || {});
+    const latestBits: string[] = [];
+    if (latest.publisher) latestBits.push(latest.publisher.toUpperCase());
+    if (latest.report_name) latestBits.push(`"${latest.report_name}"`);
+    if (latest.as_of_date) latestBits.push(new Date(latest.as_of_date).toLocaleDateString("en-US", { month: "short", year: "numeric" }));
+    if (latest.msa || latest.submarket) latestBits.push([latest.submarket, latest.msa].filter(Boolean).join(" / "));
+    lines.push(`  Latest — ${latestBits.join(" | ")}`);
+
+    const metricLabels: Array<[string, string, string]> = [
+      ["vacancy_pct", "Vacancy", "%"],
+      ["occupancy_pct", "Occupancy", "%"],
+      ["rent_growth_yoy_pct", "Rent Growth YoY", "%"],
+      ["rent_growth_qoq_pct", "Rent Growth QoQ", "%"],
+      ["effective_rent_per_unit", "Effective Rent/Unit", "$"],
+      ["effective_rent_per_sf", "Effective Rent/SF", "$/SF"],
+      ["concessions_weeks", "Concessions", " weeks"],
+      ["concessions_pct", "Concessions", "% of rent"],
+      ["absorption_units_ytd", "Absorption YTD", " units"],
+      ["absorption_sf_ytd", "Absorption YTD", " SF"],
+      ["deliveries_units_ytd", "Deliveries YTD", " units"],
+      ["deliveries_sf_ytd", "Deliveries YTD", " SF"],
+      ["under_construction_units", "Under Construction", " units"],
+      ["under_construction_sf", "Under Construction", " SF"],
+      ["planned_units", "Planned", " units"],
+      ["cap_rate_low_pct", "Cap Rate Low", "%"],
+      ["cap_rate_high_pct", "Cap Rate High", "%"],
+      ["cap_rate_avg_pct", "Cap Rate Avg", "%"],
+      ["sales_volume_ytd", "Sales Volume YTD", "$"],
+      ["price_per_unit_avg", "Avg $/Unit", "$"],
+      ["price_per_sf_avg", "Avg $/SF", "$"],
+      ["job_growth_yoy_pct", "Job Growth YoY", "%"],
+      ["unemployment_pct", "Unemployment", "%"],
+    ];
+    for (const [key, label, unit] of metricLabels) {
+      const v = latestMetrics[key];
+      if (v == null || v === "") continue;
+      const formatted = unit === "$" && typeof v === "number"
+        ? `$${Math.round(v).toLocaleString()}`
+        : unit === "%" || unit.startsWith("%")
+          ? `${v}${unit}`
+          : `${typeof v === "number" ? v.toLocaleString() : v}${unit}`;
+      lines.push(`    ${label}: ${formatted}`);
+    }
+    if (latest.narrative) lines.push(`    Publisher read: ${latest.narrative}`);
+
+    const pipeline = typeof latest.pipeline === "string"
+      ? JSON.parse(latest.pipeline || "[]")
+      : (latest.pipeline || []);
+    if (Array.isArray(pipeline) && pipeline.length > 0) {
+      lines.push(`    Supply Pipeline (${pipeline.length} project${pipeline.length > 1 ? "s" : ""}):`);
+      for (const p of pipeline.slice(0, 8) as AnyRec[]) {
+        const bits: string[] = [];
+        if (p.project_name) bits.push(p.project_name);
+        if (p.developer) bits.push(`by ${p.developer}`);
+        if (p.units) bits.push(`${p.units} units`);
+        else if (p.sf) bits.push(`${Number(p.sf).toLocaleString()} SF`);
+        if (p.expected_delivery) bits.push(`→ ${p.expected_delivery}`);
+        if (p.status) bits.push(`(${String(p.status).replace("_", " ")})`);
+        lines.push(`      - ${bits.join(" · ")}`);
+      }
+    }
+
+    // QoQ deltas across vintages on the key metrics — only shown when at
+    // least two reports exist so the developer can see the trend.
+    if (marketReports.length > 1) {
+      const keyMetrics = ["vacancy_pct", "rent_growth_yoy_pct", "cap_rate_avg_pct", "under_construction_units", "deliveries_units_ytd"];
+      const deltaLines: string[] = [];
+      for (const key of keyMetrics) {
+        const series = marketReports
+          .map((r) => {
+            const m: AnyRec = typeof r.metrics === "string" ? JSON.parse(r.metrics || "{}") : (r.metrics || {});
+            return { as_of: r.as_of_date, publisher: r.publisher, value: m[key] };
+          })
+          .filter((x) => x.value != null && x.value !== "")
+          .slice(0, 4); // latest 4 vintages
+        if (series.length >= 2) {
+          const pretty = series
+            .map((s) => `${s.publisher?.toUpperCase() || "?"} ${s.as_of ? new Date(s.as_of).toLocaleDateString("en-US", { month: "short", year: "2-digit" }) : "?"}: ${s.value}`)
+            .join(" → ");
+          deltaLines.push(`    ${key.replace(/_/g, " ")}: ${pretty}`);
+        }
+      }
+      if (deltaLines.length) {
+        lines.push(`  Trend across vintages:`);
+        for (const l of deltaLines) lines.push(l);
+      }
+    }
+  }
 
   if (submarketMetrics) {
     const sm = submarketMetrics;
