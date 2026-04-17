@@ -2065,29 +2065,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      {/* ── Top-level tabs — groups 10+ sections into 4 buckets so the
-          page isn't one giant scroll. The always-visible top strip
-          (metrics) and Massing Panel sit above; sections below swap
-          in/out via hidden class. */}
-      <div className="flex items-center gap-0 border-b border-border/40 overflow-x-auto">
-        {UW_TABS.map((t) => {
-          const active = activeTab === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => changeTab(t.id)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors shrink-0 ${
-                active
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
-              }`}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
-
       {/* ── Massing Panel — two-level tabbed header:
           Level 1: Site plan scenarios (massings) — lets the analyst flip
                    between "Base Case", "Alt 1", etc.
@@ -2215,6 +2192,30 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         );
       })()}
+
+      {/* ── Top-level tabs — groups 10+ sections into 4 buckets so the
+          page isn't one giant scroll. Massing Panel sits above so the
+          analyst always sees the building they're reasoning about,
+          regardless of which tab they're in; sections below swap in/out
+          via hidden class. */}
+      <div className="flex items-center gap-0 border-b border-border/40 overflow-x-auto">
+        {UW_TABS.map((t) => {
+          const active = activeTab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => changeTab(t.id)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors shrink-0 ${
+                active
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+              }`}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
 
       {/* Saved Scenarios — named snapshots the analyst pushed from the
           Site Plan page via "Save as UW Scenario". Renders only when at
