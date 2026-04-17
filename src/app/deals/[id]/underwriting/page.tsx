@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
@@ -1197,6 +1198,35 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null); // null = baseline
   const [activeMassingTab, setActiveMassingTab] = useState<string | null>(null); // id of building_program.scenario shown in the section-cut panel
   const [massingPanelOpen, setMassingPanelOpen] = useState(false); // read-only massing reference starts collapsed — analysts rarely need it while editing rents/expenses
+
+  // Top-level tabs — the underwriting page is long; splitting it into
+  // 4 buckets keeps the analyst focused on whichever piece they're
+  // actively editing. Synced to ?tab= so a shared URL lands on the
+  // right view.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  type UWTab = "revenue_ops" | "capital" | "returns" | "scenarios";
+  const UW_TABS: { id: UWTab; label: string }[] = [
+    { id: "revenue_ops", label: "Revenue & Ops" },
+    { id: "capital", label: "Capital" },
+    { id: "returns", label: "Returns" },
+    { id: "scenarios", label: "Scenarios" },
+  ];
+  const initialTab = ((): UWTab => {
+    const t = searchParams?.get("tab") as UWTab | null;
+    return t && UW_TABS.some((x) => x.id === t) ? t : "revenue_ops";
+  })();
+  const [activeTab, setActiveTab] = useState<UWTab>(initialTab);
+  const changeTab = (t: UWTab) => {
+    setActiveTab(t);
+    const params = new URLSearchParams(searchParams?.toString() || "");
+    params.set("tab", t);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+  // Tailwind `hidden` rather than conditional render: preserves internal
+  // Section open/closed state when the analyst switches tabs.
+  const tabCls = (t: UWTab) => (activeTab === t ? "" : "hidden");
   const [showScenarioWizard, setShowScenarioWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardType, setWizardType] = useState<ScenarioType>("custom");
@@ -2018,6 +2048,29 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
+      {/* ── Top-level tabs — groups 10+ sections into 4 buckets so the
+          page isn't one giant scroll. The always-visible top strip
+          (metrics) and Massing Reference sit above; sections below
+          swap in/out via hidden class. */}
+      <div className="flex items-center gap-0 border-b border-border/40 overflow-x-auto">
+        {UW_TABS.map((t) => {
+          const active = activeTab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => changeTab(t.id)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors shrink-0 ${
+                active
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+              }`}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* ── Massing Reference — read-only snapshot of the programming
           scenario(s), collapsed by default. Analysts editing rents /
           opex / debt don't need the section-cut open; a compact header
@@ -2148,6 +2201,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           revenue lists with the snapshot; it does NOT touch cost basis,
           loan sizing, or other inputs that the analyst typically tunes
           independently of building mix. */}
+      <div className={tabCls("scenarios")}>
       {uwScenarios.length > 0 && (
         <Section title={`Saved Scenarios (${uwScenarios.length})`} icon={<Layers className="h-4 w-4 text-amber-400" />}>
           <div className="space-y-2">
@@ -2238,7 +2292,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         </Section>
       )}
+      </div>
 
+      <div className={tabCls("capital")}>
       <Section title={isGroundUp ? "Development Cost Basis" : "Purchase & Cost Basis"} icon={<DollarSign className="h-4 w-4 text-green-400" />}>
         {isGroundUp ? (
           <div className="mt-3 space-y-4">
@@ -2288,6 +2344,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         )}
       </Section>
+      </div>
 
       {/* Rent Comps live on the Comps page now — see
           src/app/deals/[id]/comps/page.tsx. Storage stays in this
@@ -2311,6 +2368,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           Hidden in Basic — only relevant for value-add / redevelopment
           plays where existing improvements are demolished or repositioned.
           Already collapsed by default in Advanced. */}
+      <div className={tabCls("capital")}>
       {!isBasic && (
       <Section title="Redevelopment Overlay" icon={<Building2 className="h-4 w-4 text-rose-400" />}>
         <div className="mt-3">
@@ -2417,7 +2475,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
       )}
+      </div>
 
+      <div className={tabCls("revenue_ops")}>
       <Section title="Revenue — Unit / Space Mix" icon={<Calculator className="h-4 w-4 text-indigo-400" />}>
         {/* NRSF Budget — Ground-Up Only.
             Pass-through from Programming: uses the active massing scenario's
@@ -3121,7 +3181,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           }}
         />
       )}
+      </div>
 
+      <div className={tabCls("capital")}>
       <Section title={isGroundUp ? "Development Budget" : "Capital Expenditures"} icon={<Hammer className="h-4 w-4 text-orange-400" />}>
         <div className="mt-3 overflow-x-auto">
           {isGroundUp ? (
@@ -3432,8 +3494,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           )}
         </div>
       </Section>
+      </div>
 
       {/* ═══════════════════ PARKING CONFIGURATION ═══════════════════ */}
+      <div className={tabCls("revenue_ops")}>
       {(isGroundUp || d.parking?.entries?.length) && (
       <Section title="Parking Configuration" icon={<Car className="h-4 w-4 text-cyan-400" />}>
         <div className="mt-3">
@@ -4023,6 +4087,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           )}
         </div>
       </Section>
+      </div>
 
       {/* ═══════════════════ ABSORPTION / LEASE-UP ═══════════════════
           Shown for ground-up (residential absorption) OR any deal with
@@ -4033,6 +4098,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           back-of-envelope IRR estimate. Hidden in Basic, and only
           shown when the deal type requires it (ground-up or mixed-use
           with retail/office components). */}
+      <div className={tabCls("returns")}>
       {!isBasic && (isGroundUp || (d.mixed_use?.enabled && (d.mixed_use?.components || []).some(
         c => c.component_type === "retail" || c.component_type === "office"
       ))) && (
@@ -4152,11 +4218,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
       )}
+      </div>
 
       {/* ═══════════════════ CONSTRUCTION FINANCING ═══════════════════
           Hidden in Basic — analysts running back-of-envelope numbers
           can use the simpler Acquisition Financing block below; the
           construction loan modeling is for dialed-in ground-up UWs. */}
+      <div className={tabCls("capital")}>
       {!isBasic && isGroundUp && (
       <Section title="Construction Financing" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
         <div className="mt-3">
@@ -4268,7 +4336,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           )}
         </div>
       </Section>
+      </div>
 
+      <div className={tabCls("returns")}>
       <Section title="Exit Analysis" icon={<RefreshCw className="h-4 w-4 text-teal-600" />}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
           <NumInput label="Exit Cap Rate" value={d.exit_cap_rate} onChange={v => set("exit_cap_rate", v)} suffix="%" decimals={2} />
@@ -4387,6 +4457,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </tbody>
           </table>
         </div>
+      </div>
       </div>
 
       {/* ── Deal Score Progression ── */}
