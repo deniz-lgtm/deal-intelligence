@@ -500,23 +500,49 @@ export default function AffordabilityPlanner({
   //                mix). Market baseline = total − affordable.
   useEffect(() => {
     setConfig((prev) => {
-      const affordable = prev.tiers.reduce((s, t) => s + t.units_count, 0);
       const isAdditive = prev.allocation_mode === "additive";
       // Parent's `totalUnits` counts every row in unit_groups (market +
       // affordable). In additive mode we strip the affordable to recover
       // the market baseline; in replacement mode the total IS the
       // baseline (affordable rows were carved out of it).
+      //
+      // In additive mode each tier's units_pct is taken against the
+      // market baseline, so if total tier pct is Σpct then
+      //   affordable ≈ baseline × Σpct/100  and  baseline = totalUnits − affordable
+      //   ⇒ baseline = totalUnits × 100 / (100 + Σpct).
+      const sumPcts = prev.tiers.reduce((s, t) => s + (t.units_pct || 0), 0);
       const baseline = isAdditive
-        ? Math.max(0, totalUnits - affordable)
+        ? Math.max(0, Math.round((totalUnits * 100) / (100 + sumPcts)))
         : totalUnits;
-      return {
+
+      // Reconcile each tier's units_count with the new baseline so the
+      // "Units Required" field tracks units_pct × baseline. Without this
+      // a tier saved against a stale baseline would keep displaying its
+      // old count even after the massing changes the unit total.
+      const nextTiers = prev.tiers.map((t) =>
+        t.units_pct
+          ? { ...t, units_count: Math.round(baseline * (t.units_pct / 100)) }
+          : t
+      );
+      const affordable = nextTiers.reduce((s, t) => s + t.units_count, 0);
+
+      const market = isAdditive
+        ? baseline
+        : Math.max(0, baseline - affordable);
+      const changed =
+        prev.total_units !== baseline ||
+        prev.market_rate_units !== market ||
+        nextTiers.some((t, i) => t.units_count !== prev.tiers[i]?.units_count);
+      const next = {
         ...prev,
+        tiers: nextTiers,
         total_units: baseline,
-        market_rate_units: isAdditive
-          ? baseline
-          : Math.max(0, baseline - affordable),
+        market_rate_units: market,
       };
+      if (changed) onConfigChange(next);
+      return next;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalUnits]);
 
   // Fetch AMI data
