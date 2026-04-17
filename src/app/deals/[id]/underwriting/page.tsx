@@ -3175,6 +3175,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       {/* ═══ Affordability (multifamily / student housing) ═══ */}
       {isMF && (
+        <div className="mt-6">
         <AffordabilityPlanner
           dealId={params.id}
           totalUnits={m.totalUnits || 0}
@@ -3255,6 +3256,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             });
           }}
         />
+        </div>
       )}
       </div>
 
@@ -4258,14 +4260,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             ({fn(comp.sf_allocation)} SF)
                           </span>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <NumInput
-                            label="TI Allowance ($/SF)"
-                            value={comp.ti_allowance_per_sf}
-                            onChange={v => updComp({ ti_allowance_per_sf: v })}
-                            prefix="$"
-                            decimals={2}
-                          />
+                        {/* TI allowance is captured per-tenant in the
+                            Commercial Tenants table on Revenue, so it's
+                            intentionally NOT repeated here. The remaining
+                            three knobs apply to the whole component. */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                           <NumInput
                             label="Leasing Commission"
                             value={comp.leasing_commission_pct}
