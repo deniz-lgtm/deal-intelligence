@@ -1725,6 +1725,15 @@ export interface DevBudgetLineItem {
   pct_basis: "hard_costs" | "total_project" | "none";
   pct_value: number;
   notes: string;
+  // When set, the quantity is live-computed from the massing on every
+  // render instead of relying on the (possibly stale) saved value.
+  // Supported sources mirror seedDevBudget: land_sf / max_gsf /
+  // max_nrsf / parking_spaces / total_units.
+  auto_qty_source?: string;
+  // For per-building fanout. When set, the live quantity is pulled
+  // from the matching scenario in building_program, so each building
+  // can carry its own GSF/NRSF/parking-space count.
+  site_plan_building_id?: string | null;
 }
 
 export const DEFAULT_DEV_BUDGET_HARD: Array<{ label: string; subcategory: string; unit_label: string; auto_qty_source: string }> = [
