@@ -72,20 +72,28 @@ export async function POST(
     ? "market_rent_per_unit (monthly per unit)"
     : "market_rent_per_sf (annual per SF)";
 
-  const prompt = `You are a real estate market analyst. Estimate current market rents for each unit group.
+  const rentFieldName = isSH ? "market_rent_per_bed" : isMF ? "market_rent_per_unit" : "market_rent_per_sf";
+  const prompt = `You are a real estate market analyst. Estimate current market rents for each unit group using comps from the local submarket.
 
 Property: ${deal.name || "Unnamed"}
 Location: ${location}
 Type: ${deal.property_type || "multifamily"}
 
-Unit groups:
+Unit groups (one rent per row, keep the exact id so the UI can map back):
 ${groupsDesc}
 
-Return a JSON array (same order) with:
-- "id": group id
-- "${isSH ? "market_rent_per_bed" : isMF ? "market_rent_per_unit" : "market_rent_per_sf"}": number
+Return a JSON array with EXACTLY ${unitGroups.length} object${unitGroups.length === 1 ? "" : "s"}, one per group in the same order. Each object MUST include:
+- "id": "<exact id from above>"
+- "label": "<group label>"         (redundant safety net for matching)
+- "${rentFieldName}": <number>     (dollars, no commas; MUST be > 0 — never return 0)
+- "basis": "<one-line cite>"       (comp building, $/SF or $/unit, submarket)
 
-Group IDs: ${unitGroups.map(g => `"${g.id}"`).join(", ")}
+Rules:
+- Never emit 0 or null for ${rentFieldName} — if evidence is thin, use the nearest comp and note the caveat in "basis".
+- Scale by bedroom count and unit SF. A 2BR is not the same as a Studio.
+- ${isSH ? "Per-bed pricing assumes purpose-built student housing adjacent to campus." : isMF ? "Per-unit is MONTHLY. Typical ranges: $1,200-$4,500 depending on market + BR count." : "Per-SF is ANNUAL asking rent. Typical ranges: $22-$90 depending on market + class."}
+
+Group IDs for reference: ${unitGroups.map(g => `"${g.id}"`).join(", ")}
 
 JSON array only, no markdown, no extra text.`;
 
@@ -101,7 +109,28 @@ JSON array only, no markdown, no extra text.`;
     if (!parsed) {
       return NextResponse.json({ error: "AI returned unparseable response", raw: text }, { status: 502 });
     }
-    return NextResponse.json({ rents: parsed });
+    // Defensively reconcile the AI response to our unit groups. LLMs
+    // sometimes hallucinate ids or skip rows; we match on id first, then
+    // label, then positional index, and drop any row where the rent field
+    // never landed. Returning the caller's id ensures the UI can apply
+    // the result without its own fuzzy matching.
+    const rawRents = parsed as Array<Record<string, unknown>>;
+    const reconciled = unitGroups.map((g, i) => {
+      const byId = rawRents.find((r) => r.id === g.id);
+      const byLabel = rawRents.find((r) => typeof r.label === "string" && (r.label as string).trim().toLowerCase() === (g.label || "").trim().toLowerCase());
+      const byIndex = rawRents[i];
+      const src = byId || byLabel || byIndex || {};
+      const rentVal = Number(
+        src.market_rent_per_unit ?? src.market_rent_per_bed ?? src.market_rent_per_sf ?? 0,
+      );
+      return {
+        id: g.id,
+        label: g.label,
+        ...(isSH ? { market_rent_per_bed: rentVal } : isMF ? { market_rent_per_unit: rentVal } : { market_rent_per_sf: rentVal }),
+        basis: typeof src.basis === "string" ? src.basis : "",
+      };
+    });
+    return NextResponse.json({ rents: reconciled });
   } catch (err: unknown) {
     const status = (err && typeof err === "object" && "status" in err) ? (err as { status: number }).status : 500;
     if (status === 429) return NextResponse.json({ error: "Rate limited — try again in a moment" }, { status: 429 });

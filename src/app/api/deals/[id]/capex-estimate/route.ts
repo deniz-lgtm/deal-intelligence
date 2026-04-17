@@ -97,15 +97,19 @@ export async function POST(
       if (isGroundUp) {
         const prompt = buildGroundUpPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
         const response = await client.messages.create(
-          { model: MODEL, max_tokens: 500, messages: [{ role: "user", content: prompt }] },
+          { model: MODEL, max_tokens: 1200, messages: [{ role: "user", content: prompt }] },
           { signal: controller.signal }
         );
         const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
         const parsed = parseJsonObject(raw);
+        const items = Array.isArray(parsed?.items) ? parsed!.items : [];
         return NextResponse.json({
           hard_cost_per_sf: parsed?.hard_cost_per_sf ?? 150,
           soft_cost_pct: parsed?.soft_cost_pct ?? 25,
           basis: parsed?.basis ?? "",
+          // Itemized per-subcategory unit costs so the Dev Budget
+          // table gets real numbers, not just the aggregate $/GSF.
+          items,
           strategy: "ground_up",
         });
       }
@@ -245,11 +249,54 @@ CALIBRATION:
 - If parking and podium make up >30% of GSF, pricing trends higher — note this in basis.
 - If the analyst notes or OM call out market-specific drivers (hard-market insurance, labor tightness, agency-required prevailing wage), incorporate them.
 
+ITEMIZED OUTPUT — produce a unit_cost for every row the Dev Budget
+will render. The analyst's itemized budget uses these subcategories
+(match the names exactly so the UI can map them):
+
+  Hard:
+    - site_work          → $/Land SF  (sitework, utilities, landscape)
+    - off_sites          → $/LF of frontage (usually 0 unless offsites flagged)
+    - vertical           → $/GSF (shell & core, the biggest line)
+    - parking_structure  → $/space (structured/below-grade; 0 if surface-only)
+    - ffe_amenities      → $/NRSF (common/amenity FF&E)
+    - general_conditions → % of hard
+    - contractor_fee     → % of hard
+    - contingency        → % of hard
+  Soft:
+    - a_and_e            → % of hard (architecture + engineering)
+    - permits            → $/unit (permits + impact fees)
+    - legal              → lump sum total $
+    - dev_fee            → % of hard
+    - marketing_leaseup  → $/unit
+    - insurance          → lump sum total $
+    - accounting         → lump sum total $
+
+For EVERY row return either {unit_cost: <number>} (non-% rows) OR
+{pct_value: <number>, is_pct: true} (% rows). Zero is acceptable when
+a line truly doesn't apply — never omit a row.
+
 Return ONLY a JSON object, no explanation:
 {
   "hard_cost_per_sf": 245,
   "soft_cost_pct": 25,
-  "basis": "5-over-1 wood-frame MF in Austin TX, mid-2025 pricing. Base Type III/V ~$215/GSF + ~15% for structured podium parking (28% of GSF) + 3% escalation to mid-construction = ~$245/GSF. Soft at 25% reflects typical 24-mo entitlement/construction timeline and market-rate interest reserve."
+  "basis": "5-over-1 wood-frame MF in Austin TX, mid-2025 pricing. Base Type III/V ~$215/GSF + ~15% for structured podium parking (28% of GSF) + 3% escalation to mid-construction = ~$245/GSF. Soft at 25% reflects typical 24-mo entitlement/construction timeline and market-rate interest reserve.",
+  "items": [
+    { "subcategory": "site_work",          "unit_cost": 18 },
+    { "subcategory": "off_sites",          "unit_cost": 0 },
+    { "subcategory": "vertical",           "unit_cost": 215 },
+    { "subcategory": "parking_structure",  "unit_cost": 35000 },
+    { "subcategory": "ffe_amenities",      "unit_cost": 12 },
+    { "subcategory": "general_conditions", "is_pct": true, "pct_value": 4 },
+    { "subcategory": "contractor_fee",     "is_pct": true, "pct_value": 4 },
+    { "subcategory": "contingency",        "is_pct": true, "pct_value": 5 },
+    { "subcategory": "a_and_e",            "is_pct": true, "pct_value": 7 },
+    { "subcategory": "permits",            "unit_cost": 8500 },
+    { "subcategory": "legal",              "unit_cost": 125000 },
+    { "subcategory": "dev_fee",            "is_pct": true, "pct_value": 4 },
+    { "subcategory": "marketing_leaseup",  "unit_cost": 1500 },
+    { "subcategory": "insurance",          "unit_cost": 150000 },
+    { "subcategory": "accounting",         "unit_cost": 60000 }
+  ]
 }`;
 }
 

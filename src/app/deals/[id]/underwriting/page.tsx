@@ -544,6 +544,32 @@ function liveDevBudgetAmount(item: DevBudgetLineItem, d: UWData): number {
   return liveDevBudgetQty(item, d) * (item.unit_cost || 0);
 }
 
+// ── Dev-budget unit-type menu ──
+// Each itemized line picks one of these. `source` is the auto_qty_source
+// stamped on the line so liveDevBudgetQty knows which number to pull
+// from the UW state; `label` is the short tag shown in the Unit column.
+// "manual" / "lump_sum" let the analyst type a quantity in directly.
+const DEV_BUDGET_UNIT_TYPES: Array<{ source: string; label: string; isPct?: boolean }> = [
+  { source: "max_gsf", label: "GSF" },
+  { source: "max_nrsf", label: "NRSF" },
+  { source: "land_sf", label: "Land SF" },
+  { source: "parking_spaces", label: "space" },
+  { source: "total_units", label: "per unit" },
+  { source: "manual", label: "lump sum" },
+  { source: "pct", label: "% of hard", isPct: true },
+];
+
+function findDevBudgetUnitType(item: DevBudgetLineItem) {
+  if (item.is_pct) return DEV_BUDGET_UNIT_TYPES.find((t) => t.isPct)!;
+  if (item.auto_qty_source) {
+    return (
+      DEV_BUDGET_UNIT_TYPES.find((t) => t.source === item.auto_qty_source) ||
+      DEV_BUDGET_UNIT_TYPES.find((t) => t.source === "manual")!
+    );
+  }
+  return DEV_BUDGET_UNIT_TYPES.find((t) => t.source === "manual")!;
+}
+
 function newParkingEntry(type: ParkingType = "surface"): ParkingEntry {
   return { id: uuidv4(), type, spaces: 0, cost_per_space: PARKING_COST_DEFAULTS[type], reserved_residential_spaces: 0, reserved_monthly_rate: 0, unreserved_spaces: 0, unreserved_monthly_rate: 0, guest_visitor_spaces: 0, retail_shared_spaces: 0, retail_shared_monthly_rate: 0 };
 }
@@ -1652,13 +1678,58 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "Estimation failed"); return; }
       if (isGroundUp && json.hard_cost_per_sf != null) {
-        // Ground-up: AI returns hard_cost_per_sf and soft_cost_pct directly
-        setData(p => ({
-          ...p,
-          hard_cost_per_sf: json.hard_cost_per_sf,
-          soft_cost_pct: json.soft_cost_pct ?? 25,
-        }));
-        toast.success(`Dev budget set: $${json.hard_cost_per_sf}/GSF hard costs, ${json.soft_cost_pct ?? 25}% soft costs`);
+        // Ground-up: AI returns an aggregate hard_cost_per_sf + soft_cost_pct
+        // AND a per-subcategory items array. We drop the items straight into
+        // dev_budget_items so the itemized budget table actually has numbers
+        // in it after a single click — the legacy hard_cost_per_sf /
+        // soft_cost_pct are also updated for the simple-budget fallback.
+        const items = Array.isArray(json.items) ? (json.items as Array<{
+          subcategory: string;
+          unit_cost?: number;
+          pct_value?: number;
+          is_pct?: boolean;
+        }>) : [];
+        setData(p => {
+          // Make sure the budget is seeded so we have rows to merge into.
+          const seeded = (p.dev_budget_items && p.dev_budget_items.length > 0)
+            ? p.dev_budget_items
+            : seedDevBudget(p);
+          const bySubcat = new Map(items.map((it) => [it.subcategory, it]));
+          const merged = seeded.map((row) => {
+            const hit = bySubcat.get(row.subcategory);
+            if (!hit) return row;
+            if (hit.is_pct || row.is_pct) {
+              const pctValue = hit.pct_value ?? row.pct_value;
+              return {
+                ...row,
+                is_pct: true,
+                pct_basis: "hard_costs" as const,
+                pct_value: pctValue ?? 0,
+                unit_label: "% of hard",
+              };
+            }
+            const unitCost = hit.unit_cost ?? row.unit_cost;
+            return {
+              ...row,
+              unit_cost: unitCost ?? 0,
+              // amount is re-derived from live qty × unit_cost in
+              // liveDevBudgetAmount, but we set it so the
+              // hasItemizedBudget gate flips to true on first render.
+              amount: (row.quantity || 0) * (unitCost ?? 0),
+            };
+          });
+          return {
+            ...p,
+            hard_cost_per_sf: json.hard_cost_per_sf,
+            soft_cost_pct: json.soft_cost_pct ?? 25,
+            dev_budget_items: merged,
+          };
+        });
+        toast.success(
+          items.length > 0
+            ? `Dev budget populated: ${items.length} line items, $${json.hard_cost_per_sf}/GSF blended`
+            : `Dev budget set: $${json.hard_cost_per_sf}/GSF hard costs, ${json.soft_cost_pct ?? 25}% soft costs`
+        );
       } else {
         // Value-add: show preview modal for capex line items
         const hasLinkedRenos = data.capex_items.some(c => c.linked_unit_group_id);
@@ -3422,7 +3493,26 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                                   : <CellInput value={item.quantity} onChange={v => updBI({ quantity: v })} />
                               }
                             </td>
-                            <td className="px-2 py-1.5 text-xs text-muted-foreground">{item.unit_label}</td>
+                            <td className="px-2 py-1.5">
+                              <select
+                                value={findDevBudgetUnitType(item).source}
+                                onChange={(e) => {
+                                  const pick = DEV_BUDGET_UNIT_TYPES.find((t) => t.source === e.target.value)!;
+                                  if (pick.isPct) {
+                                    updBI({ is_pct: true, pct_basis: "hard_costs", pct_value: item.pct_value || 0, unit_label: pick.label, auto_qty_source: undefined });
+                                  } else if (pick.source === "manual") {
+                                    updBI({ is_pct: false, unit_label: pick.label, auto_qty_source: undefined });
+                                  } else {
+                                    updBI({ is_pct: false, unit_label: pick.label, auto_qty_source: pick.source, quantity: 0, amount: 0 });
+                                  }
+                                }}
+                                className="bg-background text-foreground text-xs outline-none rounded border border-border/40 px-1 py-0.5"
+                              >
+                                {DEV_BUDGET_UNIT_TYPES.map((t) => (
+                                  <option key={t.source} value={t.source}>{t.label}</option>
+                                ))}
+                              </select>
+                            </td>
                             <td className="px-2 py-1.5">
                               {item.is_pct ? <span className="text-muted-foreground text-xs">—</span> : <CellInput value={item.unit_cost} onChange={v => updBI({ unit_cost: v })} prefix="$" />}
                             </td>
@@ -3496,7 +3586,30 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                                     : <CellInput value={item.quantity || item.amount} onChange={v => updBI({ quantity: 1, unit_cost: v, amount: v })} />
                               }
                             </td>
-                            <td className="px-2 py-1.5 text-xs text-muted-foreground">{item.unit_label}</td>
+                            <td className="px-2 py-1.5">
+                              {item.subcategory === "interest_carry" ? (
+                                <span className="text-xs text-muted-foreground">{item.unit_label}</span>
+                              ) : (
+                                <select
+                                  value={findDevBudgetUnitType(item).source}
+                                  onChange={(e) => {
+                                    const pick = DEV_BUDGET_UNIT_TYPES.find((t) => t.source === e.target.value)!;
+                                    if (pick.isPct) {
+                                      updBI({ is_pct: true, pct_basis: "hard_costs", pct_value: item.pct_value || 0, unit_label: pick.label, auto_qty_source: undefined });
+                                    } else if (pick.source === "manual") {
+                                      updBI({ is_pct: false, unit_label: pick.label, auto_qty_source: undefined });
+                                    } else {
+                                      updBI({ is_pct: false, unit_label: pick.label, auto_qty_source: pick.source, quantity: 0, amount: 0 });
+                                    }
+                                  }}
+                                  className="bg-background text-foreground text-xs outline-none rounded border border-border/40 px-1 py-0.5"
+                                >
+                                  {DEV_BUDGET_UNIT_TYPES.map((t) => (
+                                    <option key={t.source} value={t.source}>{t.label}</option>
+                                  ))}
+                                </select>
+                              )}
+                            </td>
                             <td className="px-2 py-1.5">
                               {item.is_pct || item.subcategory === "interest_carry" ? <span className="text-muted-foreground text-xs">—</span> : <CellInput value={item.unit_cost} onChange={v => updBI({ unit_cost: v })} prefix="$" />}
                             </td>
