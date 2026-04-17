@@ -28,6 +28,8 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { Comp, SubmarketMetrics, Document } from "@/lib/types";
 import { DocCoverageChip } from "@/components/ai";
+import MarketIntelligencePanel from "@/components/comps/MarketIntelligencePanel";
+import { fireAndForgetAutoEnrich } from "@/lib/location-auto-enrich";
 
 // ── Underwriting-side rent comp matrix types ────────────────────────────────
 //
@@ -300,6 +302,11 @@ export default function CompsPage({ params }: { params: { id: string } }) {
       }
       if (!silent) toast.success("Subject deal geocoded");
       loadData();
+      // Kick off background market-data enrichment — HUD AMI + FMR, BLS LAUS
+      // + QCEW, USPS migration, FEMA flood, Census demographics. Fire-and-
+      // forget so the UI doesn't block on HUD/BLS round-trips. Each feed
+      // degrades gracefully when its API key is missing.
+      fireAndForgetAutoEnrich(params.id);
     } finally {
       setGeocodingSubject(false);
     }
@@ -897,6 +904,15 @@ export default function CompsPage({ params }: { params: { id: string } }) {
             className="w-full px-3 py-2 text-sm bg-muted/20 border border-border/40 rounded-lg outline-none resize-none focus:border-primary/40"
           />
         </div>
+      </Section>
+
+      {/* AI-extracted broker research — CBRE / JLL / C&W / M&M / Berkadia. */}
+      <Section
+        title="Market Intelligence"
+        icon={<FileSearch className="h-4 w-4 text-primary" />}
+        defaultOpen={true}
+      >
+        <MarketIntelligencePanel dealId={params.id} />
       </Section>
 
       {/* Distance filter (only when subject has coords) */}

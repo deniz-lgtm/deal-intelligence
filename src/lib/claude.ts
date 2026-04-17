@@ -1521,15 +1521,24 @@ export interface UnderwritingSnapshot {
 }
 
 const SECTION_PROMPTS: Record<string, string> = {
-  executive_summary: "**Executive Summary** (2-3 sentences synthesizing the deal thesis)",
-  property_overview: "**Property Overview** (key facts from all sources)",
-  underwriting_summary: "**Underwriting Summary** (use the COMPUTED RETURNS from the internal model — show cap rate, NOI, yield on cost, financing terms, CapEx budget, hold period, exit assumptions. Note: all percentage values are already in percent form, do NOT multiply by 100)",
-  revenue_expense: "**Revenue & Expense Analysis** (unit mix, in-place vs market rents, operating expenses breakdown)",
-  document_review: "**Document Review Status** (what's been received, what's outstanding)",
-  key_findings: "**Key Findings** (organized by category — title, environmental, financial, physical, legal)",
-  red_flags: "**Red Flags & Issues** (anything requiring attention, including checklist items marked as issues)",
-  outstanding_items: "**Outstanding Items** (what's still needed to complete diligence)",
-  recommendation: "**Recommendation** (proceed / proceed with conditions / do not proceed — with brief rationale)",
+  executive_summary:
+    "**Executive Summary** — IC-grade thesis opening. Lead with the one-sentence investment thesis, then a bulleted metrics table (purchase price, basis $/unit or $/SF, going-in cap, stabilized yield-on-cost, levered IRR, equity multiple, hold, total equity). Close with the 2-3 reasons this deal works and the 1-2 reasons it could fail. No marketing language.",
+  property_overview:
+    "**Property Overview** — Physical description tight enough for an IC member who has never seen the site. Cover: address / submarket / year built / land area / rentable SF or unit count, construction type, condition, parking, zoning classification, current occupancy, and any site plan / massing / buildable envelope facts if this is a ground-up or redevelopment deal. Flag gaps in physical due diligence explicitly.",
+  underwriting_summary:
+    "**Underwriting Summary** — Show the COMPUTED RETURNS from the internal model in a structured bullet list: purchase price, total capitalization, stabilized NOI, going-in cap, stabilized yield-on-cost, untrended YoC, cash-on-cash, levered IRR, equity multiple, DSCR at stabilization, refi proceeds (if modeled), exit cap, hold. Immediately follow with the 3-5 assumptions that drive the return (rent growth, exit cap compression/expansion, LTC, CapEx timing, lease-up speed) and flag which look aggressive vs. consensus. All percentage values are already in percent form — do NOT multiply by 100.",
+  revenue_expense:
+    "**Revenue & Expense Analysis** — Unit mix with in-place vs. market rents and the implied loss-to-lease, other income line items, vacancy/credit loss assumptions vs. submarket, OpEx build-up with $/unit or $/SF benchmarks, payroll and management load, real estate taxes (flag reassessment risk post-close), insurance at current hard-market rates, R&M adequacy. Call out any expense ratio that is more than ~10% outside submarket norms.",
+  document_review:
+    "**Document Review Status** — What has been received and reviewed, what is outstanding, and what is materially impairing diligence. Organize by workstream (title, survey, zoning, environmental, engineering, financial, legal, tax, insurance). Be specific — don't just say 'title pending', say 'Prelim title report not yet received; exceptions and easements unknown'.",
+  key_findings:
+    "**Key Findings** — Organize by workstream: Title & Survey, Zoning & Entitlements, Environmental, Physical / PCA, Financial, Legal, Tax & Insurance, Market. For each, state what was verified and what the finding means for value, closing, or the business plan. Quantify impact in $ or bps where possible.",
+  red_flags:
+    "**Red Flags & Issues** — Rank each risk by severity (HIGH / MEDIUM / LOW) and category. For each: the risk, the dollar or probability impact, and the proposed mitigant (rep, escrow, price reduction, carve-out, walk). This is the section an IC member reads first — be direct, prioritized, and specific.",
+  outstanding_items:
+    "**Outstanding Items & Path to Closing** — A closing checklist: open items, owner, target date, and which are CPs to close vs. post-close. Flag anything that could push timing or require re-trade.",
+  recommendation:
+    "**Recommendation** — Open with: PROCEED / PROCEED WITH CONDITIONS / RE-TRADE / DO NOT PROCEED. Follow with the rationale in 3-5 crisp bullets tying back to thesis and risks. If conditions, list them (price, reps, escrows, carve-outs, debt terms). State the go / no-go decision point the committee is being asked to approve.",
 };
 
 function buildSectionInstructions(sections?: string[]): string {
@@ -1584,9 +1593,16 @@ export async function generateDDAbstract(
 
   const prompt = `${CONCISE_STYLE}
 
-You are a senior real estate investment analyst conducting critical due diligence review. Your tone should be SKEPTICAL, ANALYTICAL, and CRITICAL — identify weaknesses, flag assumptions that seem aggressive, question gaps in data, and highlight risks prominently. This memo is for internal decision-makers who need an honest, unvarnished assessment — not a sales pitch. Err on the side of caution and be direct about concerns. Within each section use bullet points (markdown "-") instead of paragraphs.
+ROLE: You are a senior real estate investment professional writing the Due Diligence Abstract that precedes a Blackstone-style Investment Committee memo. Your reader is a Managing Director who will spend less than ten minutes on this document before the IC. They already understand real estate — they need signal, not explanation.
 
-Write a comprehensive due diligence abstract memo that synthesizes ALL available deal information — the OM analysis, the underwriting model, document reviews, checklist progress, and analyst notes.
+VOICE: Skeptical, analytical, institutional. Challenge every assumption: rent growth, exit cap, lease-up, basis, insurance, taxes post-reassessment. Distinguish what is UNDERWRITTEN (in the model), what is VERIFIED (in diligence), and what is ASSUMED (neither). Quantify risk in dollars or basis points. Absolutely no marketing language, no hedging boilerplate, no "it is important to note".
+
+FORMAT:
+- Markdown. H2 for each section header. Bullets (leading "-") inside sections, not paragraphs.
+- Lead each section with the bottom line. Supporting detail follows.
+- Cite the specific number AND where it came from (OM, rent roll, T-12, model, broker, comp). If the source is missing, flag it.
+- Use $/unit, $/SF, bps, % deltas vs. submarket — not vague words like "strong" or "healthy".
+- If a data input is missing, write "UNDERWRITTEN BUT NOT VERIFIED" or "DATA GAP — [what's needed]". Do not invent.
 ${memorySection}
 DEAL: ${deal.name}
 Address: ${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}
@@ -1599,11 +1615,16 @@ ${docContext || "No documents with summaries yet."}
 DILIGENCE CHECKLIST STATUS:
 ${checklistSummary || "Checklist not yet completed."}
 
-Write a professional due diligence abstract in markdown format with ONLY the following requested sections:
+Write the due diligence abstract in markdown with ONLY the following requested sections, in this order:
 ${buildSectionInstructions(sections)}
 
-IMPORTANT: Use the actual underwriting data provided. All rates (vacancy, cap rate, interest rate, etc.) are already expressed as percentages — do NOT multiply them by 100. For example, a vacancy_rate of 5 means 5%, not 500%.
-Be factual, concise, and investment-focused. If information is missing, note it as outstanding.`;
+NUMERIC CONVENTION: all rates (vacancy, cap rate, interest rate, IRR, etc.) in the underwriting block are ALREADY in percent form — 5 means 5%, not 500%. Do not multiply by 100.
+
+ANTI-PATTERNS TO AVOID:
+- Restating the OM. The reader has read it.
+- Generic statements ("the property is well-located"). Replace with: drive time to top employer, submarket rent growth %, comp cap rates, specific demographics.
+- Burying risk. If something is HIGH severity, it goes in the first bullet of the relevant section, not the last.
+- Recommending "proceed with further diligence" as a default. Take a position.`;
 
   const response = await getClient().messages.create({
     model: await getActiveModel(),
@@ -2251,6 +2272,222 @@ ${WHATIF_PROMPT}`;
     return parsed;
   } catch (err) {
     console.error("analyzeWhatIf failed:", err);
+    return null;
+  }
+}
+
+// ─── Market Report Extraction ────────────────────────────────────────────────
+//
+// Takes a broker research report (CBRE MarketBeat, JLL Research, C&W,
+// Colliers, Newmark, Marcus & Millichap, Berkadia, Yardi Matrix, etc.) as
+// a PDF buffer or pasted text and returns structured submarket metrics.
+// Designed for institutional developer-focused workflows (Lincoln Property
+// Co., Trammell Crow caliber) where the analyst collects multiple
+// vintages of the same research line and needs clean QoQ comparisons plus
+// a pipeline view of under-construction / planned deliveries.
+//
+// The extractor explicitly covers every asset class (MF, industrial,
+// office, retail, mixed-use, self-storage, student housing, hospitality,
+// land) and pulls whichever metrics the publisher surfaced — missing
+// fields come back null rather than forcing the AI to invent values.
+
+export interface MarketReportExtraction {
+  publisher: string | null;
+  report_name: string | null;
+  asset_class: string | null;
+  msa: string | null;
+  submarket: string | null;
+  as_of_date: string | null; // ISO YYYY-MM-DD, reporting period end
+  source_url: string | null;
+  metrics: {
+    // Core across asset classes — all optional, all in human units
+    vacancy_pct?: number | null;              // e.g. 5.2 means 5.2%
+    availability_pct?: number | null;          // industrial / office
+    occupancy_pct?: number | null;
+    absorption_units_ytd?: number | null;
+    absorption_sf_ytd?: number | null;
+    deliveries_units_ytd?: number | null;
+    deliveries_sf_ytd?: number | null;
+    under_construction_units?: number | null;
+    under_construction_sf?: number | null;
+    planned_units?: number | null;
+    planned_sf?: number | null;
+    net_absorption_pct_of_inventory?: number | null;
+    inventory_units?: number | null;
+    inventory_sf?: number | null;
+    rent_growth_yoy_pct?: number | null;       // e.g. 3.4 means 3.4%/yr
+    rent_growth_qoq_pct?: number | null;
+    effective_rent_per_unit?: number | null;   // MF
+    effective_rent_per_sf?: number | null;     // commercial / MF $/SF
+    asking_rent_per_sf?: number | null;
+    concessions_weeks?: number | null;         // common for MF + office
+    concessions_pct?: number | null;
+    cap_rate_low_pct?: number | null;
+    cap_rate_high_pct?: number | null;
+    cap_rate_avg_pct?: number | null;
+    sales_volume_ytd?: number | null;          // $ transacted YTD
+    price_per_unit_avg?: number | null;
+    price_per_sf_avg?: number | null;
+    job_growth_yoy_pct?: number | null;
+    employment_total?: number | null;
+    unemployment_pct?: number | null;
+    population_growth_yoy_pct?: number | null;
+    notes?: string | null;
+  };
+  // Under-construction / planned projects the publisher called out
+  pipeline: Array<{
+    project_name?: string | null;
+    developer?: string | null;
+    units?: number | null;
+    sf?: number | null;
+    expected_delivery?: string | null; // free-form or ISO
+    submarket?: string | null;
+    status?: "under_construction" | "planned" | "proposed" | "recently_delivered" | null;
+  }>;
+  top_employers: Array<{ name: string; industry?: string | null; employees?: number | null }>;
+  top_deliveries: Array<{ project_name: string; units?: number | null; sf?: number | null; delivered?: string | null }>;
+  narrative: string | null; // short AI synthesis of the report's overall read
+}
+
+const MARKET_REPORT_PUBLISHERS = [
+  "cbre", "jll", "cushman_wakefield", "colliers", "newmark",
+  "marcus_millichap", "berkadia", "yardi_matrix", "realpage",
+  "costar", "green_street", "other",
+];
+
+function buildMarketReportPrompt(
+  dealContext: {
+    property_type?: string | null;
+    msa?: string | null;
+    submarket?: string | null;
+    city?: string | null;
+    state?: string | null;
+  }
+): string {
+  const ctxLines: string[] = [];
+  if (dealContext.property_type) ctxLines.push(`Deal property type: ${dealContext.property_type}`);
+  if (dealContext.city || dealContext.state) {
+    ctxLines.push(`Deal market: ${[dealContext.city, dealContext.state].filter(Boolean).join(", ")}`);
+  }
+  if (dealContext.msa) ctxLines.push(`Deal MSA: ${dealContext.msa}`);
+  if (dealContext.submarket) ctxLines.push(`Deal submarket: ${dealContext.submarket}`);
+  const deal = ctxLines.length ? `\nDEAL CONTEXT (for synthesis narrative):\n${ctxLines.join("\n")}\n` : "";
+
+  return `${CONCISE_STYLE}
+
+ROLE: You are an institutional CRE research analyst extracting structured metrics from a broker market research report. Your output drives the submarket view on a developer's deal page and feeds downstream AI sections (investment memo, DD abstract). Accuracy matters — missing fields MUST come back null rather than invented.
+
+INPUT: The attached document is a broker market research report. Typical publishers are CBRE (MarketBeat, Figures, Viewpoint), JLL (Research), Cushman & Wakefield (MarketBeat), Colliers, Newmark, Marcus & Millichap, Berkadia (BeyondInsights), Yardi Matrix, RealPage.
+
+EXTRACTION RULES:
+1. Identify the publisher (\`cbre\`, \`jll\`, \`cushman_wakefield\`, \`colliers\`, \`newmark\`, \`marcus_millichap\`, \`berkadia\`, \`yardi_matrix\`, \`realpage\`, \`costar\`, \`green_street\`, \`other\`) from cover / header / footer.
+2. Identify the asset class: \`multifamily\`, \`industrial\`, \`office\`, \`retail\`, \`mixed_use\`, \`self_storage\`, \`student_housing\`, \`hospitality\`, \`land\`.
+3. Identify the MSA and the submarket if the report is submarket-specific.
+4. Extract the as-of date in ISO format YYYY-MM-DD. If the report says "Q3 2024" use the quarter-end (2024-09-30). If only the year, use year-end.
+5. All percentage values stay as human percentages (5.2 = 5.2%), never decimals.
+6. All money values in dollars, not thousands.
+7. Prefer "effective" rent over "asking" rent when both are published.
+8. For \`pipeline\`, extract every named under-construction / planned project in the report (cap at 25). Set status based on the publisher's labeling. If the publisher only gives totals, the pipeline array can be empty — the under_construction_units/sf totals go in \`metrics\` instead.
+9. Top employers + top deliveries: cap at 10 each; include only if explicitly listed.
+10. \`narrative\`: 2-4 crisp sentences synthesizing the publisher's overall read on the market — NOT a re-summary of every metric. Tie to the deal context when one is supplied.
+11. If a field is not in the report, return \`null\`. Do NOT guess.
+${deal}
+Return ONLY a JSON object in the shape below, no explanation, no code fence:
+
+{
+  "publisher": "cbre",
+  "report_name": "Austin Multifamily Figures Q3 2024",
+  "asset_class": "multifamily",
+  "msa": "Austin-Round Rock-Georgetown, TX",
+  "submarket": "East Austin",
+  "as_of_date": "2024-09-30",
+  "source_url": null,
+  "metrics": {
+    "vacancy_pct": 6.8, "occupancy_pct": 93.2,
+    "absorption_units_ytd": 5200, "deliveries_units_ytd": 12400,
+    "under_construction_units": 28500, "planned_units": 15200,
+    "inventory_units": 285000,
+    "rent_growth_yoy_pct": -2.1, "rent_growth_qoq_pct": -0.4,
+    "effective_rent_per_unit": 1685, "concessions_weeks": 6.2,
+    "cap_rate_low_pct": 5.0, "cap_rate_high_pct": 5.75, "cap_rate_avg_pct": 5.4,
+    "sales_volume_ytd": 1200000000, "price_per_unit_avg": 215000,
+    "job_growth_yoy_pct": 1.8, "employment_total": 1420000, "unemployment_pct": 3.6,
+    "notes": "Rent softness concentrated in luxury lease-up; Class B & C stable."
+  },
+  "pipeline": [
+    { "project_name": "The Aspen", "developer": "X Co.", "units": 324, "sf": null, "expected_delivery": "2025-06-30", "submarket": "East Austin", "status": "under_construction" }
+  ],
+  "top_employers": [ { "name": "Dell Technologies", "industry": "Tech", "employees": 13000 } ],
+  "top_deliveries": [ { "project_name": "Riverfront East", "units": 412, "sf": null, "delivered": "2024-Q2" } ],
+  "narrative": "Austin MF is in a supply-driven reset: 28.5k units under construction on a 285k base, +2.1% rent decline YTD, concessions at 6.2 weeks. Absorption is strong (5.2k YTD) but well below deliveries — expect 12-18 more months of pressure before rent growth turns."
+}`;
+}
+
+export async function extractMarketReport(
+  pdfBuffer: Buffer | null,
+  rawText: string,
+  dealContext: {
+    property_type?: string | null;
+    msa?: string | null;
+    submarket?: string | null;
+    city?: string | null;
+    state?: string | null;
+  }
+): Promise<MarketReportExtraction | null> {
+  const hasPdf = pdfBuffer && pdfBuffer.length > 0;
+  const hasText = rawText && rawText.trim().length > 0;
+  if (!hasPdf && !hasText) return null;
+
+  const prompt = buildMarketReportPrompt(dealContext);
+
+  // Build message: native PDF document block if available, plus the text
+  // (either the user's pasted research or the pdf-parse extraction). Mirrors
+  // the institutional OM extractor so extraction quality is consistent.
+  const msgContent: unknown[] = [];
+  if (hasPdf) {
+    try {
+      msgContent.push({
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: pdfBuffer!.toString("base64"),
+        },
+      });
+    } catch (err) {
+      console.error("extractMarketReport: PDF attach failed, falling back to text:", err);
+    }
+  }
+  const textBlock = hasText
+    ? `${prompt}\n\nRESEARCH TEXT:\n${rawText.slice(0, 180_000)}`
+    : prompt;
+  msgContent.push({ type: "text", text: textBlock });
+
+  try {
+    const response = await getClient().messages.create({
+      model: await getActiveModel(),
+      max_tokens: 3000,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      messages: [{ role: "user", content: msgContent as any }],
+    });
+    const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as MarketReportExtraction;
+
+    // Normalize publisher to the known set so the UI can render a logo /
+    // badge consistently. Unknown → "other".
+    if (parsed.publisher && !MARKET_REPORT_PUBLISHERS.includes(parsed.publisher)) {
+      parsed.publisher = "other";
+    }
+    // Defensive defaults so downstream code never has to null-check arrays.
+    parsed.metrics = parsed.metrics || {};
+    parsed.pipeline = Array.isArray(parsed.pipeline) ? parsed.pipeline : [];
+    parsed.top_employers = Array.isArray(parsed.top_employers) ? parsed.top_employers : [];
+    parsed.top_deliveries = Array.isArray(parsed.top_deliveries) ? parsed.top_deliveries : [];
+    return parsed;
+  } catch (err) {
+    console.error("extractMarketReport failed:", err);
     return null;
   }
 }

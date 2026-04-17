@@ -22,12 +22,22 @@ const ICS_ESCAPE = (s: string) =>
     .replace(/,/g, "\\,")
     .replace(/;/g, "\\;");
 
-const CSV_ESCAPE = (s: string) => {
+const CSV_ESCAPE = (s: string | null | undefined) => {
   if (s == null) return "";
-  const needsQuote = /[",\n]/.test(s);
-  const body = s.replace(/"/g, '""');
+  // Collapse embedded newlines to " · ". Excel, Numbers, and Google Sheets
+  // all handle CR/LF inside quoted cells, but many analyst workflows pipe
+  // the CSV through tools (Airtable import, pandas, Snowflake COPY) that
+  // choke on multi-line cells. Collapsing is safer and still readable.
+  const flat = String(s).replace(/\r\n|\r|\n/g, " · ");
+  const needsQuote = /[",]/.test(flat);
+  const body = flat.replace(/"/g, '""');
   return needsQuote ? `"${body}"` : body;
 };
+
+// Excel on Windows only auto-detects UTF-8 when the file starts with the
+// byte-order mark. Without it, em-dashes, bullets, and non-ASCII names
+// render as Mojibake. Prepended to every CSV body on the way out.
+const UTF8_BOM = "\uFEFF";
 
 function asDateStamp(iso: string | null): string | null {
   if (!iso) return null;
@@ -189,7 +199,9 @@ export async function GET(
     const slug = slugify(dealName);
 
     if (format === "csv") {
-      const body = buildCsv(phases, dealName);
+      // Prepend UTF-8 BOM so Excel renders non-ASCII characters (em-dashes,
+      // bullets, accented names) correctly instead of Mojibake.
+      const body = UTF8_BOM + buildCsv(phases, dealName);
       return new NextResponse(body, {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",

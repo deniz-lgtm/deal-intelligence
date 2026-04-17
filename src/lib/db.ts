@@ -359,6 +359,34 @@ export async function ensureColumns(): Promise<void> {
       sources JSONB NOT NULL DEFAULT '[]',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
+    // ── Market Reports (AI-extracted broker research: CBRE, JLL, M&M, etc.) ──
+    // Each row is one broker research PDF / pasted text, AI-normalized into
+    // structured submarket metrics. Keeping rows instead of overwriting
+    // submarket_metrics lets us show quarter-over-quarter deltas as more
+    // vintages get uploaded. The `metrics` JSONB holds the canonical
+    // submarket fields (vacancy, rent growth, absorption, deliveries,
+    // under-construction pipeline, cap-rate range, concessions, etc.).
+    `CREATE TABLE IF NOT EXISTS market_reports (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      publisher TEXT,
+      report_name TEXT,
+      asset_class TEXT,
+      msa TEXT,
+      submarket TEXT,
+      as_of_date DATE,
+      source_document_id TEXT,
+      source_url TEXT,
+      metrics JSONB NOT NULL DEFAULT '{}',
+      pipeline JSONB NOT NULL DEFAULT '[]',
+      top_employers JSONB NOT NULL DEFAULT '[]',
+      top_deliveries JSONB NOT NULL DEFAULT '[]',
+      narrative TEXT,
+      raw_text TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_market_reports_deal_id ON market_reports(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_market_reports_as_of ON market_reports(deal_id, as_of_date DESC)`,
     // ── Location Intelligence ─────────────────────────────────────────────
     `CREATE TABLE IF NOT EXISTS location_intelligence (
       id TEXT PRIMARY KEY,
@@ -2487,6 +2515,91 @@ export const submarketMetricsQueries = {
       ]
     );
     return submarketMetricsQueries.getByDealId(dealId);
+  },
+};
+
+// ─── Market Reports queries ──────────────────────────────────────────────────
+//
+// AI-extracted broker research (CBRE MarketBeat, JLL Research, C&W, Colliers,
+// Newmark, Marcus & Millichap, Berkadia, etc.). Each call to extract+save
+// writes a new row so the analyst can see QoQ deltas as vintages accumulate.
+
+export const marketReportsQueries = {
+  getByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM market_reports WHERE deal_id = $1 ORDER BY as_of_date DESC NULLS LAST, created_at DESC",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getLatestByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM market_reports WHERE deal_id = $1 ORDER BY as_of_date DESC NULLS LAST, created_at DESC LIMIT 1",
+      [dealId]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  create: async (
+    dealId: string,
+    id: string,
+    data: {
+      publisher?: string | null;
+      report_name?: string | null;
+      asset_class?: string | null;
+      msa?: string | null;
+      submarket?: string | null;
+      as_of_date?: string | null;
+      source_document_id?: string | null;
+      source_url?: string | null;
+      metrics?: Record<string, unknown>;
+      pipeline?: unknown[];
+      top_employers?: unknown[];
+      top_deliveries?: unknown[];
+      narrative?: string | null;
+      raw_text?: string | null;
+    }
+  ) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO market_reports (
+         id, deal_id, publisher, report_name, asset_class, msa, submarket,
+         as_of_date, source_document_id, source_url,
+         metrics, pipeline, top_employers, top_deliveries,
+         narrative, raw_text, created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7,
+                 $8, $9, $10,
+                 $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb,
+                 $15, $16, NOW())`,
+      [
+        id, dealId,
+        data.publisher ?? null,
+        data.report_name ?? null,
+        data.asset_class ?? null,
+        data.msa ?? null,
+        data.submarket ?? null,
+        data.as_of_date ?? null,
+        data.source_document_id ?? null,
+        data.source_url ?? null,
+        JSON.stringify(data.metrics ?? {}),
+        JSON.stringify(data.pipeline ?? []),
+        JSON.stringify(data.top_employers ?? []),
+        JSON.stringify(data.top_deliveries ?? []),
+        data.narrative ?? null,
+        data.raw_text ?? null,
+      ]
+    );
+    const pool2 = getPool();
+    const res = await pool2.query("SELECT * FROM market_reports WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string, dealId: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM market_reports WHERE id = $1 AND deal_id = $2", [id, dealId]);
   },
 };
 

@@ -7,14 +7,11 @@ import {
   HeadingLevel,
   AlignmentType,
   BorderStyle,
-  TableRow,
-  TableCell,
   Table,
-  WidthType,
-  ShadingType,
 } from "docx";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { getBrandingForDeal } from "@/lib/db";
+import { resolveBranding, markdownToDocx, DOCX_NUMBERING } from "@/lib/export-markdown";
 
 /**
  * POST /api/deals/:id/dd-abstract/export
@@ -43,31 +40,37 @@ export async function POST(
 
     const children = parseMarkdownToDocx(markdown, dealName, branding);
 
-    const docFont = branding?.body_font as string || "Calibri";
+    const theme = resolveBranding(branding);
     const doc = new Document({
+      // Register ordered-list numbering so `1. foo` in the markdown renders
+      // as a real Word numbered list instead of literal "1. foo" text.
+      numbering: DOCX_NUMBERING,
       styles: {
         default: {
           document: {
-            run: {
-              font: docFont,
-              size: 22, // 11pt
-            },
-            paragraph: {
-              spacing: { after: 120 },
-            },
+            run: { font: theme.bodyFont, size: 22 },
+            paragraph: { spacing: { after: 120 } },
           },
         },
+        // Explicit H1/H2/H3 sizing + coloring so the three heading levels
+        // are visually distinguishable in Word.
+        paragraphStyles: [
+          { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal",
+            run: { size: 32, bold: true, color: theme.secondaryColor, font: theme.headerFont },
+            paragraph: { spacing: { before: 320, after: 160 } } },
+          { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal",
+            run: { size: 26, bold: true, color: theme.primaryColor, font: theme.headerFont },
+            paragraph: { spacing: { before: 260, after: 120 } } },
+          { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal",
+            run: { size: 22, bold: true, color: theme.accentColor, font: theme.headerFont },
+            paragraph: { spacing: { before: 200, after: 100 } } },
+        ],
       },
       sections: [
         {
           properties: {
             page: {
-              margin: {
-                top: 1080, // 0.75 inch in twentieths of a point
-                right: 1080,
-                bottom: 1080,
-                left: 1080,
-              },
+              margin: { top: 1080, right: 1080, bottom: 1080, left: 1080 },
             },
           },
           children,
@@ -102,19 +105,21 @@ type DocxChild = Paragraph | Table;
 function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Record<string, unknown> | null): DocxChild[] {
   const children: DocxChild[] = [];
 
-  const b = branding ?? {};
-  const companyName = (b.company_name as string) || "";
-  const primaryColor = ((b.primary_color as string) || "#4F46E5").replace("#", "");
-  const secondaryColor = ((b.secondary_color as string) || "#2F3B52").replace("#", "");
-  const accentColor = ((b.accent_color as string) || "#10B981").replace("#", "");
-  const headerFont = (b.header_font as string) || "Helvetica";
-  const bodyFont = (b.body_font as string) || "Calibri";
-  const footerText = (b.footer_text as string) || "CONFIDENTIAL";
-  const tagline = (b.tagline as string) || "";
-  const website = (b.website as string) || "";
-  const email = (b.email as string) || "";
-  const phone = (b.phone as string) || "";
-  const disclaimerText = (b.disclaimer_text as string) || "";
+  // Resolve colors, fonts, confidentiality, disclaimer from the deal's
+  // business plan branding (getBrandingForDeal → resolveBranding).
+  const theme = resolveBranding(branding);
+  const companyName = theme.companyName;
+  const primaryColor = theme.primaryColor;
+  const secondaryColor = theme.secondaryColor;
+  const accentColor = theme.accentColor;
+  const headerFont = theme.headerFont;
+  const bodyFont = theme.bodyFont;
+  const footerText = theme.footerText;
+  const tagline = theme.tagline;
+  const website = theme.website;
+  const email = theme.email;
+  const phone = theme.phone;
+  const disclaimerText = theme.disclaimerText;
 
   // Branded header
   if (companyName) {
@@ -156,6 +161,11 @@ function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Reco
   // Cover title
   children.push(
     new Paragraph({
+      children: [new TextRun({ text: "STRICTLY CONFIDENTIAL  ·  IC PRE-READ", size: 18, bold: true, color: "C2410C", font: headerFont })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 100 },
+    }),
+    new Paragraph({
       children: [new TextRun({ text: "Due Diligence Abstract", size: 36, bold: true, color: secondaryColor, font: headerFont })],
       heading: HeadingLevel.TITLE,
       alignment: AlignmentType.CENTER,
@@ -167,7 +177,7 @@ function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Reco
       spacing: { after: 240 },
     }),
     new Paragraph({
-      children: [new TextRun({ text: `Generated: ${new Date().toLocaleDateString("en-US", {
+      children: [new TextRun({ text: `Prepared: ${new Date().toLocaleDateString("en-US", {
         month: "long",
         day: "numeric",
         year: "numeric",
@@ -177,125 +187,13 @@ function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Reco
     })
   );
 
-  const lines = markdown.split("\n");
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // H1
-    if (line.startsWith("# ")) {
-      children.push(
-        new Paragraph({
-          text: line.slice(2).trim(),
-          heading: HeadingLevel.HEADING_1,
-          spacing: { before: 280, after: 120 },
-        })
-      );
-      continue;
-    }
-
-    // H2
-    if (line.startsWith("## ")) {
-      children.push(
-        new Paragraph({
-          text: line.slice(3).trim(),
-          heading: HeadingLevel.HEADING_2,
-          spacing: { before: 240, after: 80 },
-        })
-      );
-      continue;
-    }
-
-    // H3
-    if (line.startsWith("### ")) {
-      children.push(
-        new Paragraph({
-          text: line.slice(4).trim(),
-          heading: HeadingLevel.HEADING_3,
-          spacing: { before: 160, after: 60 },
-        })
-      );
-      continue;
-    }
-
-    // HR / separator
-    if (line.match(/^---+$/)) {
-      children.push(
-        new Paragraph({
-          border: {
-            bottom: { style: BorderStyle.SINGLE, size: 6, color: "CCCCCC" },
-          },
-          spacing: { before: 120, after: 120 },
-          children: [],
-        })
-      );
-      continue;
-    }
-
-    // Unordered list item
-    if (line.match(/^[\s]*[-*+] /)) {
-      const text = line.replace(/^[\s]*[-*+] /, "").trim();
-      children.push(
-        new Paragraph({
-          bullet: { level: 0 },
-          children: parseInlineMarkdown(text),
-          spacing: { after: 60 },
-        })
-      );
-      continue;
-    }
-
-    // Ordered list item
-    const orderedMatch = line.match(/^[\s]*(\d+)\. (.+)/);
-    if (orderedMatch) {
-      children.push(
-        new Paragraph({
-          numbering: { reference: "default-numbering", level: 0 },
-          children: parseInlineMarkdown(orderedMatch[2].trim()),
-          spacing: { after: 60 },
-        })
-      );
-      continue;
-    }
-
-    // Blockquote
-    if (line.startsWith("> ")) {
-      children.push(
-        new Paragraph({
-          children: parseInlineMarkdown(line.slice(2).trim()),
-          indent: { left: 720 },
-          border: {
-            left: { style: BorderStyle.SINGLE, size: 20, color: "4F46E5" },
-          },
-          spacing: { after: 120 },
-          shading: {
-            type: ShadingType.SOLID,
-            color: "F5F3FF",
-          },
-        })
-      );
-      continue;
-    }
-
-    // Empty line — add spacing paragraph
-    if (line.trim() === "") {
-      children.push(
-        new Paragraph({
-          children: [],
-          spacing: { after: 60 },
-        })
-      );
-      continue;
-    }
-
-    // Regular paragraph with inline formatting
-    children.push(
-      new Paragraph({
-        children: parseInlineMarkdown(line),
-        spacing: { after: 100 },
-      })
-    );
-  }
+  // Body — shared markdown renderer handles H1/H2/H3 with explicit style
+  // hierarchy, real Word numbered lists, markdown tables, blockquotes,
+  // horizontal rules, inline **bold** / *italic* / `code`, and dedupes
+  // consecutive blank lines so we don't bloat the document with empty
+  // paragraphs.
+  const body = markdownToDocx(markdown, theme, { bodySize: 22, bodyColor: "1E293B" });
+  for (const c of body) children.push(c);
 
   // Branded footer
   children.push(
@@ -328,36 +226,3 @@ function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Reco
   return children;
 }
 
-/**
- * Parse inline markdown (bold, italic, code, plain text) into TextRun[]
- */
-function parseInlineMarkdown(text: string): TextRun[] {
-  const runs: TextRun[] = [];
-
-  // Match **bold**, *italic*, `code`, and plain text segments
-  const pattern = /(\*\*.*?\*\*|\*.*?\*|`.*?`|[^*`]+)/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    const part = match[0];
-
-    if (part.startsWith("**") && part.endsWith("**")) {
-      runs.push(new TextRun({ text: part.slice(2, -2), bold: true }));
-    } else if (part.startsWith("*") && part.endsWith("*")) {
-      runs.push(new TextRun({ text: part.slice(1, -1), italics: true }));
-    } else if (part.startsWith("`") && part.endsWith("`")) {
-      runs.push(
-        new TextRun({
-          text: part.slice(1, -1),
-          font: "Courier New",
-          size: 18,
-          shading: { type: ShadingType.SOLID, color: "F3F4F6" },
-        })
-      );
-    } else {
-      if (part) runs.push(new TextRun({ text: part }));
-    }
-  }
-
-  return runs.length > 0 ? runs : [new TextRun({ text })];
-}
