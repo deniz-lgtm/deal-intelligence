@@ -32,6 +32,8 @@ import {
 } from "@/lib/types";
 import { useViewMode } from "@/lib/use-view-mode";
 import ViewModeToggle from "@/components/ViewModeToggle";
+import { DocCoverageChip } from "@/components/ai";
+import type { Document } from "@/lib/types";
 
 type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 
@@ -1189,7 +1191,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [rentEstimating, setRentEstimating] = useState(false);
   const [loanSizing, setLoanSizing] = useState(false);
   const [showDocPicker, setShowDocPicker] = useState(false);
-  const [docs, setDocs] = useState<Array<{ id: string; original_name: string; mime_type?: string }>>([]);
+  // Full Document shape so <DocCoverageChip> can rank by category +
+  // name/tag keywords. The narrow shape used elsewhere (id, name, mime)
+  // is a subset.
+  const [docs, setDocs] = useState<Document[]>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [docViewerOpen, setDocViewerOpen] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
@@ -1821,10 +1826,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <Button variant="outline" size="sm" onClick={openDocViewer}>
             <Eye className="h-4 w-4 mr-2" />Docs
           </Button>
-          <Button variant="outline" size="sm" onClick={openDocPicker} disabled={autofilling || saving}>
-            {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-            Autofill
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={openDocPicker} disabled={autofilling || saving}>
+              {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+              Autofill
+            </Button>
+            <DocCoverageChip documents={docs} section="revenue" />
+          </div>
           <Button size="sm" onClick={save} disabled={saving || autofilling}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
@@ -3400,6 +3408,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     {capexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
                     AI Dev Budget
                   </Button>
+                  <DocCoverageChip documents={docs} section="capex" />
                 </div>
                 {!d.max_gsf && <p className="text-xs text-amber-500">Set GSF in Site &amp; Zoning to enable budget calculations</p>}
               </div>
@@ -3488,6 +3497,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 {capexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
                 AI Estimate
               </Button>
+              <DocCoverageChip documents={docs} section="capex" />
             </div>
           </div>
             </>
@@ -3997,6 +4007,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               {opexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
               AI Estimate
             </Button>
+            <DocCoverageChip documents={docs} section="opex" />
           </div>
           {/* AI OpEx Narrative (persistent) */}
           {d.opex_narrative && (
@@ -4265,10 +4276,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 <input type="checkbox" checked={d.has_financing} onChange={e => set("has_financing", e.target.checked)} className="rounded" />
                 Acquisition Loan
               </label>
-              <Button variant="outline" size="sm" onClick={estimateLoan} disabled={loanSizing}>
-                {loanSizing ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Sparkles className="h-4 w-4 mr-1.5" />}
-                AI Loan Sizer
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={estimateLoan} disabled={loanSizing}>
+                  {loanSizing ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Sparkles className="h-4 w-4 mr-1.5" />}
+                  AI Loan Sizer
+                </Button>
+                <DocCoverageChip documents={docs} section="financing" />
+              </div>
             </div>
             {d.has_financing && (<>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
