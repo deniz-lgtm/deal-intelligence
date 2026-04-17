@@ -683,11 +683,31 @@ export default function NewDealPage() {
                   </select>
                 </Field>
               </div>
-              {form.deal_scope && (
-                <p className="text-2xs text-muted-foreground -mt-2">
-                  {DEAL_SCOPE_DESCRIPTIONS[form.deal_scope as DealScope]}
-                </p>
-              )}
+              {form.deal_scope && (() => {
+                // Surface an explicit Redevelopment indicator so the user
+                // knows WHY the Redevelopment Inputs section below appears
+                // (or doesn't). Acquisitions get a matching "no redev" note.
+                const isRedev =
+                  form.deal_scope === "ground_up" || form.deal_scope === "value_add_expansion";
+                return (
+                  <div className="flex items-center gap-2 -mt-2">
+                    <span
+                      className={`text-2xs font-medium px-2 py-0.5 rounded-full border ${
+                        isRedev
+                          ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                          : "bg-muted/30 text-muted-foreground border-border/40"
+                      }`}
+                    >
+                      {isRedev ? "Redevelopment" : "No redevelopment"}
+                    </span>
+                    <p className="text-2xs text-muted-foreground">
+                      {isRedev
+                        ? DEAL_SCOPE_DESCRIPTIONS[form.deal_scope as DealScope]
+                        : "Site / development inputs are hidden — just the underwriting fundamentals."}
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           </Section>
 
@@ -796,11 +816,13 @@ export default function NewDealPage() {
             </div>
           </Section>
 
-          {/* Development Details — only when the scope involves new construction.
-              Entitlement / environmental / demolition / delivery tracking lives on
-              the diligence checklist + dev schedule where they're actually used. */}
+          {/* Redevelopment Inputs — only when the scope adds or alters
+              buildings (ground_up or value_add_expansion). Acquisitions
+              skip this block entirely so the create flow stays lean.
+              Entitlement / environmental / demolition / delivery tracking
+              lives on the diligence checklist + dev schedule. */}
           {(form.deal_scope === "ground_up" || form.deal_scope === "value_add_expansion") && (
-          <Section title="Development Details">
+          <Section title="Redevelopment Inputs">
             <div className="grid grid-cols-2 gap-4">
               <Field label="Land (Acres)">
                 <input
