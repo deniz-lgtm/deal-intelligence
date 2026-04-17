@@ -9,6 +9,7 @@ import {
   buildOmSummary,
   buildMarketSummary,
 } from "@/lib/deal-analytics-context";
+import { fetchCapitalMarketsSnapshot } from "@/lib/capital-markets";
 
 export async function POST(
   req: NextRequest,
@@ -45,6 +46,10 @@ export async function POST(
     // Fetch deal notes from the new unified table
     const allDealNotes = await dealNoteQueries.getByDealId(params.id);
 
+    // Live FRED rates — threaded through the market block so the abstract
+    // references today's 10Y UST + SOFR rather than stale assumptions.
+    const capitalMarkets = await fetchCapitalMarketsSnapshot().catch(() => null);
+
     // Build a comprehensive underwriting summary + OM comparison + market
     // context. All three use the SAME helpers as the Investment Package
     // generator so the two documents never drift on computed metrics.
@@ -55,7 +60,8 @@ export async function POST(
         submarketMetrics as Record<string, unknown> | null,
         compsAll as Array<Record<string, unknown>>,
         locationIntelRows as Array<Record<string, unknown>>,
-        marketReports as Array<Record<string, unknown>>
+        marketReports as Array<Record<string, unknown>>,
+        capitalMarkets
       ),
     ].filter(Boolean).join("\n\n");
 

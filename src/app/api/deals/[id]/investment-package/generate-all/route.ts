@@ -7,6 +7,7 @@ import {
   buildOmSummary,
   buildMarketSummary,
 } from "@/lib/deal-analytics-context";
+import { fetchCapitalMarketsSnapshot } from "@/lib/capital-markets";
 
 const MODEL = "claude-sonnet-4-6";
 let _client: Anthropic | null = null;
@@ -120,11 +121,16 @@ export async function POST(
     // the model did inconsistently section-to-section.
     const uwSummary = buildUnderwritingSummary(uw, deal, allDealNotes);
     const omSummary = buildOmSummary(omAnalysis);
+    // Pull live FRED rates + implied cap / construction loan bands so every
+    // section sees current capital-markets context without having to re-ask.
+    const capitalMarkets = await fetchCapitalMarketsSnapshot().catch(() => null);
+
     const marketSummary = buildMarketSummary(
       submarketMetrics as AnyRecord | null,
       compsAll as AnyRecord[],
       locationIntelRows as AnyRecord[],
-      marketReports as AnyRecord[]
+      marketReports as AnyRecord[],
+      capitalMarkets
     );
 
     // Build master deal context — now enriched with full UW + OM + market.

@@ -14,6 +14,8 @@ import {
   FileSearch,
   Calendar,
   RefreshCw,
+  LineChart,
+  Minus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -69,6 +71,34 @@ interface SuggestionsPayload {
   market: string | null;
   search_hint: string;
   suggestions: Suggestion[];
+}
+
+// FRED-backed capital-markets snapshot — lives above the broker-research
+// cards because a developer's first question on any deal is "where are
+// rates today and what does that imply for our exit cap?"
+interface CapitalPoint {
+  label: string;
+  value: number;
+  as_of: string;
+  change_1d: number | null;
+  change_30d: number | null;
+}
+interface CapitalMarketsPayload {
+  as_of: string | null;
+  treasury_10y: CapitalPoint | null;
+  treasury_5y: CapitalPoint | null;
+  sofr: CapitalPoint | null;
+  fed_funds: CapitalPoint | null;
+  mortgage_30y: CapitalPoint | null;
+  yield_curve_spread_bps: number | null;
+  implied_cap_rates: {
+    stabilized_low: number | null;
+    stabilized_high: number | null;
+    value_add_low: number | null;
+    value_add_high: number | null;
+  };
+  implied_construction_loan_rate: { low: number | null; high: number | null };
+  fred_configured: boolean;
 }
 
 // Metric rows rendered in the report card. Order reflects reader priority
@@ -142,6 +172,7 @@ function formatDate(iso: string | null): string {
 export default function MarketIntelligencePanel({ dealId }: { dealId: string }) {
   const [reports, setReports] = useState<MarketReport[]>([]);
   const [suggestions, setSuggestions] = useState<SuggestionsPayload | null>(null);
+  const [capitalMarkets, setCapitalMarkets] = useState<CapitalMarketsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [pasteMode, setPasteMode] = useState(false);
@@ -176,12 +207,22 @@ export default function MarketIntelligencePanel({ dealId }: { dealId: string }) 
     (async () => {
       setLoading(true);
       await fetchReports();
+      // Pull broker-research suggestions + live capital-markets rates in
+      // parallel — the rate strip renders first so the analyst sees today's
+      // debt environment before scrolling through broker research.
       try {
-        const res = await fetch(`/api/deals/${dealId}/market-reports/suggestions`);
-        const j = await res.json();
-        if (mounted && j.data) setSuggestions(j.data);
+        const [sugRes, capRes] = await Promise.all([
+          fetch(`/api/deals/${dealId}/market-reports/suggestions`),
+          fetch(`/api/deals/${dealId}/capital-markets`),
+        ]);
+        const sugJ = await sugRes.json();
+        const capJ = await capRes.json();
+        if (mounted) {
+          if (sugJ.data) setSuggestions(sugJ.data);
+          if (capJ.data) setCapitalMarkets(capJ.data);
+        }
       } catch (e) {
-        console.error("Failed to load suggestions:", e);
+        console.error("Failed to load suggestions/capital-markets:", e);
       }
       if (mounted) setLoading(false);
     })();
@@ -331,6 +372,9 @@ export default function MarketIntelligencePanel({ dealId }: { dealId: string }) 
 
   return (
     <div className="space-y-5">
+      {/* ── Capital Markets (FRED live rates) ───────────────────────────── */}
+      {capitalMarkets && <CapitalMarketsStrip snapshot={capitalMarkets} />}
+
       {/* ── Suggested reports ──────────────────────────────────────────── */}
       {suggestions && suggestions.suggestions.length > 0 && (
         <div className="rounded-lg border border-border/40 bg-muted/10 p-4">
@@ -598,6 +642,121 @@ export default function MarketIntelligencePanel({ dealId }: { dealId: string }) 
           Refresh
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ─── Capital Markets strip (FRED rates + implied cap / construction bands) ───
+//
+// Always renders above broker-research cards because a developer's first
+// question on any deal is "where are rates today and what does that
+// imply for my exit cap + construction loan?". Rate cards are color-coded
+// by 30-day direction (red up, green down, since for a borrower falling
+// rates are "good"). The implied-cap and construction-loan bands give the
+// analyst an instant benchmark to compare the deal's underwritten exit
+// cap / construction debt pricing against.
+
+function CapitalMarketsStrip({ snapshot }: { snapshot: CapitalMarketsPayload }) {
+  if (!snapshot.fred_configured) {
+    return (
+      <div className="rounded-lg border border-border/40 bg-muted/5 p-3 text-[11px] text-muted-foreground flex items-center gap-2">
+        <LineChart className="h-3.5 w-3.5" />
+        Capital markets snapshot unavailable — set <code className="px-1 py-0.5 rounded bg-muted text-foreground/80">FRED_API_KEY</code> to enable live Treasury / SOFR / mortgage rates.
+      </div>
+    );
+  }
+  const points: Array<CapitalPoint | null> = [
+    snapshot.treasury_10y, snapshot.treasury_5y, snapshot.sofr, snapshot.fed_funds, snapshot.mortgage_30y,
+  ];
+  const anyLoaded = points.some(Boolean);
+  if (!anyLoaded) return null;
+
+  const fmtDelta = (d: number | null) => {
+    if (d == null) return null;
+    const bps = Math.round(d * 100);
+    if (bps === 0) return { label: "flat 30d", color: "text-muted-foreground", Icon: Minus };
+    const color = bps > 0 ? "text-red-400" : "text-emerald-400";
+    const Icon = bps > 0 ? TrendingUp : TrendingDown;
+    return { label: `${bps > 0 ? "+" : ""}${bps} bps 30d`, color, Icon };
+  };
+
+  const ic = snapshot.implied_cap_rates;
+  const cl = snapshot.implied_construction_loan_rate;
+  const curveNote =
+    snapshot.yield_curve_spread_bps == null
+      ? null
+      : snapshot.yield_curve_spread_bps < 0
+      ? { label: "inverted", color: "text-red-400" }
+      : snapshot.yield_curve_spread_bps < 50
+      ? { label: "flat", color: "text-amber-400" }
+      : { label: "positive", color: "text-emerald-400" };
+
+  return (
+    <div className="rounded-lg border border-border/40 bg-muted/5 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <LineChart className="h-4 w-4 text-primary" />
+          Capital Markets
+        </div>
+        <div className="text-[10px] text-muted-foreground">
+          FRED · {snapshot.as_of ? new Date(snapshot.as_of).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+        </div>
+      </div>
+
+      {/* Rate cards */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+        {points.map((p, i) => {
+          if (!p) return (
+            <div key={i} className="rounded-md border border-border/30 bg-background/40 p-2.5 opacity-40">
+              <div className="text-[10px] text-muted-foreground">—</div>
+            </div>
+          );
+          const d = fmtDelta(p.change_30d);
+          return (
+            <div key={p.label} className="rounded-md border border-border/30 bg-background/60 p-2.5">
+              <div className="text-[10px] text-muted-foreground">{p.label}</div>
+              <div className="text-base font-semibold mt-0.5">{p.value.toFixed(2)}%</div>
+              {d && (
+                <div className={`flex items-center gap-1 text-[10px] mt-0.5 ${d.color}`}>
+                  <d.Icon className="h-3 w-3" />
+                  <span>{d.label}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Implied bands + yield-curve read */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+        {ic.stabilized_low != null && ic.stabilized_high != null && (
+          <div className="rounded-md border border-border/30 bg-background/60 px-3 py-2">
+            <div className="text-[10px] text-muted-foreground">Indicated Cap Rate — Stabilized</div>
+            <div className="font-semibold">{ic.stabilized_low.toFixed(2)}% – {ic.stabilized_high.toFixed(2)}%</div>
+            <div className="text-[9px] text-muted-foreground">10Y UST + 250-400 bps</div>
+          </div>
+        )}
+        {ic.value_add_low != null && ic.value_add_high != null && (
+          <div className="rounded-md border border-border/30 bg-background/60 px-3 py-2">
+            <div className="text-[10px] text-muted-foreground">Indicated Cap Rate — Value-Add</div>
+            <div className="font-semibold">{ic.value_add_low.toFixed(2)}% – {ic.value_add_high.toFixed(2)}%</div>
+            <div className="text-[9px] text-muted-foreground">10Y UST + 400-550 bps</div>
+          </div>
+        )}
+        {cl.low != null && cl.high != null && (
+          <div className="rounded-md border border-border/30 bg-background/60 px-3 py-2">
+            <div className="text-[10px] text-muted-foreground">Indicated Construction Debt</div>
+            <div className="font-semibold">{cl.low.toFixed(2)}% – {cl.high.toFixed(2)}%</div>
+            <div className="text-[9px] text-muted-foreground">SOFR + 275-400 bps</div>
+          </div>
+        )}
+      </div>
+
+      {snapshot.yield_curve_spread_bps != null && curveNote && (
+        <div className="text-[10px] text-muted-foreground mt-2.5">
+          Yield curve (10Y − Fed Funds): <span className={`font-semibold ${curveNote.color}`}>{snapshot.yield_curve_spread_bps} bps · {curveNote.label}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -15,6 +15,8 @@
 
 import { formatLocationIntelContext } from "@/lib/location-intel-context";
 import type { OmAnalysisRow } from "@/lib/db";
+import type { CapitalMarketsSnapshot } from "@/lib/capital-markets";
+import { formatCapitalMarketsSummary } from "@/lib/capital-markets";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRec = Record<string, any>;
@@ -284,6 +286,55 @@ export function buildOmSummary(om: OmAnalysisRow | null): string {
   return lines.length > 1 ? lines.join("\n") : "";
 }
 
+// ─── HUD AMI / FMR extraction from location_intelligence blob ────────────────
+// The /api/deals/[id]/location-intelligence/fetch-ami route already writes
+// AMI data to location_intelligence.data.ami. It was never surfaced in the
+// investment-memo / DD-abstract context. This helper pulls whichever row
+// has AMI data and emits a ready-to-cite summary.
+
+function formatAmiFromLocationIntel(rows: AnyRec[]): string {
+  if (!rows || rows.length === 0) return "";
+  for (const row of rows) {
+    const data: AnyRec = typeof row.data === "string" ? JSON.parse(row.data) : (row.data || {});
+    const ami = data.ami as AnyRec | undefined;
+    if (!ami || typeof ami !== "object") continue;
+
+    const lines: string[] = ["HUD AREA MEDIAN INCOME (for LIHTC / workforce underwriting):"];
+    if (ami.area_name) lines.push(`  Area: ${ami.area_name}${ami.year ? ` (FY ${ami.year})` : ""}`);
+    if (ami.median_family_income) lines.push(`  Median Family Income: $${Number(ami.median_family_income).toLocaleString()}`);
+
+    // Max rents at common AMI bands for common unit types — drives LIHTC
+    // and workforce underwriting rent caps.
+    const rents = ami.max_rents as AnyRec | undefined;
+    if (rents) {
+      const bands: Array<[string, string]> = [
+        ["30% AMI", "ami_30"],
+        ["50% AMI", "ami_50"],
+        ["60% AMI", "ami_60"],
+        ["80% AMI", "ami_80"],
+        ["100% AMI", "ami_100"],
+        ["120% AMI", "ami_120"],
+      ];
+      const unitTypes: Array<[string, string]> = [
+        ["Studio", "studio"],
+        ["1BR", "one_br"],
+        ["2BR", "two_br"],
+        ["3BR", "three_br"],
+      ];
+      for (const [label, key] of bands) {
+        const band = rents[key] as AnyRec | undefined;
+        if (!band) continue;
+        const parts = unitTypes
+          .map(([t, k]) => (band[k] != null ? `${t}: $${Number(band[k]).toLocaleString()}/mo` : null))
+          .filter(Boolean);
+        if (parts.length) lines.push(`  Max Rent @ ${label}: ${parts.join(" · ")}`);
+      }
+    }
+    return lines.join("\n");
+  }
+  return "";
+}
+
 // ─── Market summary ─────────────────────────────────────────────────────────
 // Consolidates submarket metrics, selected sale comps, selected rent comps,
 // and location-intelligence demographics into one block. The AI can then
@@ -294,9 +345,23 @@ export function buildMarketSummary(
   submarketMetrics: AnyRec | null,
   compsAll: AnyRec[],
   locationIntel: AnyRec[],
-  marketReports: AnyRec[] = []
+  marketReports: AnyRec[] = [],
+  capitalMarkets: CapitalMarketsSnapshot | null = null
 ): string {
   const lines: string[] = [];
+
+  // Live capital-markets rates (FRED). Every section prompt sees this so
+  // returns/debt/exit sections can cite today's 10Y UST and compare the
+  // deal's exit cap + construction loan rate against the indicated bands.
+  if (capitalMarkets) {
+    const capitalText = formatCapitalMarketsSummary(capitalMarkets);
+    if (capitalText) lines.push(capitalText);
+  }
+
+  // AMI / FMR data from HUD (stored on location_intelligence.data.ami).
+  // Critical for any deal with a workforce / LIHTC / affordable component.
+  const amiLine = formatAmiFromLocationIntel(locationIntel);
+  if (amiLine) lines.push(amiLine);
 
   // AI-extracted broker research — this block captures the submarket's
   // CBRE / JLL / C&W / Newmark / M&M / Berkadia view so every section
