@@ -330,11 +330,9 @@ export default function DealOverviewPage({
               <div className="flex items-center gap-2 mb-1">
                 <Badge variant={STATUS_BADGE_VARIANT[deal.status]}>{DEAL_STAGE_LABELS[deal.status]}</Badge>
                 <span className="text-xs text-muted-foreground">{deal.property_type ? titleCase(deal.property_type) : ""}</span>
-                {deal.investment_strategy && (
-                  <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                    {INVESTMENT_THESIS_LABELS[deal.investment_strategy as InvestmentThesis] || titleCase(deal.investment_strategy)}
-                  </span>
-                )}
+                {/* Scope is the user-facing workflow signal; Strategy
+                    duplicates thesis info available in Property Details
+                    and the Business Plan card, so we keep only Scope here. */}
                 {deal.deal_scope && (
                   <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/20">
                     {DEAL_SCOPE_LABELS[deal.deal_scope]}
@@ -622,39 +620,10 @@ export default function DealOverviewPage({
             <SiteDevelopmentCard deal={deal} underwriting={underwriting} dealId={params.id} onUnderwritingUpdate={(updates) => setUnderwriting(prev => prev ? { ...prev, ...updates } : updates as any)} />
           )}
 
-          {/* Financial Summary (from UW) */}
-          {highlights && (
-            <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
-                <h3 className="font-display text-sm">Financial Summary</h3>
-                <Link href={`/deals/${params.id}/underwriting`}>
-                  <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">Full Model <ArrowRight className="h-3 w-3" /></Button>
-                </Link>
-              </div>
-              <div className="p-4">
-                <table className="w-full text-sm">
-                  <tbody>
-                    {[
-                      { label: "Purchase Price", value: underwriting?.purchase_price ? formatCurrency(underwriting.purchase_price) : formatCurrency(deal.asking_price) },
-                      { label: "Vacancy", value: underwriting?.vacancy_rate ? `${underwriting.vacancy_rate}%` : null },
-                      { label: "Net Operating Income", value: highlights.noi != null ? formatCurrency(highlights.noi) : null, bold: true },
-                      { label: "In-Place Cap Rate", value: highlights.capRate != null ? `${highlights.capRate.toFixed(2)}%` : null },
-                      ...(highlights.cashOnCash != null ? [{ label: "Cash-on-Cash Return", value: `${highlights.cashOnCash.toFixed(2)}%` }] : []),
-                      ...(highlights.dscr != null ? [{ label: "DSCR", value: `${highlights.dscr.toFixed(2)}x` }] : []),
-                      ...(highlights.equityMultiple != null ? [{ label: "Equity Multiple", value: `${highlights.equityMultiple.toFixed(2)}x` }] : []),
-                      ...(underwriting?.exit_cap_rate ? [{ label: "Exit Cap Rate", value: `${underwriting.exit_cap_rate}%` }] : []),
-                      ...(underwriting?.hold_period_years ? [{ label: "Hold Period", value: `${underwriting.hold_period_years} years` }] : []),
-                    ].filter(r => r.value).map(({ label, value, bold }: any) => (
-                      <tr key={label} className={`border-b border-border/20 ${bold ? "font-semibold" : ""}`}>
-                        <td className="py-1.5 text-muted-foreground">{label}</td>
-                        <td className="py-1.5 text-right tabular-nums">{value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          {/* Financial Summary removed — the 8-cell Key Metrics strip above
+              already surfaces NOI, Cap Rate, Cash-on-Cash, DSCR, and Equity
+              Multiple. Purchase Price lives in Property Details; Vacancy /
+              Exit Cap / Hold Period are one click away in the UW full model. */}
 
           {/* Deal Notes */}
           <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
@@ -751,25 +720,29 @@ export default function DealOverviewPage({
             </div>
           </div>
 
-          {/* Quick Links — compact grid */}
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-4 w-4 text-blue-400" />, label: "UW" },
-              { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-4 w-4 text-orange-400" />, label: deal.loi_executed ? "LOI ✓" : "LOI" },
-              { href: `/deals/${params.id}/photos`, icon: <Camera className="h-4 w-4 text-emerald-400" />, label: `Photos${photos.length > 0 ? ` (${photos.length})` : ""}` },
-              { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-4 w-4 text-amber-400" />, label: "Abstract" },
-              { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-4 w-4 text-purple-400" />, label: "Chat" },
-              { href: `/deals/${params.id}/deal-log`, icon: <FileText className="h-4 w-4 text-muted-foreground" />, label: "Log" },
-            ].map(({ href, icon, label }) => (
-              <Link key={href} href={href}>
-                <div className="border border-border/40 rounded-lg p-2.5 bg-card hover:bg-muted/30 transition-colors text-center">
-                  <div className="flex justify-center mb-1">{icon}</div>
-                  <p className="text-2xs font-medium truncate">{label}</p>
-                </div>
-              </Link>
-            ))}
-          </div>
         </div>
+      </div>
+
+      {/* Quick Links — moved out of the right column to a subtle footer
+          row so the two-column body stays focused on financial +
+          diligence cards. Still just deep-links into existing pages. */}
+      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border/30">
+        <span className="text-2xs uppercase tracking-wide text-muted-foreground/60 mr-1">Jump to</span>
+        {[
+          { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3 w-3" />, label: "UW" },
+          { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-3 w-3" />, label: deal.loi_executed ? "LOI ✓" : "LOI" },
+          { href: `/deals/${params.id}/photos`, icon: <Camera className="h-3 w-3" />, label: `Photos${photos.length > 0 ? ` (${photos.length})` : ""}` },
+          { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-3 w-3" />, label: "Abstract" },
+          { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3 w-3" />, label: "Chat" },
+          { href: `/deals/${params.id}/deal-log`, icon: <FileText className="h-3 w-3" />, label: "Log" },
+        ].map(({ href, icon, label }) => (
+          <Link key={href} href={href}>
+            <span className="inline-flex items-center gap-1 text-2xs px-2 py-1 rounded-md border border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
+              {icon}
+              {label}
+            </span>
+          </Link>
+        ))}
       </div>
     </div>
   );
