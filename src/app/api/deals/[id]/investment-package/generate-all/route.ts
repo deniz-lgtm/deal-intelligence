@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries, compQueries, submarketMetricsQueries, locationIntelligenceQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { summarizeAffordability } from "@/lib/affordability-summary";
 
 const MODEL = "claude-sonnet-4-6";
 let _client: Anthropic | null = null;
@@ -138,7 +139,8 @@ Write the "${SECTION_TITLES[sectionId] || sectionId}" section. Use the deal data
 const SECTION_TITLES: Record<string, string> = {
   cover: "Cover Page", exec_summary: "Executive Summary", property_overview: "Property Overview",
   location_market: "Location & Market Analysis", financial_summary: "Financial Summary",
-  unit_mix: "Unit Mix & Revenue", rent_comps: "Rent Comp Analysis", value_add: "Value-Add Strategy",
+  unit_mix: "Unit Mix & Revenue", affordability_strategy: "Affordability & Incentives",
+  rent_comps: "Rent Comp Analysis", value_add: "Value-Add Strategy",
   operating_plan: "Operating Plan", capital_structure: "Capital Structure",
   returns_analysis: "Returns Analysis", exit_strategy: "Exit Strategy",
   risk_factors: "Risk Factors & Mitigants", photos: "Property Photos", appendix: "Appendix",
@@ -178,6 +180,23 @@ function buildDealContext(deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord |
   if (uw?.purchase_price) lines.push(`Purchase Price: $${Number(uw.purchase_price).toLocaleString()}`);
   if (om?.summary) lines.push(`OM Summary: ${om.summary}`);
   if (deal.context_notes) lines.push(`Analyst Notes: ${deal.context_notes}`);
+
+  // Affordability + incentive posture surfaced at the top-level context so
+  // every section prompt sees it (exec summary, unit mix, risk, returns).
+  const affSummary = summarizeAffordability({
+    config: uw?.affordability_config as Parameters<
+      typeof summarizeAffordability
+    >[0]["config"],
+    bonuses: Array.isArray(uw?.zoning_info?.density_bonuses)
+      ? (uw!.zoning_info!.density_bonuses as Parameters<
+          typeof summarizeAffordability
+        >[0]["bonuses"])
+      : [],
+  });
+  if (affSummary.enabled) {
+    lines.push(`Affordability Posture: ${affSummary.headline}`);
+  }
+
   lines.push(`Documents: ${docs.length} uploaded | Photos: ${photos.length} | Checklist: ${checklist.length} items`);
 
   return lines.join("\n");
@@ -194,6 +213,32 @@ function buildSectionContext(
   const isMF = deal.property_type === "multifamily" || deal.property_type === "sfr" || deal.property_type === "student_housing";
   const unitGroups = uw?.unit_groups || [];
 
+  // ── Shared: affordability + public-incentive summary ────────────────
+  // Built once so every section that mentions rents, revenue, or risk
+  // gets consistent affordability framing (instead of the LLM
+  // hallucinating it from the raw config). Also exposed as its own
+  // `affordability_strategy` section below.
+  const affordabilitySummary = summarizeAffordability({
+    config: uw?.affordability_config as Parameters<
+      typeof summarizeAffordability
+    >[0]["config"],
+    bonuses: Array.isArray(uw?.zoning_info?.density_bonuses)
+      ? (uw!.zoning_info!.density_bonuses as Parameters<
+          typeof summarizeAffordability
+        >[0]["bonuses"])
+      : [],
+    avgMarketRent: (() => {
+      const marketRows = (unitGroups as AnyRecord[]).filter((g) => !g.is_affordable);
+      const units = marketRows.reduce((s: number, g: AnyRecord) => s + n(g.unit_count), 0);
+      if (units === 0) return undefined;
+      const rev = marketRows.reduce((s: number, g: AnyRecord) => s + n(g.unit_count) * n(g.market_rent_per_unit), 0);
+      return rev / units;
+    })(),
+  });
+  const affSnippet = affordabilitySummary.enabled
+    ? `Affordability & Incentives: ${affordabilitySummary.headline}\n${affordabilitySummary.bullets.map((b) => `  ${b}`).join("\n")}`
+    : "";
+
   switch (sectionId) {
     case "exec_summary":
       return [
@@ -203,6 +248,7 @@ function buildSectionContext(
         om?.summary ? `OM Summary: ${om.summary}` : "",
         om?.score_reasoning ? `Score Reasoning: ${om.score_reasoning}` : "",
         deal.context_notes ? `Analyst Notes: ${deal.context_notes}` : "",
+        affSnippet,
       ].filter(Boolean).join("\n");
 
     case "property_overview":
@@ -311,16 +357,36 @@ function buildSectionContext(
         `Vacancy: ${uw.vacancy_rate}% (pro forma) | ${uw.in_place_vacancy_rate}% (in-place)`,
         `Exit Cap: ${uw.exit_cap_rate}% | Hold: ${uw.hold_period_years} years`,
         uw.has_financing ? `Financing: ${uw.acq_ltc}% LTC, ${uw.acq_interest_rate}% rate, ${uw.acq_amort_years}yr amort` : "All cash basis",
-      ].join("\n");
+        affSnippet,
+      ].filter(Boolean).join("\n");
     }
 
     case "unit_mix": {
       if (!unitGroups.length) return "No unit data available.";
       const lines = unitGroups.map((g: AnyRecord) => {
-        if (isMF) return `${g.label}: ${g.unit_count} units, ${g.bedrooms}BD/${g.bathrooms}BA, ${g.sf_per_unit}SF, IP $${n(g.current_rent_per_unit)}/mo, Mkt $${n(g.market_rent_per_unit)}/mo`;
-        return `${g.label}: ${g.unit_count} units, ${g.sf_per_unit}SF, IP $${n(g.current_rent_per_sf).toFixed(2)}/SF, Mkt $${n(g.market_rent_per_sf).toFixed(2)}/SF`;
+        const aff = g.is_affordable ? ` [AFFORDABLE${g.ami_pct ? ` @ ${g.ami_pct}% AMI` : ""}]` : "";
+        if (isMF) return `${g.label}${aff}: ${g.unit_count} units, ${g.bedrooms}BD/${g.bathrooms}BA, ${g.sf_per_unit}SF, IP $${n(g.current_rent_per_unit)}/mo, Mkt $${n(g.market_rent_per_unit)}/mo`;
+        return `${g.label}${aff}: ${g.unit_count} units, ${g.sf_per_unit}SF, IP $${n(g.current_rent_per_sf).toFixed(2)}/SF, Mkt $${n(g.market_rent_per_sf).toFixed(2)}/SF`;
       });
-      return lines.join("\n");
+      return [lines.join("\n"), affSnippet].filter(Boolean).join("\n\n");
+    }
+
+    case "affordability_strategy": {
+      if (!affordabilitySummary.enabled) {
+        return "No affordability tiers, tax exemptions, or density-bonus programs configured. Project is underwritten as 100% market-rate.";
+      }
+      // Hand the LLM the programmatic narrative + supporting data. The
+      // prompt asks the model to polish for the target audience; we
+      // still feed the raw bullets so it stays quantitatively anchored.
+      return [
+        `Headline: ${affordabilitySummary.headline}`,
+        "",
+        "Key data points:",
+        ...affordabilitySummary.bullets.map((b) => `  ${b}`),
+        "",
+        "Draft narrative (polish for audience/format):",
+        affordabilitySummary.narrative,
+      ].join("\n");
     }
 
     case "rent_comps": {
@@ -506,6 +572,10 @@ function buildSectionContext(
       return [
         flags.length > 0 ? `OM Red Flags: ${flags.map((f: AnyRecord) => `[${f.severity}] ${f.description}`).join("; ")}` : "",
         issues.length > 0 ? `Checklist Issues: ${issues.map((i: AnyRecord) => `${i.item}${i.notes ? ` — ${i.notes}` : ""}`).join("; ")}` : "",
+        // Affordability commitments are a risk-factor input: covenant
+        // periods, AMI rent caps, and program-specific labor / filing
+        // requirements all shape the downside case.
+        affSnippet,
       ].filter(Boolean).join("\n");
     }
 
