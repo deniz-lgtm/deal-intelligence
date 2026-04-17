@@ -882,8 +882,11 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       {/* Massing tabs — driven 1:1 by site_plan.scenarios. To rename,
           add or delete a Massing the analyst goes back to Site & Zoning;
           this page is read-only on the structure (it just edits the
-          floor stacks within each cell). */}
-      {hasMultipleMassings && (
+          floor stacks within each cell).
+          Shown even in the single-massing case so the analyst always
+          knows which massing they're editing — the chip acts as a
+          breadcrumb and an affordance for adding alternates later. */}
+      {sitePlanMassings.length > 0 && (
         <MassingTabsRow
           massings={sitePlanMassings}
           activeMassingId={currentMassing?.id ?? null}

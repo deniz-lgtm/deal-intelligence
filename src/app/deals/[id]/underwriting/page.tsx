@@ -2104,14 +2104,21 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         const landSF = d.site_info?.land_sf || (deal as any)?.land_acres * 43560 || 0;
         const zi = { land_sf: landSF, far: d.far || 0, lot_coverage_pct: d.lot_coverage_pct || 0, height_limit_ft: d.height_limit_stories * 10 || 0, height_limit_stories: d.height_limit_stories || 0 };
 
-        // Group building_program.scenarios by site_plan_scenario_id
+        // Group building_program.scenarios by site_plan_scenario_id.
+        // Skip orphans — scenarios whose site_plan_scenario_id no longer
+        // matches any known site-plan massing (dead data from a deleted
+        // or renamed massing). Without this filter those orphans show up
+        // as phantom "Massing 1" / "Massing 2" tabs in the strip.
         const groups: Record<string, any[]> = {};
         for (const s of allScenarios) {
           const key = s.site_plan_scenario_id || "__default";
+          const isOrphan = key !== "__default" && !sitePlanScenarioMeta[key];
+          if (isOrphan) continue;
           if (!groups[key]) groups[key] = [];
           groups[key].push(s);
         }
         const massingIds = Object.keys(groups);
+        if (massingIds.length === 0) return null;
 
         // Selected massing (level 1)
         const selectedMassingId = activeMassingScenarioId && groups[activeMassingScenarioId]
