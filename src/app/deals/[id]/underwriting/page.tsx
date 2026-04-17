@@ -4421,35 +4421,43 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       )}
       </div>
 
-      {/* ═══════════════════ CONSTRUCTION FINANCING ═══════════════════
-          Hidden in Basic — analysts running back-of-envelope numbers
-          can use the simpler Acquisition Financing block below; the
-          construction loan modeling is for dialed-in ground-up UWs. */}
+      {/* ═══════════════════ CONSTRUCTION PERIOD ═══════════════════
+          For ground-up deals the construction loan and acquisition loan
+          are the same facility — see the Construction-Acquisition Loan
+          section below. This block captures the construction timeline
+          (term + draws) that drives capitalized interest. */}
       <div className={tabCls("capital")}>
       {!isBasic && isGroundUp && (
-      <Section title="Construction Financing" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
+      <Section title="Construction Period" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
         <div className="mt-3">
           {(() => {
             const cl = d.construction_loan || defaultConstructionLoan();
             const setCL = (upd: Partial<ConstructionLoanConfig>) => setData(p => ({ ...p, construction_loan: { ...(p.construction_loan || defaultConstructionLoan()), ...upd } }));
-            const loanAmt = m.totalCost * (cl.ltc_pct / 100);
-            const monthlyRate = cl.rate / 100 / 12;
+            const ltc = d.acq_pp_ltv ?? d.acq_ltc ?? 0;
+            const loanAmt = m.totalCost * (ltc / 100);
+            const monthlyRate = (d.acq_interest_rate || 0) / 100 / 12;
             const avgInterest = loanAmt * 0.5 * monthlyRate * cl.term_months;
             return (
               <>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                  <NumInput label="Loan-to-Cost (LTC)" value={cl.ltc_pct} onChange={v => setCL({ ltc_pct: v })} suffix="%" decimals={1} />
-                  <NumInput label="Interest Rate" value={cl.rate} onChange={v => setCL({ rate: v })} suffix="%" decimals={2} />
                   <NumInput label="Term (months)" value={cl.term_months} onChange={v => setCL({ term_months: v })} />
                   <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Loan Rate</label>
+                    <p className="text-sm font-semibold py-1.5">{d.has_financing ? `${(d.acq_interest_rate || 0).toFixed(2)}%` : "—"}</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Loan-to-Cost</label>
+                    <p className="text-sm font-semibold py-1.5">{d.has_financing ? `${ltc.toFixed(1)}%` : "—"}</p>
+                  </div>
+                  <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">Loan Amount</label>
-                    <p className="text-sm font-semibold py-1.5">{fc(loanAmt)}</p>
+                    <p className="text-sm font-semibold py-1.5">{d.has_financing ? fc(loanAmt) : "—"}</p>
                   </div>
                 </div>
                 <div className="border rounded-md bg-muted/10 p-3 text-sm space-y-1">
                   <div className="flex justify-between"><span>Estimated Capitalized Interest (avg 50% draw)</span><span className="font-semibold tabular-nums">{fc(avgInterest)}</span></div>
                   <div className="flex justify-between"><span>Computed Cap. Interest (from calc)</span><span className="font-semibold tabular-nums text-primary">{fc(m.capitalizedInterest)}</span></div>
-                  <p className="text-xs text-muted-foreground mt-1">Interest carry is auto-included in the Development Budget soft costs and total project cost.</p>
+                  <p className="text-xs text-muted-foreground mt-1">Rate and LTC come from the Construction-Acquisition Loan below — one facility takes down the land and funds improvements. Interest carry is auto-included in total project cost.</p>
                 </div>
               </>
             );
@@ -4458,13 +4466,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </Section>
       )}
 
-      <Section title="Financing" icon={<TrendingUp className="h-4 w-4 text-purple-400" />}>
+      <Section title={isGroundUp ? "Construction-Acquisition Loan" : "Financing"} icon={<TrendingUp className="h-4 w-4 text-purple-400" />}>
         <div className="mt-3 space-y-5">
           <div>
             <div className="flex items-center justify-between mb-3">
               <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold">
                 <input type="checkbox" checked={d.has_financing} onChange={e => set("has_financing", e.target.checked)} className="rounded" />
-                Acquisition Loan
+                {isGroundUp ? "Construction-Acquisition Loan" : "Acquisition Loan"}
               </label>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={estimateLoan} disabled={loanSizing}>
@@ -4476,8 +4484,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </div>
             {d.has_financing && (<>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <NumInput label="Purchase Price LTV" value={d.acq_pp_ltv} onChange={v => set("acq_pp_ltv", v)} suffix="%" decimals={1} />
-                <NumInput label="CapEx LTV" value={d.acq_capex_ltv} onChange={v => set("acq_capex_ltv", v)} suffix="%" decimals={1} />
+                <NumInput label={isGroundUp ? "Loan-to-Cost" : "Purchase Price LTV"} value={d.acq_pp_ltv} onChange={v => set("acq_pp_ltv", v)} suffix="%" decimals={1} />
+                {!isGroundUp && <NumInput label="CapEx LTV" value={d.acq_capex_ltv} onChange={v => set("acq_capex_ltv", v)} suffix="%" decimals={1} />}
                 <NumInput label="Interest Rate" value={d.acq_interest_rate} onChange={v => set("acq_interest_rate", v)} suffix="%" decimals={3} />
                 <div className="p-3 bg-primary/5 rounded-lg border border-primary/15">
                   <p className="text-xs text-muted-foreground mb-1">Blended LTC</p>

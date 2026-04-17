@@ -390,10 +390,15 @@ export function calc(d: UWData, mode: "commercial" | "multifamily" | "student_ho
 
   let capitalizedInterest = 0;
   const cl = d.construction_loan;
-  if (d.development_mode && cl && cl.rate > 0 && cl.term_months > 0) {
-    const totalBudget = totalHardCosts + softCostsTotal + (d.development_mode ? totalParkingCost : 0);
-    const loanAmount = totalBudget * (cl.ltc_pct / 100);
-    const monthlyRate = cl.rate / 100 / 12;
+  // Construction-Acquisition Loan: in ground-up deals the acquisition loan IS the
+  // construction loan — it takes down the land and funds improvements as one
+  // facility. We use the acq loan's rate and LTC for capitalized interest during
+  // the construction period; construction_loan now only carries the term + draws.
+  if (d.development_mode && cl && cl.term_months > 0 && d.acq_interest_rate > 0 && d.has_financing) {
+    const totalBudget = totalHardCosts + softCostsTotal + totalParkingCost;
+    const ltc = d.acq_pp_ltv ?? d.acq_ltc ?? 0;
+    const loanAmount = totalBudget * (ltc / 100);
+    const monthlyRate = d.acq_interest_rate / 100 / 12;
     if (cl.draw_schedule.length > 0) {
       for (let m = 1; m <= cl.term_months; m++) {
         const draw = cl.draw_schedule.find(dp => dp.month === m);
