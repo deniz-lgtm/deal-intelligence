@@ -1841,6 +1841,15 @@ export interface ConstructionLoanConfig {
   ltc_pct: number;
   rate: number;
   term_months: number;
+  // Draw curve shape — "s_curve" generates a bell-curve (Gaussian) draw
+  // profile: slow start, ramp up in the middle, slow tail. Its cumulative
+  // form is an S-curve, which is how real construction draws look.
+  // "linear" draws equal monthly tranches. "custom" uses draw_schedule.
+  draw_curve?: "s_curve" | "linear" | "custom";
+  // Standard deviation (in months) of the bell curve. Lower = more
+  // concentrated draws in the middle (steep ramp). Higher = flatter /
+  // more spread out. Typical: term_months / 4.
+  draw_std_dev_months?: number;
   draw_schedule: ConstructionDrawPeriod[];
 }
 
