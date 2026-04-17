@@ -27,6 +27,10 @@ import {
   TrendingUp,
   Percent,
   ImageIcon,
+  ChevronDown,
+  Presentation,
+  Share2,
+  ScrollText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -79,6 +83,11 @@ export default function DealOverviewPage({
   const [advancingTo, setAdvancingTo] = useState<DealStatus | null>(null);
   const [showGateWarning, setShowGateWarning] = useState<{ status: DealStatus; message: string } | null>(null);
   const [autoFilling, setAutoFilling] = useState(false);
+  // Investment Materials collapsible bar: separate from the Execution
+  // sidebar group so outputs (LOI / DD Abstract / Inv. Package / Deal
+  // Room) are reachable in one click from the Overview without cluttering
+  // the nav. Collapsed by default.
+  const [materialsOpen, setMaterialsOpen] = useState(false);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [underwriting, setUnderwriting] = useState<UnderwritingData | null>(null);
   const [editingProperty, setEditingProperty] = useState(false);
@@ -407,6 +416,73 @@ export default function DealOverviewPage({
             </Button>
           )}
         </div>
+      </div>
+
+      {/* ═══ INVESTMENT MATERIALS (collapsible) ═══
+          Surfaces the output artifacts (LOI, DD Abstract, Investment
+          Package, Deal Room) in a compact bar so they're one click
+          away without taking over the page. Execution sidebar group
+          still has the same links for deep editing. */}
+      <div className="border border-border/40 rounded-lg bg-card/40 overflow-hidden">
+        <button
+          onClick={() => setMaterialsOpen((o) => !o)}
+          className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted/20 transition-colors text-left"
+        >
+          {materialsOpen ? (
+            <ChevronDown className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+          )}
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Investment materials
+          </span>
+          {!materialsOpen && (
+            <span className="text-[11px] text-muted-foreground/80 truncate">
+              LOI{deal.loi_executed ? " ✓" : ""} · DD Abstract · Inv. Package · Deal Room
+            </span>
+          )}
+        </button>
+        {materialsOpen && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-2 border-t border-border/40">
+            {[
+              {
+                href: `/deals/${params.id}/loi`,
+                icon: <FileSignature className="h-4 w-4 text-orange-400" />,
+                label: "Letter of Intent",
+                status: deal.loi_executed ? "Executed" : "Draft",
+              },
+              {
+                href: `/deals/${params.id}/dd-abstract`,
+                icon: <ScrollText className="h-4 w-4 text-amber-400" />,
+                label: "DD Abstract",
+                status: "Open to view",
+              },
+              {
+                href: `/deals/${params.id}/investment-package`,
+                icon: <Presentation className="h-4 w-4 text-blue-400" />,
+                label: "Investment Package",
+                status: "Open to view",
+              },
+              {
+                href: `/deals/${params.id}/room`,
+                icon: <Share2 className="h-4 w-4 text-emerald-400" />,
+                label: "Deal Room",
+                status: "Share externally",
+              },
+            ].map((m) => (
+              <Link key={m.href} href={m.href}>
+                <div className="flex items-center gap-2 p-2 rounded-md border border-border/40 bg-card hover:bg-muted/20 transition-colors">
+                  <div className="shrink-0">{m.icon}</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium truncate">{m.label}</p>
+                    <p className="text-2xs text-muted-foreground truncate">{m.status}</p>
+                  </div>
+                  <ArrowRight className="h-3 w-3 text-muted-foreground/50 shrink-0" />
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ═══ SCORES STRIP ═══ */}
