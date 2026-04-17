@@ -33,6 +33,7 @@ import { toPng } from "html-to-image";
 import { toast } from "sonner";
 import type { SitePlan, SitePlanPoint, SitePlanBuilding, SitePlanScenario, SitePlanCutout } from "@/lib/types";
 import { getTileConfig } from "@/lib/map-config";
+import SupplyPipelineLayer, { type PipelineData } from "@/components/site-plan/SupplyPipelineLayer";
 import {
   polygonAreaSf,
   polygonPerimeterFt,
@@ -406,6 +407,12 @@ export default function SitePlanGenerator({
   // Set when Mapbox tiles fail and we auto-fall-back to CARTO/Esri, so
   // we can show an in-map hint to the user.
   const [tilesFallback, setTilesFallback] = useState(false);
+  // Supply-pipeline overlay — pulls under-construction / planned projects
+  // from every uploaded market report for this deal and plots them on the
+  // map so the developer can see competing supply relative to their parcel.
+  const [showPipeline, setShowPipeline] = useState(false);
+  const [pipelineRadiusMi, setPipelineRadiusMi] = useState(3);
+  const [pipelineData, setPipelineData] = useState<PipelineData | null>(null);
   const [draft, setDraft] = useState<SitePlanPoint[]>([]);
   const [cursor, setCursor] = useState<SitePlanPoint | null>(null);
   const [snapshotting, setSnapshotting] = useState(false);
@@ -1114,6 +1121,50 @@ export default function SitePlanGenerator({
               Setback envelope
             </label>
           )}
+          {/* Supply pipeline overlay — pulls nearby under-construction /
+              planned projects from uploaded market reports so the developer
+              can see competing supply around their parcel. Requires dealId. */}
+          {dealId && (
+            <div className="pt-1 border-t border-border/40 space-y-1">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showPipeline}
+                  onChange={(e) => setShowPipeline(e.target.checked)}
+                  className="accent-red-400 h-3 w-3"
+                />
+                <span>Supply pipeline</span>
+                {showPipeline && pipelineData && (
+                  <span className="ml-auto text-[10px] text-muted-foreground">
+                    {pipelineData.mapped.length} on map · {pipelineData.totals.total_units.toLocaleString()} units
+                  </span>
+                )}
+              </label>
+              {showPipeline && (
+                <label className="flex items-center gap-1.5 text-[11px] pl-5">
+                  <span className="text-muted-foreground">Radius</span>
+                  <select
+                    value={pipelineRadiusMi}
+                    onChange={(e) => setPipelineRadiusMi(Number(e.target.value))}
+                    className="bg-background border border-border/40 rounded px-1 py-0.5 text-[10px]"
+                  >
+                    <option value={1}>1 mi</option>
+                    <option value={3}>3 mi</option>
+                    <option value={5}>5 mi</option>
+                    <option value={10}>10 mi</option>
+                    <option value={25}>25 mi</option>
+                    <option value={0}>All</option>
+                  </select>
+                </label>
+              )}
+              {showPipeline && pipelineData && (
+                <div className="text-[10px] text-muted-foreground pl-5 leading-relaxed">
+                  <span className="text-red-400">●</span> {pipelineData.totals.under_construction_count} UC ({pipelineData.totals.under_construction_units.toLocaleString()} u) ·{" "}
+                  <span className="text-amber-400">●</span> {pipelineData.totals.planned_count} planned ({pipelineData.totals.planned_units.toLocaleString()} u)
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1234,6 +1285,17 @@ export default function SitePlanGenerator({
           style={value.map_style}
           onFallback={() => setTilesFallback(true)}
         />
+        {/* Nearby supply-pipeline markers. Sits above tiles but below the
+            user's drawn polygons so clicks on the parcel / building always
+            win. Only mounts when the analyst turns the layer on. */}
+        {dealId && (
+          <SupplyPipelineLayer
+            dealId={dealId}
+            enabled={showPipeline}
+            radiusMi={pipelineRadiusMi}
+            onDataChange={setPipelineData}
+          />
+        )}
         <CursorStyler tool={tool} />
         <MapRefCapture onReady={(m) => { mapRef.current = m; }} />
         <TranslateHandler

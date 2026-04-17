@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { dealQueries, marketReportsQueries } from "@/lib/db";
 import { extractMarketReport } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { geocodeAddress } from "@/lib/geocode";
 
 /**
  * GET  /api/deals/:id/market-reports
@@ -108,6 +109,15 @@ export async function POST(
       extraction.publisher = hintedPublisher;
     }
 
+    // Best-effort geocode each named pipeline project. Developers need the
+    // supply pipeline plotted on the site plan to see what's competing
+    // nearby. The Census geocoder is free + unauthenticated but slow-ish,
+    // so we cap at 20 projects + 100ms between calls. Anything that
+    // doesn't resolve stays in the list without coords — the UI renders
+    // those in a list view rather than on the map.
+    const submarket = [extraction.submarket, extraction.msa].filter(Boolean).join(", ");
+    const enrichedPipeline = await geocodePipeline(extraction.pipeline, submarket);
+
     const id = uuidv4();
     const row = await marketReportsQueries.create(params.id, id, {
       publisher: extraction.publisher,
@@ -118,7 +128,7 @@ export async function POST(
       as_of_date: extraction.as_of_date,
       source_url: sourceUrl || extraction.source_url,
       metrics: extraction.metrics as Record<string, unknown>,
-      pipeline: extraction.pipeline,
+      pipeline: enrichedPipeline,
       top_employers: extraction.top_employers,
       top_deliveries: extraction.top_deliveries,
       narrative: extraction.narrative,
@@ -131,4 +141,69 @@ export async function POST(
     console.error("POST /api/deals/[id]/market-reports error:", error);
     return NextResponse.json({ error: "Market report extraction failed" }, { status: 500 });
   }
+}
+
+// ── Geocode pipeline projects ───────────────────────────────────────────────
+//
+// Broker research pipeline entries look like
+//   { project_name: "The Aspen", developer: "X Co.", units: 324, submarket: "East Austin" }
+//
+// For the supply-pipeline map layer on the site plan we need lat/lng. The
+// Census geocoder doesn't understand "The Aspen", but many research reports
+// include an address too, and even "Project Name, Submarket, City" often
+// resolves because Census accepts free-form strings. For everything that
+// doesn't resolve, the entry stays in the list sans coords — the UI will
+// render those in a sidebar table rather than on the map.
+
+type PipelineEntry = {
+  project_name?: string | null;
+  developer?: string | null;
+  units?: number | null;
+  sf?: number | null;
+  expected_delivery?: string | null;
+  submarket?: string | null;
+  address?: string | null;
+  status?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+};
+
+async function geocodePipeline(
+  pipeline: PipelineEntry[],
+  submarketFallback: string
+): Promise<PipelineEntry[]> {
+  if (!Array.isArray(pipeline) || pipeline.length === 0) return [];
+  const out: PipelineEntry[] = [];
+  // Cap at 20 so a big national report doesn't fan out 300 geocode calls.
+  const MAX = 20;
+  for (let i = 0; i < pipeline.length; i++) {
+    const p = { ...pipeline[i] } as PipelineEntry;
+    if (i >= MAX || (p.lat != null && p.lng != null)) {
+      out.push(p);
+      continue;
+    }
+    const addressCandidates = [
+      p.address ? `${p.address}, ${submarketFallback}` : null,
+      p.address,
+      p.project_name && p.submarket ? `${p.project_name}, ${p.submarket}, ${submarketFallback}` : null,
+      p.project_name && submarketFallback ? `${p.project_name}, ${submarketFallback}` : null,
+    ].filter((s): s is string => Boolean(s && s.trim()));
+
+    for (const candidate of addressCandidates) {
+      try {
+        const r = await geocodeAddress(candidate);
+        if (r) {
+          p.lat = r.lat;
+          p.lng = r.lng;
+          break;
+        }
+      } catch {
+        // Continue to next candidate.
+      }
+    }
+    // Politeness delay so we don't hammer the Census geocoder for big reports.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    out.push(p);
+  }
+  return out;
 }

@@ -95,9 +95,55 @@ export function formatLocationIntelContext(rows: AnyRecord[]): string {
     lines.push(
       `  Top Industries: ${data.top_industries
         .slice(0, 5)
-        .map((i: AnyRecord) => `${i.name} (${i.share_pct}%)`)
+        .map((i: AnyRecord) => {
+          const bits = [`${i.name} (${i.share_pct}%`];
+          if (i.yoy_pct != null) bits.push(`, ${i.yoy_pct > 0 ? "+" : ""}${i.yoy_pct}% YoY`);
+          bits.push(")");
+          return bits.join("");
+        })
         .join(", ")}`
     );
+  }
+
+  // BLS QCEW detail — industry-by-industry employment + YoY growth, which
+  // developers use to sanity-check rent growth / absorption assumptions.
+  if (data.qcew) {
+    const q = data.qcew as AnyRecord;
+    const qLines: string[] = [];
+    qLines.push(
+      `BLS QCEW (${q.reporting_period}, private sector, county ${q.county_fips}):`
+    );
+    if (q.total_employment != null)
+      qLines.push(
+        `  Total Private Employment: ${Number(q.total_employment).toLocaleString()}${q.yoy_employment_pct != null ? ` (${q.yoy_employment_pct > 0 ? "+" : ""}${q.yoy_employment_pct}% YoY)` : ""}`
+      );
+    if (q.avg_weekly_wage != null)
+      qLines.push(`  Average Weekly Wage: $${Number(q.avg_weekly_wage).toLocaleString()}`);
+    if (Array.isArray(q.industries) && q.industries.length > 0) {
+      qLines.push(`  Top Industries by Employment:`);
+      for (const i of q.industries.slice(0, 8)) {
+        const wage = i.avg_weekly_wage ? ` · $${Number(i.avg_weekly_wage).toLocaleString()}/wk` : "";
+        const yoy = i.yoy_employment_pct != null ? ` · ${i.yoy_employment_pct > 0 ? "+" : ""}${i.yoy_employment_pct}% YoY` : "";
+        qLines.push(
+          `    - ${i.label}: ${Number(i.employment).toLocaleString()} (${i.employment_share_pct}% share${wage}${yoy})`
+        );
+      }
+    }
+    lines.push(qLines.join("\n"));
+  }
+
+  // BLS LAUS — monthly unemployment rate + 12-month trend if the LAUS feed
+  // ran. These fields are written directly onto the data blob by the LAUS
+  // fetch route, so we just surface them here.
+  if (data.laus_month || data.unemployment_yoy_change != null) {
+    const lausLines: string[] = [`BLS LAUS (county-level unemployment, ${data.laus_month || "latest month"}):`];
+    if (data.unemployment_rate != null) {
+      const yoy = data.unemployment_yoy_change != null
+        ? ` (${data.unemployment_yoy_change > 0 ? "+" : ""}${data.unemployment_yoy_change} pp YoY)`
+        : "";
+      lausLines.push(`  Unemployment Rate: ${data.unemployment_rate}%${yoy}`);
+    }
+    lines.push(lausLines.join("\n"));
   }
 
   // Growth projections

@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type { Comp, SubmarketMetrics } from "@/lib/types";
 import MarketIntelligencePanel from "@/components/comps/MarketIntelligencePanel";
+import { fireAndForgetAutoEnrich } from "@/lib/location-auto-enrich";
 
 // ── Underwriting-side rent comp matrix types ────────────────────────────────
 //
@@ -296,6 +297,11 @@ export default function CompsPage({ params }: { params: { id: string } }) {
       }
       if (!silent) toast.success("Subject deal geocoded");
       loadData();
+      // Kick off background market-data enrichment — HUD AMI + FMR, BLS LAUS
+      // + QCEW, USPS migration, FEMA flood, Census demographics. Fire-and-
+      // forget so the UI doesn't block on HUD/BLS round-trips. Each feed
+      // degrades gracefully when its API key is missing.
+      fireAndForgetAutoEnrich(params.id);
     } finally {
       setGeocodingSubject(false);
     }
