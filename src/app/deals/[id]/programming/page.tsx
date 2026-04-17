@@ -110,6 +110,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     overlays: string[];
     height_limits: Array<{ label: string; value: string }>;
   }>({ zoning_designation: "", overlays: [], height_limits: [] });
+  const [zoningOpen, setZoningOpen] = useState(false);
   const [unitGroups, setUnitGroups] = useState<any[]>([]);
   const [affordabilityConfig, setAffordabilityConfig] = useState<any>(null);
   const [taxesAnnual, setTaxesAnnual] = useState(0);
@@ -949,69 +950,96 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         </div>
       )}
 
-      {/* Read-only zoning + spotted-bonus chips. Keeps the constraints
-          driving the active massing visible without forcing the analyst
-          to flip back to Site & Zoning. Values are sourced from the
-          UW blob's zoning_info. A link-out at the end jumps back to
-          Site & Zoning if something needs changing. */}
+      {/* Collapsed by default. Zoning and bonus constraints drive the
+          massing but the analyst rarely references them while editing
+          unit mix / rents. A one-line summary stays visible so they
+          know the context exists; click to expand for full chips. */}
       {(zoningContext.zoning_designation ||
         zoningContext.overlays.length > 0 ||
         zoningContext.height_limits.length > 0 ||
         zoningInputs.far > 0 ||
         zoningInputs.lot_coverage_pct > 0 ||
         densityBonuses.length > 0) && (
-        <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">
-            Zoning
-          </span>
-          {zoningContext.zoning_designation && (
-            <ZoningChip color="blue">{zoningContext.zoning_designation}</ZoningChip>
-          )}
-          {zoningInputs.far > 0 && (
-            <ZoningChip color="blue">FAR {zoningInputs.far}</ZoningChip>
-          )}
-          {zoningInputs.lot_coverage_pct > 0 && (
-            <ZoningChip color="blue">Coverage ≤ {zoningInputs.lot_coverage_pct}%</ZoningChip>
-          )}
-          {zoningContext.height_limits
-            .filter((h) => typeof h?.value === "string" && h.value.trim() !== "")
-            .slice(0, 2)
-            .map((h, i) => (
-              <ZoningChip key={`hl-${i}`} color="blue" title={typeof h.label === "string" ? h.label : undefined}>
-                {String(h.value)}
-              </ZoningChip>
-            ))}
-          {zoningContext.overlays
-            .filter((o) => typeof o === "string" && o.trim() !== "")
-            .slice(0, 3)
-            .map((o, i) => (
-              <ZoningChip key={`ov-${i}`} color="slate">{String(o)}</ZoningChip>
-            ))}
-          {densityBonuses.length > 0 && (
-            <>
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground mx-1">
-                Bonuses
-              </span>
-              {densityBonuses.map((b, i) => (
-                <ZoningChip
-                  key={`db-${i}`}
-                  color="emerald"
-                  title={typeof b?.description === "string" ? b.description : undefined}
-                >
-                  {String(b?.source || "")}
-                  {typeof b?.additional_density === "string" && b.additional_density
-                    ? ` · ${b.additional_density}`
-                    : ""}
-                </ZoningChip>
-              ))}
-            </>
-          )}
-          <a
-            href={`/deals/${params.id}/site-zoning`}
-            className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline decoration-dotted"
+        <div className="border border-border/40 rounded-md bg-muted/5">
+          <button
+            onClick={() => setZoningOpen((o) => !o)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/15 transition-colors"
           >
-            Edit on Site &amp; Zoning →
-          </a>
+            {zoningOpen ? (
+              <ChevronDown className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+            ) : (
+              <ChevronRight className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+            )}
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Zoning constraints
+            </span>
+            {!zoningOpen && (
+              <span className="text-[11px] text-muted-foreground/80 truncate">
+                {[
+                  zoningContext.zoning_designation,
+                  zoningInputs.far > 0 ? `FAR ${zoningInputs.far}` : null,
+                  zoningInputs.lot_coverage_pct > 0 ? `Cov ≤ ${zoningInputs.lot_coverage_pct}%` : null,
+                  densityBonuses.length > 0
+                    ? `${densityBonuses.length} bonus${densityBonuses.length > 1 ? "es" : ""}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            )}
+          </button>
+          {zoningOpen && (
+            <div className="flex items-center gap-1.5 flex-wrap text-[11px] px-3 pb-2 pt-1 border-t border-border/40">
+              {zoningContext.zoning_designation && (
+                <ZoningChip color="blue">{zoningContext.zoning_designation}</ZoningChip>
+              )}
+              {zoningInputs.far > 0 && (
+                <ZoningChip color="blue">FAR {zoningInputs.far}</ZoningChip>
+              )}
+              {zoningInputs.lot_coverage_pct > 0 && (
+                <ZoningChip color="blue">Coverage ≤ {zoningInputs.lot_coverage_pct}%</ZoningChip>
+              )}
+              {zoningContext.height_limits
+                .filter((h) => typeof h?.value === "string" && h.value.trim() !== "")
+                .slice(0, 2)
+                .map((h, i) => (
+                  <ZoningChip key={`hl-${i}`} color="blue" title={typeof h.label === "string" ? h.label : undefined}>
+                    {String(h.value)}
+                  </ZoningChip>
+                ))}
+              {zoningContext.overlays
+                .filter((o) => typeof o === "string" && o.trim() !== "")
+                .slice(0, 3)
+                .map((o, i) => (
+                  <ZoningChip key={`ov-${i}`} color="slate">{String(o)}</ZoningChip>
+                ))}
+              {densityBonuses.length > 0 && (
+                <>
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground mx-1">
+                    Bonuses
+                  </span>
+                  {densityBonuses.map((b, i) => (
+                    <ZoningChip
+                      key={`db-${i}`}
+                      color="emerald"
+                      title={typeof b?.description === "string" ? b.description : undefined}
+                    >
+                      {String(b?.source || "")}
+                      {typeof b?.additional_density === "string" && b.additional_density
+                        ? ` · ${b.additional_density}`
+                        : ""}
+                    </ZoningChip>
+                  ))}
+                </>
+              )}
+              <a
+                href={`/deals/${params.id}/site-zoning`}
+                className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline decoration-dotted"
+              >
+                Edit on Site &amp; Zoning →
+              </a>
+            </div>
+          )}
         </div>
       )}
 

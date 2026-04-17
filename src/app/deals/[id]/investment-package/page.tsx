@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { Document } from "@/lib/types";
+import { DocCoverageChip } from "@/components/ai";
 
 // ─── Section Definitions ─────────────────────────────────────────────────────
 const ALL_SECTIONS = [
@@ -82,6 +84,7 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
   const [generatingAll, setGeneratingAll] = useState(false);
   const [dealName, setDealName] = useState("Deal");
   const [uwUpdatedAt, setUwUpdatedAt] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<Document[]>([]);
 
   // Deal score state
   const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null; final_score: number | null; final_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null, final_score: null, final_score_reasoning: null });
@@ -101,7 +104,9 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       fetch(`/api/deals/${params.id}/investment-package`).then(r => r.json()).catch(() => null),
       fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).catch(() => null),
       fetch(`/api/deals/${params.id}/deal-score`).then(r => r.json()).catch(() => null),
-    ]).then(([dealJson, pkgJson, uwJson, scoresJson]) => {
+      fetch(`/api/deals/${params.id}/documents`).then(r => r.json()).catch(() => null),
+    ]).then(([dealJson, pkgJson, uwJson, scoresJson, docsJson]) => {
+      if (docsJson?.data) setDocuments(docsJson.data);
       if (dealJson.data?.name) setDealName(dealJson.data.name);
       if (uwJson?.data?.updated_at) setUwUpdatedAt(uwJson.data.updated_at);
       if (scoresJson?.data) setDealScores(scoresJson.data);
@@ -284,9 +289,12 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
           <Button size="sm" onClick={save} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
-          <Button onClick={() => { setShowWizard(true); setWizardStep(0); }} disabled={generatingAll}>
-            {generatingAll ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><Sparkles className="h-4 w-4 mr-2" />Generate Package</>}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => { setShowWizard(true); setWizardStep(0); }} disabled={generatingAll}>
+              {generatingAll ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><Sparkles className="h-4 w-4 mr-2" />Generate Package</>}
+            </Button>
+            <DocCoverageChip documents={documents} section="inv_package" />
+          </div>
         </div>
       </div>
 

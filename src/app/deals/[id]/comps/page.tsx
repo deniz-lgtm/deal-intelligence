@@ -26,7 +26,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import type { Comp, SubmarketMetrics } from "@/lib/types";
+import type { Comp, SubmarketMetrics, Document } from "@/lib/types";
+import { DocCoverageChip } from "@/components/ai";
 
 // ── Underwriting-side rent comp matrix types ────────────────────────────────
 //
@@ -203,6 +204,10 @@ export default function CompsPage({ params }: { params: { id: string } }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteType, setPasteType] = useState<"sale" | "rent">("sale");
   const [docExtractOpen, setDocExtractOpen] = useState(false);
+  // Documents are fetched once at the page level so the coverage chip
+  // next to "Extract from Market Docs" can tell the user at a glance
+  // whether any market-category docs exist before they open the modal.
+  const [documents, setDocuments] = useState<Document[]>([]);
 
   // Matrix-style rent comps live inside the underwriting JSONB blob — see
   // MatrixRentComp comment near the top of this file for why. We hold the
@@ -307,6 +312,15 @@ export default function CompsPage({ params }: { params: { id: string } }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subject?.address, subject?.lat, subject?.lng]);
+
+  // Load documents for the page-level coverage chip (separate from the
+  // filtered list the doc-extract modal maintains internally).
+  useEffect(() => {
+    fetch(`/api/deals/${params.id}/documents`)
+      .then((r) => r.json())
+      .then((j) => setDocuments(j.data || []))
+      .catch(() => {});
+  }, [params.id]);
 
   async function handleGeocodeMissing() {
     setGeocodingMissing(true);
@@ -754,14 +768,17 @@ export default function CompsPage({ params }: { params: { id: string } }) {
             listing text or extracting from an uploaded market document.
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setDocExtractOpen(true)}
-        >
-          <FileSearch className="h-3.5 w-3.5 mr-1.5" />
-          Extract from Market Docs
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setDocExtractOpen(true)}
+          >
+            <FileSearch className="h-3.5 w-3.5 mr-1.5" />
+            Extract from Market Docs
+          </Button>
+          <DocCoverageChip documents={documents} section="comps" />
+        </div>
       </div>
 
       {/* Legal / posture note */}

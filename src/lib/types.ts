@@ -67,6 +67,7 @@ export interface Deal {
   zip: string;
   property_type: PropertyType;
   investment_strategy: InvestmentThesis | null;
+  deal_scope: DealScope | null;
   status: DealStatus;
   starred: boolean;
   asking_price: number | null;
@@ -144,6 +145,34 @@ export const INVESTMENT_THESIS_DESCRIPTIONS: Record<InvestmentThesis, string> = 
   core_plus: "Acquire quality assets with minor value-add potential through light improvements or lease-up",
   opportunistic: "High-risk/high-return strategies including distressed assets, heavy rehab, or market turnarounds",
 };
+
+// ─── Deal Scope ────────────────────────────────────────────────────────────
+// Orthogonal to InvestmentThesis: drives UI complexity (which sections matter).
+// Acquisition → underwriting-focused; Programming + Site & Zoning are de-emphasized.
+// Value-Add + Expansion → adds new SF (vertical additions, ADUs, phased adds); full flow.
+// Ground-Up → new construction; full flow with programming, site, and zoning defaults.
+
+export type DealScope = "acquisition" | "value_add_expansion" | "ground_up";
+
+export const DEAL_SCOPE_LABELS: Record<DealScope, string> = {
+  acquisition: "Acquisition",
+  value_add_expansion: "Value-Add + Expansion",
+  ground_up: "Ground-Up Development",
+};
+
+export const DEAL_SCOPE_DESCRIPTIONS: Record<DealScope, string> = {
+  acquisition: "Buy and operate, or interior renovation only. No new SF. Underwriting-focused.",
+  value_add_expansion: "Reposition with added square footage — vertical additions, ADUs, new phases.",
+  ground_up: "New construction on raw or entitled land. Full programming, site, and zoning flow.",
+};
+
+// Suggest a default scope from an investment thesis. User can always override.
+export function suggestScopeFromStrategy(strategy: InvestmentThesis | null | ""): DealScope | null {
+  if (strategy === "ground_up") return "ground_up";
+  if (strategy === "value_add") return "value_add_expansion";
+  if (strategy === "core" || strategy === "core_plus") return "acquisition";
+  return null;
+}
 
 export const PREDEFINED_MARKETS = [
   "DFW", "Houston", "San Antonio", "Austin", "Tampa", "Orlando", "Jacksonville",

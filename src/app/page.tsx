@@ -92,7 +92,13 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showAnalytics, setShowAnalytics] = useState(true);
+  // Activity feed toggle persists across reloads — previously reset on
+  // every page load which buried the feed for users who wanted it pinned.
   const [showFeed, setShowFeed] = useState(false);
+  useEffect(() => {
+    const stored = localStorage.getItem("dashboardFeedPinned");
+    if (stored === "1") setShowFeed(true);
+  }, []);
   const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
   const [draggingDealId, setDraggingDealId] = useState<string | null>(null);
@@ -127,6 +133,13 @@ export default function DashboardPage() {
       setActivityLoading(false);
     }
   }, [activityEvents.length]);
+
+  // Auto-load activity when the feed is pinned (restored from localStorage
+  // on mount) — otherwise the pinned feed would render empty until the user
+  // clicked the toggle.
+  useEffect(() => {
+    if (showFeed) loadActivity();
+  }, [showFeed, loadActivity]);
 
   const handleStar = async (id: string, starred: boolean) => {
     setDeals((prev) =>
@@ -241,6 +254,7 @@ export default function DashboardPage() {
   const toggleFeed = () => {
     const next = !showFeed;
     setShowFeed(next);
+    localStorage.setItem("dashboardFeedPinned", next ? "1" : "0");
     if (next) loadActivity();
   };
 
@@ -286,61 +300,55 @@ export default function DashboardPage() {
       {/* ── Today strip (AI command center summary) ── */}
       <TodayStrip />
 
-      {/* ── Analytics row (collapsible) ── */}
+      {/* ── Analytics row — single-line strip.
+          Previously stacked: 3 summary stats on top + a row of per-stage
+          bars below. The bar chart already visualizes where pipeline
+          value sits across stages (total = Pipeline Value stat), so
+          stacking them was redundant. Now summary stats sit inline on
+          the left, per-stage bars stretch to the right. */}
       {showAnalytics && (
         <div className="shrink-0 border-b border-border/30 bg-card/30 backdrop-blur-sm animate-fade-up">
-          <div className="max-w-full mx-auto px-6 sm:px-8 py-4">
-            {/* Top summary */}
-            <div className="flex items-center gap-6 mb-4">
+          <div className="max-w-full mx-auto px-6 sm:px-8 py-2.5 flex items-center gap-5">
+            {/* Summary stats */}
+            <div className="flex items-center gap-4 shrink-0">
               <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                  <DollarSign className="h-4 w-4 text-emerald-400" />
-                </div>
+                <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
                 <div>
-                  <p className="text-lg font-bold tabular-nums tracking-tight">{formatCurrency(totalPipelineValue)}</p>
-                  <p className="text-2xs text-muted-foreground">Pipeline Value</p>
+                  <p className="text-sm font-bold tabular-nums tracking-tight leading-tight">{formatCurrency(totalPipelineValue)}</p>
+                  <p className="text-[10px] text-muted-foreground leading-tight">Pipeline</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                  <TrendingUp className="h-4 w-4 text-blue-400" />
-                </div>
+                <TrendingUp className="h-3.5 w-3.5 text-blue-400" />
                 <div>
-                  <p className="text-lg font-bold tabular-nums tracking-tight">{activeDeals.length}</p>
-                  <p className="text-2xs text-muted-foreground">Active Deals</p>
+                  <p className="text-sm font-bold tabular-nums tracking-tight leading-tight">{activeDeals.length}</p>
+                  <p className="text-[10px] text-muted-foreground leading-tight">Active</p>
                 </div>
               </div>
               {avgScore && (
                 <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <FileSearch className="h-4 w-4 text-primary" />
-                  </div>
+                  <FileSearch className="h-3.5 w-3.5 text-primary" />
                   <div>
-                    <p className="text-lg font-bold tabular-nums tracking-tight">{avgScore}</p>
-                    <p className="text-2xs text-muted-foreground">Avg OM Score</p>
+                    <p className="text-sm font-bold tabular-nums tracking-tight leading-tight">{avgScore}</p>
+                    <p className="text-[10px] text-muted-foreground leading-tight">Avg OM</p>
                   </div>
                 </div>
               )}
             </div>
-
-            {/* Per-column value bar */}
-            <div className="flex items-end gap-4">
+            <div className="h-8 w-px bg-border/40 shrink-0" />
+            {/* Per-stage bars inline */}
+            <div className="flex items-end gap-2 flex-1 min-w-0">
               {columnMetrics.filter(m => m.status !== "dead" && m.status !== "archived").map((m) => {
                 const maxValue = Math.max(...columnMetrics.map((c) => c.value), 1);
-                const barHeight = m.value > 0 ? Math.max(4, Math.round((m.value / maxValue) * 40)) : 0;
+                const barHeight = m.value > 0 ? Math.max(4, Math.round((m.value / maxValue) * 28)) : 0;
                 const colors = COLUMN_COLORS[m.status as DealStatus];
                 return (
-                  <div key={m.status} className="flex-1 flex flex-col items-center gap-1.5 min-w-0">
-                    {m.value > 0 && (
-                      <span className="text-[10px] text-muted-foreground tabular-nums truncate">
-                        {formatCurrency(m.value)}
-                      </span>
-                    )}
+                  <div key={m.status} className="flex-1 flex flex-col items-center gap-0.5 min-w-0" title={`${stageLabels[m.status as DealStatus] ?? m.status}: ${formatCurrency(m.value)}`}>
                     <div
                       className={cn("w-full rounded-sm transition-all", colors.dot)}
                       style={{ height: `${barHeight}px`, opacity: barHeight > 0 ? 1 : 0.15, minHeight: barHeight > 0 ? undefined : "4px" }}
                     />
-                    <span className="text-[10px] text-muted-foreground/60 truncate">
+                    <span className="text-[9px] text-muted-foreground/60 truncate">
                       {stageLabels[m.status as DealStatus] ?? m.status}
                     </span>
                   </div>

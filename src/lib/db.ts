@@ -74,6 +74,7 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS deal_scope TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS owner_id TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
@@ -1317,6 +1318,7 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS deal_scope TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE photos ADD COLUMN IF NOT EXISTS is_cover BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER",
@@ -1426,6 +1428,10 @@ export const dealQueries = {
     if (deal.investment_strategy) {
       cols.push("investment_strategy");
       vals.push(deal.investment_strategy);
+    }
+    if (deal.deal_scope) {
+      cols.push("deal_scope");
+      vals.push(deal.deal_scope);
     }
     if (deal.land_acres != null) {
       cols.push("land_acres");
