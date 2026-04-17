@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { Document } from "@/lib/types";
+import { DocCoverageChip } from "@/components/ai";
 
 const ALL_SECTIONS = [
   { id: "executive_summary", label: "Executive Summary", default: true },
@@ -31,6 +33,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
   );
   const [savedDocId, setSavedDocId] = useState<string | null>(null);
   const [lastGenerated, setLastGenerated] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<Document[]>([]);
 
   // Load existing saved abstract on mount
   useEffect(() => {
@@ -45,6 +48,9 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
       .then(j => {
         const docs = j.data || j;
         if (Array.isArray(docs)) {
+          // Keep the full doc list around so <DocCoverageChip> can show
+          // how much diligence material backs the abstract.
+          setDocuments(docs as Document[]);
           const existing = docs.find((d: { category: string; name: string }) =>
             d.category === "dd_abstract" || d.name?.includes("DD Abstract")
           );
@@ -214,6 +220,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
               <><FileText className="h-4 w-4 mr-2" />Generate Abstract</>
             )}
           </Button>
+          <DocCoverageChip documents={documents} section="dd_abstract" />
         </div>
       </div>
 

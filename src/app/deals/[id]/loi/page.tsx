@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/button";
 import ContactPicker from "@/components/ContactPicker";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
-import type { LOIData, Deal, Contact, StakeholderType } from "@/lib/types";
+import type { LOIData, Deal, Contact, StakeholderType, Document } from "@/lib/types";
+import { DocCoverageChip } from "@/components/ai";
 
 const DEFAULT_LOI: LOIData = {
   buyer_entity: "",
@@ -77,6 +78,7 @@ export default function LOIPage({ params }: { params: { id: string } }) {
   const [executed, setExecuted] = useState(false);
   const [markingExecuted, setMarkingExecuted] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
+  const [documents, setDocuments] = useState<Document[]>([]);
 
   const autofillLOI = async () => {
     setAutofilling(true);
@@ -102,6 +104,15 @@ export default function LOIPage({ params }: { params: { id: string } }) {
     } catch { toast.error("Autofill failed"); }
     finally { setAutofilling(false); }
   };
+
+  useEffect(() => {
+    // Documents power the coverage chip; load independently so the LOI
+    // data fetch path stays untouched.
+    fetch(`/api/deals/${params.id}/documents`)
+      .then((r) => r.json())
+      .then((j) => setDocuments(j.data || []))
+      .catch(() => {});
+  }, [params.id]);
 
   useEffect(() => {
     Promise.all([
@@ -245,10 +256,13 @@ export default function LOIPage({ params }: { params: { id: string } }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={autofillLOI} disabled={autofilling}>
-            {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-            AI Autofill
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={autofillLOI} disabled={autofilling}>
+              {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+              AI Autofill
+            </Button>
+            <DocCoverageChip documents={documents} section="loi" />
+          </div>
           <Button variant="outline" onClick={printLOI}>
             <Printer className="h-4 w-4 mr-2" />
             Export / Print

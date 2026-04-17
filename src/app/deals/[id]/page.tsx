@@ -32,6 +32,7 @@ import {
   Share2,
   ScrollText,
 } from "lucide-react";
+import { DocCoverageChip } from "@/components/ai";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -358,9 +359,12 @@ export default function DealOverviewPage({
                 <Star className={`h-4 w-4 ${deal.starred ? "text-amber-400 fill-amber-400" : "text-muted-foreground"}`} />
               </Button>
               {documents.length > 0 && (
-                <Button variant="outline" size="sm" className="text-xs gap-1.5 h-7" onClick={autoFillFromDocs} disabled={autoFilling}>
-                  {autoFilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} AI Auto-fill
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" className="text-xs gap-1.5 h-7" onClick={autoFillFromDocs} disabled={autoFilling}>
+                    {autoFilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} AI Auto-fill
+                  </Button>
+                  <DocCoverageChip documents={documents} section="deal_intake" />
+                </div>
               )}
             </div>
           </div>
