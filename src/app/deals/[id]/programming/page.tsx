@@ -1108,10 +1108,14 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           return unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0) || 100;
         })()}
         avgMarketRent={(() => {
-          if (unitGroups.length === 0) return 0;
-          const totalUnits = unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
+          // Exclude post-split affordable rows so the planner's revenue
+          // impact preview reflects the actual market rent, not a rent
+          // already pulled down by AMI-capped rows.
+          const marketRows = (unitGroups as any[]).filter((g) => !g?.is_affordable);
+          if (marketRows.length === 0) return 0;
+          const totalUnits = marketRows.reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
           if (totalUnits === 0) return 0;
-          const totalRent = unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0) * (g.market_rent_per_unit || 0), 0);
+          const totalRent = marketRows.reduce((s: number, g: any) => s + (g.unit_count || 0) * (g.market_rent_per_unit || 0), 0);
           return totalRent / totalUnits;
         })()}
         currentTaxes={taxesAnnual}
