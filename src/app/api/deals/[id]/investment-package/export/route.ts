@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import PptxGenJS from "pptxgenjs";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, Table } from "docx";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { getBrandingForDeal } from "@/lib/db";
+import {
+  resolveBranding,
+  markdownToPptxBlocks,
+  markdownToDocx,
+  DOCX_NUMBERING,
+} from "@/lib/export-markdown";
 
 interface ExportSection {
   id: string;
@@ -33,16 +39,18 @@ export async function POST(
       branding = await getBrandingForDeal(params.id);
     } catch { /* use defaults */ }
 
-    const b = branding ?? {};
-    const companyName = (b.company_name as string) || "";
-    const tagline = (b.tagline as string) || "";
-    const headerFont = (b.header_font as string) || "Helvetica";
-    const bodyFont = (b.body_font as string) || "Calibri";
-    const footerText = (b.footer_text as string) || "CONFIDENTIAL";
-    const website = (b.website as string) || "";
-    const bEmail = (b.email as string) || "";
-    const phone = (b.phone as string) || "";
-    const disclaimerText = (b.disclaimer_text as string) || "";
+    // Resolve branding from the deal's business plan — colors, fonts,
+    // confidentiality text, contact info. resolveBranding() supplies
+    // institutional defaults for anything the BP hasn't set yet.
+    const theme = resolveBranding(branding);
+    const companyName = theme.companyName;
+    const tagline = theme.tagline;
+    const headerFont = theme.headerFont;
+    const bodyFont = theme.bodyFont;
+    const footerText = theme.footerText;
+    const website = theme.website;
+    const bEmail = theme.email;
+    const phone = theme.phone;
 
     if (format === "docx") {
       return generateDocx(sections, dealName, branding);
@@ -53,11 +61,11 @@ export async function POST(
     pptx.author = companyName || "Deal Intelligence";
     pptx.title = `Investment Package - ${dealName}`;
 
-    // Color theme from branding
-    const PRIMARY = ((b.secondary_color as string) || "#2F3B52").replace("#", "");
-    const ACCENT = ((b.primary_color as string) || "#4F46E5").replace("#", "");
-    const ACCENT2 = ((b.accent_color as string) || "#10B981").replace("#", "");
-    const LIGHT_BG = "F8FAFC";
+    // Color theme — PRIMARY is the darker (secondary) color used for the
+    // header bars / cover background; ACCENT is the brand primary used for
+    // rule lines and the section-number badge.
+    const PRIMARY = theme.secondaryColor;
+    const ACCENT = theme.primaryColor;
     const TEXT = "1E293B";
     const MUTED = "64748B";
 
@@ -184,54 +192,49 @@ export async function POST(
         charSpacing: 2,
       });
 
-      if (section.generatedContent) {
-        // Parse markdown into slide-friendly text
-        const lines = section.generatedContent.split("\n").filter(l => l.trim());
-        const textContent: Array<{ text: string; options: Record<string, unknown> }> = [];
+      // Render body content — either the AI-generated markdown, or bullet
+      // notes if no AI content yet. All inline **bold**, *italic*, `code`,
+      // markdown tables, blockquotes, numbered lists, and nested bullets
+      // flow through the shared parser, so what renders on the slide is
+      // semantically the same as what renders in the Word export.
+      const contentMd = section.generatedContent
+        ? section.generatedContent
+        : section.notes.filter(n => n.text?.trim()).map(n => `- ${n.text}`).join("\n");
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("###") || trimmed.startsWith("##")) {
-            textContent.push({
-              text: trimmed.replace(/^#{1,3}\s*/, "").replace(/\*\*/g, ""),
-              options: { fontSize: 13, color: ACCENT, bold: true, paraSpaceBefore: 8, breakType: "none" as const },
+      if (contentMd) {
+        const blocks = markdownToPptxBlocks(contentMd, theme, TEXT, ACCENT, MUTED);
+        // Flatten blocks into a single run array. PptxGenJS renders each
+        // entry as a run, and a run whose `text` ends with "\n" starts a
+        // new paragraph. This preserves inline formatting (bold / italic
+        // / code) within a paragraph.
+        const runs: Array<{ text: string; options: Record<string, unknown> }> = [];
+        for (const blk of blocks) {
+          if (Array.isArray(blk.text)) {
+            blk.text.forEach((r, i, arr) => {
+              const isLast = i === arr.length - 1;
+              runs.push({
+                text: r.text + (isLast ? "\n" : ""),
+                options: { ...blk.options, ...r.options },
+              });
             });
-          } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
-            textContent.push({
-              text: "  " + trimmed.replace(/^[-*+]\s*/, "• ").replace(/\*\*/g, ""),
-              options: { fontSize: 11, color: TEXT, paraSpaceBefore: 2, breakType: "none" as const },
-            });
-          } else if (trimmed.match(/^\d+\.\s/)) {
-            textContent.push({
-              text: "  " + trimmed.replace(/\*\*/g, ""),
-              options: { fontSize: 11, color: TEXT, paraSpaceBefore: 2, breakType: "none" as const },
-            });
-          } else if (trimmed.startsWith("|")) {
-            // Skip markdown tables — too complex for simple PPTX
-            continue;
           } else {
-            textContent.push({
-              text: trimmed.replace(/\*\*/g, "").replace(/\*/g, ""),
-              options: { fontSize: 11, color: TEXT, paraSpaceBefore: 4, breakType: "none" as const },
-            });
+            runs.push({ text: String(blk.text) + "\n", options: blk.options });
           }
         }
-
-        if (textContent.length > 0) {
+        if (runs.length > 0) {
           slide.addText(
-            textContent.map(tc => ({ text: tc.text + "\n", options: tc.options })),
-            { x: 0.8, y: 1.2, w: 11.5, h: 5.5, valign: "top", fontFace: bodyFont }
-          );
-        }
-      } else {
-        // Just show the bullet notes
-        const bullets = section.notes
-          .filter(n => n.text?.trim())
-          .map(n => ({ text: "• " + n.text, options: { fontSize: 12, color: TEXT, paraSpaceBefore: 4, breakType: "none" as const } }));
-        if (bullets.length > 0) {
-          slide.addText(
-            bullets.map(blt => ({ text: blt.text + "\n", options: blt.options })),
-            { x: 0.8, y: 1.2, w: 11.5, h: 5.5, valign: "top", fontFace: bodyFont }
+            runs as unknown as Parameters<typeof slide.addText>[0],
+            {
+              x: 0.8, y: 1.2, w: 11.5, h: 5.5,
+              valign: "top",
+              fontFace: bodyFont,
+              // Auto-shrink so long AI-generated sections fit the slide
+              // instead of silently clipping off the bottom — the #1 PPTX
+              // formatting defect users reported.
+              autoFit: true,
+              shrinkText: true,
+              fit: "shrink",
+            } as unknown as Parameters<typeof slide.addText>[1]
           );
         }
       }
@@ -274,21 +277,25 @@ export async function POST(
 // ─── Word Export ──────────────────────────────────────────────────────────────
 
 async function generateDocx(sections: ExportSection[], dealName: string, branding?: Record<string, unknown> | null) {
-  const children: Paragraph[] = [];
+  // Section children can be either Paragraphs or Tables — the shared
+  // markdown renderer emits both for properly-formatted markdown tables.
+  const children: Array<Paragraph | Table> = [];
 
-  const bx = branding ?? {};
-  const cName = (bx.company_name as string) || "";
-  const cTagline = (bx.tagline as string) || "";
-  const cPrimary = ((bx.primary_color as string) || "#4F46E5").replace("#", "");
-  const cSecondary = ((bx.secondary_color as string) || "#2F3B52").replace("#", "");
-  const cAccent = ((bx.accent_color as string) || "#10B981").replace("#", "");
-  const hFont = (bx.header_font as string) || "Helvetica";
-  const bFont = (bx.body_font as string) || "Calibri";
-  const fText = (bx.footer_text as string) || "CONFIDENTIAL";
-  const cWebsite = (bx.website as string) || "";
-  const cEmail = (bx.email as string) || "";
-  const cPhone = (bx.phone as string) || "";
-  const cDisclaimer = (bx.disclaimer_text as string) || "";
+  // All branding (colors, fonts, confidentiality, disclaimers) comes from
+  // the deal's business plan via getBrandingForDeal().
+  const theme = resolveBranding(branding);
+  const cName = theme.companyName;
+  const cTagline = theme.tagline;
+  const cPrimary = theme.primaryColor;
+  const cSecondary = theme.secondaryColor;
+  const cAccent = theme.accentColor;
+  const hFont = theme.headerFont;
+  const bFont = theme.bodyFont;
+  const fText = theme.footerText;
+  const cWebsite = theme.website;
+  const cEmail = theme.email;
+  const cPhone = theme.phone;
+  const cDisclaimer = theme.disclaimerText;
 
   // Branded header
   if (cName) {
@@ -392,31 +399,13 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
       border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: cPrimary + "40" } },
     }));
 
-    // Parse markdown content into paragraphs
-    const lines = content.split("\n");
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        children.push(new Paragraph({ spacing: { before: 100 } }));
-        continue;
-      }
-      if (trimmed.startsWith("### ") || trimmed.startsWith("## ")) {
-        children.push(new Paragraph({
-          children: [new TextRun({ text: trimmed.replace(/^#{1,3}\s*/, "").replace(/\*\*/g, ""), size: 24, bold: true, color: cPrimary, font: hFont })],
-          spacing: { before: 200, after: 100 },
-        }));
-      } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
-        children.push(new Paragraph({
-          children: [new TextRun({ text: "  • " + trimmed.replace(/^[-*+]\s*/, "").replace(/\*\*/g, ""), size: 22, color: "1E293B" })],
-          spacing: { before: 40 },
-        }));
-      } else {
-        children.push(new Paragraph({
-          children: [new TextRun({ text: trimmed.replace(/\*\*/g, "").replace(/\*/g, ""), size: 22, color: "1E293B" })],
-          spacing: { before: 80 },
-        }));
-      }
-    }
+    // Render the body markdown through the shared parser — preserves
+    // inline **bold** / *italic* / `code`, markdown tables, blockquotes,
+    // horizontal rules, nested bullets, and real Word numbering for
+    // ordered lists. This replaces the old regex-stripping loop that
+    // dropped emphasis and tables.
+    const bodyChildren = markdownToDocx(content, theme, { bodySize: 22, bodyColor: "1E293B" });
+    for (const c of bodyChildren) children.push(c);
   }
 
   // Branded footer
@@ -443,7 +432,26 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
 
   const doc = new Document({
     sections: [{ children }],
-    styles: { default: { document: { run: { font: bFont, size: 22 } } } },
+    // Register the numbering reference the shared markdown renderer uses
+    // for ordered lists — without this, `1. foo` lines render as literal
+    // text instead of real Word auto-numbered lists.
+    numbering: DOCX_NUMBERING,
+    styles: {
+      default: { document: { run: { font: bFont, size: 22 } } },
+      // Explicit H1/H2/H3 styling so the markdown renderer's heading
+      // levels stay visually distinct in the final DOCX.
+      paragraphStyles: [
+        { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal",
+          run: { size: 32, bold: true, color: cSecondary, font: hFont },
+          paragraph: { spacing: { before: 320, after: 160 } } },
+        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal",
+          run: { size: 26, bold: true, color: cPrimary, font: hFont },
+          paragraph: { spacing: { before: 260, after: 120 } } },
+        { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal",
+          run: { size: 22, bold: true, color: cAccent, font: hFont },
+          paragraph: { spacing: { before: 200, after: 100 } } },
+      ],
+    },
   });
 
   const buffer = await Packer.toBuffer(doc);
