@@ -509,20 +509,54 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         return s + item.amount;
       }, 0);
 
+      // When the scenario belongs to a multi-building massing we push
+      // each building one-by-one — but each call overwrites the UW's
+      // max_gsf / max_nrsf, so the last building's SF would win. To
+      // keep the dev budget sized to the WHOLE massing, compute
+      // aggregate GSF/NRSF across every scenario in the same
+      // site_plan_scenario_id. Single-building massings fall straight
+      // through to this scenario's own summary.
+      const siteMassingId = scenario.site_plan_scenario_id || null;
+      const massingScenariosForPush = siteMassingId
+        ? buildingProgram.scenarios.filter(
+            (s) => s.site_plan_scenario_id === siteMassingId
+          )
+        : [scenario];
+      const aggregateMassing = massingScenariosForPush.reduce(
+        (acc, s) => {
+          const sm = computeMassingSummary(s, zoningInputs);
+          return {
+            total_gsf: acc.total_gsf + sm.total_gsf,
+            total_nrsf: acc.total_nrsf + sm.total_nrsf,
+            total_parking_spaces_est:
+              acc.total_parking_spaces_est + sm.total_parking_spaces_est,
+          };
+        },
+        { total_gsf: 0, total_nrsf: 0, total_parking_spaces_est: 0 }
+      );
+
       const merged = {
         ...current,
         development_mode: true,
-        max_gsf: summary.total_gsf, max_nrsf: summary.total_nrsf,
-        efficiency_pct: summary.total_gsf > 0 ? Math.round((summary.total_nrsf / summary.total_gsf) * 100) : 80,
+        max_gsf: aggregateMassing.total_gsf,
+        max_nrsf: aggregateMassing.total_nrsf,
+        efficiency_pct:
+          aggregateMassing.total_gsf > 0
+            ? Math.round(
+                (aggregateMassing.total_nrsf / aggregateMassing.total_gsf) * 100
+              )
+            : 80,
         unit_groups: newUnitGroups,
         mixed_use: mixedUseConfig,
         building_program: buildingProgram,
         other_income_items: otherIncomeItems,
         commercial_tenants: commercialTenants,
-        // Parking — auto-split 70% reserved / 30% unreserved with default rates
-        parking_reserved_spaces: Math.round(parkingSpaces * 0.7),
+        // Parking — auto-split 70% reserved / 30% unreserved with default
+        // rates. Uses the aggregate parking count so multi-building
+        // massings don't collapse to just the last building's stalls.
+        parking_reserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.7),
         parking_reserved_rate: current.parking_reserved_rate || 200,
-        parking_unreserved_spaces: Math.round(parkingSpaces * 0.3),
+        parking_unreserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.3),
         parking_unreserved_rate: current.parking_unreserved_rate || 100,
         // Legacy fields for backward compat
         rubs_per_unit_monthly: otherIncomeItems.find(i => i.label.toLowerCase().includes("rubs"))?.amount || 0,

@@ -381,12 +381,78 @@ function seedDevBudget(d?: UWData): DevBudgetLineItem[] {
     return 0;
   };
 
+  // Detect a multi-building active massing so the SF-driven hard
+  // costs (Vertical Construction, Parking Structure, FF&E) can fan
+  // out into one row per building. The analyst can then set a
+  // different $/SF per building (podium vs townhouse vs garden)
+  // and the aggregate still ties back to max_gsf.
+  const bp = d?.building_program as
+    | {
+        active_scenario_id?: string;
+        scenarios?: Array<{
+          id: string;
+          name?: string;
+          site_plan_scenario_id?: string | null;
+          site_plan_building_id?: string | null;
+          floors?: unknown[];
+        }>;
+      }
+    | null
+    | undefined;
+  const activeScenario = bp?.scenarios?.find((s) => s.id === bp.active_scenario_id);
+  const massingId = activeScenario?.site_plan_scenario_id || null;
+  const buildings = massingId
+    ? (bp?.scenarios || []).filter((s) => s.site_plan_scenario_id === massingId)
+    : [];
+  const multiBuilding = buildings.length > 1;
+  type BuildingTotals = { label: string; gsf: number; nrsf: number; parking: number };
+  const perBuilding: BuildingTotals[] = multiBuilding
+    ? (() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { computeMassingSummary } = require("@/components/massing/massing-utils");
+        const zoningStub = {
+          land_sf: 0,
+          far: 0,
+          lot_coverage_pct: 0,
+          height_limit_ft: 0,
+          height_limit_stories: 0,
+        };
+        return buildings.map((b) => {
+          const sm = computeMassingSummary(b, zoningStub);
+          return {
+            label: b.name || "Building",
+            gsf: sm.total_gsf,
+            nrsf: sm.total_nrsf,
+            parking: sm.total_parking_spaces_est,
+          };
+        });
+      })()
+    : [];
+
+  const perBuildingSources = new Set(["max_gsf", "max_nrsf", "parking_spaces"]);
+
+  const hardRows: DevBudgetLineItem[] = DEFAULT_DEV_BUDGET_HARD.flatMap((h) => {
+    if (multiBuilding && perBuildingSources.has(h.auto_qty_source)) {
+      return perBuilding.map((b) => {
+        const item = newDevBudgetItem(`${h.label} — ${b.label}`, "hard", h.subcategory, h.unit_label);
+        item.quantity =
+          h.auto_qty_source === "max_gsf"
+            ? b.gsf
+            : h.auto_qty_source === "max_nrsf"
+            ? b.nrsf
+            : b.parking;
+        return item;
+      });
+    }
+    const item = newDevBudgetItem(h.label, "hard", h.subcategory, h.unit_label);
+    if (h.auto_qty_source !== "pct" && h.auto_qty_source !== "manual") {
+      item.quantity = autoQty(h.auto_qty_source);
+    }
+    return [item];
+  });
+
   return [
-    ...DEFAULT_DEV_BUDGET_HARD.map(h => {
-      const item = newDevBudgetItem(h.label, "hard", h.subcategory, h.unit_label);
-      if (h.auto_qty_source !== "pct" && h.auto_qty_source !== "manual") item.quantity = autoQty(h.auto_qty_source);
-      return item;
-    }),
+    ...hardRows,
     ...DEFAULT_DEV_BUDGET_SOFT.map(s => {
       const item = newDevBudgetItem(s.label, "soft", s.subcategory, s.unit_label);
       if (s.auto_qty_source !== "pct" && s.auto_qty_source !== "manual" && s.auto_qty_source !== "computed") item.quantity = autoQty(s.auto_qty_source);
