@@ -2,8 +2,14 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Loader2, DollarSign, ChevronDown, ChevronRight } from "lucide-react";
+import { Loader2, DollarSign, ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 import { buildAmiTables } from "@/lib/ami-calc";
+import {
+  summarizeAffordability,
+  type AffordabilitySummary,
+  type LooseAffordabilityConfig,
+  type LooseSpottedBonus,
+} from "@/lib/affordability-summary";
 
 // Shape of the stored AMI object on the location_intelligence record.
 interface StoredAmi {
@@ -36,6 +42,10 @@ export default function AmiReference({ dealId, variant = "inline", allowFetch = 
   const [ami, setAmi] = useState<StoredAmi | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  // Pulled from the underwriting blob when the card opens. Drives the
+  // "this deal's strategy" summary block; AMI data still loads in
+  // parallel for the rent/income-limit tables underneath.
+  const [summary, setSummary] = useState<AffordabilitySummary | null>(null);
 
   // Pull any AMI data already stored on the deal's location intel record.
   const loadStoredAmi = useCallback(async () => {
@@ -62,6 +72,57 @@ export default function AmiReference({ dealId, variant = "inline", allowFetch = 
   useEffect(() => {
     if (open && !ami) loadStoredAmi();
   }, [open, ami, loadStoredAmi]);
+
+  // Fetch the deal's own affordability config + spotted bonuses on first
+  // open so we can render the "this deal's strategy" summary above the
+  // reference tables. Best-effort — if the UW row is missing we just
+  // fall through and show the raw tables.
+  const loadSummary = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/underwriting?deal_id=${dealId}`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const raw = json?.data?.data;
+      const uw = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null;
+      if (!uw) return;
+      const cfg: LooseAffordabilityConfig | null = uw.affordability_config || null;
+      const bonuses: LooseSpottedBonus[] = Array.isArray(
+        uw.zoning_info?.density_bonuses
+      )
+        ? uw.zoning_info.density_bonuses
+        : [];
+      const unitGroups: Array<{
+        unit_count?: number;
+        market_rent_per_unit?: number;
+        is_affordable?: boolean;
+      }> = Array.isArray(uw.unit_groups) ? uw.unit_groups : [];
+      const marketRows = unitGroups.filter((g) => !g.is_affordable);
+      const marketUnits = marketRows.reduce(
+        (s, g) => s + (g.unit_count || 0),
+        0
+      );
+      const marketRent =
+        marketUnits > 0
+          ? marketRows.reduce(
+              (s, g) => s + (g.unit_count || 0) * (g.market_rent_per_unit || 0),
+              0
+            ) / marketUnits
+          : 0;
+      setSummary(
+        summarizeAffordability({
+          config: cfg,
+          bonuses,
+          avgMarketRent: marketRent || undefined,
+        })
+      );
+    } catch {
+      /* non-fatal */
+    }
+  }, [dealId]);
+
+  useEffect(() => {
+    if (open && !summary) loadSummary();
+  }, [open, summary, loadSummary]);
 
   const fetchAmiNow = async () => {
     setLoading(true);
@@ -157,6 +218,41 @@ export default function AmiReference({ dealId, variant = "inline", allowFetch = 
 
       {open && (
         <div className="p-3 space-y-3">
+          {/* "This deal's affordability strategy" — a one-glance summary of
+              what the analyst has actually committed to on Programming +
+              Site & Zoning, rendered above the abstract HUD tables so
+              readers see the deal's own posture first. */}
+          {summary && (
+            <div className="rounded-md border border-border/60 bg-muted/30 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  This deal&apos;s affordability strategy
+                </span>
+              </div>
+              <div className="text-sm font-medium leading-snug">
+                {summary.headline}
+              </div>
+              {summary.bullets.length > 0 && (
+                <ul className="text-xs text-muted-foreground space-y-0.5 leading-relaxed">
+                  {summary.bullets.map((b, i) => (
+                    <li key={i}>{b}</li>
+                  ))}
+                </ul>
+              )}
+              {summary.narrative && summary.enabled && (
+                <details className="text-xs">
+                  <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                    Full narrative (used in investment memo)
+                  </summary>
+                  <div className="mt-2 whitespace-pre-wrap text-foreground/80 leading-relaxed">
+                    {summary.narrative}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+
           {!ami && !loading && (
             <div className="text-xs text-muted-foreground py-2">
               No AMI data yet.{" "}

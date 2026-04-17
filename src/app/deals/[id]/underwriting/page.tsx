@@ -3112,16 +3112,24 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           dealId={params.id}
           totalUnits={m.totalUnits || 0}
           avgMarketRent={(() => {
-            // Weighted average market rent per unit/month across unit groups
-            const totalUnits = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
+            // Weighted average market rent per unit/month across unit groups.
+            // IMPORTANT: exclude is_affordable rows — after a split those
+            // carry the AMI-capped rent in market_rent_per_unit and would
+            // drag the average down, causing the planner's "revenue
+            // impact" preview to understate how much market rent is
+            // being traded away.
+            const marketRows = d.unit_groups.filter(
+              (g) => !(g as { is_affordable?: boolean }).is_affordable
+            );
+            const totalUnits = marketRows.reduce((s, g) => s + effectiveUnits(g), 0);
             if (totalUnits === 0) return 0;
             if (isSH) {
               // student housing: rent is per-bed monthly; convert to per-unit
-              const totalRentPerMonth = d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed, 0);
+              const totalRentPerMonth = marketRows.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed, 0);
               return totalRentPerMonth / totalUnits;
             }
             // multifamily / mixed-use residential
-            const totalRentPerMonth = d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * (g.market_rent_per_unit || 0), 0);
+            const totalRentPerMonth = marketRows.reduce((s, g) => s + effectiveUnits(g) * (g.market_rent_per_unit || 0), 0);
             return totalRentPerMonth / totalUnits;
           })()}
           currentTaxes={d.taxes_annual || 0}

@@ -50,12 +50,12 @@ interface AmiData {
   // Max rents at each AMI level (30% of monthly income, for common unit sizes)
   // Standard: rent = (AMI_limit × 30%) / 12, minus utility allowance
   max_rents: {
-    ami_30: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_50: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_60: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_80: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_100: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_120: { studio: number; one_br: number; two_br: number; three_br: number };
+    ami_30: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_50: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_60: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_80: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_100: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_120: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
   };
 }
 
