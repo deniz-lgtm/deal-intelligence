@@ -92,6 +92,9 @@ export function newScenario(name: string, floors: BuildingFloor[] = []): Massing
     notes: "", created_at: new Date().toISOString(), is_baseline: false, linked_uw_scenario_id: null,
     unit_mix: seedUnitMix(),
     parking_sf_per_space: 350,
+    parking_surface_sf_per_space: 325,
+    parking_structured_sf_per_space: 350,
+    parking_underground_sf_per_space: 375,
   };
 }
 
@@ -161,8 +164,33 @@ export function computeMassingSummary(scenario: MassingScenario, zoning: ZoningI
   }
 
   const total_parking_sf = gsf_by_use.parking || 0;
-  const sfPerSpace = scenario.parking_sf_per_space || 350;
-  const total_parking_spaces_est = Math.floor(total_parking_sf / sfPerSpace);
+  // Above-grade parking is "structured", below-grade is "underground".
+  // Each gets its own SF/space rate so mixed stacks (e.g. podium + cellar)
+  // produce a realistic space count instead of applying a single blended
+  // rate to both. Falls back to the legacy single rate when the per-type
+  // rates haven't been set on older scenarios.
+  const legacyRate = scenario.parking_sf_per_space || 350;
+  const structuredRate = scenario.parking_structured_sf_per_space || legacyRate;
+  const undergroundRate = scenario.parking_underground_sf_per_space || legacyRate;
+  let above_parking_sf = 0;
+  let below_parking_sf = 0;
+  for (const rawFloor of floors) {
+    const f = normalizeFloor(rawFloor);
+    const bucket = f.is_below_grade ? "below" : "above";
+    if (f.use_type === "parking") {
+      const sf = primarySF(f);
+      if (bucket === "above") above_parking_sf += sf;
+      else below_parking_sf += sf;
+    }
+    for (const u of (f.additional_uses || [])) {
+      if (u.use_type !== "parking" || !u.sf) continue;
+      if (bucket === "above") above_parking_sf += u.sf;
+      else below_parking_sf += u.sf;
+    }
+  }
+  const total_parking_spaces_est =
+    Math.floor(above_parking_sf / structuredRate) +
+    Math.floor(below_parking_sf / undergroundRate);
 
   const above_grade_gsf = aboveFloors.reduce((s, f) => s + f.floor_plate_sf, 0);
   const effective_far = zoning.land_sf > 0 ? above_grade_gsf / zoning.land_sf : 0;

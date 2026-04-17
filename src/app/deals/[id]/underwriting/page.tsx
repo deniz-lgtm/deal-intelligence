@@ -359,9 +359,25 @@ const newGroup = (): UnitGroup => ({
 const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity: 1, cost_per_unit: 0 });
 
 // ── Factory helpers for new feature types ────────────────────────────────
-function newDevBudgetItem(label: string, category: "hard" | "soft", subcategory: string, unit_label: string): DevBudgetLineItem {
+function newDevBudgetItem(
+  label: string,
+  category: "hard" | "soft",
+  subcategory: string,
+  unit_label: string,
+  auto_qty_source?: string,
+  site_plan_building_id?: string | null,
+): DevBudgetLineItem {
   const isPct = unit_label === "% of hard";
-  return { id: uuidv4(), label, category, subcategory, amount: 0, quantity: 0, unit_cost: 0, unit_label, is_pct: isPct, pct_basis: isPct ? "hard_costs" : "none", pct_value: isPct ? (subcategory === "contingency" ? 5 : subcategory === "general_conditions" || subcategory === "contractor_fee" ? 4 : subcategory === "dev_fee" ? 4 : subcategory === "a_and_e" ? 8 : 0) : 0, notes: "" };
+  return {
+    id: uuidv4(), label, category, subcategory, amount: 0, quantity: 0, unit_cost: 0,
+    unit_label, is_pct: isPct, pct_basis: isPct ? "hard_costs" : "none",
+    pct_value: isPct ? (subcategory === "contingency" ? 5 : subcategory === "general_conditions" || subcategory === "contractor_fee" ? 4 : subcategory === "dev_fee" ? 4 : subcategory === "a_and_e" ? 8 : 0) : 0,
+    notes: "",
+    ...(auto_qty_source && auto_qty_source !== "pct" && auto_qty_source !== "manual" && auto_qty_source !== "computed"
+      ? { auto_qty_source }
+      : {}),
+    ...(site_plan_building_id ? { site_plan_building_id } : {}),
+  };
 }
 
 function seedDevBudget(d?: UWData): DevBudgetLineItem[] {
@@ -381,18 +397,151 @@ function seedDevBudget(d?: UWData): DevBudgetLineItem[] {
     return 0;
   };
 
+  // Detect a multi-building active massing so the SF-driven hard
+  // costs (Vertical Construction, Parking Structure, FF&E) can fan
+  // out into one row per building. The analyst can then set a
+  // different $/SF per building (podium vs townhouse vs garden)
+  // and the aggregate still ties back to max_gsf.
+  const bp = d?.building_program as
+    | {
+        active_scenario_id?: string;
+        scenarios?: Array<{
+          id: string;
+          name?: string;
+          site_plan_scenario_id?: string | null;
+          site_plan_building_id?: string | null;
+          floors?: unknown[];
+        }>;
+      }
+    | null
+    | undefined;
+  const activeScenario = bp?.scenarios?.find((s) => s.id === bp.active_scenario_id);
+  const massingId = activeScenario?.site_plan_scenario_id || null;
+  const buildings = massingId
+    ? (bp?.scenarios || []).filter((s) => s.site_plan_scenario_id === massingId)
+    : [];
+  const multiBuilding = buildings.length > 1;
+  type BuildingTotals = { label: string; gsf: number; nrsf: number; parking: number };
+  const perBuilding: BuildingTotals[] = multiBuilding
+    ? (() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { computeMassingSummary } = require("@/components/massing/massing-utils");
+        const zoningStub = {
+          land_sf: 0,
+          far: 0,
+          lot_coverage_pct: 0,
+          height_limit_ft: 0,
+          height_limit_stories: 0,
+        };
+        return buildings.map((b) => {
+          const sm = computeMassingSummary(b, zoningStub);
+          return {
+            label: b.name || "Building",
+            gsf: sm.total_gsf,
+            nrsf: sm.total_nrsf,
+            parking: sm.total_parking_spaces_est,
+          };
+        });
+      })()
+    : [];
+
+  const perBuildingSources = new Set(["max_gsf", "max_nrsf", "parking_spaces"]);
+
+  const hardRows: DevBudgetLineItem[] = DEFAULT_DEV_BUDGET_HARD.flatMap((h) => {
+    if (multiBuilding && perBuildingSources.has(h.auto_qty_source)) {
+      return buildings.map((scenario, i) => {
+        const b = perBuilding[i];
+        const item = newDevBudgetItem(
+          `${h.label} — ${b.label}`,
+          "hard",
+          h.subcategory,
+          h.unit_label,
+          h.auto_qty_source,
+          scenario.site_plan_building_id ?? scenario.id,
+        );
+        item.quantity =
+          h.auto_qty_source === "max_gsf"
+            ? b.gsf
+            : h.auto_qty_source === "max_nrsf"
+            ? b.nrsf
+            : b.parking;
+        return item;
+      });
+    }
+    const item = newDevBudgetItem(h.label, "hard", h.subcategory, h.unit_label, h.auto_qty_source);
+    if (h.auto_qty_source !== "pct" && h.auto_qty_source !== "manual") {
+      item.quantity = autoQty(h.auto_qty_source);
+    }
+    return [item];
+  });
+
   return [
-    ...DEFAULT_DEV_BUDGET_HARD.map(h => {
-      const item = newDevBudgetItem(h.label, "hard", h.subcategory, h.unit_label);
-      if (h.auto_qty_source !== "pct" && h.auto_qty_source !== "manual") item.quantity = autoQty(h.auto_qty_source);
-      return item;
-    }),
+    ...hardRows,
     ...DEFAULT_DEV_BUDGET_SOFT.map(s => {
-      const item = newDevBudgetItem(s.label, "soft", s.subcategory, s.unit_label);
+      const item = newDevBudgetItem(s.label, "soft", s.subcategory, s.unit_label, s.auto_qty_source);
       if (s.auto_qty_source !== "pct" && s.auto_qty_source !== "manual" && s.auto_qty_source !== "computed") item.quantity = autoQty(s.auto_qty_source);
       return item;
     }),
   ];
+}
+
+/**
+ * Dev-budget quantities that are tagged with an auto_qty_source read
+ * live from the current underwriting state / massing on every render
+ * — so a Vertical Construction row sized against a 48,800-GSF
+ * baseline automatically re-sizes the moment the massing grows to
+ * 334,000 GSF. Per-building rows (site_plan_building_id set) resolve
+ * against THAT building's own floor stack, so a 3-building massing
+ * shows three distinct GSF values. Items without auto_qty_source
+ * fall through to the saved quantity (manual entries / lump sums).
+ */
+function liveDevBudgetQty(item: DevBudgetLineItem, d: UWData): number {
+  if (!item.auto_qty_source) return item.quantity || 0;
+  const src = item.auto_qty_source;
+  if (src === "land_sf") return d.site_info?.land_sf || 0;
+  if (src === "total_units") {
+    return (d.unit_groups || []).reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
+  }
+  if (
+    item.site_plan_building_id &&
+    (src === "max_gsf" || src === "max_nrsf" || src === "parking_spaces")
+  ) {
+    const bp = d.building_program as
+      | { scenarios?: Array<{ id: string; site_plan_building_id?: string | null }> }
+      | null
+      | undefined;
+    const scenario = bp?.scenarios?.find(
+      (s) =>
+        s.site_plan_building_id === item.site_plan_building_id ||
+        s.id === item.site_plan_building_id,
+    );
+    if (scenario) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { computeMassingSummary } = require("@/components/massing/massing-utils");
+      const zoningStub = {
+        land_sf: 0, far: 0, lot_coverage_pct: 0, height_limit_ft: 0, height_limit_stories: 0,
+      };
+      const sm = computeMassingSummary(scenario, zoningStub);
+      if (src === "max_gsf") return sm.total_gsf;
+      if (src === "max_nrsf") return sm.total_nrsf;
+      if (src === "parking_spaces") return sm.total_parking_spaces_est;
+    }
+  }
+  if (src === "max_gsf") return d.max_gsf || 0;
+  if (src === "max_nrsf") return d.max_nrsf || 0;
+  if (src === "parking_spaces") {
+    return (d.parking?.entries || []).reduce(
+      (s: number, e: any) => s + (e.spaces || 0),
+      0,
+    );
+  }
+  return item.quantity || 0;
+}
+
+function liveDevBudgetAmount(item: DevBudgetLineItem, d: UWData): number {
+  if (item.is_pct) return 0;                     // resolved against hard base
+  if (item.subcategory === "interest_carry") return 0; // filled from construction loan
+  return liveDevBudgetQty(item, d) * (item.unit_cost || 0);
 }
 
 function newParkingEntry(type: ParkingType = "surface"): ParkingEntry {
@@ -729,15 +878,23 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   // Development budget: use itemized line items if populated, else fall back to legacy
   const devBudgetItems = d.dev_budget_items || [];
-  const hasItemizedBudget = d.development_mode && devBudgetItems.length > 0 && devBudgetItems.some(i => i.amount > 0);
+  const hasItemizedBudget =
+    d.development_mode &&
+    devBudgetItems.length > 0 &&
+    devBudgetItems.some((i) => i.amount > 0 || liveDevBudgetAmount(i, d) > 0 || (i.is_pct && i.pct_value > 0));
 
-  // Compute itemized hard/soft costs with % items resolving against non-% hard total
+  // Compute itemized hard/soft costs with % items resolving against
+  // non-% hard total. Amounts are resolved LIVE via liveDevBudgetAmount
+  // (quantity × unit_cost, with the quantity pulled from the current
+  // massing when the row has auto_qty_source) so a stale saved
+  // `item.amount` never wins against a freshly-updated massing.
   let itemizedHardBase = 0, itemizedSoftBase = 0;
   if (hasItemizedBudget) {
     // First pass: sum non-percentage items
     for (const item of devBudgetItems) {
-      if (!item.is_pct && item.category === "hard") itemizedHardBase += item.amount;
-      if (!item.is_pct && item.category === "soft") itemizedSoftBase += item.amount;
+      const amt = liveDevBudgetAmount(item, d);
+      if (!item.is_pct && item.category === "hard") itemizedHardBase += amt;
+      if (!item.is_pct && item.category === "soft") itemizedSoftBase += amt;
     }
     // Second pass: resolve percentage items against the base
     for (const item of devBudgetItems) {
@@ -1265,6 +1422,29 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const isMF = deal?.property_type === "multifamily" || deal?.property_type === "sfr" || isSH || isMixedUseWithRes || isLandDevResidential;
   const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
   const isGroundUp = deal?.investment_strategy === "ground_up";
+
+  // Auto-seed the itemized dev budget the moment a ground-up deal has
+  // something worth sizing (a pushed massing or a manual GSF), so the
+  // Hard Costs table renders with the right per-building rows without
+  // a manual "Seed" click. The live quantity logic keeps the rows in
+  // sync with the massing on every subsequent change — this effect
+  // only handles the first-load shape. Skips if the user has already
+  // curated the budget.
+  useEffect(() => {
+    if (loading) return;
+    if (!isGroundUp) return;
+    const items = data.dev_budget_items || [];
+    if (items.length > 0) return;
+    const scenarios = (data.building_program as
+      | { scenarios?: Array<{ id: string }> }
+      | null
+      | undefined)?.scenarios;
+    const hasMassing = Array.isArray(scenarios) && scenarios.length > 0;
+    const hasSF = (data.max_gsf || 0) > 0;
+    if (!hasMassing && !hasSF) return;
+    setData((p) => ({ ...p, dev_budget_items: seedDevBudget(p) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, isGroundUp, data.dev_budget_items?.length, data.max_gsf, data.building_program]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -3183,6 +3363,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       {/* ═══ Affordability (multifamily / student housing) ═══ */}
       {isMF && (
+        <div className="mt-6">
         <AffordabilityPlanner
           dealId={params.id}
           totalUnits={m.totalUnits || 0}
@@ -3263,6 +3444,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             });
           }}
         />
+        </div>
       )}
       </div>
 
@@ -3306,9 +3488,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             ),
                           }));
                         };
+                        const liveQty = liveDevBudgetQty(item, d);
                         const resolvedAmt = item.is_pct
                           ? m.totalHardCosts * (item.pct_value / 100)
-                          : item.quantity * item.unit_cost;
+                          : liveQty * item.unit_cost;
                         return (
                           <tr key={item.id} className="border-b hover:bg-muted/10 group">
                             <td className="px-2 py-1.5">
@@ -3317,7 +3500,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             <td className="px-2 py-1.5">
                               {item.is_pct
                                 ? <CellInput value={item.pct_value} onChange={v => updBI({ pct_value: v, amount: m.totalHardCosts * v / 100 })} suffix="%" decimals={1} />
-                                : <CellInput value={item.quantity} onChange={v => updBI({ quantity: v })} />
+                                : item.auto_qty_source
+                                  ? <span className="text-xs tabular-nums text-muted-foreground block text-right pr-1" title="Auto-tracked from the massing">{fn(liveQty)}</span>
+                                  : <CellInput value={item.quantity} onChange={v => updBI({ quantity: v })} />
                               }
                             </td>
                             <td className="px-2 py-1.5 text-xs text-muted-foreground">{item.unit_label}</td>
@@ -3334,7 +3519,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     </tbody>
                     <tfoot>
                       <tr className="border-t bg-muted/20 font-semibold">
-                        <td colSpan={4} className="px-2 py-2 text-right">Total Hard Costs</td>
+                        <td colSpan={4} className="px-2 py-2 text-right">
+                          Total Hard Costs
+                          {(d.max_gsf || 0) > 0 && (
+                            <span className="ml-2 text-[11px] font-normal text-muted-foreground tabular-nums">
+                              ({fc(m.totalHardCosts / d.max_gsf)}/GSF)
+                            </span>
+                          )}
+                        </td>
                         <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalHardCosts)}</td>
                         <td />
                       </tr>
@@ -3367,9 +3559,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             ),
                           }));
                         };
+                        const liveQty = liveDevBudgetQty(item, d);
                         const resolvedAmt = item.is_pct
                           ? m.totalHardCosts * (item.pct_value / 100)
-                          : (item.subcategory === "interest_carry" ? m.capitalizedInterest : item.quantity * item.unit_cost);
+                          : (item.subcategory === "interest_carry" ? m.capitalizedInterest : liveQty * item.unit_cost);
                         return (
                           <tr key={item.id} className="border-b hover:bg-muted/10 group">
                             <td className="px-2 py-1.5">
@@ -3381,7 +3574,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                                 ? <CellInput value={item.pct_value} onChange={v => updBI({ pct_value: v, amount: m.totalHardCosts * v / 100 })} suffix="%" decimals={1} />
                                 : item.subcategory === "interest_carry"
                                   ? <span className="text-xs text-muted-foreground">auto</span>
-                                  : <CellInput value={item.quantity || item.amount} onChange={v => updBI({ quantity: 1, unit_cost: v, amount: v })} />
+                                  : item.auto_qty_source
+                                    ? <span className="text-xs tabular-nums text-muted-foreground block text-right pr-1" title="Auto-tracked from the massing">{fn(liveQty)}</span>
+                                    : <CellInput value={item.quantity || item.amount} onChange={v => updBI({ quantity: 1, unit_cost: v, amount: v })} />
                               }
                             </td>
                             <td className="px-2 py-1.5 text-xs text-muted-foreground">{item.unit_label}</td>
@@ -3429,10 +3624,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             <td className="text-right tabular-nums">{fc(m.totalCost / m.totalUnits)}</td>
                           </tr>
                         )}
-                        {(d.max_nrsf || d.max_gsf) > 0 && (
+                        {(d.max_gsf || 0) > 0 && (
+                          <tr className="text-muted-foreground text-xs">
+                            <td className="py-0.5">Per SF (GSF)</td>
+                            <td className="text-right tabular-nums">{fc(m.totalCost / d.max_gsf)}</td>
+                          </tr>
+                        )}
+                        {(d.max_nrsf || 0) > 0 && (
                           <tr className="text-muted-foreground text-xs">
                             <td className="py-0.5">Per SF (NRSF)</td>
-                            <td className="text-right tabular-nums">{fc(m.totalCost / (d.max_nrsf || d.max_gsf))}</td>
+                            <td className="text-right tabular-nums">{fc(m.totalCost / d.max_nrsf)}</td>
                           </tr>
                         )}
                       </tbody>
@@ -4266,14 +4467,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             ({fn(comp.sf_allocation)} SF)
                           </span>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <NumInput
-                            label="TI Allowance ($/SF)"
-                            value={comp.ti_allowance_per_sf}
-                            onChange={v => updComp({ ti_allowance_per_sf: v })}
-                            prefix="$"
-                            decimals={2}
-                          />
+                        {/* TI allowance is captured per-tenant in the
+                            Commercial Tenants table on Revenue, so it's
+                            intentionally NOT repeated here. The remaining
+                            three knobs apply to the whole component. */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                           <NumInput
                             label="Leasing Commission"
                             value={comp.leasing_commission_pct}

@@ -1725,6 +1725,15 @@ export interface DevBudgetLineItem {
   pct_basis: "hard_costs" | "total_project" | "none";
   pct_value: number;
   notes: string;
+  // When set, the quantity is live-computed from the massing on every
+  // render instead of relying on the (possibly stale) saved value.
+  // Supported sources mirror seedDevBudget: land_sf / max_gsf /
+  // max_nrsf / parking_spaces / total_units.
+  auto_qty_source?: string;
+  // For per-building fanout. When set, the live quantity is pulled
+  // from the matching scenario in building_program, so each building
+  // can carry its own GSF/NRSF/parking-space count.
+  site_plan_building_id?: string | null;
 }
 
 export const DEFAULT_DEV_BUDGET_HARD: Array<{ label: string; subcategory: string; unit_label: string; auto_qty_source: string }> = [
@@ -2170,7 +2179,13 @@ export interface MassingScenario {
   is_baseline: boolean;
   linked_uw_scenario_id: string | null;
   unit_mix: UnitMixEntry[];
-  parking_sf_per_space: number;  // avg SF per parking stall (default 350; surface ~325, structured ~350, underground ~375)
+  parking_sf_per_space: number;  // legacy single rate; kept for backwards compat
+  // Per-parking-type SF/space rates. Above-grade parking uses the
+  // structured rate; below-grade uses the underground rate; surface is
+  // carried for reference / future site-plan integrations.
+  parking_surface_sf_per_space?: number;
+  parking_structured_sf_per_space?: number;
+  parking_underground_sf_per_space?: number;
   // Optional link to a building drawn on the site plan. When set, the
   // scenario's footprint_sf is sourced from that building's area_sf. When
   // null, the scenario uses its own typed footprint (legacy behaviour).

@@ -500,23 +500,65 @@ export default function AffordabilityPlanner({
   //                mix). Market baseline = total − affordable.
   useEffect(() => {
     setConfig((prev) => {
-      const affordable = prev.tiers.reduce((s, t) => s + t.units_count, 0);
       const isAdditive = prev.allocation_mode === "additive";
       // Parent's `totalUnits` counts every row in unit_groups (market +
       // affordable). In additive mode we strip the affordable to recover
       // the market baseline; in replacement mode the total IS the
       // baseline (affordable rows were carved out of it).
+      //
+      // In additive mode each tier's units_pct is taken against the
+      // market baseline, so if total tier pct is Σpct then
+      //   affordable ≈ baseline × Σpct/100  and  baseline = totalUnits − affordable
+      //   ⇒ baseline = totalUnits × 100 / (100 + Σpct).
+      const sumPcts = prev.tiers.reduce((s, t) => s + (t.units_pct || 0), 0);
       const baseline = isAdditive
-        ? Math.max(0, totalUnits - affordable)
+        ? Math.max(0, Math.round((totalUnits * 100) / (100 + sumPcts)))
         : totalUnits;
-      return {
+
+      // Reconcile each tier's units_count with the new baseline so the
+      // "Units Required" field tracks units_pct × baseline, AND reflow
+      // the per-BR counts (units_studio, units_1br, …) to sum to the new
+      // units_count. The split in affordability-split.ts reads per-BR
+      // counts directly, so leaving them stale would make "Push to Unit
+      // Mix" emit the old number of affordable rows even though the
+      // Programming UI shows the new one.
+      const nextTiers = prev.tiers.map((t) => {
+        if (!t.units_pct) return t;
+        const next = { ...t, units_count: Math.round(baseline * (t.units_pct / 100)) };
+        resolveTierMixInPlace(next, buildingUnitMix);
+        return next;
+      });
+      const affordable = nextTiers.reduce((s, t) => s + t.units_count, 0);
+
+      const market = isAdditive
+        ? baseline
+        : Math.max(0, baseline - affordable);
+      const tiersChanged = nextTiers.some((t, i) => {
+        const p = prev.tiers[i];
+        if (!p) return true;
+        return (
+          t.units_count !== p.units_count ||
+          t.units_studio !== p.units_studio ||
+          t.units_1br !== p.units_1br ||
+          t.units_2br !== p.units_2br ||
+          t.units_3br !== p.units_3br ||
+          t.units_4br_plus !== p.units_4br_plus
+        );
+      });
+      const changed =
+        prev.total_units !== baseline ||
+        prev.market_rate_units !== market ||
+        tiersChanged;
+      const next = {
         ...prev,
+        tiers: nextTiers,
         total_units: baseline,
-        market_rate_units: isAdditive
-          ? baseline
-          : Math.max(0, baseline - affordable),
+        market_rate_units: market,
       };
+      if (changed) onConfigChange(next);
+      return next;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalUnits]);
 
   // Fetch AMI data
@@ -649,7 +691,11 @@ export default function AffordabilityPlanner({
   /**
    * Re-run whichever solver the tier's mode calls for and mutate the tier
    * in place. Used from updateTier() after changes that would invalidate
-   * the current mix. Flexible mode leaves the user's manual edits alone.
+   * the current mix. In flexible mode the per-BR counts are rescaled to
+   * match the new units_count while preserving the existing BR
+   * distribution — so a 45-unit tier originally spread 63/74/57
+   * rebalances to the same ratios at the smaller total instead of
+   * staying at 194 and feeding stale numbers to the split.
    */
   function resolveTierMixInPlace(tier: AmiTier, mix?: BuildingUnitMix): void {
     if (tier.mix_mode === "match_building" && mix) {
@@ -659,7 +705,9 @@ export default function AffordabilityPlanner({
       tier.units_2br = r.two_br;
       tier.units_3br = r.three_br;
       tier.units_4br_plus = r.four_br_plus;
-    } else if (tier.mix_mode === "bedroom_equivalent") {
+      return;
+    }
+    if (tier.mix_mode === "bedroom_equivalent") {
       const r = solveBedroomEquivalentMaxRevenue(tier.bedroom_target, {
         max_rent_studio: tier.max_rent_studio,
         max_rent_1br: tier.max_rent_1br,
@@ -674,8 +722,52 @@ export default function AffordabilityPlanner({
       tier.units_4br_plus = r.four_br_plus;
       tier.units_count =
         r.studio + r.one_br + r.two_br + r.three_br + r.four_br_plus;
+      return;
     }
-    // "flexible" leaves per-BR counts alone.
+    // Flexible mode — the user owns the per-BR mix, but we still have
+    // to keep Σper-BR == units_count, otherwise the split in
+    // affordability-split.ts (which reads per-BR, not units_count)
+    // emits the wrong number of affordable rows.
+    const current = {
+      studio: tier.units_studio || 0,
+      one_br: tier.units_1br || 0,
+      two_br: tier.units_2br || 0,
+      three_br: tier.units_3br || 0,
+      four_br_plus: tier.units_4br_plus || 0,
+    };
+    const currentSum =
+      current.studio +
+      current.one_br +
+      current.two_br +
+      current.three_br +
+      current.four_br_plus;
+    const target = tier.units_count;
+    if (target <= 0) {
+      tier.units_studio = 0;
+      tier.units_1br = 0;
+      tier.units_2br = 0;
+      tier.units_3br = 0;
+      tier.units_4br_plus = 0;
+      return;
+    }
+    if (currentSum === target) return;
+    const seed = currentSum > 0 ? current : mix;
+    if (seed && (seed.studio + seed.one_br + seed.two_br + seed.three_br + seed.four_br_plus) > 0) {
+      const r = solveMatchBuilding(target, seed);
+      tier.units_studio = r.studio;
+      tier.units_1br = r.one_br;
+      tier.units_2br = r.two_br;
+      tier.units_3br = r.three_br;
+      tier.units_4br_plus = r.four_br_plus;
+    } else {
+      // No prior ratio and no building mix to crib from — drop every
+      // unit into 1BR as a sensible default the analyst can rebalance.
+      tier.units_studio = 0;
+      tier.units_1br = target;
+      tier.units_2br = 0;
+      tier.units_3br = 0;
+      tier.units_4br_plus = 0;
+    }
   }
 
   function applyPreset(preset: typeof AMI_PRESETS[0]) {
