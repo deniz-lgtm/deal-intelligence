@@ -35,6 +35,8 @@ import {
   FileWarning,
   Layers,
   Globe,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
@@ -188,18 +190,39 @@ export default function DealLayout({
   const { can, isAdmin } = usePermissions();
   const [deal, setDeal] = useState<Deal | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Per-group collapse state keyed by group label. Overview (no label) is
+  // never collapsible. Defaults: Analysis open, everything else closed so
+  // the sidebar reads as a lean nav with optional disclosure.
+  const [navGroupsCollapsed, setNavGroupsCollapsed] = useState<Record<string, boolean>>({
+    Files: true,
+    Execution: true,
+    Activity: true,
+    Construction: true,
+  });
   const pathname = usePathname();
   const { userId } = useAuth();
 
   useEffect(() => {
     const stored = localStorage.getItem("dealSidebarCollapsed");
     if (stored !== null) setSidebarCollapsed(stored === "1");
+    const storedGroups = localStorage.getItem("dealNavGroupsCollapsed");
+    if (storedGroups) {
+      try { setNavGroupsCollapsed(JSON.parse(storedGroups)); } catch {}
+    }
   }, []);
 
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
       const next = !prev;
       localStorage.setItem("dealSidebarCollapsed", next ? "1" : "0");
+      return next;
+    });
+  };
+
+  const toggleNavGroup = (label: string) => {
+    setNavGroupsCollapsed((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
+      localStorage.setItem("dealNavGroupsCollapsed", JSON.stringify(next));
       return next;
     });
   };
@@ -298,17 +321,31 @@ export default function DealLayout({
           )}
         >
           <nav className="py-3 px-2 flex flex-col gap-4 min-h-full">
-            {getNavGroups(deal?.execution_phase ?? null, deal?.deal_scope ?? null).map((group, gi) => (
+            {getNavGroups(deal?.execution_phase ?? null, deal?.deal_scope ?? null).map((group, gi) => {
+              // Groups with a label can be collapsed by the user. When the
+              // whole sidebar is in icon-only mode we ignore per-group
+              // collapse so all icons remain reachable — the compact mode
+              // already hides labels anyway.
+              const groupCollapsed = !!(group.label && !sidebarCollapsed && navGroupsCollapsed[group.label]);
+              return (
               <div key={gi} className="flex flex-col gap-0.5">
                 {group.label && !sidebarCollapsed && (
-                  <div className="px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 font-medium">
-                    {group.label}
-                  </div>
+                  <button
+                    onClick={() => toggleNavGroup(group.label!)}
+                    className="w-full flex items-center gap-1 px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 hover:text-muted-foreground font-medium text-left"
+                  >
+                    {groupCollapsed ? (
+                      <ChevronRight className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                    <span>{group.label}</span>
+                  </button>
                 )}
                 {group.label && sidebarCollapsed && gi > 0 && (
                   <div className="mx-2 mb-1 border-t border-border/30" />
                 )}
-                {group.items.map((item) => {
+                {!groupCollapsed && group.items.map((item) => {
                   const fullPath = `${basePath}${item.href}`;
                   const isActive =
                     item.href === ""
@@ -344,7 +381,8 @@ export default function DealLayout({
                   );
                 })}
               </div>
-            ))}
+              );
+            })}
 
             {isAdmin && (
               <div className="mt-auto flex flex-col gap-0.5 pt-3 border-t border-border/30">
