@@ -2170,7 +2170,13 @@ export interface MassingScenario {
   is_baseline: boolean;
   linked_uw_scenario_id: string | null;
   unit_mix: UnitMixEntry[];
-  parking_sf_per_space: number;  // avg SF per parking stall (default 350; surface ~325, structured ~350, underground ~375)
+  parking_sf_per_space: number;  // legacy single rate; kept for backwards compat
+  // Per-parking-type SF/space rates. Above-grade parking uses the
+  // structured rate; below-grade uses the underground rate; surface is
+  // carried for reference / future site-plan integrations.
+  parking_surface_sf_per_space?: number;
+  parking_structured_sf_per_space?: number;
+  parking_underground_sf_per_space?: number;
   // Optional link to a building drawn on the site plan. When set, the
   // scenario's footprint_sf is sourced from that building's area_sf. When
   // null, the scenario uses its own typed footprint (legacy behaviour).

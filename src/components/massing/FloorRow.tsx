@@ -13,6 +13,10 @@ interface FloorRowProps {
   floor: BuildingFloor;
   onChange: (updates: Partial<BuildingFloor>) => void;
   onDelete: () => void;
+  // Max allowed plate SF — sourced from the scenario's footprint. Any
+  // edit that would push plate_sf above this value is clamped so the
+  // massing stays within the drawn footprint.
+  maxPlate?: number;
 }
 
 function CellInput({ value, onChange, prefix, suffix, decimals = 0, width = "w-[80px]" }: {
@@ -34,7 +38,9 @@ function CellInput({ value, onChange, prefix, suffix, decimals = 0, width = "w-[
   );
 }
 
-export default function FloorRow({ floor, onChange, onDelete }: FloorRowProps) {
+export default function FloorRow({ floor, onChange, onDelete, maxPlate }: FloorRowProps) {
+  const clampPlate = (v: number) =>
+    maxPlate && maxPlate > 0 ? Math.min(v, maxPlate) : v;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: floor.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   const isRes = floor.use_type === "residential";
@@ -103,13 +109,13 @@ export default function FloorRow({ floor, onChange, onDelete }: FloorRowProps) {
               value={primary_sf}
               onChange={v => {
                 // User edits the PRIMARY use's SF. Total plate = primary + Σ additional.
-                const newPlate = v + additionalTotal;
+                const newPlate = clampPlate(v + additionalTotal);
                 onChange({ floor_plate_sf: newPlate });
               }}
               width="w-[85px]"
             />
           ) : (
-            <CellInput value={floor.floor_plate_sf} onChange={v => onChange({ floor_plate_sf: v })} width="w-[85px]" />
+            <CellInput value={floor.floor_plate_sf} onChange={v => onChange({ floor_plate_sf: clampPlate(v) })} width="w-[85px]" />
           )}
         </td>
         <td className="px-1 py-1"><CellInput value={floor.floor_to_floor_ft} onChange={v => onChange({ floor_to_floor_ft: v })} suffix="ft" decimals={1} width="w-[65px]" /></td>

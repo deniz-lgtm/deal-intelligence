@@ -48,6 +48,11 @@ export default function MassingSection({
   program, onChange, zoning, densityBonuses = [], footprintReadOnly = false, activeBuildingLabel = null,
 }: Props) {
   const [quickStackOpen, setQuickStackOpen] = useState(false);
+  // Local buffer for the Max Footprint input so we can display the
+  // committed value with commas while the user is typing a raw number.
+  // null means "show the committed value"; a string means "user is
+  // editing, show what they typed until blur".
+  const [footprintRaw, setFootprintRaw] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -362,76 +367,56 @@ export default function MassingSection({
       <div className="flex flex-col lg:flex-row gap-4">
         {/* LEFT — Floor Editor */}
         <div className="flex-1 min-w-0">
-          {/* Footprint + Density Bonus */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1 flex items-center justify-between gap-2">
-                <span>Base Footprint (SF)</span>
-                {footprintReadOnly && (
-                  <span
-                    className="inline-flex items-center gap-1 text-[9px] font-semibold tracking-wide uppercase text-amber-300"
-                    title="Footprint is sourced from the Site Plan — go to Site & Zoning to resize the building."
-                  >
-                    <Lock className="h-2.5 w-2.5" /> from Site Plan
-                  </span>
-                )}
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={activeScenario.footprint_sf || ""}
-                onChange={(e) => {
-                  if (footprintReadOnly) return;
-                  updateScenario(activeScenario.id, (s) => ({
-                    ...s,
-                    footprint_sf: parseFloat(e.target.value.replace(/,/g, "")) || 0,
-                  }));
-                }}
-                readOnly={footprintReadOnly}
-                disabled={footprintReadOnly}
-                className={`w-full border rounded-md px-2 py-1.5 text-sm outline-none tabular-nums ${
-                  footprintReadOnly
-                    ? "bg-muted/30 text-muted-foreground cursor-not-allowed"
-                    : "bg-background"
-                }`}
-                placeholder="0"
-              />
-              {footprintReadOnly && activeBuildingLabel && (
-                <p className="mt-1 text-[10px] text-muted-foreground">
-                  {activeBuildingLabel} · edit the footprint on the Site Plan
-                </p>
+          {/* Max Footprint — caps every floor's Plate SF so the stack
+              stays within the drawn building. Density bonuses are edited
+              on Site & Zoning; the parking-rate inputs live below the
+              floor stack so they sit next to the parking summary line. */}
+          <div className="mb-3 max-w-xs">
+            <label className="block text-xs font-medium text-muted-foreground mb-1 flex items-center justify-between gap-2">
+              <span>Max Footprint (SF)</span>
+              {footprintReadOnly && (
+                <span
+                  className="inline-flex items-center gap-1 text-[9px] font-semibold tracking-wide uppercase text-amber-300"
+                  title="Footprint is sourced from the Site Plan — go to Site & Zoning to resize the building."
+                >
+                  <Lock className="h-2.5 w-2.5" /> from Site Plan
+                </span>
               )}
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Parking SF / Space</label>
-              <input type="text" inputMode="decimal"
-                value={activeScenario.parking_sf_per_space || 350}
-                onChange={e => updateScenario(activeScenario.id, s => ({ ...s, parking_sf_per_space: parseFloat(e.target.value) || 350 }))}
-                className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none tabular-nums"
-                placeholder="350" />
-              <p className="text-[10px] text-muted-foreground mt-0.5">Surface ~325 · Structured ~350 · Underground ~375</p>
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-muted-foreground mb-1 flex items-center gap-2">
-                <span>Density Bonuses</span>
-                <span className="text-[9px] font-semibold tracking-wide uppercase text-muted-foreground/70">from Site &amp; Zoning</span>
-              </label>
-              {densityBonuses.length === 0 ? (
-                <div className="w-full border rounded-md px-2 py-1.5 text-xs bg-muted/20 text-muted-foreground italic">
-                  No density bonuses identified in the zoning report.
-                </div>
-              ) : (
-                <div className="w-full border rounded-md px-2 py-1.5 text-[11px] bg-muted/10 space-y-0.5 max-h-[80px] overflow-y-auto">
-                  {densityBonuses.map((b, i) => (
-                    <div key={i} className="flex items-baseline gap-1.5">
-                      <span className="text-emerald-400 font-medium tabular-nums shrink-0">{b.additional_density}</span>
-                      <span className="text-foreground/90 truncate" title={b.description}>{b.source}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <p className="text-[10px] text-muted-foreground mt-1">Edit bonuses on Site &amp; Zoning · FAR/height compliance above uses base-zoning limits.</p>
-            </div>
+            </label>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={
+                footprintRaw !== null
+                  ? footprintRaw
+                  : activeScenario.footprint_sf
+                  ? activeScenario.footprint_sf.toLocaleString("en-US")
+                  : ""
+              }
+              onChange={(e) => {
+                if (footprintReadOnly) return;
+                setFootprintRaw(e.target.value);
+              }}
+              onBlur={() => {
+                if (footprintReadOnly || footprintRaw === null) return;
+                const v = parseFloat(footprintRaw.replace(/,/g, "")) || 0;
+                updateScenario(activeScenario.id, (s) => ({ ...s, footprint_sf: v }));
+                setFootprintRaw(null);
+              }}
+              readOnly={footprintReadOnly}
+              disabled={footprintReadOnly}
+              className={`w-full border rounded-md px-2 py-1.5 text-sm outline-none tabular-nums ${
+                footprintReadOnly
+                  ? "bg-muted/30 text-muted-foreground cursor-not-allowed"
+                  : "bg-background"
+              }`}
+              placeholder="0"
+            />
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              {footprintReadOnly && activeBuildingLabel
+                ? `${activeBuildingLabel} · edit the footprint on the Site Plan`
+                : "Floor plate SF is capped at this value."}
+            </p>
           </div>
 
           {/* Above Grade Floors */}
@@ -455,7 +440,7 @@ export default function MassingSection({
               <SortableContext items={aboveFloors.map(f => f.id)} strategy={verticalListSortingStrategy}>
                 <tbody>
                   {aboveFloors.map(f => (
-                    <FloorRow key={f.id} floor={f} onChange={upd => updateFloor(f.id, upd)} onDelete={() => deleteFloor(f.id)} />
+                    <FloorRow key={f.id} floor={f} onChange={upd => updateFloor(f.id, upd)} onDelete={() => deleteFloor(f.id)} maxPlate={activeScenario.footprint_sf} />
                   ))}
                 </tbody>
               </SortableContext>
@@ -494,7 +479,7 @@ export default function MassingSection({
               <SortableContext items={belowFloors.map(f => f.id)} strategy={verticalListSortingStrategy}>
                 <tbody>
                   {belowFloors.map(f => (
-                    <FloorRow key={f.id} floor={f} onChange={upd => updateFloor(f.id, upd)} onDelete={() => deleteFloor(f.id)} />
+                    <FloorRow key={f.id} floor={f} onChange={upd => updateFloor(f.id, upd)} onDelete={() => deleteFloor(f.id)} maxPlate={activeScenario.footprint_sf} />
                   ))}
                 </tbody>
               </SortableContext>
@@ -505,12 +490,44 @@ export default function MassingSection({
             <Plus className="h-3 w-3 mr-1" /> Add Below Grade
           </Button>
 
+          {/* Parking SF / Space — one rate per parking type so mixed
+              stacks (podium + cellar, surface overflow) compute realistic
+              space counts. Above-grade parking uses the structured rate,
+              below-grade uses underground. */}
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Parking SF / Space</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { key: "parking_surface_sf_per_space" as const, label: "Surface", fallback: 325 },
+                { key: "parking_structured_sf_per_space" as const, label: "Structured", fallback: 350 },
+                { key: "parking_underground_sf_per_space" as const, label: "Underground", fallback: 375 },
+              ].map(({ key, label, fallback }) => (
+                <div key={key}>
+                  <label className="block text-[10px] text-muted-foreground mb-0.5">{label}</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={activeScenario[key] ?? activeScenario.parking_sf_per_space ?? fallback}
+                    onChange={(e) =>
+                      updateScenario(activeScenario.id, (s) => ({
+                        ...s,
+                        [key]: parseFloat(e.target.value.replace(/,/g, "")) || fallback,
+                      }))
+                    }
+                    className="w-full border rounded-md px-2 py-1.5 text-sm bg-background outline-none tabular-nums"
+                    placeholder={String(fallback)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Summary */}
           <div className="border rounded-md bg-muted/10 p-3 text-sm space-y-1">
             <div className="flex justify-between"><span>Total GSF</span><span className="font-semibold tabular-nums">{fn(summary.total_gsf)}</span></div>
             <div className="flex justify-between"><span>Total NRSF</span><span className="font-semibold tabular-nums">{fn(summary.total_nrsf)}</span></div>
             <div className="flex justify-between"><span>Residential Units</span><span className="font-semibold tabular-nums">{fn(summary.total_units)}</span></div>
-            <div className="flex justify-between"><span>Est. Parking Spaces</span><span className="font-semibold tabular-nums">{fn(summary.total_parking_spaces_est)} <span className="text-muted-foreground text-xs">(@ {activeScenario.parking_sf_per_space || 350} SF/space)</span></span></div>
+            <div className="flex justify-between"><span>Est. Parking Spaces</span><span className="font-semibold tabular-nums">{fn(summary.total_parking_spaces_est)} <span className="text-muted-foreground text-xs">(struct {activeScenario.parking_structured_sf_per_space ?? activeScenario.parking_sf_per_space ?? 350} · undg {activeScenario.parking_underground_sf_per_space ?? activeScenario.parking_sf_per_space ?? 375} SF/space)</span></span></div>
             <div className="flex justify-between"><span>Building Height</span><span className="font-semibold tabular-nums">{Math.round(summary.total_height_ft).toLocaleString()} ft ({summary.above_grade_floors} floors)</span></div>
             {summary.below_grade_floors > 0 && <div className="flex justify-between"><span>Below Grade</span><span className="font-semibold tabular-nums">{Math.round(summary.total_below_grade_ft).toLocaleString()} ft ({summary.below_grade_floors} levels)</span></div>}
             <div className="flex justify-between"><span>Effective FAR</span><span className="font-semibold tabular-nums">{summary.effective_far.toFixed(2)}</span></div>
