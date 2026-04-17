@@ -533,10 +533,22 @@ export default function AffordabilityPlanner({
       const market = isAdditive
         ? baseline
         : Math.max(0, baseline - affordable);
+      const tiersChanged = nextTiers.some((t, i) => {
+        const p = prev.tiers[i];
+        if (!p) return true;
+        return (
+          t.units_count !== p.units_count ||
+          t.units_studio !== p.units_studio ||
+          t.units_1br !== p.units_1br ||
+          t.units_2br !== p.units_2br ||
+          t.units_3br !== p.units_3br ||
+          t.units_4br_plus !== p.units_4br_plus
+        );
+      });
       const changed =
         prev.total_units !== baseline ||
         prev.market_rate_units !== market ||
-        nextTiers.some((t, i) => t.units_count !== prev.tiers[i]?.units_count);
+        tiersChanged;
       const next = {
         ...prev,
         tiers: nextTiers,
