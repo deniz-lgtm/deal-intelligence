@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 
+// Opt out of static analysis / prerendering at `next build`. Without this
+// Next.js evaluates the route handler during build-time route collection,
+// hits getPool(), and throws when DATABASE_URL isn't in the build env
+// (Railway's build step doesn't inherit runtime env vars by default).
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const pool = getPool();
