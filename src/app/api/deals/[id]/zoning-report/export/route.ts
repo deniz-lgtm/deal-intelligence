@@ -10,7 +10,6 @@ import {
   resolveBranding,
   inlineToDocxRuns,
   markdownToDocx,
-  DOCX_NUMBERING,
 } from "@/lib/export-markdown";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -245,11 +244,10 @@ export async function POST(
       }));
     }
 
-    // paragraphStyles block dropped — redundant with per-run formatting
-    // and has triggered Packer.toBuffer() crashes on certain docx 9.x
-    // versions. Heading visuals come from the TextRuns themselves.
+    // Minimum viable Document config — no numbering registration and no
+    // custom paragraphStyles. Both have been triggers for Packer.toBuffer()
+    // crashes on certain docx@9.x patch versions.
     const doc = new Document({
-      numbering: DOCX_NUMBERING,
       styles: {
         default: { document: { run: { font: bFont, size: 20 } } },
       },

@@ -11,7 +11,7 @@ import {
 } from "docx";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { getBrandingForDeal } from "@/lib/db";
-import { resolveBranding, markdownToDocx, DOCX_NUMBERING } from "@/lib/export-markdown";
+import { resolveBranding, markdownToDocx } from "@/lib/export-markdown";
 
 /**
  * POST /api/deals/:id/dd-abstract/export
@@ -41,12 +41,13 @@ export async function POST(
     const children = parseMarkdownToDocx(markdown, dealName, branding);
 
     const theme = resolveBranding(branding);
-    // Keep the Document config minimal — markdownToDocx sets per-run
-    // size/bold/color/font on each heading so the Document-level
-    // paragraphStyles block is redundant and has been a source of
-    // Packer.toBuffer() crashes on certain docx 9.x versions.
+    // Minimum viable Document config. markdownToDocx sets per-run
+    // size/bold/color/font on each heading and renders ordered lists as
+    // literal "1. foo" paragraphs (no numbering.reference needed), so we
+    // skip both the Document-level paragraphStyles block and the numbering
+    // registration — both have caused Packer.toBuffer() to crash on
+    // certain docx@9.x patch versions.
     const doc = new Document({
-      numbering: DOCX_NUMBERING,
       styles: {
         default: {
           document: {

@@ -24,8 +24,6 @@ import {
   TableRow,
   TableCell,
   WidthType,
-  AlignmentType,
-  LevelFormat,
 } from "docx";
 
 // ─── Branding theme ─────────────────────────────────────────────────────────
@@ -274,20 +272,20 @@ export function markdownToDocx(
       continue;
     }
 
-    // Ordered list — use Word numbering reference (registered by caller)
+    // Ordered list — render as a plain indented paragraph with a literal
+    // numeric prefix. We deliberately do NOT use docx's numbering.reference
+    // feature because docx@9.x has been inconsistent about accepting the
+    // INumberingOptions shape; a single malformed field crashes the whole
+    // Packer.toBuffer() with the opaque error users saw as "Export failed".
+    // A literal "1. foo" paragraph survives every version.
     const olMatch = raw.match(/^(\s*)(\d+)\.\s+(.+)/);
     if (olMatch) {
       const indentCols = olMatch[1].length;
       const level = Math.min(2, Math.floor(indentCols / 2));
-      // Per-level indent now lives here (not on DOCX_NUMBERING) because
-      // docx 9.x has been inconsistent about accepting `style` on level
-      // options. Indent values mirror the Word defaults: 360 twips per
-      // level with a 260-twip hanging indent for the number.
       const leftIndent = 360 + level * 360;
       children.push(new Paragraph({
-        numbering: { reference: "md-numbering", level },
         indent: { left: leftIndent, hanging: 260 },
-        children: inlineToDocxRuns(olMatch[3], { size: bodySize, color: bodyColor, font: bFont }),
+        children: inlineToDocxRuns(`${olMatch[2]}.  ${olMatch[3]}`, { size: bodySize, color: bodyColor, font: bFont }),
         spacing: { before: 40, after: 40 },
       }));
       continue;
@@ -351,27 +349,16 @@ function renderDocxTable(
   });
 }
 
-// Shared numbering config — pass into `new Document({ numbering: DOCX_NUMBERING, ... })`
-// so that ordered list paragraphs referencing `md-numbering` render as real
-// Word numbered lists (auto-renumbering, nested levels) instead of literal
-// "1. foo" text.
-//
-// Kept intentionally minimal: docx 9.x has been fussy about the `style`
-// sub-key on level options in some minor versions, and the symptom is a
-// completely-failed Packer.toBuffer() — which previously swallowed as
-// "Export failed" with no detail. Per-paragraph indent is set on each
-// ordered-list Paragraph in markdownToDocx() below, so we don't lose the
-// visual hierarchy by dropping it here.
-export const DOCX_NUMBERING = {
-  config: [{
-    reference: "md-numbering",
-    levels: [
-      { level: 0, format: LevelFormat.DECIMAL, text: "%1.", alignment: AlignmentType.START },
-      { level: 1, format: LevelFormat.LOWER_LETTER, text: "%2.", alignment: AlignmentType.START },
-      { level: 2, format: LevelFormat.LOWER_ROMAN, text: "%3.", alignment: AlignmentType.START },
-    ],
-  }],
-};
+// Historically we registered a real docx INumberingOptions config here so
+// ordered list paragraphs could reference it via `numbering.reference`.
+// That feature crashed Packer.toBuffer() on certain docx@9.x patch versions
+// (the symptom users saw was the opaque "Export failed" toast).
+// markdownToDocx() now renders ordered lists as plain paragraphs with a
+// literal "1. foo" prefix, so no numbering registration is needed. This
+// export is kept as an empty-shape stub so legacy callers compile cleanly;
+// passing it into new Document({ numbering: DOCX_NUMBERING, ... }) is a
+// no-op on a Document that has no numbering.reference paragraphs.
+export const DOCX_NUMBERING = { config: [] as unknown[] };
 
 // ─── PPTX: inline-run rendering + paragraph building ────────────────────────
 
@@ -476,6 +463,30 @@ export function markdownToPptxBlocks(
       blocks.push({
         text: h[2].replace(/\*\*/g, "").replace(/`/g, ""),
         options: { fontSize: size, color, bold: true, fontFace: theme.headerFont, paraSpaceBefore: lastWasBlank ? 12 : 8, breakType: "none" as const },
+      });
+      lastWasBlank = false;
+      continue;
+    }
+
+    // Emphasized-only line → render as a mini subheading. The AI memo
+    // prompts emit labels like `**THESIS**`, `**THREE REASONS THIS WORKS**`,
+    // and `**THREE REASONS IT FAILS**` on their own lines. Without this
+    // carve-out they'd render as plain inline bold with no visible hierarchy
+    // on the slide. Matches the whole line being wrapped in `**...**` with
+    // no other content.
+    const emph = trimmed.match(/^\*\*(.+?)\*\*:?$/);
+    if (emph && !emph[1].includes("**")) {
+      blocks.push({
+        text: emph[1].toUpperCase(),
+        options: {
+          fontSize: 12,
+          color: accent,
+          bold: true,
+          fontFace: theme.headerFont,
+          charSpacing: 4,
+          paraSpaceBefore: lastWasBlank ? 14 : 10,
+          breakType: "none" as const,
+        },
       });
       lastWasBlank = false;
       continue;

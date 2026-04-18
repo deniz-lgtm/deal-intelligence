@@ -7,7 +7,6 @@ import {
   resolveBranding,
   markdownToPptxBlocks,
   markdownToDocx,
-  DOCX_NUMBERING,
 } from "@/lib/export-markdown";
 
 interface ExportSection {
@@ -68,6 +67,10 @@ export async function POST(
     const ACCENT = theme.primaryColor;
     const TEXT = "1E293B";
     const MUTED = "64748B";
+    // Darker shade of PRIMARY for subtle side-panel accents on the cover.
+    // Blends a fixed 20% black into whatever the brand's secondary color is
+    // so we get a visible tonal shift even when PRIMARY is already dark.
+    const PRIMARY_DARK = shadeHex(PRIMARY, -0.2);
 
     // Pre-compute the list of sections with meaningful content so the TOC
     // and page numbers line up with what actually renders.
@@ -75,98 +78,164 @@ export async function POST(
       (s) => s.generatedContent || s.notes.filter(n => n.text?.trim()).length > 0
     );
 
-    // --- Cover Slide ---
+    // Shared footer block — bottom rule + confidentiality + company + page.
+    // Declared up here (as an arrow, not a nested function declaration, to
+    // satisfy strict-mode ES5 target) so both the TOC and every content
+    // slide can call it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const addSlideFooter = (slide: any, pageNum?: number) => {
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.85, y: 6.9, w: 11.5, h: 0.01, fill: { color: ACCENT + "66" },
+      });
+      slide.addText(footerText, {
+        x: 0.85, y: 7.0, w: 4, h: 0.3,
+        fontSize: 8, color: MUTED, fontFace: bodyFont,
+      });
+      slide.addText(companyName || dealName, {
+        x: 4.85, y: 7.0, w: 4, h: 0.3,
+        fontSize: 8, color: MUTED, fontFace: bodyFont,
+        align: "center",
+      });
+      if (pageNum != null) {
+        slide.addText(`${pageNum} / ${renderableSections.length}`, {
+          x: 10.5, y: 7.0, w: 1.85, h: 0.3,
+          fontSize: 8, color: MUTED, fontFace: bodyFont,
+          align: "right",
+        });
+      }
+    };
+
+    // --- Cover Slide ───────────────────────────────────────────────────
+    // Two-column composition: a dark PRIMARY band covers the full slide as
+    // the background with a vertical ACCENT stripe at left, big title in
+    // the center, confidentiality mark + date + company locked to the
+    // top-left and bottom. Deliberately heavier weight than a Word cover
+    // because pitch decks are read from across a conference-room table.
     const cover = pptx.addSlide();
     cover.background = { color: PRIMARY };
 
-    // Confidentiality strip (top-left, institutional convention)
-    cover.addText("STRICTLY CONFIDENTIAL", {
-      x: 0.8, y: 0.5, w: 5, h: 0.3,
-      fontSize: 10, color: "FF7A7A",
-      fontFace: headerFont, bold: true,
-      charSpacing: 8,
+    // Vertical accent stripe — full slide height, left edge
+    cover.addShape(pptx.ShapeType.rect, {
+      x: 0, y: 0, w: 0.35, h: 7.5, fill: { color: ACCENT },
+    });
+    // Subtle right-side accent block so the composition doesn't feel top-heavy
+    cover.addShape(pptx.ShapeType.rect, {
+      x: 12.4, y: 0, w: 0.93, h: 7.5, fill: { color: PRIMARY_DARK },
     });
 
-    cover.addText("INVESTMENT COMMITTEE MATERIALS", {
-      x: 0.8, y: 1.5, w: 11.5, h: 0.6,
-      fontSize: 14, color: "94A3B8",
-      fontFace: headerFont, bold: false,
-      charSpacing: 6,
+    // Confidentiality tag
+    cover.addText("STRICTLY CONFIDENTIAL  ·  FOR INTERNAL IC USE ONLY", {
+      x: 0.8, y: 0.45, w: 11.5, h: 0.3,
+      fontSize: 9, color: "FCA5A5",
+      fontFace: headerFont, bold: true,
+      charSpacing: 10,
     });
+
+    // Section label above title
+    cover.addText("INVESTMENT COMMITTEE MATERIALS", {
+      x: 0.8, y: 2.2, w: 11.5, h: 0.4,
+      fontSize: 12, color: "93C5FD",
+      fontFace: headerFont, bold: false,
+      charSpacing: 8,
+    });
+    // Deal name — the focal point
     cover.addText(dealName, {
-      x: 0.8, y: 2.2, w: 11.5, h: 1.2,
-      fontSize: 36, color: "FFFFFF",
+      x: 0.8, y: 2.75, w: 11.2, h: 1.5,
+      fontSize: 44, color: "FFFFFF",
       fontFace: headerFont, bold: true,
     });
+    // Accent divider under the name
     cover.addShape(pptx.ShapeType.rect, {
-      x: 0.8, y: 3.2, w: 2, h: 0.04, fill: { color: ACCENT },
+      x: 0.8, y: 4.35, w: 1.8, h: 0.06, fill: { color: ACCENT },
     });
+    // Date — understated subtitle
     cover.addText(new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }), {
-      x: 0.8, y: 3.5, w: 11.5, h: 0.4,
-      fontSize: 14, color: "94A3B8",
+      x: 0.8, y: 4.55, w: 11.5, h: 0.4,
+      fontSize: 14, color: "CBD5E1",
       fontFace: headerFont,
     });
 
-    // Company branding on cover slide
+    // Deal one-line metadata chip row (asking / units / sf / year / strategy)
+    // — pulled from the sections list when a cover "notes" array supplies it.
+    // Skipping by default; can be wired later by passing deal data into this
+    // route.
+
+    // Company block — bottom-left, institutional signature
     if (companyName) {
       cover.addText(companyName, {
-        x: 0.8, y: 4.2, w: 11.5, h: 0.5,
-        fontSize: 16, color: "FFFFFF",
+        x: 0.8, y: 6.35, w: 7, h: 0.4,
+        fontSize: 14, color: "FFFFFF",
         fontFace: headerFont, bold: true,
+        charSpacing: 1,
       });
       if (tagline) {
         cover.addText(tagline, {
-          x: 0.8, y: 4.7, w: 11.5, h: 0.4,
-          fontSize: 11, color: "94A3B8",
-          fontFace: bodyFont,
+          x: 0.8, y: 6.75, w: 7, h: 0.3,
+          fontSize: 10, color: "94A3B8",
+          fontFace: bodyFont, italic: true,
         });
       }
       const contactParts = [website, bEmail, phone].filter(Boolean);
       if (contactParts.length > 0) {
         cover.addText(contactParts.join("  ·  "), {
-          x: 0.8, y: 6.8, w: 11.5, h: 0.3,
-          fontSize: 9, color: "64748B",
-          fontFace: bodyFont,
+          x: 8, y: 7.05, w: 4.4, h: 0.3,
+          fontSize: 8, color: "64748B",
+          fontFace: bodyFont, align: "right",
         });
       }
     }
 
-    // --- Table of Contents ---
+    // --- Table of Contents ─────────────────────────────────────────────
+    // Two-column TOC: big section numbers in ACCENT at left, section titles
+    // at right, each row separated by a hairline. Feels more like a printed
+    // memo than a text dump.
     if (renderableSections.length > 1) {
       const toc = pptx.addSlide();
       toc.background = { color: "FFFFFF" };
+      // Colored sidebar — echoes the cover's accent stripe for continuity
       toc.addShape(pptx.ShapeType.rect, {
-        x: 0, y: 0, w: 13.33, h: 0.9, fill: { color: PRIMARY },
+        x: 0, y: 0, w: 0.35, h: 7.5, fill: { color: ACCENT },
       });
-      toc.addText("TABLE OF CONTENTS", {
-        x: 0.8, y: 0.15, w: 11.5, h: 0.6,
-        fontSize: 18, color: "FFFFFF",
+      // Label strip
+      toc.addText("CONTENTS", {
+        x: 0.85, y: 0.6, w: 6, h: 0.35,
+        fontSize: 10, color: ACCENT,
+        fontFace: headerFont, bold: true, charSpacing: 10,
+      });
+      toc.addText(dealName, {
+        x: 0.85, y: 1.0, w: 11.5, h: 0.8,
+        fontSize: 28, color: PRIMARY,
         fontFace: headerFont, bold: true,
-        charSpacing: 2,
       });
-      const tocEntries = renderableSections.map((s, i) => ({
-        text: `${String(i + 1).padStart(2, "0")}    ${s.title}\n`,
-        options: { fontSize: 14, color: TEXT, paraSpaceBefore: 10, breakType: "none" as const },
-      }));
-      toc.addText(
-        tocEntries,
-        { x: 1.2, y: 1.4, w: 10.5, h: 5.5, valign: "top", fontFace: bodyFont }
-      );
       toc.addShape(pptx.ShapeType.rect, {
-        x: 0.8, y: 6.9, w: 11.5, h: 0.01, fill: { color: ACCENT + "66" },
+        x: 0.85, y: 1.85, w: 1.5, h: 0.04, fill: { color: ACCENT },
       });
-      toc.addText(footerText, {
-        x: 0.8, y: 7.0, w: 5, h: 0.3,
-        fontSize: 8, color: MUTED, fontFace: bodyFont,
+
+      // Rows
+      const rowH = 0.5;
+      const startY = 2.3;
+      const visible = renderableSections.slice(0, 10);
+      visible.forEach((s, i) => {
+        const y = startY + i * rowH;
+        toc.addText(String(i + 1).padStart(2, "0"), {
+          x: 0.85, y, w: 0.8, h: rowH - 0.05,
+          fontSize: 22, color: ACCENT,
+          fontFace: headerFont, bold: true, valign: "middle",
+        });
+        toc.addText(s.title, {
+          x: 1.75, y, w: 10.5, h: rowH - 0.05,
+          fontSize: 13, color: TEXT,
+          fontFace: bodyFont, valign: "middle",
+        });
+        toc.addShape(pptx.ShapeType.rect, {
+          x: 0.85, y: y + rowH - 0.05, w: 11.5, h: 0.005, fill: { color: "E5E7EB" },
+        });
       });
-      toc.addText(companyName || dealName, {
-        x: 7, y: 7.0, w: 5.5, h: 0.3,
-        fontSize: 8, color: MUTED, fontFace: bodyFont,
-        align: "right",
-      });
+
+      addSlideFooter(toc);
     }
 
-    // --- Content Slides ---
+    // --- Content Slides ───────────────────────────────────────────────
     let slideIdx = 0;
     for (const section of sections) {
       if (!section.generatedContent && section.notes.filter(n => n.text?.trim()).length === 0) continue;
@@ -175,21 +244,30 @@ export async function POST(
       const slide = pptx.addSlide();
       slide.background = { color: "FFFFFF" };
 
-      // Header bar
+      // Left accent stripe — full slide height. Anchors every content
+      // slide to the brand color without consuming the full header.
       slide.addShape(pptx.ShapeType.rect, {
-        x: 0, y: 0, w: 13.33, h: 0.9, fill: { color: PRIMARY },
+        x: 0, y: 0, w: 0.35, h: 7.5, fill: { color: ACCENT },
       });
-      // Section number badge (e.g. "01", "02") — institutional deck convention
-      slide.addText(String(slideIdx).padStart(2, "0"), {
-        x: 0.8, y: 0.15, w: 0.8, h: 0.6,
-        fontSize: 22, color: ACCENT,
+
+      // Top-left: small section label ("01 / 08  ·  CONFIDENTIAL")
+      slide.addText(
+        `${String(slideIdx).padStart(2, "0")} / ${String(renderableSections.length).padStart(2, "0")}  ·  ${footerText}`,
+        {
+          x: 0.85, y: 0.45, w: 6, h: 0.3,
+          fontSize: 9, color: MUTED,
+          fontFace: headerFont, bold: true, charSpacing: 6,
+        }
+      );
+      // Section title — big, dark, left-aligned
+      slide.addText(section.title, {
+        x: 0.85, y: 0.75, w: 11.5, h: 0.6,
+        fontSize: 22, color: PRIMARY,
         fontFace: headerFont, bold: true,
       });
-      slide.addText(section.title.toUpperCase(), {
-        x: 1.7, y: 0.15, w: 10.6, h: 0.6,
-        fontSize: 18, color: "FFFFFF",
-        fontFace: headerFont, bold: true,
-        charSpacing: 2,
+      // Accent rule under the title
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0.85, y: 1.38, w: 1.2, h: 0.045, fill: { color: ACCENT },
       });
 
       // Render body content — either the AI-generated markdown, or bullet
@@ -225,37 +303,16 @@ export async function POST(
           slide.addText(
             runs as unknown as Parameters<typeof slide.addText>[0],
             {
-              x: 0.8, y: 1.2, w: 11.5, h: 5.5,
+              x: 0.85, y: 1.65, w: 11.5, h: 5.0,
               valign: "top",
               fontFace: bodyFont,
-              // Shrink text to fit so long AI-generated sections don't clip
-              // off the bottom of the slide. `shrinkText: true` is the
-              // widely-supported PptxGenJS option; older versions choke on
-              // the combined `autoFit`/`fit` options so we use only this.
               shrinkText: true,
             } as unknown as Parameters<typeof slide.addText>[1]
           );
         }
       }
 
-      // Footer with branding + page number
-      slide.addShape(pptx.ShapeType.rect, {
-        x: 0.8, y: 6.9, w: 11.5, h: 0.01, fill: { color: ACCENT + "66" },
-      });
-      slide.addText(footerText, {
-        x: 0.8, y: 7.0, w: 4, h: 0.3,
-        fontSize: 8, color: MUTED, fontFace: bodyFont,
-      });
-      slide.addText(companyName || dealName, {
-        x: 4.8, y: 7.0, w: 4, h: 0.3,
-        fontSize: 8, color: MUTED, fontFace: bodyFont,
-        align: "center",
-      });
-      slide.addText(`${slideIdx} / ${renderableSections.length}`, {
-        x: 10.5, y: 7.0, w: 1.8, h: 0.3,
-        fontSize: 8, color: MUTED, fontFace: bodyFont,
-        align: "right",
-      });
+      addSlideFooter(slide, slideIdx);
     }
 
     const buffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
@@ -433,14 +490,12 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
     }));
   }
 
-  // markdownToDocx already sets per-run size / bold / color / font on each
-  // heading paragraph, so the Document-level paragraphStyles block is
-  // redundant — and has been a source of Packer.toBuffer() crashes on
-  // certain docx 9.x versions. Keep the config to just the numbering ref
-  // + a plain default body style.
+  // Minimum viable Document config. markdownToDocx sets per-run size / bold
+  // / color / font on every paragraph, so we don't need a custom stylesheet
+  // or a numbering registration — both have been triggers for
+  // Packer.toBuffer() crashes on certain docx@9.x patch versions.
   const doc = new Document({
     sections: [{ children }],
-    numbering: DOCX_NUMBERING,
     styles: {
       default: { document: { run: { font: bFont, size: 22 } } },
     },
@@ -455,4 +510,23 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
       "Content-Disposition": `attachment; filename="Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx"`,
     },
   });
+}
+
+// Lighten (positive amt) or darken (negative amt) a 6-char hex color.
+// Used to derive PRIMARY_DARK from whatever the brand's secondary color is
+// so the cover composition has visible tonal depth even when the brand
+// didn't configure a second accent. amt in [-1, 1].
+function shadeHex(hex: string, amt: number): string {
+  const h = hex.replace("#", "");
+  if (h.length !== 6) return hex;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const adj = (c: number) => {
+    const t = amt < 0 ? 0 : 255;
+    const p = Math.abs(amt);
+    return Math.round((t - c) * p + c);
+  };
+  const toHex = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0");
+  return toHex(adj(r)) + toHex(adj(g)) + toHex(adj(b));
 }
