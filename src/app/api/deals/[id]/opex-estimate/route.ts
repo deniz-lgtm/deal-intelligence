@@ -5,6 +5,11 @@ import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 import { parseJsonObject } from "@/lib/parse-json";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 const MODEL = "claude-sonnet-4-6";
 
 interface OpexEstimate {

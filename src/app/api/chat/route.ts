@@ -5,6 +5,11 @@ import { chatWithDealIntelligence } from "@/lib/claude";
 import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
 import type { Document } from "@/lib/types";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   const { userId, errorResponse } = await requirePermission("ai.chat");
   if (errorResponse) return errorResponse;

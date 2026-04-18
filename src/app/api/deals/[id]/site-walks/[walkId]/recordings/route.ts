@@ -14,6 +14,11 @@ import { transcribeMedia, isSupportedMediaMime, WHISPER_MAX_BYTES } from "@/lib/
 import { processTranscript } from "@/lib/site-walk-ai";
 import { SITE_WALK_AREA_LABELS } from "@/lib/types";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string; walkId: string } }

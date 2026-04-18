@@ -5,6 +5,11 @@ import { extractMarketReport } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { geocodeAddress } from "@/lib/geocode";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 /**
  * GET  /api/deals/:id/market-reports
  *   List every broker market research report uploaded for this deal,

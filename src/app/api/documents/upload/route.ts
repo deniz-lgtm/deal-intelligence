@@ -6,6 +6,11 @@ import { classifyDocument, extractRentRollSummary, diffDocumentVersions } from "
 import { uploadBlob } from "@/lib/blob-storage";
 import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 // 100 MB cap. pdf-parse buffers the entire file in memory to extract
 // text; without a cap a single oversized PDF can OOM the Railway
 // container (typically 512 MB). Most diligence docs — OMs, T-12s,

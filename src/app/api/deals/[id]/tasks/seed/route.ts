@@ -4,6 +4,11 @@ import { milestoneQueries, taskQueries, getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { DEFAULT_MILESTONES, DEFAULT_TASKS } from "@/lib/types";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 async function ensureProjectTables() {
   const pool = getPool();
   await pool.query(`

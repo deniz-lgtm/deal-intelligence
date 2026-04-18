@@ -3,6 +3,11 @@ import { v4 as uuidv4 } from "uuid";
 import { entitlementTemplateQueries } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 /**
  * GET — list the current user's saved entitlement templates.
  * POST — create a new template. Body: { name, tasks[] }.

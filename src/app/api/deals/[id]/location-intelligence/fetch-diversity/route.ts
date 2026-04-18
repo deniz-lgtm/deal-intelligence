@@ -3,6 +3,11 @@ import { locationIntelligenceQueries, dealQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { assertAllowedFetchUrl } from "@/lib/web-allowlist";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 // ── Census ACS Race/Ethnicity & Age Distribution ─────────────────────────────
 // Detailed diversity data from ACS 5-Year at the county level.
 // B03002 = Hispanic or Latino by Race

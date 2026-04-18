@@ -9,6 +9,11 @@ import {
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { enrichCompWithGeocode } from "@/lib/geocode";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/workspace/comps/from-deal
  * Body: { deal_id: string, comp_type?: "sale" | "rent", attach_to_deal?: boolean }

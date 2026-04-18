@@ -10,6 +10,11 @@ import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { STAKEHOLDER_LABELS, DEAL_STAGE_LABELS } from "@/lib/types";
 import type { StakeholderType } from "@/lib/types";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
