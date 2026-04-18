@@ -2278,7 +2278,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       {/* Returns — Before (In-Place) vs After (Pro Forma) */}
       <div className={`border rounded-xl bg-card overflow-hidden ${activeScenario ? "ring-2 ring-amber-300/50" : ""}`}>
         <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
-          <h3 className="font-semibold text-sm">{isGroundUp ? "Returns — Stabilized" : "Returns — In-Place vs Proforma"}{d.has_refi && d.has_financing ? " (Post-Refi)" : ""}</h3>
+          <h3 className="font-semibold text-sm">{isGroundUp ? "Returns — Stabilized" : "Returns — In-Place vs Proforma"}</h3>
           {activeScenario && (
             <span className="text-2xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{activeScenario.name}</span>
           )}
