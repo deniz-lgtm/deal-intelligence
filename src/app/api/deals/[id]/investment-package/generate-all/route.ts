@@ -95,8 +95,19 @@ export async function POST(
       marketReportsQueries.getByDealId(params.id).catch(() => []),
     ]);
 
+    // Guard: if the deal row is missing (deleted between the click and the
+    // request) we want a clean error, not a crash on deal.context_notes.
+    if (!deal) {
+      return NextResponse.json(
+        { error: "Deal not found — it may have been deleted" },
+        { status: 404 }
+      );
+    }
+
     // Use deal notes for context instead of legacy context_notes
-    deal.context_notes = await dealNoteQueries.getMemoryText(params.id) || null;
+    deal.context_notes = await dealNoteQueries
+      .getMemoryText(params.id)
+      .catch(() => "") || null;
 
     // Fetch linked business plan if set
     const businessPlan = deal.business_plan_id
@@ -112,39 +123,56 @@ export async function POST(
 
     // Pull analyst deal notes so they can flow into the UW summary (thesis,
     // risk, context buckets) instead of only landing in the section prompts.
-    const allDealNotes = await dealNoteQueries.getByDealId(params.id) as Array<{ text: string; category: string }>;
+    // Wrapped defensively — a missing deal_notes row should never take the
+    // whole generation down.
+    const allDealNotes = await dealNoteQueries
+      .getByDealId(params.id)
+      .catch((err) => {
+        console.warn("generate-all: dealNoteQueries.getByDealId failed:", err);
+        return [] as Array<{ text: string; category: string }>;
+      }) as Array<{ text: string; category: string }>;
 
     // Build the full computed UW / OM / market analytics blocks ONCE so
     // every section prompt sees the same NOI, cap rate, yield on cost,
     // DSCR, debt yield, loss-to-lease, OpEx build, comp-set averages, and
-    // submarket demographics. Previously the investment-package prompts
-    // only saw raw inputs and had to re-derive returns themselves, which
-    // the model did inconsistently section-to-section.
-    const uwSummary = buildUnderwritingSummary(uw, deal, allDealNotes);
-    const omSummary = buildOmSummary(omAnalysis);
-    // Pull live FRED rates + implied cap / construction loan bands so every
-    // section sees current capital-markets context without having to re-ask.
-    const capitalMarkets = await fetchCapitalMarketsSnapshot().catch(() => null);
+    // submarket demographics. Each helper is wrapped so a single bad field
+    // (e.g. a corrupt numeric in the UW JSONB) can't 500 the whole route.
+    const safe = <T>(fn: () => T, label: string, fallback: T): T => {
+      try { return fn(); } catch (err) {
+        console.error(`generate-all: ${label} threw —`, err);
+        return fallback;
+      }
+    };
+    const uwSummary = safe(() => buildUnderwritingSummary(uw, deal, allDealNotes), "buildUnderwritingSummary", "");
+    const omSummary = safe(() => buildOmSummary(omAnalysis), "buildOmSummary", "");
+    const capitalMarkets = await fetchCapitalMarketsSnapshot().catch((err) => {
+      console.warn("generate-all: fetchCapitalMarketsSnapshot failed:", err);
+      return null;
+    });
 
-    const marketSummary = buildMarketSummary(
+    const marketSummary = safe(() => buildMarketSummary(
       submarketMetrics as AnyRecord | null,
       compsAll as AnyRecord[],
       locationIntelRows as AnyRecord[],
       marketReports as AnyRecord[],
       capitalMarkets
-    );
+    ), "buildMarketSummary", "");
 
     // Build master deal context — now enriched with full UW + OM + market.
-    const dealContext = buildDealContext(
+    const dealContext = safe(() => buildDealContext(
       deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[],
       photos, businessPlan as AnyRecord | null,
       uwSummary, omSummary, marketSummary
-    );
+    ), "buildDealContext", "");
 
     // Build per-section context
     const sectionContexts: Record<string, string> = {};
     for (const sectionId of sections) {
-      sectionContexts[sectionId] = buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc, businessPlan as AnyRecord | null, devPhases as AnyRecord[], preDevCosts as AnyRecord[], compsAll as AnyRecord[], submarketMetrics as AnyRecord | null, locationIntelRows as AnyRecord[]);
+      sectionContexts[sectionId] = safe(
+        () => buildSectionContext(sectionId, deal, uw, omAnalysis, docs as AnyRecord[], checklist as AnyRecord[], photos, n, fc, businessPlan as AnyRecord | null, devPhases as AnyRecord[], preDevCosts as AnyRecord[], compsAll as AnyRecord[], submarketMetrics as AnyRecord | null, locationIntelRows as AnyRecord[]),
+        `buildSectionContext(${sectionId})`,
+        ""
+      );
     }
 
     const audienceTone = AUDIENCE_TONES[audience] || AUDIENCE_TONES.investment_committee;
@@ -192,8 +220,14 @@ Write the "${SECTION_TITLES[sectionId] || sectionId}" section. Use the deal data
 
     return NextResponse.json({ data: results });
   } catch (error) {
+    // Surface the actual error text in the response so the UI toast shows
+    // something actionable instead of an opaque "Generation failed".
     console.error("Generate-all error:", error);
-    return NextResponse.json({ error: "Generation failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: `Generation failed: ${message.slice(0, 300)}` },
+      { status: 500 }
+    );
   }
 }
 
