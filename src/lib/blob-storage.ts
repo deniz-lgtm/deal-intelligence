@@ -110,6 +110,82 @@ export function isBlobUrl(filePath: string): boolean {
 }
 
 /**
+ * Stream a file's contents without ever loading it fully into memory.
+ * Returns a ReadableStream the caller can hand straight to a Response
+ * body, plus content-length / content-type if available.
+ *
+ * Prefer this over readFile() for endpoints that serve files to the
+ * browser — readFile() buffers the whole file and will OOM the Node
+ * process on large PDFs served concurrently.
+ */
+export async function readFileStream(filePath: string): Promise<{
+  stream: ReadableStream<Uint8Array>;
+  contentLength?: number;
+  contentType?: string;
+} | null> {
+  if (isBlobUrl(filePath)) {
+    // Public R2 URL — pass the fetch body straight through.
+    try {
+      const response = await fetch(filePath);
+      if (response.ok && response.body) {
+        const cl = response.headers.get("content-length");
+        return {
+          stream: response.body,
+          contentLength: cl ? Number(cl) : undefined,
+          contentType: response.headers.get("content-type") || undefined,
+        };
+      }
+    } catch {}
+
+    // Fallback: S3 GetObject. AWS SDK v3 body exposes transformToWebStream()
+    // on Node 18+. If that's unavailable we gracefully return null and
+    // the caller can fall back to buffered readFile().
+    if (isR2Configured()) {
+      try {
+        const publicBase = process.env.R2_PUBLIC_URL || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${getBucket()}`;
+        const key = filePath.startsWith(publicBase) ? filePath.slice(publicBase.length + 1) : filePath;
+
+        const client = getR2Client();
+        const result = await client.send(new GetObjectCommand({
+          Bucket: getBucket(),
+          Key: key,
+        }));
+        if (result.Body && typeof (result.Body as unknown as { transformToWebStream?: () => ReadableStream<Uint8Array> }).transformToWebStream === "function") {
+          const stream = (result.Body as unknown as { transformToWebStream: () => ReadableStream<Uint8Array> }).transformToWebStream();
+          return {
+            stream,
+            contentLength: result.ContentLength,
+            contentType: result.ContentType,
+          };
+        }
+      } catch {}
+    }
+    return null;
+  }
+
+  // Local file (dev or legacy)
+  const actualPath = filePath.startsWith("local://")
+    ? filePath.replace("local://", "")
+    : filePath;
+  try {
+    const fs = await import("fs");
+    const path = await import("path");
+    const { Readable } = await import("stream");
+    const resolved = path.isAbsolute(actualPath)
+      ? actualPath
+      : path.join(process.cwd(), actualPath);
+    if (!fs.existsSync(resolved)) return null;
+    const stat = fs.statSync(resolved);
+    const nodeStream = fs.createReadStream(resolved);
+    // Node Readable → Web ReadableStream.
+    const stream = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
+    return { stream, contentLength: stat.size };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read a file — either fetch from R2 URL or read from local disk.
  * Returns the buffer content.
  */

@@ -6,6 +6,14 @@ import { classifyDocument, extractRentRollSummary, diffDocumentVersions } from "
 import { uploadBlob } from "@/lib/blob-storage";
 import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
 
+// 100 MB cap. pdf-parse buffers the entire file in memory to extract
+// text; without a cap a single oversized PDF can OOM the Railway
+// container (typically 512 MB). Most diligence docs — OMs, T-12s,
+// rent rolls, zoning letters — weigh in well under 20 MB, so 100 MB
+// is comfortable headroom without exposing the server to abuse.
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const fmtMB = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+
 async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
   if (mimeType === "application/pdf") {
     try {
@@ -45,6 +53,19 @@ export async function POST(req: NextRequest) {
 
     if (!files || files.length === 0) {
       return NextResponse.json({ error: "No files provided" }, { status: 400 });
+    }
+
+    // Size-check every file BEFORE we start reading any of them into
+    // memory. One oversized file kills the whole batch so the user
+    // gets a useful error instead of a half-complete upload.
+    const oversize = files.find((f) => f.size > MAX_UPLOAD_BYTES);
+    if (oversize) {
+      return NextResponse.json(
+        {
+          error: `"${oversize.name}" is ${fmtMB(oversize.size)} — uploads are capped at ${fmtMB(MAX_UPLOAD_BYTES)}. Compress the PDF or split it before uploading.`,
+        },
+        { status: 413 },
+      );
     }
 
     const uploaded = [];
