@@ -90,11 +90,28 @@ export default function DealOverviewPage({
   // the nav. Collapsed by default.
   const [materialsOpen, setMaterialsOpen] = useState(false);
   const [photos, setPhotos] = useState<Photo[]>([]);
+  // Cover source — persisted per deal in localStorage. "street_view"
+  // and "satellite" use a Google Maps embed; "photo:<id>" uses one of
+  // the deal's uploaded photos. Null = auto-pick (first photo if any,
+  // else street view).
+  const [coverMode, setCoverMode] = useState<string | null>(null);
+  const [coverMenuOpen, setCoverMenuOpen] = useState(false);
   const [underwriting, setUnderwriting] = useState<UnderwritingData | null>(null);
   const [editingProperty, setEditingProperty] = useState(false);
   const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null; deal_scope: DealScope | null }>({ year_built: null, land_acres: null, investment_strategy: null, deal_scope: null });
 
   const [lastActivity, setLastActivity] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const stored = localStorage.getItem(`dealCoverMode:${params.id}`);
+    if (stored) setCoverMode(stored);
+  }, [params.id]);
+
+  const pickCover = (mode: string) => {
+    setCoverMode(mode);
+    localStorage.setItem(`dealCoverMode:${params.id}`, mode);
+    setCoverMenuOpen(false);
+  };
 
   useEffect(() => {
     Promise.all([
@@ -250,12 +267,33 @@ export default function DealOverviewPage({
 
   // Compute financial highlights from underwriting data
   const highlights = computeHighlights(underwriting, deal);
-  const coverPhoto = photos.length > 0 ? photos[0] : null;
   const addressString = [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ");
-  const hasAddress = deal.address || deal.city;
-  const mapsEmbedUrl = hasAddress
+  const hasAddress = !!(deal.address || deal.city);
+  const streetViewEmbed = hasAddress
     ? `https://maps.google.com/maps?q=${encodeURIComponent(addressString)}&output=embed&layer=c`
     : null;
+  const satelliteEmbed = hasAddress
+    ? `https://maps.google.com/maps?q=${encodeURIComponent(addressString)}&t=k&z=18&output=embed`
+    : null;
+  // Resolve the active cover. Priority: explicit choice → first photo
+  // → street view (falls through to a gradient if the deal has no
+  // address). "photo:<id>" references are sanity-checked against the
+  // current photo list so a deleted photo doesn't leave a broken tile.
+  const photoMatch = coverMode?.startsWith("photo:")
+    ? photos.find((p) => p.id === coverMode.slice("photo:".length))
+    : null;
+  const activeCover: { kind: "photo"; photo: Photo } | { kind: "street_view" } | { kind: "satellite" } | { kind: "empty" } =
+    photoMatch
+      ? { kind: "photo", photo: photoMatch }
+      : coverMode === "street_view" && streetViewEmbed
+      ? { kind: "street_view" }
+      : coverMode === "satellite" && satelliteEmbed
+      ? { kind: "satellite" }
+      : photos.length > 0
+      ? { kind: "photo", photo: photos[0] }
+      : streetViewEmbed
+      ? { kind: "street_view" }
+      : { kind: "empty" };
 
   const savePropertyEdits = async () => {
     setDeal((prev: any) => prev ? { ...prev, ...editFields } : prev);
@@ -297,42 +335,117 @@ export default function DealOverviewPage({
 
       {/* ═══ HERO: Photo + Deal Info + Pipeline ═══ */}
       <div className="relative rounded-2xl overflow-hidden border border-border/60 shadow-card z-0">
-        {coverPhoto ? (
-          <div className="relative h-40 md:h-52">
-            <img src={`/api/photos/${coverPhoto.id}`} alt={coverPhoto.caption || deal.name} className="w-full h-full object-cover" />
-            {photos.length > 1 && (
-              <Link href={`/deals/${params.id}/photos`}>
-                <button className="absolute top-3 right-3 flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors z-10">
-                  <ImageIcon className="h-3 w-3" />{photos.length} photos
-                </button>
-              </Link>
-            )}
-          </div>
-        ) : (
-          <div className="relative h-40 md:h-52 overflow-hidden">
-            {mapsEmbedUrl ? (
-              <iframe src={mapsEmbedUrl} className="absolute inset-0 w-full h-full border-0 pointer-events-none" loading="lazy" referrerPolicy="no-referrer-when-downgrade" title="Property street view" />
-            ) : (
-              <div className="absolute inset-0 bg-gradient-to-br from-muted/80 to-muted/30" />
-            )}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
-            <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
-              {hasAddress && (
-                <a href={`https://www.google.com/maps?layer=c&q=${encodeURIComponent(addressString)}`} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors"
-                >
-                  <MapPin className="h-3 w-3" />
-                  Street View
-                </a>
+        <div className="relative h-40 md:h-52 overflow-hidden">
+          {activeCover.kind === "photo" ? (
+            <img
+              src={`/api/photos/${activeCover.photo.id}`}
+              alt={activeCover.photo.caption || deal.name}
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          ) : activeCover.kind === "street_view" && streetViewEmbed ? (
+            <iframe
+              src={streetViewEmbed}
+              className="absolute inset-0 w-full h-full border-0 pointer-events-none"
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              title="Property street view"
+            />
+          ) : activeCover.kind === "satellite" && satelliteEmbed ? (
+            <iframe
+              src={satelliteEmbed}
+              className="absolute inset-0 w-full h-full border-0 pointer-events-none"
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              title="Satellite view"
+            />
+          ) : (
+            <div className="absolute inset-0 bg-gradient-to-br from-muted/80 to-muted/30" />
+          )}
+          {activeCover.kind !== "photo" && (
+            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent pointer-events-none" />
+          )}
+
+          {/* Cover picker + add-photos buttons */}
+          <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
+            <div className="relative">
+              <button
+                onClick={() => setCoverMenuOpen((o) => !o)}
+                className="flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors"
+              >
+                <ImageIcon className="h-3 w-3" />
+                Cover
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {coverMenuOpen && (
+                <div className="absolute right-0 top-full mt-1 min-w-[180px] bg-card border border-border/60 rounded-lg shadow-card overflow-hidden text-xs z-20">
+                  {[
+                    { key: "street_view", label: "Street View", disabled: !streetViewEmbed, hint: !streetViewEmbed ? "Add an address" : undefined },
+                    { key: "satellite", label: "Satellite", disabled: !satelliteEmbed, hint: !satelliteEmbed ? "Add an address" : undefined },
+                  ].map((opt) => {
+                    const isActive = activeCover.kind === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        disabled={opt.disabled}
+                        onClick={() => pickCover(opt.key)}
+                        className={`w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 text-left transition-colors ${
+                          isActive ? "text-primary font-medium bg-primary/5" : "text-foreground"
+                        } ${opt.disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+                        title={opt.hint}
+                      >
+                        <span>{opt.label}</span>
+                        {isActive && <span className="text-[10px]">✓</span>}
+                      </button>
+                    );
+                  })}
+                  {photos.length > 0 && (
+                    <>
+                      <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground border-t border-border/40 bg-muted/20">
+                        Photos ({photos.length})
+                      </div>
+                      <div className="max-h-60 overflow-y-auto">
+                        {photos.map((p) => {
+                          const isActive = activeCover.kind === "photo" && activeCover.photo.id === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              onClick={() => pickCover(`photo:${p.id}`)}
+                              className={`w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50 text-left transition-colors ${
+                                isActive ? "text-primary font-medium bg-primary/5" : "text-foreground"
+                              }`}
+                            >
+                              <img
+                                src={`/api/photos/${p.id}`}
+                                alt=""
+                                className="h-8 w-8 object-cover rounded shrink-0"
+                              />
+                              <span className="truncate flex-1 text-[11px]">
+                                {p.caption || p.original_name || "Untitled photo"}
+                              </span>
+                              {isActive && <span className="text-[10px]">✓</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                  <Link href={`/deals/${params.id}/photos`} className="block">
+                    <div className="px-3 py-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 border-t border-border/40 flex items-center gap-1.5">
+                      <Camera className="h-3 w-3" /> Upload photos
+                    </div>
+                  </Link>
+                </div>
               )}
+            </div>
+            {photos.length > 1 && activeCover.kind === "photo" && (
               <Link href={`/deals/${params.id}/photos`}>
                 <button className="flex items-center gap-1.5 text-2xs text-white/80 bg-black/40 backdrop-blur-sm px-2.5 py-1.5 rounded-lg hover:bg-black/60 transition-colors">
-                  <Camera className="h-3 w-3" /> Add Photos
+                  <ImageIcon className="h-3 w-3" />{photos.length}
                 </button>
               </Link>
-            </div>
+            )}
           </div>
-        )}
+        </div>
         {/* Deal info overlay */}
         <div className="px-5 py-3 bg-card border-t border-border/40">
           <div className="flex items-start justify-between gap-4">
