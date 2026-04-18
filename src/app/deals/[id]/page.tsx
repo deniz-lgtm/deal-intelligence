@@ -619,6 +619,12 @@ export default function DealOverviewPage({
               )}
             </div>
             <div className="p-4">
+              {/* Ground-up deals don't have deal.square_footage /
+                  deal.units set at creation time — those come from
+                  Programming's massing once it's pushed to UW. The
+                  Square Footage + Units cells below fall back to
+                  uw.max_gsf / sum of unit_groups so the Overview
+                  isn't stuck on dashes for ground-up deals. */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3">
                 <div>
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Asking Price</p>
@@ -626,11 +632,40 @@ export default function DealOverviewPage({
                 </div>
                 <div>
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Square Footage</p>
-                  <p className="text-sm font-semibold tabular-nums">{deal.square_footage ? `${formatNumber(deal.square_footage)} SF` : "—"}</p>
+                  {(() => {
+                    const sf = deal.square_footage
+                      || (underwriting as any)?.max_gsf
+                      || ((underwriting as any)?.unit_groups || []).reduce(
+                        (s: number, g: any) => s + (g.unit_count || 0) * (g.sf_per_unit || 0),
+                        0,
+                      )
+                      || 0;
+                    const isDerived = !deal.square_footage && sf > 0;
+                    return (
+                      <p className="text-sm font-semibold tabular-nums">
+                        {sf > 0 ? `${formatNumber(sf)} SF` : "—"}
+                        {isDerived && <span className="ml-1 text-[9px] text-muted-foreground/60 font-normal">from UW</span>}
+                      </p>
+                    );
+                  })()}
                 </div>
                 <div>
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Units</p>
-                  <p className="text-sm font-semibold tabular-nums">{deal.units ? formatNumber(deal.units) : "—"}</p>
+                  {(() => {
+                    const units = deal.units
+                      || ((underwriting as any)?.unit_groups || []).reduce(
+                        (s: number, g: any) => s + (g.unit_count || 0),
+                        0,
+                      )
+                      || 0;
+                    const isDerived = !deal.units && units > 0;
+                    return (
+                      <p className="text-sm font-semibold tabular-nums">
+                        {units > 0 ? formatNumber(units) : "—"}
+                        {isDerived && <span className="ml-1 text-[9px] text-muted-foreground/60 font-normal">from UW</span>}
+                      </p>
+                    );
+                  })()}
                 </div>
                 {deal.bedrooms != null && deal.bedrooms > 0 && (
                   <div>

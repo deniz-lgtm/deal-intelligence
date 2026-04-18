@@ -2313,7 +2313,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           ))}
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-border border-t">
-          {/* Total Units with arrow */}
+          {/* Total Units with arrow. On mixed-use deals we also append
+              per-use commercial SF (retail / office / parking spaces)
+              so the analyst sees the full physical program in one box
+              rather than only the residential unit count. */}
           <div className="bg-card p-3">
             <p className="text-xs text-muted-foreground mb-2">{isSH ? "Total Beds" : isMF ? "Total Units" : "Total SF"}</p>
             {isGroundUp ? (
@@ -2331,6 +2334,29 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </div>
               </div>
             )}
+            {d.mixed_use?.enabled && (d.mixed_use?.components?.length ?? 0) > 0 && (() => {
+              const nonRes = (d.mixed_use?.components || []).filter(
+                (c) => c.component_type !== "residential" && c.sf_allocation > 0,
+              );
+              if (nonRes.length === 0) return null;
+              return (
+                <div className="mt-2 pt-2 border-t border-border/40 space-y-0.5">
+                  {nonRes.map((c) => (
+                    <p
+                      key={c.id}
+                      className="text-[10px] text-muted-foreground tabular-nums flex items-center justify-between gap-2"
+                    >
+                      <span>{c.label}</span>
+                      <span className="font-medium text-muted-foreground/90">
+                        {c.component_type === "parking"
+                          ? `${fn(c.sf_allocation)} spaces`
+                          : `${fn(c.sf_allocation)} SF`}
+                      </span>
+                    </p>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
           {/* Price / Unit|SF|Bed: purchase → sale */}
           <div className="bg-card p-3">
