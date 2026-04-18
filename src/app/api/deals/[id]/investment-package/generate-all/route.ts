@@ -9,6 +9,7 @@ import {
   buildMarketSummary,
 } from "@/lib/deal-analytics-context";
 import { fetchCapitalMarketsSnapshot } from "@/lib/capital-markets";
+import { CONCISE_STYLE } from "@/lib/ai-style";
 
 const MODEL = "claude-sonnet-4-6";
 let _client: Anthropic | null = null;
@@ -19,41 +20,39 @@ function getClient() {
 
 const AUDIENCE_TONES: Record<string, string> = {
   lp_investor:
-    "AUDIENCE: Institutional Limited Partners (public pensions, sovereigns, endowments, insurance co's, large family offices). They evaluate dozens of funds and deals per quarter and will benchmark this investment against their entire portfolio.\n" +
-    "VOICE: Formal, institutional, return-focused — but not promotional. Lead with the thesis in one sentence. Emphasize gross/net returns, DPI/MOIC pacing, downside protection, alignment (GP co-invest, fee structure), sponsor track record with specific prior realizations, and exit optionality. Every return figure gets a matching downside scenario. Risk is addressed head-on with mitigants — never buried. Use $-denominated numbers, bps, and comps. No adjectives (no 'irreplaceable', 'premier', 'world-class').",
+    "AUDIENCE: Institutional LPs (pensions, sovereigns, endowments, insurance, large family offices). They benchmark every deal against their entire portfolio.\n" +
+    "VOICE: Formal, institutional, return-focused. Every return figure gets a matching downside in the same bullet. Risks get mitigants in the same bullet. No adjectives about the deal — only about the sponsor's realized track record.",
   investment_committee:
-    "AUDIENCE: Internal Investment Committee at a top-tier institutional manager (Blackstone / KKR / Starwood / Oaktree caliber). Readers include Managing Directors, the Head of Acquisitions, a Chief Investment Officer, and Risk. They have 15 minutes with this memo before a 45-minute discussion. They do not need education — they need the sharp edges.\n" +
-    "VOICE: Analytical, blunt, assumption-driven. Open with the deal in ONE sentence (strategy / size / basis / yield on cost / IRR / hold). Follow with the three reasons this deal works and the three reasons it could fail. Separate UNDERWRITTEN from VERIFIED from ASSUMED. Show a base / downside / upside sensitivity on the two most important variables (rent growth and exit cap for stabilized; cost and lease-up for ground-up). Quantify every risk in dollars or bps. Compare basis to recent submarket comps and flag the spread. Take a position — do not hedge. No marketing language. No 'important to note'.",
+    "AUDIENCE: Internal IC at a top-tier manager (Blackstone / KKR / Starwood / Oaktree caliber). Readers have 15 minutes before a 45-minute discussion. They do not need education.\n" +
+    "VOICE: Blunt, analytical, assumption-driven. Separate UNDERWRITTEN / VERIFIED / ASSUMED. Compare basis to comp-set spread in bps. Take a position — do not hedge. No marketing language.",
   lender:
-    "AUDIENCE: Senior lender / debt capital markets counterparty (balance-sheet bank, debt fund, agency, life co). They underwrite the collateral and the sponsor, not the equity return.\n" +
-    "VOICE: Conservative, coverage-focused. Lead with: loan request, LTV/LTC, DSCR at stabilization, debt yield, recourse posture. Emphasize collateral quality, in-place cash flow stability, rent roll granularity, tenant credit (if commercial), environmental/physical condition, and sponsor guarantee capacity. Stress test DSCR and debt yield against +100/+200 bps rate moves and -10% NOI. Address any prior workouts or modifications on sponsor's portfolio directly.",
+    "AUDIENCE: Senior lender / debt capital markets (balance-sheet bank, debt fund, agency, life co). They underwrite collateral and sponsor, not equity return.\n" +
+    "VOICE: Conservative, coverage-focused. Lead every bullet with LTV / LTC / DSCR / debt yield / recourse. Stress DSCR and debt yield against +100/+200 bps rate moves and −10% NOI.",
   internal_review:
-    "AUDIENCE: Internal acquisitions / asset management team doing initial screen. Purpose is a pre-IC go/no-go.\n" +
-    "VOICE: Direct, efficient, engineer-style. Flag blockers in the first paragraph. State the bid strategy, the walk price, and the re-trade triggers. Polish is not needed — signal is. If the deal is a pass, say so and list the three dispositive reasons.",
+    "AUDIENCE: Internal acquisitions team, pre-IC screen.\n" +
+    "VOICE: Direct, engineer-style. Flag blockers first. State the bid, walk price, and re-trade triggers. If the deal is a pass, say so and list the three dispositive reasons.",
 };
 
 const FORMAT_INSTRUCTIONS: Record<string, string> = {
   pitch_deck:
-    "FORMAT: Board-ready slide deck.\n" +
-    "- 3-6 bullet points per slide, each bullet ≤ 15 words.\n" +
-    "- Lead bullet is the takeaway / headline metric. Supporting bullets are evidence.\n" +
-    "- Use markdown: `## Subheader` (max 2 per slide), `-` for bullets, `**bold**` for the key metric inside each bullet.\n" +
-    "- Prefer numbers to adjectives. Never write 'strong demand' — write 'Submarket vacancy 4.8%, 130 bps below MSA'.\n" +
-    "- No paragraphs, no run-on sentences, no filler.",
+    "FORMAT: Board-ready slide.\n" +
+    "- 3-6 bullets per section. Each bullet ≤ 15 words.\n" +
+    "- Bullet 1 is the headline metric. Bullets 2+ are supporting evidence.\n" +
+    "- Prefer numbers to adjectives. No run-on sentences. No filler.\n" +
+    "- Markdown: `-` for bullets. `**bold**` only for the key metric inside a bullet. No `##` headers.",
   investment_memo:
-    "FORMAT: Institutional investment memo (Word / PDF).\n" +
-    "- Open each section with a 1-sentence bottom-line / takeaway in bold.\n" +
-    "- Follow with 2-4 focused paragraphs (3-5 sentences each) of supporting analysis. Each paragraph makes ONE point.\n" +
-    "- Mix prose with tight bullet lists when showing metrics, comps, or sensitivities — don't bury numbers in prose.\n" +
-    "- Use markdown `##` for section headers, `###` for sub-topics (e.g. 'Supply Pipeline', 'Rent Growth Drivers').\n" +
-    "- Cite sources inline: '(per T-12)', '(CoStar Q3 2024)', '(broker OM)'. If the source is missing, flag it as 'UNVERIFIED'.\n" +
-    "- Always show base case with at least one downside sensitivity for the numbers that matter.",
+    "FORMAT: Institutional investment memo.\n" +
+    "- Each section: 1 bold takeaway sentence (≤ 20 words) + 4-8 bullets (≤ 20 words each).\n" +
+    "- Every bullet carries a specific number, source citation, or action. If it doesn't, delete it.\n" +
+    "- NO multi-sentence paragraphs of prose. NO section recaps. NO transitional language between bullets.\n" +
+    "- Cite sources inline in parentheses: (T-12), (CoStar Q3 '24), (broker OM), (internal UW). If the source is missing, tag the bullet UNVERIFIED.\n" +
+    "- For returns/exit/risk sections, show base / downside / upside on one inline line each, not three paragraphs.",
   one_pager:
-    "FORMAT: Single-page teaser / executive summary.\n" +
-    "- Total length ≤ 350 words across ALL sections combined.\n" +
-    "- Each section = 1 headline sentence + at most 2 bullets with the 3-4 numbers that matter.\n" +
-    "- Focus: thesis, basis ($/unit or $/SF), going-in and stabilized yield, levered IRR, equity multiple, hold, total equity check.\n" +
-    "- No narrative. No adjectives. Just the numbers and the thesis.",
+    "FORMAT: Single-page teaser.\n" +
+    "- ≤ 350 words across ALL sections combined. Be ruthless.\n" +
+    "- Each section: 1 headline sentence + up to 2 bullets. The bullets carry 3-4 numbers.\n" +
+    "- Thesis, basis ($/unit or $/SF), going-in yield, stabilized yield, levered IRR, equity multiple, hold, equity check.\n" +
+    "- No narrative. No adjectives. Numbers and thesis only.",
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -191,7 +190,9 @@ export async function POST(
       const userNotes = existingNotes[sectionId]?.filter(n => n.trim()) || [];
       const sectionCtx = sectionContexts[sectionId] || "";
 
-      const prompt = `${audienceTone}
+      const prompt = `${CONCISE_STYLE}
+
+${audienceTone}
 
 ${formatInstr}
 
@@ -500,7 +501,7 @@ function buildSectionContext(
         "",
         siteMassing,
         "",
-        "GUIDANCE: Treat GSF / NRSF / unit count / parking as the BUILDABLE PROGRAM driving the underwriting. Call out lot coverage, FAR implied by above-grade GSF / parcel SF, any density-bonus assumptions, and whether parking ratio is in line with submarket norms for the product type. If more than one massing exists, compare the base case to the alternatives.",
+        "SHAPE: Bullets for GSF, NRSF, units, parking, lot coverage %, implied FAR. 1 bullet flagging density-bonus use. 1 bullet on parking ratio vs. submarket norm. If multiple massings, 1 bullet comparing base to alternative.",
       ].filter(Boolean).join("\n");
     }
 
@@ -618,8 +619,7 @@ function buildSectionContext(
         `Exit Cap: ${uw.exit_cap_rate}% | Hold: ${uw.hold_period_years} years`,
         affSnippet,
         ``,
-        `[GUIDANCE FOR WRITER]`,
-        `Open with the one-sentence trade: strategy, size, basis, stabilized yield on cost, levered IRR, equity multiple, hold. Then show the sources-and-uses and total cap in a clean list. Compare implied basis ($/unit or $/SF) to the selected sale comps and state the spread. Flag whether closing costs, CapEx reserve, and financing fees are adequately reserved.`,
+        `SHAPE: Takeaway sentence (strategy/size/basis/stabilized YoC/IRR/EM/hold). Then sources-and-uses as Label: value bullets. Then 1 bullet comparing $/unit or $/SF basis to sale comp average (spread in %). Flag closing costs / CapEx reserve / financing fees if under-reserved.`,
       ].filter(Boolean).join("\n");
     }
 
@@ -739,10 +739,9 @@ function buildSectionContext(
         siteMassing ? `\n[GROUND-UP PROGRAM]\n${siteMassing}` : "",
         deal.context_notes ? `\nAnalyst Strategy Notes: ${deal.context_notes}` : "",
         ``,
-        `[GUIDANCE FOR WRITER]`,
         isGroundUp
-          ? `This is a ground-up development. Open with the program (buildable GSF, unit count, parking, use mix from the massing). Then lay out the critical-path milestones (entitlement, permit, GMP, construction start, TCO, stabilization) and the budget (hard $/GSF, soft as % of hard, contingency). Quantify the value-creation spread: development yield on cost vs. exit cap, implied untrended spread in bps, and the comp basis that prices the finished product.`
-          : `Lay out the value-creation thesis in 3 steps: (1) what we're buying and what's broken / under-managed, (2) the specific interventions (capex, re-tenanting, re-branding, operational lift), and (3) the resulting NOI lift and yield-on-cost uplift. Quantify $/unit in CapEx, expected rent lift $/unit, implied ROC on CapEx, and timing to stabilization.`,
+          ? `SHAPE: Program bullets (buildable GSF, units, parking, use mix). Then critical-path milestone bullets (entitlement → permit → GMP → start → TCO → stabilization). Then budget bullets (hard $/GSF, soft % of hard, contingency). Then 1 bullet quantifying dev yield-on-cost vs. exit cap in bps.`
+          : `SHAPE: 3 thesis bullets (what's broken + specific interventions + resulting NOI lift). Then bullets for: CapEx $/unit, expected rent lift $/unit, implied ROC on CapEx, timing to stabilization.`,
       ].filter(Boolean).join("\n");
     }
 
@@ -781,8 +780,7 @@ function buildSectionContext(
         targetEM,
         deal.context_notes ? `Analyst Context: ${deal.context_notes}` : "",
         ``,
-        `[GUIDANCE FOR WRITER]`,
-        `Present returns in a BASE / DOWNSIDE / UPSIDE frame. Base = model output. Downside = 50 bps exit cap expansion AND rent growth 150 bps below plan. Upside = 50 bps cap compression AND rent growth 150 bps above plan. For each scenario list: levered IRR, equity multiple, stabilized yield-on-cost, and DSCR at stabilization. Identify the TWO variables the return is most sensitive to and quantify the break-even on each. If business-plan targets are set, state whether the base case hits the bottom, middle, or top of that band.`,
+        `SHAPE: 3 one-line scenarios on consecutive bullets (labels inline, not paragraphs):\n- Base: <IRR / EM / YoC / DSCR> at model assumptions\n- Downside: +50bps exit cap, rent growth -150bps — <new IRR / EM>\n- Upside: -50bps exit cap, rent growth +150bps — <new IRR / EM>\nThen 2 bullets: the two variables returns are most sensitive to, with break-even on each. Then 1 bullet on whether base case hits bottom/middle/top of the business-plan band.`,
       ].filter(Boolean).join("\n");
     }
 
@@ -800,8 +798,7 @@ function buildSectionContext(
         avgCompCap ? `Sale Comp Average Cap: ${avgCompCap.toFixed(2)}% (across ${saleComps.length} selected comps)` : "",
         avgCompPPU ? `Sale Comp Average $/Unit: $${Math.round(avgCompPPU).toLocaleString()}` : "",
         ``,
-        `[GUIDANCE FOR WRITER]`,
-        `Frame exit with: (1) underwritten exit cap vs. trailing-12 comp-set average (state the spread in bps — expansion or compression), (2) expected buyer profile (institutional core, value-add follow-on, private capital, 1031), (3) optionality — refi/recap at year N, partial sale, partnership buyout. Always include one "break-in-case-of-emergency" exit at a stressed cap. Never assume exit cap < going-in cap without explicit rate-environment justification.`,
+        `SHAPE:\n- Bullet: exit cap vs. trailing-12 comp-set average, spread in bps (expansion or compression).\n- Bullet: expected buyer profile (core / value-add follow-on / private capital / 1031).\n- Bullet: optionality — refi/recap at year N, partial sale, partnership buyout.\n- Bullet: break-glass stressed exit at +100bps cap.\nNever assume exit cap < going-in without naming the rate-environment catalyst.`,
       ].filter(Boolean).join("\n");
     }
 

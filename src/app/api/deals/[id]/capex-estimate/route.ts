@@ -279,7 +279,7 @@ Return ONLY a JSON object, no explanation:
 {
   "hard_cost_per_sf": 245,
   "soft_cost_pct": 25,
-  "basis": "5-over-1 wood-frame MF in Austin TX, mid-2025 pricing. Base Type III/V ~$215/GSF + ~15% for structured podium parking (28% of GSF) + 3% escalation to mid-construction = ~$245/GSF. Soft at 25% reflects typical 24-mo entitlement/construction timeline and market-rate interest reserve.",
+  "basis": "5-over-1 wood-frame MF in Austin TX, mid-2025 pricing: Type III/V ~$215/GSF + 15% for podium parking (28% of GSF) + 3% escalation. One sentence only.",
   "items": [
     { "subcategory": "site_work",          "unit_cost": 18 },
     { "subcategory": "off_sites",          "unit_cost": 0 },
@@ -326,11 +326,11 @@ PRODUCT-TYPE PLAYBOOKS:
 - MIXED-USE / HOSPITALITY: keep unit + PIP scope separate; differentiate FF&E vs. Case Goods vs. soft goods.
 
 RULES:
-- Every item needs a realistic quantity and a unit of measure: "per unit", "per SF", "lump sum", "per bay", "per door".
-- Cost_per_unit is the UNIT RATE, not the line total — the line total = quantity × cost_per_unit.
-- Basis must cite the reason (age from year-built, scope tier tied to business plan, comp rent premium, OM red flag).
-- Prioritize items that are either (a) capital-critical (roof, HVAC, envelope, parking) or (b) directly tied to the rent lift / re-tenanting thesis. Avoid noise like "miscellaneous repairs" — that belongs in operating reserves.
-- Use a renovation-vintage lens: properties 15+ years past last capital event usually need envelope + MEP; 5-10 years out typically just cosmetic + targeted mechanical.
+- Every item has a realistic quantity and unit of measure: per unit / per SF / lump sum / per bay / per door.
+- cost_per_unit is the UNIT RATE, not the line total — line total = quantity × cost_per_unit.
+- basis is ONE short phrase (≤ 20 words): cite the reason in fragment form. No full sentences. Example format: "18k SF TPO, age >20yrs, ~$14/SF incl. tear-off". No paragraphs.
+- Prioritize items that are capital-critical (roof, HVAC, envelope, parking) or directly tied to the rent-lift / re-tenanting thesis. No "miscellaneous repairs".
+- 15+ years past last capital event → envelope + MEP. 5-10 years → cosmetic + targeted mechanical.
 
 Return ONLY a JSON array, no explanation:
 [
@@ -339,14 +339,14 @@ Return ONLY a JSON array, no explanation:
     "quantity": 1,
     "unit": "lump sum",
     "cost_per_unit": 45000,
-    "basis": "18,000 SF flat TPO roof, age >20 yrs per year-built, replacement at ~$14/SF incl. tear-off and insulation"
+    "basis": "18k SF TPO, age >20yrs, ~$14/SF incl. tear-off + insulation"
   },
   {
     "label": "HVAC Replacement — RTUs",
     "quantity": 4,
     "unit": "unit",
     "cost_per_unit": 8000,
-    "basis": "4 rooftop package units at end-of-life (15+ yrs); $8k per 5-ton RTU installed"
+    "basis": "4 RTUs end-of-life (15+ yrs); $8k per 5-ton unit installed"
   }
 ]`;
 }
