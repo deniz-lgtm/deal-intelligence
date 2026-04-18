@@ -25,6 +25,7 @@ import {
   TableCell,
   WidthType,
   AlignmentType,
+  LevelFormat,
 } from "docx";
 
 // ─── Branding theme ─────────────────────────────────────────────────────────
@@ -276,10 +277,16 @@ export function markdownToDocx(
     // Ordered list — use Word numbering reference (registered by caller)
     const olMatch = raw.match(/^(\s*)(\d+)\.\s+(.+)/);
     if (olMatch) {
-      const indent = olMatch[1].length;
-      const level = Math.min(2, Math.floor(indent / 2));
+      const indentCols = olMatch[1].length;
+      const level = Math.min(2, Math.floor(indentCols / 2));
+      // Per-level indent now lives here (not on DOCX_NUMBERING) because
+      // docx 9.x has been inconsistent about accepting `style` on level
+      // options. Indent values mirror the Word defaults: 360 twips per
+      // level with a 260-twip hanging indent for the number.
+      const leftIndent = 360 + level * 360;
       children.push(new Paragraph({
         numbering: { reference: "md-numbering", level },
+        indent: { left: leftIndent, hanging: 260 },
         children: inlineToDocxRuns(olMatch[3], { size: bodySize, color: bodyColor, font: bFont }),
         spacing: { before: 40, after: 40 },
       }));
@@ -348,31 +355,20 @@ function renderDocxTable(
 // so that ordered list paragraphs referencing `md-numbering` render as real
 // Word numbered lists (auto-renumbering, nested levels) instead of literal
 // "1. foo" text.
+//
+// Kept intentionally minimal: docx 9.x has been fussy about the `style`
+// sub-key on level options in some minor versions, and the symptom is a
+// completely-failed Packer.toBuffer() — which previously swallowed as
+// "Export failed" with no detail. Per-paragraph indent is set on each
+// ordered-list Paragraph in markdownToDocx() below, so we don't lose the
+// visual hierarchy by dropping it here.
 export const DOCX_NUMBERING = {
   config: [{
     reference: "md-numbering",
     levels: [
-      {
-        level: 0,
-        format: "decimal" as const,
-        text: "%1.",
-        alignment: AlignmentType.START,
-        style: { paragraph: { indent: { left: 360, hanging: 260 } } },
-      },
-      {
-        level: 1,
-        format: "lowerLetter" as const,
-        text: "%2.",
-        alignment: AlignmentType.START,
-        style: { paragraph: { indent: { left: 720, hanging: 260 } } },
-      },
-      {
-        level: 2,
-        format: "lowerRoman" as const,
-        text: "%3.",
-        alignment: AlignmentType.START,
-        style: { paragraph: { indent: { left: 1080, hanging: 260 } } },
-      },
+      { level: 0, format: LevelFormat.DECIMAL, text: "%1.", alignment: AlignmentType.START },
+      { level: 1, format: LevelFormat.LOWER_LETTER, text: "%2.", alignment: AlignmentType.START },
+      { level: 2, format: LevelFormat.LOWER_ROMAN, text: "%3.", alignment: AlignmentType.START },
     ],
   }],
 };

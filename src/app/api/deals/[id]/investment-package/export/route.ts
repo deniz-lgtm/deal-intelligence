@@ -228,12 +228,11 @@ export async function POST(
               x: 0.8, y: 1.2, w: 11.5, h: 5.5,
               valign: "top",
               fontFace: bodyFont,
-              // Auto-shrink so long AI-generated sections fit the slide
-              // instead of silently clipping off the bottom — the #1 PPTX
-              // formatting defect users reported.
-              autoFit: true,
+              // Shrink text to fit so long AI-generated sections don't clip
+              // off the bottom of the slide. `shrinkText: true` is the
+              // widely-supported PptxGenJS option; older versions choke on
+              // the combined `autoFit`/`fit` options so we use only this.
               shrinkText: true,
-              fit: "shrink",
             } as unknown as Parameters<typeof slide.addText>[1]
           );
         }
@@ -270,7 +269,11 @@ export async function POST(
     });
   } catch (error) {
     console.error("Export PPTX error:", error);
-    return NextResponse.json({ error: "Export failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: `Export failed: ${message.slice(0, 300)}` },
+      { status: 500 }
+    );
   }
 }
 
@@ -430,27 +433,16 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
     }));
   }
 
+  // markdownToDocx already sets per-run size / bold / color / font on each
+  // heading paragraph, so the Document-level paragraphStyles block is
+  // redundant — and has been a source of Packer.toBuffer() crashes on
+  // certain docx 9.x versions. Keep the config to just the numbering ref
+  // + a plain default body style.
   const doc = new Document({
     sections: [{ children }],
-    // Register the numbering reference the shared markdown renderer uses
-    // for ordered lists — without this, `1. foo` lines render as literal
-    // text instead of real Word auto-numbered lists.
     numbering: DOCX_NUMBERING,
     styles: {
       default: { document: { run: { font: bFont, size: 22 } } },
-      // Explicit H1/H2/H3 styling so the markdown renderer's heading
-      // levels stay visually distinct in the final DOCX.
-      paragraphStyles: [
-        { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal",
-          run: { size: 32, bold: true, color: cSecondary, font: hFont },
-          paragraph: { spacing: { before: 320, after: 160 } } },
-        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal",
-          run: { size: 26, bold: true, color: cPrimary, font: hFont },
-          paragraph: { spacing: { before: 260, after: 120 } } },
-        { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal",
-          run: { size: 22, bold: true, color: cAccent, font: hFont },
-          paragraph: { spacing: { before: 200, after: 100 } } },
-      ],
     },
   });
 

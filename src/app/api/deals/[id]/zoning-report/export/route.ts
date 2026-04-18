@@ -245,21 +245,13 @@ export async function POST(
       }));
     }
 
+    // paragraphStyles block dropped — redundant with per-run formatting
+    // and has triggered Packer.toBuffer() crashes on certain docx 9.x
+    // versions. Heading visuals come from the TextRuns themselves.
     const doc = new Document({
       numbering: DOCX_NUMBERING,
       styles: {
         default: { document: { run: { font: bFont, size: 20 } } },
-        paragraphStyles: [
-          { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal",
-            run: { size: 32, bold: true, color: theme.secondaryColor, font: hFont },
-            paragraph: { spacing: { before: 320, after: 160 } } },
-          { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal",
-            run: { size: 26, bold: true, color: theme.primaryColor, font: hFont },
-            paragraph: { spacing: { before: 260, after: 120 } } },
-          { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal",
-            run: { size: 22, bold: true, color: theme.accentColor, font: hFont },
-            paragraph: { spacing: { before: 200, after: 100 } } },
-        ],
       },
       sections: [{ children }],
     });
@@ -278,7 +270,11 @@ export async function POST(
     });
   } catch (error) {
     console.error("Zoning export error:", error);
-    return NextResponse.json({ error: "Export failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: `Export failed: ${message.slice(0, 300)}` },
+      { status: 500 }
+    );
   }
 }
 

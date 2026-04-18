@@ -41,9 +41,11 @@ export async function POST(
     const children = parseMarkdownToDocx(markdown, dealName, branding);
 
     const theme = resolveBranding(branding);
+    // Keep the Document config minimal — markdownToDocx sets per-run
+    // size/bold/color/font on each heading so the Document-level
+    // paragraphStyles block is redundant and has been a source of
+    // Packer.toBuffer() crashes on certain docx 9.x versions.
     const doc = new Document({
-      // Register ordered-list numbering so `1. foo` in the markdown renders
-      // as a real Word numbered list instead of literal "1. foo" text.
       numbering: DOCX_NUMBERING,
       styles: {
         default: {
@@ -52,19 +54,6 @@ export async function POST(
             paragraph: { spacing: { after: 120 } },
           },
         },
-        // Explicit H1/H2/H3 sizing + coloring so the three heading levels
-        // are visually distinguishable in Word.
-        paragraphStyles: [
-          { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal",
-            run: { size: 32, bold: true, color: theme.secondaryColor, font: theme.headerFont },
-            paragraph: { spacing: { before: 320, after: 160 } } },
-          { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal",
-            run: { size: 26, bold: true, color: theme.primaryColor, font: theme.headerFont },
-            paragraph: { spacing: { before: 260, after: 120 } } },
-          { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal",
-            run: { size: 22, bold: true, color: theme.accentColor, font: theme.headerFont },
-            paragraph: { spacing: { before: 200, after: 100 } } },
-        ],
       },
       sections: [
         {
@@ -94,7 +83,11 @@ export async function POST(
     });
   } catch (error) {
     console.error("DD Abstract Word export error:", error);
-    return NextResponse.json({ error: "Export failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: `Export failed: ${message.slice(0, 300)}` },
+      { status: 500 }
+    );
   }
 }
 
