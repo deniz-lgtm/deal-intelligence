@@ -5059,3 +5059,119 @@ export const dealContactQueries = {
     await pool.query("DELETE FROM deal_contacts WHERE id = $1", [id]);
   },
 };
+
+// ─── Usage / storage rollups ─────────────────────────────────────────────────
+//
+// Per-user totals across the file-storing tables. Powers the Storage panel
+// on the admin page so you can see at a glance who's consuming what — and
+// catch a runaway uploader before R2 + Postgres bills surprise anyone.
+// We bucket per-table sums in subqueries before joining so the LEFT JOINs
+// don't multiply rows (a Cartesian product of documents × photos for a
+// single deal would inflate sizes by 100x).
+
+export interface UserStorageRow {
+  user_id: string;
+  email: string;
+  name: string | null;
+  deal_count: number;
+  doc_count: number;
+  doc_bytes: number;
+  photo_count: number;
+  photo_bytes: number;
+  total_bytes: number;
+}
+
+export interface StorageTotals {
+  user_count: number;
+  deal_count: number;
+  doc_count: number;
+  doc_bytes: number;
+  photo_count: number;
+  photo_bytes: number;
+  total_bytes: number;
+}
+
+export const usageQueries = {
+  /**
+   * Per-user storage rollup, sorted by largest footprint first.
+   * Includes users with zero owned deals so admins can see the full
+   * roster (a brand-new user is just a row of zeros, not a missing one).
+   */
+  getStorageByUser: async (): Promise<UserStorageRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(`
+      SELECT
+        u.id   AS user_id,
+        u.email,
+        u.name,
+        COALESCE(d.deal_count, 0)::int   AS deal_count,
+        COALESCE(doc.cnt, 0)::int        AS doc_count,
+        COALESCE(doc.bytes, 0)::bigint   AS doc_bytes,
+        COALESCE(ph.cnt, 0)::int         AS photo_count,
+        COALESCE(ph.bytes, 0)::bigint    AS photo_bytes,
+        (COALESCE(doc.bytes, 0) + COALESCE(ph.bytes, 0))::bigint AS total_bytes
+      FROM users u
+      LEFT JOIN (
+        SELECT owner_id, COUNT(*) AS deal_count
+        FROM deals
+        WHERE owner_id IS NOT NULL
+        GROUP BY owner_id
+      ) d ON d.owner_id = u.id
+      LEFT JOIN (
+        SELECT deals.owner_id, COUNT(*) AS cnt, SUM(documents.file_size) AS bytes
+        FROM documents
+        JOIN deals ON deals.id = documents.deal_id
+        WHERE deals.owner_id IS NOT NULL
+        GROUP BY deals.owner_id
+      ) doc ON doc.owner_id = u.id
+      LEFT JOIN (
+        SELECT deals.owner_id, COUNT(*) AS cnt, SUM(photos.file_size) AS bytes
+        FROM photos
+        JOIN deals ON deals.id = photos.deal_id
+        WHERE deals.owner_id IS NOT NULL
+        GROUP BY deals.owner_id
+      ) ph ON ph.owner_id = u.id
+      ORDER BY total_bytes DESC, u.email ASC
+    `);
+    return res.rows.map((r) => ({
+      user_id: r.user_id,
+      email: r.email,
+      name: r.name,
+      deal_count: Number(r.deal_count) || 0,
+      doc_count: Number(r.doc_count) || 0,
+      doc_bytes: Number(r.doc_bytes) || 0,
+      photo_count: Number(r.photo_count) || 0,
+      photo_bytes: Number(r.photo_bytes) || 0,
+      total_bytes: Number(r.total_bytes) || 0,
+    }));
+  },
+
+  /**
+   * Workspace-wide totals — handy as a single hero number on the admin
+   * page so you can spot trend changes without scanning the per-user table.
+   */
+  getStorageTotals: async (): Promise<StorageTotals> => {
+    const pool = getPool();
+    const res = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM users)::int AS user_count,
+        (SELECT COUNT(*) FROM deals)::int AS deal_count,
+        (SELECT COUNT(*) FROM documents)::int AS doc_count,
+        COALESCE((SELECT SUM(file_size) FROM documents), 0)::bigint AS doc_bytes,
+        (SELECT COUNT(*) FROM photos)::int AS photo_count,
+        COALESCE((SELECT SUM(file_size) FROM photos), 0)::bigint AS photo_bytes
+    `);
+    const r = res.rows[0] || {};
+    const docBytes = Number(r.doc_bytes) || 0;
+    const photoBytes = Number(r.photo_bytes) || 0;
+    return {
+      user_count: Number(r.user_count) || 0,
+      deal_count: Number(r.deal_count) || 0,
+      doc_count: Number(r.doc_count) || 0,
+      doc_bytes: docBytes,
+      photo_count: Number(r.photo_count) || 0,
+      photo_bytes: photoBytes,
+      total_bytes: docBytes + photoBytes,
+    };
+  },
+};
