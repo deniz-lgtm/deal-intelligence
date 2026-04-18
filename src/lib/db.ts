@@ -4,12 +4,37 @@ import { Pool } from "pg";
 
 let _pool: Pool | null = null;
 
+// Build-phase stub pool. Returned from getPool() when DATABASE_URL isn't set
+// AND we're running inside `next build`. Routes that actually run during the
+// static-page-generation phase (despite `export const dynamic = "force-dynamic"`)
+// will pull this back, attempt a query, and get a clean rejected promise that
+// bubbles into the route's try/catch as a normal error response. Critically,
+// getPool() ITSELF no longer throws at module-eval / build time — that was
+// causing Railway's "Generating static pages" phase to fail the entire build
+// every time we deployed without a Postgres plugin attached to the build env.
+function makeBuildStubPool(): Pool {
+  const reject = () =>
+    Promise.reject(new Error("Database unavailable during build (DATABASE_URL not set)"));
+  // The routes only call .query(); no need to stub the entire Pool surface.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return { query: reject, on: () => undefined, end: reject } as any;
+}
+
 export function getPool(): Pool {
   if (_pool) return _pool;
 
   const connectionString = process.env.DATABASE_URL;
 
   if (!connectionString) {
+    // During the Next.js build phase, return the stub instead of throwing.
+    // The error will surface at .query() time and be caught by the route's
+    // try/catch, which produces a 500 — not a build failure. At true
+    // runtime in production, the same path is taken but should never hit
+    // because Railway injects DATABASE_URL when a Postgres plugin is
+    // attached to the service.
+    if (process.env.NEXT_PHASE === "phase-production-build") {
+      return makeBuildStubPool();
+    }
     throw new Error(
       "DATABASE_URL environment variable is not set. " +
         "Add a Postgres database in your Railway project and it will be set automatically."

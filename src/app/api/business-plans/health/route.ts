@@ -8,6 +8,12 @@ import { getPool } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Build-phase short-circuit. If DATABASE_URL isn't injected (Railway's
+  // build env), return a benign 503 immediately so the build log stays
+  // clean and Next.js doesn't fail the static-page-generation phase.
+  if (!process.env.DATABASE_URL) {
+    return NextResponse.json({ ok: false, error: "Database not configured" }, { status: 503 });
+  }
   try {
     const pool = getPool();
 

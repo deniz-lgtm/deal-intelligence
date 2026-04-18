@@ -8,6 +8,12 @@ import { dropboxQueries } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Build-phase short-circuit. If DATABASE_URL isn't injected (Railway's
+  // build env), return "not connected" immediately so the build log stays
+  // clean and Next.js doesn't fail static-page generation.
+  if (!process.env.DATABASE_URL) {
+    return NextResponse.json({ data: { connected: false } });
+  }
   try {
     const account = await dropboxQueries.get();
     if (!account) {
