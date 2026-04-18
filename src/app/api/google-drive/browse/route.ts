@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 import { listFolder, refreshAccessToken } from "@/lib/google-drive";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   const folderId = new URL(req.url).searchParams.get("folder_id") || "root";
   try {

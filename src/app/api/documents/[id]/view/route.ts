@@ -3,6 +3,11 @@ import { documentQueries } from "@/lib/db";
 import { readFile, readFileStream } from "@/lib/blob-storage";
 import type { Document } from "@/lib/types";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 export async function GET(
   _req: Request,
   { params }: { params: { id: string } }

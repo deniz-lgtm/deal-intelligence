@@ -4,6 +4,11 @@ import type { Photo, Deal } from "@/lib/types";
 import fs from "fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 const MODEL = "claude-sonnet-4-6";
 
 export async function POST(

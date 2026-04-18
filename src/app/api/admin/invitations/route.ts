@@ -3,6 +3,11 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { requireAdmin } from "@/lib/auth";
 import { recordAudit } from "@/lib/admin-helpers";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/admin/invitations
  * List pending and recently accepted Clerk invitations.
