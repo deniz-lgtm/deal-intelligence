@@ -7,6 +7,7 @@ import {
   resolveBranding,
   markdownToPptxBlocks,
   markdownToDocx,
+  shadeHex,
 } from "@/lib/export-markdown";
 
 interface ExportSection {
@@ -421,7 +422,7 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
       children: [new TextRun({ text: "TABLE OF CONTENTS", size: 24, bold: true, color: cSecondary, font: hFont })],
       heading: HeadingLevel.HEADING_2,
       spacing: { before: 200, after: 200 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: cPrimary + "40" } },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(cPrimary, 0.75) } },
     }));
     renderable.forEach((s, i) => {
       const num = String(i + 1).padStart(2, "0");
@@ -456,7 +457,7 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
       ],
       heading: HeadingLevel.HEADING_2,
       spacing: { before: 400, after: 200 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: cPrimary + "40" } },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(cPrimary, 0.75) } },
     }));
 
     // Render the body markdown through the shared parser — preserves
@@ -470,7 +471,7 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
 
   // Branded footer
   children.push(new Paragraph({
-    border: { top: { style: BorderStyle.SINGLE, size: 2, color: cPrimary + "66" } },
+    border: { top: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(cPrimary, 0.55) } },
     spacing: { before: 400 },
     children: [],
   }));
@@ -512,21 +513,3 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
   });
 }
 
-// Lighten (positive amt) or darken (negative amt) a 6-char hex color.
-// Used to derive PRIMARY_DARK from whatever the brand's secondary color is
-// so the cover composition has visible tonal depth even when the brand
-// didn't configure a second accent. amt in [-1, 1].
-function shadeHex(hex: string, amt: number): string {
-  const h = hex.replace("#", "");
-  if (h.length !== 6) return hex;
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  const adj = (c: number) => {
-    const t = amt < 0 ? 0 : 255;
-    const p = Math.abs(amt);
-    return Math.round((t - c) * p + c);
-  };
-  const toHex = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0");
-  return toHex(adj(r)) + toHex(adj(g)) + toHex(adj(b));
-}

@@ -339,8 +339,8 @@ function renderDocxTable(
     rows: trs,
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: {
-      top: { style: BorderStyle.SINGLE, size: 2, color: theme.primaryColor + "66" },
-      bottom: { style: BorderStyle.SINGLE, size: 2, color: theme.primaryColor + "66" },
+      top: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.55) },
+      bottom: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.55) },
       left: { style: BorderStyle.SINGLE, size: 2, color: "E5E7EB" },
       right: { style: BorderStyle.SINGLE, size: 2, color: "E5E7EB" },
       insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "E5E7EB" },
@@ -359,6 +359,33 @@ function renderDocxTable(
 // passing it into new Document({ numbering: DOCX_NUMBERING, ... }) is a
 // no-op on a Document that has no numbering.reference paragraphs.
 export const DOCX_NUMBERING = { config: [] as unknown[] };
+
+// Lighten (positive amt) or darken (negative amt) a 6-char hex color.
+// amt in [-1, 1]. 0.7 blends 70% toward white — good for light tinted
+// borders. -0.2 mixes 20% black — good for subtle darker accents.
+//
+// CRITICAL: docx@9.x only accepts 6-digit hex color values. Earlier
+// versions of these exports tried to get a semi-transparent border by
+// concatenating `primaryColor + "66"` (8-digit hex with alpha), which
+// caused "Invalid hex value" errors at Packer.toBuffer() time — the
+// symptom users saw was "Export failed: Invalid hex value '4F46E566'".
+// Callers that want a light-tinted border should use shadeHex(color, 0.7)
+// instead of string-concatenating an alpha suffix.
+export function shadeHex(hex: string, amt: number): string {
+  const h = (hex || "").replace("#", "");
+  if (h.length !== 6) return hex;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return hex;
+  const adj = (c: number) => {
+    const t = amt < 0 ? 0 : 255;
+    const p = Math.abs(amt);
+    return Math.round((t - c) * p + c);
+  };
+  const toHex = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0");
+  return toHex(adj(r)) + toHex(adj(g)) + toHex(adj(b));
+}
 
 // ─── PPTX: inline-run rendering + paragraph building ────────────────────────
 

@@ -11,7 +11,7 @@ import {
 } from "docx";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { getBrandingForDeal } from "@/lib/db";
-import { resolveBranding, markdownToDocx } from "@/lib/export-markdown";
+import { resolveBranding, markdownToDocx, shadeHex } from "@/lib/export-markdown";
 
 /**
  * POST /api/deals/:id/dd-abstract/export
@@ -192,7 +192,7 @@ function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Reco
   // Branded footer
   children.push(
     new Paragraph({
-      border: { top: { style: BorderStyle.SINGLE, size: 2, color: primaryColor + "66" } },
+      border: { top: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(primaryColor, 0.55) } },
       spacing: { before: 400 },
       children: [],
     })

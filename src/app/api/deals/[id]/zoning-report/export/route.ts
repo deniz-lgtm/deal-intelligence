@@ -10,6 +10,7 @@ import {
   resolveBranding,
   inlineToDocxRuns,
   markdownToDocx,
+  shadeHex,
 } from "@/lib/export-markdown";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -225,7 +226,7 @@ export async function POST(
 
     // ── Branded footer ──────────────────────────────────────────────────
     children.push(new Paragraph({
-      border: { top: { style: BorderStyle.SINGLE, size: 2, color: theme.primaryColor + "66" } },
+      border: { top: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.55) } },
       spacing: { before: 400 },
     }));
     if (theme.footerText || theme.companyName) {
@@ -286,7 +287,7 @@ function sectionHeading(
     children: [new TextRun({ text, bold: true, size: 26, color: theme.primaryColor, font: theme.headerFont })],
     heading: HeadingLevel.HEADING_2,
     spacing: { before: 300, after: 150 },
-    border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: theme.primaryColor + "40" } },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.75) } },
   });
 }
 
