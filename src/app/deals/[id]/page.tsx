@@ -1055,10 +1055,38 @@ function computeHighlights(rawUw: any | null, deal: Deal): FinancialHighlights |
     const typeDefaults = getDefaultsForPropertyType(deal.property_type);
     const uw = { ...typeDefaults, ...parsed } as UWData;
 
-    // Determine property type for calc
+    // Force development_mode on ground-up deals even if the saved UW
+    // blob doesn't have it set yet. Without this the calc falls back to
+    // purchase_price (= $0 on most ground-up deals), which zeros out
+    // cap rate / NOI / YoC / DSCR / EM and the Overview shows dashes
+    // while the UW page itself happily renders real numbers.
+    const isGroundUpDeal =
+      deal.deal_scope === "ground_up" ||
+      (deal.deal_scope == null && deal.investment_strategy === "ground_up") ||
+      uw.development_mode;
+    if (isGroundUpDeal) uw.development_mode = true;
+
+    // Detect residential presence for mode selection. A mixed-use or
+    // land deal with residential unit groups needs "multifamily" mode
+    // so the GPR calc reads rent_per_unit rather than rent_per_sf
+    // (which is typically empty on residential rows and would zero
+    // out the entire income side).
+    const hasResUnitGroups = ((uw as any).unit_groups || []).some((g: any) =>
+      (g.market_rent_per_unit || 0) > 0 ||
+      (g.current_rent_per_unit || 0) > 0 ||
+      (g.bedrooms || 0) > 0,
+    );
+    const hasResMixedUseComp = !!(uw as any).mixed_use?.enabled &&
+      ((uw as any).mixed_use?.components || []).some(
+        (c: any) => c.component_type === "residential",
+      );
+    const isResidentialGroundUp = isGroundUpDeal && (hasResUnitGroups || hasResMixedUseComp);
+
+    // Determine property type for calc.
     const mode: "commercial" | "multifamily" | "student_housing" =
       deal.property_type === "multifamily" || deal.property_type === "sfr" ? "multifamily" :
       deal.property_type === "student_housing" ? "student_housing" :
+      isResidentialGroundUp ? "multifamily" :
       "commercial";
 
     // Call the full calc function
