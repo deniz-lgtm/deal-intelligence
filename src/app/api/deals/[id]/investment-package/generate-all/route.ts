@@ -591,23 +591,48 @@ function buildSectionContext(
 
     case "financial_summary": {
       if (!uw) return "No underwriting data available.";
+      // Ground-up deals don't have a purchase price or closing costs. They
+      // have a land cost and a dev_budget_items[] line-item list (hard + soft
+      // categories, amounts already computed) that must be summed differently
+      // from capex_items.
+      const isGroundUpFin = !!uw.development_mode;
+      const devBudgetItems = Array.isArray(uw.dev_budget_items) ? uw.dev_budget_items : [];
+      const devBudgetTotal = devBudgetItems.reduce((s: number, it: AnyRecord) => s + n(it.amount), 0);
+      const hardTotal = devBudgetItems.filter((it: AnyRecord) => it.category === "hard").reduce((s: number, it: AnyRecord) => s + n(it.amount), 0);
+      const softTotal = devBudgetItems.filter((it: AnyRecord) => it.category === "soft").reduce((s: number, it: AnyRecord) => s + n(it.amount), 0);
       const capex = (uw.capex_items || []).reduce((s: number, c: AnyRecord) => s + n(c.quantity) * n(c.cost_per_unit), 0);
       const closingCosts = n(uw.purchase_price) * (n(uw.closing_costs_pct) / 100);
-      const totalCost = n(uw.purchase_price) + closingCosts + capex;
+      const landCost = n(uw.land_cost);
+      const totalCost = isGroundUpFin
+        ? landCost + devBudgetTotal
+        : n(uw.purchase_price) + closingCosts + capex;
       const units = n(deal.units);
       const sf = n(deal.square_footage) || n(uw.max_gsf);
       const perUnit = units > 0 ? Math.round(totalCost / units) : 0;
       const perSF = sf > 0 ? (totalCost / sf) : 0;
       const ppUnit = units > 0 ? Math.round(n(uw.purchase_price) / units) : 0;
       const ppSF = sf > 0 ? (n(uw.purchase_price) / sf) : 0;
-      const loan = uw.has_financing ? n(uw.purchase_price) * (n(uw.acq_ltc) / 100) : 0;
+      const loanBasis = isGroundUpFin ? totalCost : n(uw.purchase_price);
+      const loan = uw.has_financing ? loanBasis * (n(uw.acq_ltc) / 100) : 0;
       const equity = Math.max(0, totalCost - loan);
+      const basisLines = isGroundUpFin
+        ? [
+            `[BASIS]`,
+            `Land Cost: ${fc(landCost)}${sf > 0 ? ` | $${(landCost / sf).toFixed(0)}/GSF land` : ""}`,
+            `Hard Costs: ${fc(hardTotal)}${sf > 0 ? ` | $${(hardTotal / sf).toFixed(0)}/GSF` : ""}`,
+            `Soft Costs: ${fc(softTotal)}${hardTotal > 0 ? ` | ${((softTotal / hardTotal) * 100).toFixed(1)}% of hard` : ""}`,
+            `Total Development Budget: ${fc(devBudgetTotal)}`,
+            `Total Capitalization: ${fc(totalCost)}${perUnit ? ` | $${perUnit.toLocaleString()}/unit` : ""}${perSF ? ` | $${perSF.toFixed(0)}/GSF` : ""}`,
+          ]
+        : [
+            `[BASIS]`,
+            `Purchase Price: ${fc(n(uw.purchase_price))}${ppUnit ? ` | $${ppUnit.toLocaleString()}/unit` : ""}${ppSF ? ` | $${ppSF.toFixed(0)}/SF` : ""}`,
+            `Closing Costs: ${n(uw.closing_costs_pct)}% (${fc(closingCosts)})`,
+            `Total CapEx: ${fc(capex)}`,
+            `Total Capitalization: ${fc(totalCost)}${perUnit ? ` | $${perUnit.toLocaleString()}/unit` : ""}${perSF ? ` | $${perSF.toFixed(0)}/SF` : ""}`,
+          ];
       return [
-        `[BASIS]`,
-        `Purchase Price: ${fc(n(uw.purchase_price))}${ppUnit ? ` | $${ppUnit.toLocaleString()}/unit` : ""}${ppSF ? ` | $${ppSF.toFixed(0)}/SF` : ""}`,
-        `Closing Costs: ${n(uw.closing_costs_pct)}% (${fc(closingCosts)})`,
-        `Total CapEx / Development: ${fc(capex)}`,
-        `Total Capitalization: ${fc(totalCost)}${perUnit ? ` | $${perUnit.toLocaleString()}/unit` : ""}${perSF ? ` | $${perSF.toFixed(0)}/SF` : ""}`,
+        ...basisLines,
         ``,
         `[SOURCES & USES]`,
         uw.has_financing ? `Senior Debt: ${fc(loan)} @ ${uw.acq_ltc}% LTC / ${uw.acq_interest_rate}% / ${uw.acq_amort_years}yr amort${n(uw.acq_io_years) > 0 ? ` / ${uw.acq_io_years}yr I/O` : ""}` : "Senior Debt: NONE — all-cash basis",
@@ -625,10 +650,30 @@ function buildSectionContext(
 
     case "unit_mix": {
       if (!unitGroups.length) return "No unit data available.";
+      // Ground-up deals have no existing tenant base, so rendering an
+      // "IP $0/mo" column reads as a data gap to the model. For ground-up
+      // only show the stabilized (market) rent column.
+      const isGroundUpUnits = !!uw?.development_mode;
       const lines = unitGroups.map((g: AnyRecord) => {
         const aff = g.is_affordable ? ` [AFFORDABLE${g.ami_pct ? ` @ ${g.ami_pct}% AMI` : ""}]` : "";
-        if (isMF) return `${g.label}${aff}: ${g.unit_count} units, ${g.bedrooms}BD/${g.bathrooms}BA, ${g.sf_per_unit}SF, IP $${n(g.current_rent_per_unit)}/mo, Mkt $${n(g.market_rent_per_unit)}/mo`;
-        return `${g.label}${aff}: ${g.unit_count} units, ${g.sf_per_unit}SF, IP $${n(g.current_rent_per_sf).toFixed(2)}/SF, Mkt $${n(g.market_rent_per_sf).toFixed(2)}/SF`;
+        if (isMF) {
+          const parts = [`${g.label}${aff}: ${g.unit_count} units, ${g.bedrooms}BD/${g.bathrooms}BA, ${g.sf_per_unit}SF`];
+          if (isGroundUpUnits) {
+            parts.push(`Stabilized $${n(g.market_rent_per_unit)}/mo`);
+          } else {
+            parts.push(`IP $${n(g.current_rent_per_unit)}/mo`);
+            parts.push(`Mkt $${n(g.market_rent_per_unit)}/mo`);
+          }
+          return parts.join(", ");
+        }
+        const parts = [`${g.label}${aff}: ${g.unit_count} units, ${g.sf_per_unit}SF`];
+        if (isGroundUpUnits) {
+          parts.push(`Stabilized $${n(g.market_rent_per_sf).toFixed(2)}/SF`);
+        } else {
+          parts.push(`IP $${n(g.current_rent_per_sf).toFixed(2)}/SF`);
+          parts.push(`Mkt $${n(g.market_rent_per_sf).toFixed(2)}/SF`);
+        }
+        return parts.join(", ");
       });
       return [lines.join("\n"), affSnippet].filter(Boolean).join("\n\n");
     }
@@ -722,26 +767,42 @@ function buildSectionContext(
     }
 
     case "value_add": {
-      const capexItems = uw?.capex_items || [];
+      // Ground-up vs. acquisition split. Ground-up reads dev_budget_items
+      // (hard + soft categories) and shows the programmed site + massing.
+      // Acquisition reads capex_items and renovation scope.
+      const isGroundUp = deal.investment_strategy === "ground_up" || !!uw?.development_mode;
+      const capexItems: AnyRecord[] = uw?.capex_items || [];
+      const devBudgetItems: AnyRecord[] = Array.isArray(uw?.dev_budget_items) ? uw!.dev_budget_items : [];
+      const devBudgetTotal = devBudgetItems.reduce((s: number, it: AnyRecord) => s + n(it.amount), 0);
+      const hardTotal = devBudgetItems.filter((it: AnyRecord) => it.category === "hard").reduce((s: number, it: AnyRecord) => s + n(it.amount), 0);
+      const softTotal = devBudgetItems.filter((it: AnyRecord) => it.category === "soft").reduce((s: number, it: AnyRecord) => s + n(it.amount), 0);
       const renos = unitGroups.filter((g: AnyRecord) => g.will_renovate);
       const totalCapex = capexItems.reduce((s: number, c: AnyRecord) => s + n(c.quantity) * n(c.cost_per_unit), 0);
       const units = n(deal.units);
-      const isGroundUp = deal.investment_strategy === "ground_up";
+      const sf = n(deal.square_footage) || n(uw?.max_gsf);
       const capexPerUnit = units > 0 && totalCapex > 0 ? Math.round(totalCapex / units) : 0;
       const siteMassing = isGroundUp ? summarizeSiteAndMassing(uw) : "";
+
+      const budgetBlock = isGroundUp
+        ? (devBudgetItems.length > 0
+            ? `Development Budget (${devBudgetItems.length} line items, ${fc(devBudgetTotal)} total):\n  Hard Costs: ${fc(hardTotal)}${sf > 0 ? ` ($${(hardTotal / sf).toFixed(0)}/GSF)` : ""}\n  Soft Costs: ${fc(softTotal)}${hardTotal > 0 ? ` (${((softTotal / hardTotal) * 100).toFixed(1)}% of hard)` : ""}\n${devBudgetItems.slice(0, 12).map((it: AnyRecord) => `  - ${it.label || it.subcategory || "Item"} [${it.category}]: ${fc(n(it.amount))}`).join("\n")}`
+            : "Development budget not yet populated.")
+        : (capexItems.length > 0
+            ? `CapEx Line Items (${capexItems.length}):\n${capexItems.map((c: AnyRecord) => `  - ${c.label}: ${n(c.quantity)} x ${fc(n(c.cost_per_unit))} = ${fc(n(c.quantity) * n(c.cost_per_unit))}`).join("\n")}\nTotal CapEx: ${fc(totalCapex)}${capexPerUnit ? ` ($${capexPerUnit.toLocaleString()}/unit)` : ""}`
+            : "CapEx scope not yet populated.");
+
       return [
-        bp ? `Business Plan: ${bp.name} — ${(bp.investment_theses || []).map((t: string) => THESIS_LABELS[t] || t).join(", ")}` : "",
+        bp ? `Business Plan: ${bp.name}. ${(bp.investment_theses || []).map((t: string) => THESIS_LABELS[t] || t).join(", ")}` : "",
         bp?.description ? `Strategy Narrative: ${bp.description}` : "",
         deal.investment_strategy ? `Deal-level Strategy: ${deal.investment_strategy}` : "",
-        renos.length > 0 ? `Unit Renovation Scope: ${renos.length} unit types flagged for renovation — ${renos.map((r: AnyRecord) => r.label).join(", ")}` : "",
-        capexItems.length > 0 ? `CapEx / Development Line Items (${capexItems.length}):\n${capexItems.map((c: AnyRecord) => `  - ${c.label}: ${n(c.quantity)} × ${fc(n(c.cost_per_unit))} = ${fc(n(c.quantity) * n(c.cost_per_unit))}`).join("\n")}` : "",
-        totalCapex > 0 ? `Total CapEx / Development Budget: ${fc(totalCapex)}${capexPerUnit ? ` ($${capexPerUnit.toLocaleString()}/unit)` : ""}` : "",
+        !isGroundUp && renos.length > 0 ? `Unit Renovation Scope: ${renos.length} unit types flagged. ${renos.map((r: AnyRecord) => r.label).join(", ")}` : "",
+        budgetBlock,
         siteMassing ? `\n[GROUND-UP PROGRAM]\n${siteMassing}` : "",
         deal.context_notes ? `\nAnalyst Strategy Notes: ${deal.context_notes}` : "",
         ``,
         isGroundUp
-          ? `SHAPE: Program bullets (buildable GSF, units, parking, use mix). Then critical-path milestone bullets (entitlement → permit → GMP → start → TCO → stabilization). Then budget bullets (hard $/GSF, soft % of hard, contingency). Then 1 bullet quantifying dev yield-on-cost vs. exit cap in bps.`
-          : `SHAPE: 3 thesis bullets (what's broken + specific interventions + resulting NOI lift). Then bullets for: CapEx $/unit, expected rent lift $/unit, implied ROC on CapEx, timing to stabilization.`,
+          ? `SHAPE: Program bullets (buildable GSF, units, parking, use mix). Then critical-path milestone bullets (entitlement, permit, GMP, start, TCO, stabilization). Then budget bullets (hard $/GSF, soft % of hard, contingency). Then 1 bullet quantifying dev yield-on-cost vs. exit cap in bps.`
+          : `SHAPE: 3 thesis bullets (what's broken + specific interventions + resulting NOI lift). Then bullets for CapEx $/unit, expected rent lift $/unit, implied ROC on CapEx, timing to stabilization.`,
       ].filter(Boolean).join("\n");
     }
 

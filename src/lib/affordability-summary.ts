@@ -149,7 +149,7 @@ export function summarizeAffordability(input: {
   if (!hasAffordability && !hasBonuses && !hasTax && !hasDensityBonus) {
     return {
       enabled: false,
-      headline: "100% market-rate — no affordability restrictions or public incentives configured.",
+      headline: "100% market-rate. No affordability restrictions or public incentives configured.",
       bullets: [],
       narrative:
         "This deal is underwritten as 100% market-rate. No affordable-housing tiers, property-tax exemptions, or density/entitlement bonuses have been configured on the Programming or Site & Zoning pages. Rents are assumed to float to market without AMI caps.",
@@ -183,7 +183,7 @@ export function summarizeAffordability(input: {
       cfg.density_bonus_source || "an entitlement program"
     }`;
   } else {
-    headline = `Public incentives spotted (${bonuses.length}) — no affordability tiers committed yet`;
+    headline = `Public incentives spotted (${bonuses.length}), no affordability tiers committed yet`;
   }
 
   // ── Bullets (short lines for inline UI) ───────────────────────────────
@@ -204,7 +204,7 @@ export function summarizeAffordability(input: {
       const rent = tierWeightedRent(t);
       const rentLabel = rent > 0 ? ` (avg ${fmtMoney(rent)}/mo)` : "";
       const pctOfTotal =
-        totalUnits > 0 ? ` — ${fmtPct((count / totalUnits) * 100)}` : "";
+        totalUnits > 0 ? ` (${fmtPct((count / totalUnits) * 100)})` : "";
       bullets.push(
         `• ${fmtInt(count)} at ${amiTierLabel(ami)}${pctOfTotal}${rentLabel}`
       );
@@ -273,7 +273,7 @@ export function summarizeAffordability(input: {
       affordablePct
     )} of the building) are income-restricted. `;
     if (tierDescriptions.length === 1) {
-      p1 += `All affordable units sit at a single tier — ${tierDescriptions[0]}. `;
+      p1 += `All affordable units sit at a single tier: ${tierDescriptions[0]}. `;
     } else {
       p1 += `The affordable share is split across ${tierDescriptions.length} AMI tiers: ${tierDescriptions.join(
         "; "

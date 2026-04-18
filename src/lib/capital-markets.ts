@@ -171,9 +171,9 @@ export function formatCapitalMarketsSummary(snap: CapitalMarketsSnapshot): strin
 
   if (snap.yield_curve_spread_bps != null) {
     const note = snap.yield_curve_spread_bps < 0
-      ? "inverted — recessionary signal"
+      ? "inverted (recessionary signal)"
       : snap.yield_curve_spread_bps < 50
-      ? "flat — late-cycle"
+      ? "flat (late-cycle)"
       : "positively sloped";
     lines.push(`  Yield Curve (10Y − Fed Funds): ${snap.yield_curve_spread_bps} bps · ${note}`);
   }

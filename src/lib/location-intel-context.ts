@@ -38,7 +38,7 @@ export function formatLocationIntelContext(rows: AnyRecord[]): string {
       : "User-provided data";
 
   lines.push(
-    `LOCATION INTELLIGENCE (${row.radius_miles}-Mile Radius — ${sourceLabel}):`
+    `LOCATION INTELLIGENCE (${row.radius_miles}-Mile Radius, ${sourceLabel}):`
   );
 
   // Demographics
