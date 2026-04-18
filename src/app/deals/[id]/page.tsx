@@ -853,13 +853,21 @@ export default function DealOverviewPage({
               Multiple. Purchase Price lives in Property Details; Vacancy /
               Exit Cap / Hold Period are one click away in the UW full model. */}
 
-          {/* Deal Notes */}
+          {/* Deal Notes — preview only on the overview page. Full listing
+              lives at /notes?deal=<id> (cross-deal repository) so the
+              overview doesn't get dominated by a long note stream. */}
           <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
-            <div className="px-4 py-3 border-b border-border/40">
+            <div className="px-4 py-3 border-b border-border/40 flex items-center justify-between">
               <h3 className="font-display text-sm">Deal Notes</h3>
+              <Link
+                href={`/notes?deal=${params.id}`}
+                className="text-[11px] text-muted-foreground hover:text-primary"
+              >
+                Open notes hub →
+              </Link>
             </div>
             <div className="p-4">
-              <DealNotes dealId={params.id} />
+              <DealNotes dealId={params.id} preview={3} />
             </div>
           </div>
 

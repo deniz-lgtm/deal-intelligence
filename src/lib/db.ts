@@ -1631,6 +1631,39 @@ export const dealNoteQueries = {
   },
 
   /** Get concatenated text of all memory-included notes for AI consumption */
+  /** Workspace-wide list: every note across every deal the user can access.
+   * Powers the /notes hub. Joined with deals.name so the UI can render
+   * the parent deal without a second round-trip. Returns most-recent first. */
+  getAllAccessible: async (userId: string, opts?: { limit?: number; dealId?: string }): Promise<Array<{
+    id: string;
+    deal_id: string;
+    deal_name: string;
+    text: string;
+    category: string;
+    source: string;
+    created_at: string;
+  }>> => {
+    const pool = getPool();
+    const limit = Math.max(1, Math.min(1000, opts?.limit ?? 500));
+    const params: unknown[] = [userId];
+    let dealFilter = "";
+    if (opts?.dealId) {
+      params.push(opts.dealId);
+      dealFilter = ` AND n.deal_id = $${params.length}`;
+    }
+    const res = await pool.query(
+      `SELECT n.id, n.deal_id, d.name as deal_name, n.text, n.category, n.source, n.created_at
+         FROM deal_notes n
+         JOIN deals d ON d.id = n.deal_id
+         LEFT JOIN deal_shares s ON s.deal_id = d.id AND s.user_id = $1
+        WHERE (d.owner_id = $1 OR s.deal_id IS NOT NULL)${dealFilter}
+        ORDER BY n.created_at DESC
+        LIMIT ${limit}`,
+      params
+    );
+    return res.rows;
+  },
+
   getMemoryText: async (dealId: string): Promise<string> => {
     const pool = getPool();
     const res = await pool.query(
