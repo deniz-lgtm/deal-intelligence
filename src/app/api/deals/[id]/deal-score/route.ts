@@ -114,7 +114,11 @@ export async function POST(
     }
 
     // Parse JSON from response — be lenient
-    let parsed: { deal_score: number; score_reasoning: string };
+    let parsed: {
+      deal_score: number;
+      score_reasoning: string;
+      bullet_points?: string[];
+    };
     try {
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       parsed = jsonMatch
@@ -126,13 +130,32 @@ export async function POST(
     }
 
     const score = Math.max(1, Math.min(10, Math.round(parsed.deal_score ?? 5)));
-    const reasoning = parsed.score_reasoning ?? "";
+    // Bullets are the new primary surface; serialize them back into
+    // score_reasoning (the persisted column) as "• line\n• line" so the
+    // existing legacy renderer still shows something useful if it reads
+    // this column directly. The UW page will prefer bullet_points when
+    // present.
+    const bulletPoints = Array.isArray(parsed.bullet_points)
+      ? parsed.bullet_points
+          .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
+          .slice(0, 5)
+      : [];
+    const reasoning = parsed.score_reasoning
+      ?? (bulletPoints.length > 0 ? bulletPoints.map((b) => `• ${b}`).join("\n") : "");
 
-    // Store on the deal
+    // Store on the deal. We encode bullets into the reasoning column as a
+    // marker-prefixed JSON blob so the existing column keeps working while
+    // the UI can round-trip structured bullets. Older readers just see the
+    // JSON text; new readers parse it.
+    const storedReasoning =
+      bulletPoints.length > 0
+        ? `__STRUCTURED__${JSON.stringify({ reasoning, bullets: bulletPoints })}`
+        : reasoning;
+
     const updateField =
       stage === "underwriting"
-        ? { uw_score: score, uw_score_reasoning: reasoning }
-        : { final_score: score, final_score_reasoning: reasoning };
+        ? { uw_score: score, uw_score_reasoning: storedReasoning }
+        : { final_score: score, final_score_reasoning: storedReasoning };
 
     const updated = await dealQueries.update(params.id, updateField);
 
@@ -141,6 +164,7 @@ export async function POST(
         stage,
         score,
         reasoning,
+        bullet_points: bulletPoints,
         om_score: omAnalysis?.deal_score ?? null,
         om_reasoning: omAnalysis?.score_reasoning ?? null,
         uw_score: updated.uw_score ?? null,
@@ -444,8 +468,21 @@ Score this deal based on the ACTUAL underwriting numbers. Consider:
 Return ONLY a JSON object:
 {
   "deal_score": 7,
-  "score_reasoning": "2-4 sentences — reference SPECIFIC numbers from the UW metrics. State the YoC, DSCR, EM, CoC. Explain why this is better or worse than the OM score."
+  "score_reasoning": "1 sentence summary — will only show as a tooltip/fallback.",
+  "bullet_points": [
+    "YoC 8.4% vs 7% target — above threshold",
+    "DSCR 1.42x; IO years cover construction risk",
+    "EM 2.1x at 5yr hold, CoC ramps to 12% Y3",
+    "Three OM red flags addressed in notes",
+    "Still sensitive to exit cap > 5.75%"
+  ]
 }
+
+Rules for bullet_points:
+- 3 to 5 bullets, each ≤ 14 words
+- Reference concrete numbers (YoC, DSCR, EM, CoC, cap rate, etc.)
+- Cover the most important positive(s), the biggest risk/caveat, and the business-plan fit
+- No leading dashes or bullets in the strings — just the text
 
 Score guide:
 1-3: Pass — UW reveals fatal flaws (negative NOI, sub-1.0 DSCR, negative leverage)
@@ -480,8 +517,20 @@ Provide a comprehensive final score considering:
 Return ONLY a JSON object:
 {
   "deal_score": 7,
-  "score_reasoning": "3-5 sentences — comprehensive final assessment. Reference the score progression (OM → UW → Final), what was confirmed, what changed, and whether the deal is ready for presentation. Be specific about any remaining concerns."
+  "score_reasoning": "1 sentence summary — will only show as a tooltip/fallback.",
+  "bullet_points": [
+    "UW confirmed 8% YoC; OM score validated",
+    "Checklist clean; zoning + env resolved",
+    "EM 2.2x over 5yr hold; hits BP target",
+    "Last risk: rent-growth sensitivity above 3%",
+    "Ready for IC"
+  ]
 }
+
+Rules for bullet_points:
+- 3 to 5 bullets, each ≤ 14 words
+- Note the OM → UW → Final progression, what was validated, remaining risks, and IC readiness
+- No leading dashes or bullets in the strings — just the text
 
 Score guide (final assessment):
 1-3: Do not proceed — fundamental issues remain unresolved
