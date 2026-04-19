@@ -9,9 +9,15 @@ import {
   BorderStyle,
   Table,
 } from "docx";
+import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { getBrandingForDeal } from "@/lib/db";
-import { resolveBranding, markdownToDocx, DOCX_NUMBERING } from "@/lib/export-markdown";
+import { getBrandingForDeal, generatedReportsQueries } from "@/lib/db";
+import { resolveBranding, markdownToDocx, shadeHex } from "@/lib/export-markdown";
+
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
 
 /**
  * POST /api/deals/:id/dd-abstract/export
@@ -31,6 +37,9 @@ export async function POST(
     const body = await req.json();
     const markdown: string = body.markdown ?? "";
     const dealName: string = body.dealName ?? "Deal";
+    // Reports-hub re-download proxies to this route; skip the snapshot
+    // write so we don't duplicate the saved row.
+    const skipSnapshot = req.headers.get("x-skip-snapshot") === "1";
 
     // Fetch branding from deal's business plan
     let branding: Record<string, unknown> | null = null;
@@ -41,10 +50,13 @@ export async function POST(
     const children = parseMarkdownToDocx(markdown, dealName, branding);
 
     const theme = resolveBranding(branding);
+    // Minimum viable Document config. markdownToDocx sets per-run
+    // size/bold/color/font on each heading and renders ordered lists as
+    // literal "1. foo" paragraphs (no numbering.reference needed), so we
+    // skip both the Document-level paragraphStyles block and the numbering
+    // registration — both have caused Packer.toBuffer() to crash on
+    // certain docx@9.x patch versions.
     const doc = new Document({
-      // Register ordered-list numbering so `1. foo` in the markdown renders
-      // as a real Word numbered list instead of literal "1. foo" text.
-      numbering: DOCX_NUMBERING,
       styles: {
         default: {
           document: {
@@ -52,19 +64,6 @@ export async function POST(
             paragraph: { spacing: { after: 120 } },
           },
         },
-        // Explicit H1/H2/H3 sizing + coloring so the three heading levels
-        // are visually distinguishable in Word.
-        paragraphStyles: [
-          { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal",
-            run: { size: 32, bold: true, color: theme.secondaryColor, font: theme.headerFont },
-            paragraph: { spacing: { before: 320, after: 160 } } },
-          { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal",
-            run: { size: 26, bold: true, color: theme.primaryColor, font: theme.headerFont },
-            paragraph: { spacing: { before: 260, after: 120 } } },
-          { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal",
-            run: { size: 22, bold: true, color: theme.accentColor, font: theme.headerFont },
-            paragraph: { spacing: { before: 200, after: 100 } } },
-        ],
       },
       sections: [
         {
@@ -81,6 +80,23 @@ export async function POST(
     const buffer = await Packer.toBuffer(doc);
     const uint8 = new Uint8Array(buffer);
 
+    // Save a snapshot so the DD Abstract appears in the deal's Reports hub.
+    // Skipped when we're re-rendering from an existing snapshot.
+    if (!skipSnapshot) try {
+      await generatedReportsQueries.create(params.id, uuidv4(), {
+        title: `DD Abstract — ${dealName}`,
+        report_type: "dd_abstract",
+        format: "docx",
+        audience: null,
+        deal_name: dealName,
+        sections: [{ id: "dd_abstract", title: "Due Diligence Abstract", content: markdown, notes: [] }],
+        file_size_bytes: uint8.byteLength,
+        created_by: userId,
+      });
+    } catch (err) {
+      console.warn("dd-abstract export: failed to save generated_reports row:", err);
+    }
+
     const filename = `DD-Abstract-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx`;
 
     return new NextResponse(uint8, {
@@ -94,7 +110,11 @@ export async function POST(
     });
   } catch (error) {
     console.error("DD Abstract Word export error:", error);
-    return NextResponse.json({ error: "Export failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: `Export failed: ${message.slice(0, 300)}` },
+      { status: 500 }
+    );
   }
 }
 
@@ -198,7 +218,7 @@ function parseMarkdownToDocx(markdown: string, dealName: string, branding?: Reco
   // Branded footer
   children.push(
     new Paragraph({
-      border: { top: { style: BorderStyle.SINGLE, size: 2, color: primaryColor + "66" } },
+      border: { top: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(primaryColor, 0.55) } },
       spacing: { before: 400 },
       children: [],
     })

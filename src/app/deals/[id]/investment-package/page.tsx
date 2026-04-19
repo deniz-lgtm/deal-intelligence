@@ -5,12 +5,15 @@ import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, FileText, Download, Sparkles,
   ChevronDown, ChevronUp, Edit3, Eye, RefreshCw, AlertTriangle,
-  CheckCircle2, Circle, ArrowRight, Target, TrendingUp,
+  CheckCircle2, Circle, ArrowRight, Target, TrendingUp, FolderOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { Document } from "@/lib/types";
+import { DocCoverageChip } from "@/components/ai";
+import ReportsModal from "@/components/ReportsModal";
 
 // ─── Section Definitions ─────────────────────────────────────────────────────
 const ALL_SECTIONS = [
@@ -20,6 +23,7 @@ const ALL_SECTIONS = [
   { id: "location_market", title: "Location & Market Analysis", description: "Submarket, comps, rent growth, demand drivers" },
   { id: "financial_summary", title: "Financial Summary", description: "Purchase price, NOI, cap rate, debt terms, returns" },
   { id: "unit_mix", title: "Unit Mix & Revenue", description: "Unit types, in-place vs market rents, projections" },
+  { id: "affordability_strategy", title: "Affordability & Incentives", description: "AMI tiers, tax exemptions, density bonuses, entitlement programs" },
   { id: "rent_comps", title: "Rent Comp Analysis", description: "Comparable properties, market positioning" },
   { id: "value_add", title: "Value-Add Strategy", description: "Renovation plan, CapEx budget, rent premium targets" },
   { id: "operating_plan", title: "Operating Plan", description: "Management, expense reduction, occupancy targets" },
@@ -34,6 +38,9 @@ const ALL_SECTIONS = [
 ];
 
 const FORMAT_SECTIONS: Record<string, string[]> = {
+  // Affordability is off the default pitch-deck outline (users toggle it
+  // on for affordable / mixed-income deals) but always in the memo since
+  // memos are exhaustive.
   pitch_deck: ["cover", "exec_summary", "property_overview", "financial_summary", "unit_mix", "value_add", "capital_structure", "returns_analysis", "development_schedule", "predev_budget", "exit_strategy", "photos"],
   investment_memo: ALL_SECTIONS.map(s => s.id),
   one_pager: ["exec_summary", "financial_summary", "photos"],
@@ -78,10 +85,14 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
   const [generatingAll, setGeneratingAll] = useState(false);
   const [dealName, setDealName] = useState("Deal");
   const [uwUpdatedAt, setUwUpdatedAt] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<Document[]>([]);
 
   // Deal score state
   const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null; final_score: number | null; final_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null, final_score: null, final_score_reasoning: null });
   const [scoringFinal, setScoringFinal] = useState(false);
+
+  // Reports hub modal
+  const [showReports, setShowReports] = useState(false);
 
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
@@ -97,7 +108,9 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       fetch(`/api/deals/${params.id}/investment-package`).then(r => r.json()).catch(() => null),
       fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).catch(() => null),
       fetch(`/api/deals/${params.id}/deal-score`).then(r => r.json()).catch(() => null),
-    ]).then(([dealJson, pkgJson, uwJson, scoresJson]) => {
+      fetch(`/api/deals/${params.id}/documents`).then(r => r.json()).catch(() => null),
+    ]).then(([dealJson, pkgJson, uwJson, scoresJson, docsJson]) => {
+      if (docsJson?.data) setDocuments(docsJson.data);
       if (dealJson.data?.name) setDealName(dealJson.data.name);
       if (uwJson?.data?.updated_at) setUwUpdatedAt(uwJson.data.updated_at);
       if (scoresJson?.data) setDealScores(scoresJson.data);
@@ -234,7 +247,16 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections, dealName, format }),
+        body: JSON.stringify({
+          sections,
+          dealName,
+          format,
+          // Pass through so the server-side Reports hub records WHY this
+          // was exported — audience ("investment_committee" etc.) and the
+          // semantic report type ("investment_memo" | "pitch_deck" | "one_pager").
+          audience: meta.audience,
+          reportType: meta.format,
+        }),
       });
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
@@ -277,14 +299,24 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
               <Download className="h-4 w-4 mr-2" />.docx
             </Button>
           </>)}
+          <Button variant="outline" size="sm" onClick={() => setShowReports(true)}>
+            <FolderOpen className="h-4 w-4 mr-2" />Reports
+          </Button>
           <Button size="sm" onClick={save} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
-          <Button onClick={() => { setShowWizard(true); setWizardStep(0); }} disabled={generatingAll}>
-            {generatingAll ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><Sparkles className="h-4 w-4 mr-2" />Generate Package</>}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => { setShowWizard(true); setWizardStep(0); }} disabled={generatingAll}>
+              {generatingAll ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><Sparkles className="h-4 w-4 mr-2" />Generate Package</>}
+            </Button>
+            <DocCoverageChip documents={documents} section="inv_package" />
+          </div>
         </div>
       </div>
+
+      {/* Reports hub modal — lists every memo/deck/abstract exported for this
+          deal so a fresh generation doesn't bury the previous one. */}
+      <ReportsModal dealId={params.id} open={showReports} onClose={() => setShowReports(false)} />
 
       {/* ─── Wizard Modal ───────────────────────────────────────────────── */}
       {showWizard && (

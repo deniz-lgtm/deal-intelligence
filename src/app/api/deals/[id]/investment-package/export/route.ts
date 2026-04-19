@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import PptxGenJS from "pptxgenjs";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, Table } from "docx";
+import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { getBrandingForDeal } from "@/lib/db";
+import { getBrandingForDeal, generatedReportsQueries } from "@/lib/db";
 import {
   resolveBranding,
   markdownToPptxBlocks,
@@ -27,10 +28,46 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
-    const { sections, dealName, format = "pptx" } = await req.json() as {
+    const { sections, dealName, format = "pptx", audience = null, reportType = null } = await req.json() as {
       sections: ExportSection[];
       dealName: string;
       format?: string;
+      audience?: string | null;
+      reportType?: string | null;
+    };
+
+    // When the Reports hub re-downloads a saved snapshot, it proxies to
+    // this route. That path sends X-Skip-Snapshot: 1 so we don't write a
+    // duplicate generated_reports row for what is functionally the same
+    // document the analyst already saved.
+    const skipSnapshot = req.headers.get("x-skip-snapshot") === "1";
+
+    // After the file is generated we save a snapshot row into
+    // generated_reports so the analyst can reopen this exact export later
+    // from the Reports hub on the investment-package page. Helper wraps
+    // the insert so both the PPTX and DOCX branches can call it with the
+    // final buffer length.
+    const saveReportSnapshot = async (fileSize: number) => {
+      if (skipSnapshot) return;
+      try {
+        await generatedReportsQueries.create(params.id, uuidv4(), {
+          title: `${prettyReportType(reportType || format)} — ${dealName}`,
+          report_type: reportType || (format === "docx" ? "investment_memo" : "pitch_deck"),
+          format,
+          audience,
+          deal_name: dealName,
+          sections: sections.map((s) => ({
+            id: s.id,
+            title: s.title,
+            content: s.generatedContent ?? "",
+            notes: Array.isArray(s.notes) ? s.notes.filter((n) => n.text?.trim()) : [],
+          })),
+          file_size_bytes: fileSize,
+          created_by: userId,
+        });
+      } catch (err) {
+        console.warn("export: failed to save generated_reports row:", err);
+      }
     };
 
     // Fetch branding from deal's business plan
@@ -53,7 +90,14 @@ export async function POST(
     const phone = theme.phone;
 
     if (format === "docx") {
-      return generateDocx(sections, dealName, branding);
+      const { uint8 } = await generateDocx(sections, dealName, branding);
+      await saveReportSnapshot(uint8.byteLength);
+      return new NextResponse(uint8, {
+        headers: {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "Content-Disposition": `attachment; filename="Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx"`,
+        },
+      });
     }
 
     const pptx = new PptxGenJS();
@@ -261,6 +305,7 @@ export async function POST(
 
     const buffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
     const uint8 = new Uint8Array(buffer);
+    await saveReportSnapshot(uint8.byteLength);
 
     return new NextResponse(uint8, {
       headers: {
@@ -456,11 +501,19 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
 
   const buffer = await Packer.toBuffer(doc);
   const uint8 = new Uint8Array(buffer);
+  // Return the raw bytes so POST can record a generated_reports snapshot
+  // with an accurate file-size before wrapping in a NextResponse.
+  return { uint8 };
+}
 
-  return new NextResponse(uint8, {
-    headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "Content-Disposition": `attachment; filename="Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx"`,
-    },
-  });
+// Map a report_type key to a display label for the Reports hub card.
+function prettyReportType(t: string): string {
+  const map: Record<string, string> = {
+    investment_memo: "Investment Memo",
+    pitch_deck: "Pitch Deck",
+    one_pager: "One-Pager",
+    pptx: "Pitch Deck",
+    docx: "Investment Memo",
+  };
+  return map[t] || "Investment Package";
 }

@@ -386,6 +386,27 @@ export async function ensureColumns(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_market_reports_deal_id ON market_reports(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_market_reports_as_of ON market_reports(deal_id, as_of_date DESC)`,
+    // ── Generated Reports (snapshots of every memo / deck / abstract exported) ──
+    // Every investment-package or DD-abstract export writes a row here so the
+    // analyst can reopen a previously-generated document later without losing
+    // it when they regenerate the working copy. `sections` is a full JSONB
+    // snapshot at export time so downloads regenerate byte-identical output
+    // even after the working investment_package row gets edited.
+    `CREATE TABLE IF NOT EXISTS generated_reports (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      report_type TEXT NOT NULL,                -- investment_memo | pitch_deck | one_pager | dd_abstract
+      format TEXT NOT NULL,                     -- pptx | docx
+      audience TEXT,                            -- investment_committee | lp_investor | lender | internal_review | null
+      deal_name TEXT,                           -- snapshot at time of export
+      sections JSONB NOT NULL DEFAULT '[]',     -- Array<{id, title, content, notes?}>
+      section_count INTEGER NOT NULL DEFAULT 0,
+      file_size_bytes BIGINT,
+      created_by TEXT,                          -- user id
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_generated_reports_deal_id ON generated_reports(deal_id, created_at DESC)`,
     // ── Location Intelligence ─────────────────────────────────────────────
     `CREATE TABLE IF NOT EXISTS location_intelligence (
       id TEXT PRIMARY KEY,
@@ -2594,6 +2615,83 @@ export const marketReportsQueries = {
   delete: async (id: string, dealId: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM market_reports WHERE id = $1 AND deal_id = $2", [id, dealId]);
+  },
+};
+
+// ─── Generated Reports queries ────────────────────────────────────────────────
+// Snapshots of every memo / deck / abstract exported for a deal. The Reports
+// modal on the investment-package + DD-abstract pages lists these so the
+// analyst can reopen a prior generation without losing it when they edit the
+// working copy.
+
+export const generatedReportsQueries = {
+  getByDealId: async (dealId: string) => {
+    if (!process.env.DATABASE_URL) return [];
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT id, deal_id, title, report_type, format, audience, deal_name, section_count, file_size_bytes, created_by, created_at FROM generated_reports WHERE deal_id = $1 ORDER BY created_at DESC",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string, dealId: string) => {
+    if (!process.env.DATABASE_URL) return null;
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM generated_reports WHERE id = $1 AND deal_id = $2",
+      [id, dealId]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  create: async (
+    dealId: string,
+    id: string,
+    data: {
+      title: string;
+      report_type: string;
+      format: string;
+      audience?: string | null;
+      deal_name?: string | null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      sections: any[];
+      file_size_bytes?: number | null;
+      created_by?: string | null;
+    }
+  ) => {
+    if (!process.env.DATABASE_URL) return null;
+    const pool = getPool();
+    const sectionCount = Array.isArray(data.sections) ? data.sections.length : 0;
+    await pool.query(
+      `INSERT INTO generated_reports (
+         id, deal_id, title, report_type, format, audience, deal_name,
+         sections, section_count, file_size_bytes, created_by, created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, NOW())`,
+      [
+        id,
+        dealId,
+        data.title,
+        data.report_type,
+        data.format,
+        data.audience ?? null,
+        data.deal_name ?? null,
+        JSON.stringify(data.sections ?? []),
+        sectionCount,
+        data.file_size_bytes ?? null,
+        data.created_by ?? null,
+      ]
+    );
+    return { id };
+  },
+
+  delete: async (id: string, dealId: string) => {
+    if (!process.env.DATABASE_URL) return;
+    const pool = getPool();
+    await pool.query(
+      "DELETE FROM generated_reports WHERE id = $1 AND deal_id = $2",
+      [id, dealId]
+    );
   },
 };
 
