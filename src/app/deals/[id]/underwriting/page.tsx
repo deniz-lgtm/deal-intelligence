@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
   Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3, Target, Pencil, GitCompare,
-  Car, Building2, Layers, Construction, ArrowDownUp,
+  Car, Building2, Layers, Construction, ArrowDownUp, Info,
 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -215,6 +215,10 @@ interface UWData {
   site_info: any;
   // AI estimate narratives
   opex_narrative: string;
+  // Per-line-item AI notes that show up as hover popovers next to each
+  // OpEx label. Empty object by default; populated by the opex-estimate
+  // API route alongside the numeric fields.
+  opex_item_notes: Record<string, string>;
   loan_narrative: string;
   // Affordability config (set from Programming page or the in-page
   // AffordabilityPlanner). The shape is owned by AffordabilityPlanner — see
@@ -289,6 +293,7 @@ const DEFAULT: UWData = {
   other_income_items: [],
   site_info: null,
   opex_narrative: "",
+  opex_item_notes: {},
   loan_narrative: "",
   affordability_config: null,
 };
@@ -1366,6 +1371,61 @@ function Section({ title, icon, children, open: defaultOpen = true }: { title: s
   );
 }
 
+// Parse the stored deal-score reasoning into compact bullets.
+// - New format: "__STRUCTURED__<json>" with {reasoning, bullets}.
+// - Legacy format: plain string; split into sentences and keep the
+//   first 3-5 as bullets so older scores still render tidily.
+function extractScoreBullets(reasoning?: string | null): { bullets: string[]; summary: string } {
+  if (!reasoning) return { bullets: [], summary: "" };
+  const STRUCT = "__STRUCTURED__";
+  if (reasoning.startsWith(STRUCT)) {
+    try {
+      const payload = JSON.parse(reasoning.slice(STRUCT.length));
+      const bullets = Array.isArray(payload.bullets)
+        ? payload.bullets.filter((b: unknown): b is string => typeof b === "string" && b.trim().length > 0)
+        : [];
+      return { bullets: bullets.slice(0, 5), summary: typeof payload.reasoning === "string" ? payload.reasoning : "" };
+    } catch {
+      return { bullets: [], summary: reasoning.slice(STRUCT.length) };
+    }
+  }
+  // Legacy: split sentences, trim, keep 3-5 non-empty lines.
+  const parts = reasoning
+    .split(/(?:\r?\n+)|(?<=[.!?])\s+(?=[A-Z0-9])/g)
+    .map((s) => s.replace(/^[\s•\-–*\d.)\]]+/, "").trim())
+    .filter((s) => s.length > 0);
+  if (parts.length >= 2) return { bullets: parts.slice(0, 5), summary: "" };
+  return { bullets: [], summary: reasoning };
+}
+
+// Small hover/click popover that surfaces the AI's short per-line-item
+// rationale next to an OpEx row. Replaces the big "AI Estimate Basis"
+// blob that used to sit under the OpEx table.
+function OpexNote({ note }: { note?: string }) {
+  const [open, setOpen] = useState(false);
+  if (!note) return null;
+  return (
+    <span className="relative inline-flex items-center align-middle">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className="ml-1 text-muted-foreground/50 hover:text-primary transition-colors"
+        title="AI estimate basis"
+        aria-label="AI estimate basis"
+      >
+        <Info className="h-3 w-3" />
+      </button>
+      {open && (
+        <span className="absolute left-4 top-0 z-20 w-64 rounded-md border bg-popover p-2 shadow-lifted-md text-xs text-popover-foreground whitespace-normal normal-case font-normal">
+          {note}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function ISRow({ label, ip, pf, proforma, muted, bold, hi, hideIp }: { label: string; ip: number; pf: number; proforma?: number; muted?: boolean; bold?: boolean; hi?: boolean; hideIp?: boolean; }) {
   const fmtVal = (v: number) => { const neg = v < 0; return neg ? `(${fc(Math.abs(v))})` : fc(Math.abs(v)); };
   return (
@@ -1838,6 +1898,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           other_expenses_annual: est.other_expenses_annual ?? p.other_expenses_annual,
           custom_opex: nextCustom,
           opex_narrative: est.basis || est.narrative || "",
+          opex_item_notes: (est.item_notes && typeof est.item_notes === "object") ? est.item_notes : {},
         };
       });
       toast.success(est.basis ? `OpEx estimated — ${est.basis}` : "Operating expenses estimated");
@@ -2384,7 +2445,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   )])
                 : 0;
               return irrVal > 0
-                ? <p className="text-xs text-muted-foreground">IRR {irrVal.toFixed(1)}% · {d.hold_period_years}yr hold</p>
+                ? <p className="text-xs text-muted-foreground">IRR {irrVal.toFixed(2)}% · {d.hold_period_years}yr hold</p>
                 : <p className="text-xs text-muted-foreground">{d.hold_period_years}yr hold</p>;
             })()}
           </div>
@@ -2602,24 +2663,48 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       variant="outline"
                       onClick={() => {
                         if (!window.confirm(
-                          `Load "${sc.name}"? This replaces the current building program and unit mix with the snapshot.`
+                          `Load "${sc.name}"? This replaces the current underwriting state with the snapshot.`
                         )) return;
-                        setData((p) => ({
-                          ...p,
-                          ...(sc.building_program ? { building_program: sc.building_program as any } : {}),
-                          unit_groups: Array.isArray(sc.unit_groups)
-                            ? (sc.unit_groups.map((g: any) => ({ ...newGroup(), ...g })) as UnitGroup[])
-                            : p.unit_groups,
-                          ...(Array.isArray(sc.other_income_items)
-                            ? { other_income_items: sc.other_income_items as any }
-                            : {}),
-                          ...(Array.isArray(sc.commercial_tenants)
-                            ? { commercial_tenants: sc.commercial_tenants as any }
-                            : {}),
-                        }));
+                        setData((p) => {
+                          // Prefer the new full-state snapshot when
+                          // present — it carries rents, affordability,
+                          // OpEx, financing, dev budget, etc. Older
+                          // snapshots only stored a handful of fields;
+                          // fall back to merging what's available so
+                          // legacy saves keep working.
+                          const fullState = (sc as any).state;
+                          if (fullState && typeof fullState === "object") {
+                            return {
+                              ...p,
+                              ...fullState,
+                              unit_groups: Array.isArray(fullState.unit_groups)
+                                ? fullState.unit_groups.map((g: any) => ({ ...newGroup(), ...g })) as UnitGroup[]
+                                : p.unit_groups,
+                              // Never overwrite the scenario list itself
+                              // — that lives at the deal level, not in
+                              // any one scenario. The field isn't typed
+                              // on UWData (scenarios are a sibling blob
+                              // on the DB row) so cast through any.
+                              uw_scenarios: (p as any).uw_scenarios,
+                            } as UWData;
+                          }
+                          return {
+                            ...p,
+                            ...(sc.building_program ? { building_program: sc.building_program as any } : {}),
+                            unit_groups: Array.isArray(sc.unit_groups)
+                              ? (sc.unit_groups.map((g: any) => ({ ...newGroup(), ...g })) as UnitGroup[])
+                              : p.unit_groups,
+                            ...(Array.isArray(sc.other_income_items)
+                              ? { other_income_items: sc.other_income_items as any }
+                              : {}),
+                            ...(Array.isArray(sc.commercial_tenants)
+                              ? { commercial_tenants: sc.commercial_tenants as any }
+                              : {}),
+                          };
+                        });
                         toast.success(`Loaded "${sc.name}"`);
                       }}
-                      title="Replace current building program + unit mix with this snapshot"
+                      title="Replace the current underwriting state with this scenario snapshot"
                     >
                       Load
                     </Button>
@@ -4168,8 +4253,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           {/* Vacancy row */}
           <div className={`grid ${isGroundUp ? "grid-cols-2" : "grid-cols-3"} gap-4 mb-4`}>
             {!isGroundUp && <NumInput label="In-Place Vacancy" value={d.in_place_vacancy_rate} onChange={v => set("in_place_vacancy_rate", v)} suffix="%" decimals={1} />}
-            <NumInput label={isGroundUp ? "Stabilized Vacancy" : "Pro Forma Vacancy"} value={d.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
-            <NumInput label="Management Fee" value={d.management_fee_pct} onChange={v => set("management_fee_pct", v)} suffix="% EGI" decimals={1} />
+            <div className="relative">
+              <NumInput label={isGroundUp ? "Stabilized Vacancy" : "Pro Forma Vacancy"} value={d.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
+              <span className="absolute top-0 left-[7.5rem]"><OpexNote note={d.opex_item_notes?.vacancy_rate} /></span>
+            </div>
+            <div className="relative">
+              <NumInput label="Management Fee" value={d.management_fee_pct} onChange={v => set("management_fee_pct", v)} suffix="% EGI" decimals={1} />
+              <span className="absolute top-0 left-[6.5rem]"><OpexNote note={d.opex_item_notes?.management_fee_pct} /></span>
+            </div>
           </div>
           <table className="w-full text-sm border-collapse">
             <thead>
@@ -4184,7 +4275,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <tbody>
               {/* Management row — in-place is hard $ amount, pro forma is % of EGI */}
               <tr className="border-b hover:bg-muted/20">
-                <td className="px-2 py-1.5 text-muted-foreground">Management <span className="text-xs text-muted-foreground/60">({d.management_fee_pct}% PF)</span></td>
+                <td className="px-2 py-1.5 text-muted-foreground">Management <span className="text-xs text-muted-foreground/60">({d.management_fee_pct}% PF)</span><OpexNote note={d.opex_item_notes?.management_fee_pct} /></td>
                 {!isMF && !isSH && (
                   <td className="px-2 py-1.5 text-center">
                     <input type="checkbox" checked={d.cam_management} onChange={e => set("cam_management", e.target.checked)} className="rounded h-3.5 w-3.5 accent-blue-500" />
@@ -4210,14 +4301,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               )}
               {/* Editable expense rows */}
               {([
-                { label: "Property Taxes", ipKey: "ip_taxes_annual" as keyof UWData, pfKey: "taxes_annual" as keyof UWData, camKey: "cam_taxes" as keyof UWData },
-                { label: "Insurance", ipKey: "ip_insurance_annual" as keyof UWData, pfKey: "insurance_annual" as keyof UWData, camKey: "cam_insurance" as keyof UWData },
-                { label: "Repairs & Maintenance", ipKey: "ip_repairs_annual" as keyof UWData, pfKey: "repairs_annual" as keyof UWData, camKey: "cam_repairs" as keyof UWData },
-                { label: "Utilities", ipKey: "ip_utilities_annual" as keyof UWData, pfKey: "utilities_annual" as keyof UWData, camKey: "cam_utilities" as keyof UWData },
-                { label: "General & Admin", ipKey: "ip_ga_annual" as keyof UWData, pfKey: "ga_annual" as keyof UWData, camKey: "cam_ga" as keyof UWData },
-                { label: "Marketing / Leasing", ipKey: "ip_marketing_annual" as keyof UWData, pfKey: "marketing_annual" as keyof UWData, camKey: "cam_marketing" as keyof UWData },
-                { label: "Reserves", ipKey: "ip_reserves_annual" as keyof UWData, pfKey: "reserves_annual" as keyof UWData, camKey: "cam_reserves" as keyof UWData },
-                { label: "Other", ipKey: "ip_other_annual" as keyof UWData, pfKey: "other_expenses_annual" as keyof UWData, camKey: "cam_other" as keyof UWData },
+                { label: "Property Taxes", ipKey: "ip_taxes_annual" as keyof UWData, pfKey: "taxes_annual" as keyof UWData, camKey: "cam_taxes" as keyof UWData, noteKey: "taxes_annual" },
+                { label: "Insurance", ipKey: "ip_insurance_annual" as keyof UWData, pfKey: "insurance_annual" as keyof UWData, camKey: "cam_insurance" as keyof UWData, noteKey: "insurance_annual" },
+                { label: "Repairs & Maintenance", ipKey: "ip_repairs_annual" as keyof UWData, pfKey: "repairs_annual" as keyof UWData, camKey: "cam_repairs" as keyof UWData, noteKey: "repairs_annual" },
+                { label: "Utilities", ipKey: "ip_utilities_annual" as keyof UWData, pfKey: "utilities_annual" as keyof UWData, camKey: "cam_utilities" as keyof UWData, noteKey: "utilities_annual" },
+                { label: "General & Admin", ipKey: "ip_ga_annual" as keyof UWData, pfKey: "ga_annual" as keyof UWData, camKey: "cam_ga" as keyof UWData, noteKey: "ga_annual" },
+                { label: "Marketing / Leasing", ipKey: "ip_marketing_annual" as keyof UWData, pfKey: "marketing_annual" as keyof UWData, camKey: "cam_marketing" as keyof UWData, noteKey: "marketing_annual" },
+                { label: "Reserves", ipKey: "ip_reserves_annual" as keyof UWData, pfKey: "reserves_annual" as keyof UWData, camKey: "cam_reserves" as keyof UWData, noteKey: "reserves_annual" },
+                { label: "Other", ipKey: "ip_other_annual" as keyof UWData, pfKey: "other_expenses_annual" as keyof UWData, camKey: "cam_other" as keyof UWData, noteKey: "other_expenses_annual" },
               ]).map(row => {
                 const ipVal = (d[row.ipKey] as number) || 0;
                 const pfVal = (d[row.pfKey] as number) || 0;
@@ -4226,7 +4317,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 const ipIsDefault = ipVal === 0;
                 return (
                   <tr key={row.label} className="border-b hover:bg-muted/20">
-                    <td className="px-2 py-1.5 text-muted-foreground">{row.label}</td>
+                    <td className="px-2 py-1.5 text-muted-foreground">{row.label}<OpexNote note={d.opex_item_notes?.[row.noteKey]} /></td>
                     {!isMF && !isSH && (
                       <td className="px-2 py-1.5 text-center">
                         <input type="checkbox" checked={isCam} onChange={e => set(row.camKey as keyof UWData, e.target.checked)} className="rounded h-3.5 w-3.5 accent-blue-500" />
@@ -4255,6 +4346,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   "custom_opex",
                   (d.custom_opex || []).filter(r => r.id !== row.id)
                 );
+                const labelLower = (row.label || "").toLowerCase();
+                const rowNote = labelLower.includes("contract")
+                  ? d.opex_item_notes?.contracts_annual
+                  : labelLower === "staff"
+                    ? d.opex_item_notes?.staff_annual
+                    : undefined;
                 return (
                   <tr key={row.id} className="border-b hover:bg-muted/20 group">
                     <td className="px-2 py-1.5">
@@ -4265,6 +4362,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           placeholder="Category"
                           className="bg-transparent border-b border-transparent focus:border-muted-foreground/40 outline-none text-sm text-muted-foreground w-full"
                         />
+                        <OpexNote note={rowNote} />
                         <button
                           onClick={removeRow}
                           className="opacity-0 group-hover:opacity-100 text-xs text-muted-foreground hover:text-red-400 px-1"
@@ -4397,12 +4495,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </Button>
             <DocCoverageChip documents={docs} section="opex" />
           </div>
-          {/* AI OpEx Narrative (persistent) */}
+          {/* AI OpEx Narrative — per-item notes now sit inline next to
+              each row (hover the ⓘ icon). This block is collapsed by
+              default so legacy deals that have the narrative but not
+              structured notes can still surface it on demand. */}
           {d.opex_narrative && (
-            <div className="mt-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
-              <p className="text-xs font-medium text-primary mb-1">AI Estimate Basis</p>
-              <p className="text-xs text-muted-foreground leading-relaxed">{d.opex_narrative}</p>
-            </div>
+            <details className="mt-3 group">
+              <summary className="text-xs text-muted-foreground/70 hover:text-primary cursor-pointer select-none list-none inline-flex items-center gap-1">
+                <Info className="h-3 w-3" /> View AI estimate basis
+              </summary>
+              <div className="mt-2 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                <p className="text-xs text-muted-foreground leading-relaxed">{d.opex_narrative}</p>
+              </div>
+            </details>
           )}
           {/* Leasing Commissions — commercial only */}
           {!isMF && !isSH && (
@@ -4957,7 +5062,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 });
                 const json = await res.json();
                 if (res.ok && json.data) {
-                  setDealScores(prev => ({ ...prev, uw_score: json.data.score, uw_score_reasoning: json.data.reasoning }));
+                  // Store reasoning in the same __STRUCTURED__ shape the API
+                  // persists, so the card renders bullets immediately after
+                  // scoring — no page refresh needed.
+                  const bullets = Array.isArray(json.data.bullet_points)
+                    ? json.data.bullet_points.filter((b: unknown) => typeof b === "string")
+                    : [];
+                  const reasoning = bullets.length > 0
+                    ? `__STRUCTURED__${JSON.stringify({ reasoning: json.data.reasoning || "", bullets })}`
+                    : (json.data.reasoning || "");
+                  setDealScores(prev => ({ ...prev, uw_score: json.data.score, uw_score_reasoning: reasoning }));
                   toast.success("Underwriting score updated");
                 } else { toast.error(json.error || "Scoring failed"); }
               } catch { toast.error("Scoring failed"); }
@@ -4975,6 +5089,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             ].map(({ label, score, reasoning, empty }) => {
               const accent = score ? score >= 8 ? "border-l-emerald-500" : score >= 6 ? "border-l-amber-500" : score >= 4 ? "border-l-orange-500" : "border-l-rose-500" : "border-l-muted-foreground/20";
               const numColor = score ? score >= 8 ? "text-emerald-400" : score >= 6 ? "text-amber-400" : score >= 4 ? "text-orange-400" : "text-rose-400" : "text-muted-foreground/30";
+              // The scoring API can persist reasoning either as a raw
+              // string (legacy) or as "__STRUCTURED__<json>" carrying
+              // {reasoning, bullets}. Prefer bullets when present;
+              // otherwise split long paragraphs into their natural
+              // sentence/newline fragments so the card stays compact.
+              const { bullets, summary } = extractScoreBullets(reasoning);
               return (
                 <div key={label} className={`rounded-lg border border-l-4 ${accent} bg-card p-4`}>
                   <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
@@ -4984,9 +5104,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     </span>
                     {score && <span className="text-sm text-muted-foreground">/10</span>}
                   </div>
-                  {reasoning && (
-                    <p className="text-xs text-foreground/70 mt-2 leading-relaxed">{reasoning}</p>
-                  )}
+                  {bullets.length > 0 ? (
+                    <ul className="mt-2 space-y-1">
+                      {bullets.map((b, i) => (
+                        <li key={i} className="text-xs text-foreground/80 leading-snug flex gap-1.5">
+                          <span className="text-primary/70 select-none">•</span>
+                          <span>{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : summary ? (
+                    <p className="text-xs text-foreground/70 mt-2 leading-snug">{summary}</p>
+                  ) : null}
                   {!score && <p className="text-xs text-muted-foreground mt-1">{empty}</p>}
                 </div>
               );
