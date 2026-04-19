@@ -1728,7 +1728,7 @@ export interface DevBudgetLineItem {
   // When set, the quantity is live-computed from the massing on every
   // render instead of relying on the (possibly stale) saved value.
   // Supported sources mirror seedDevBudget: land_sf / max_gsf /
-  // max_nrsf / parking_spaces / total_units.
+  // max_nrsf / parking_spaces / total_units / frontage_length_ft.
   auto_qty_source?: string;
   // For per-building fanout. When set, the live quantity is pulled
   // from the matching scenario in building_program, so each building
@@ -1738,7 +1738,7 @@ export interface DevBudgetLineItem {
 
 export const DEFAULT_DEV_BUDGET_HARD: Array<{ label: string; subcategory: string; unit_label: string; auto_qty_source: string }> = [
   { label: "Site Work", subcategory: "site_work", unit_label: "SF", auto_qty_source: "land_sf" },
-  { label: "Off-Sites", subcategory: "off_sites", unit_label: "LF", auto_qty_source: "manual" },
+  { label: "Off-Sites", subcategory: "off_sites", unit_label: "Linear SF", auto_qty_source: "frontage_length_ft" },
   { label: "Vertical Construction (Shell & Core)", subcategory: "vertical", unit_label: "GSF", auto_qty_source: "max_gsf" },
   { label: "Parking Structure", subcategory: "parking_structure", unit_label: "space", auto_qty_source: "parking_spaces" },
   { label: "FF&E / Amenities", subcategory: "ffe_amenities", unit_label: "NRSF", auto_qty_source: "max_nrsf" },
