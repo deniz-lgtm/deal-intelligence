@@ -504,6 +504,18 @@ function liveDevBudgetQty(item: DevBudgetLineItem, d: UWData): number {
   if (!item.auto_qty_source) return item.quantity || 0;
   const src = item.auto_qty_source;
   if (src === "land_sf") return d.site_info?.land_sf || 0;
+  if (src === "frontage_length_ft") {
+    const sp = (d as unknown as {
+      site_plan?: {
+        scenarios?: Array<{ id: string; frontage_length_ft?: number }>;
+        active_scenario_id?: string | null;
+      };
+    }).site_plan;
+    const scen =
+      sp?.scenarios?.find((s) => s.id === sp?.active_scenario_id) ||
+      sp?.scenarios?.[0];
+    return scen?.frontage_length_ft || 0;
+  }
   if (src === "total_units") {
     return (d.unit_groups || []).reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
   }
@@ -558,6 +570,7 @@ const DEV_BUDGET_UNIT_TYPES: Array<{ source: string; label: string; isPct?: bool
   { source: "max_gsf", label: "GSF" },
   { source: "max_nrsf", label: "NRSF" },
   { source: "land_sf", label: "Land SF" },
+  { source: "frontage_length_ft", label: "Linear SF" },
   { source: "parking_spaces", label: "space" },
   { source: "total_units", label: "per unit" },
   { source: "manual", label: "lump sum" },
@@ -3881,6 +3894,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     {capexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
                     AI Dev Budget
                   </Button>
+                  {d.dev_budget_items.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (confirm("Clear itemized dev budget and revert to simple Hard Cost/SF + Soft Cost % pricing?")) {
+                          setData(p => ({ ...p, dev_budget_items: [] }));
+                        }
+                      }}
+                    >
+                      Simplify to SF Pricing
+                    </Button>
+                  )}
                   <DocCoverageChip documents={docs} section="capex" />
                 </div>
                 {!d.max_gsf && <p className="text-xs text-amber-500">Set GSF in Site &amp; Zoning to enable budget calculations</p>}
