@@ -48,7 +48,8 @@ const FORMAT_INSTRUCTIONS: Record<string, string> = {
   investment_memo:
     "FORMAT: Institutional investment memo.\n" +
     "- Each section: 1 bold takeaway sentence (≤ 20 words) + 4-8 bullets (≤ 20 words each).\n" +
-    "- Every bullet carries a specific number, source citation, or action. If it doesn't, delete it.\n" +
+    "- TABLES FIRST when the section context provides a markdown table (unit mix, sources & uses, comps). Paste the table verbatim; do NOT re-render its values in prose. Write analytical bullets AFTER the table.\n" +
+    "- Every non-table bullet carries a specific number, source citation, or action. If it doesn't, delete it.\n" +
     "- NO multi-sentence paragraphs of prose. NO section recaps. NO transitional language between bullets.\n" +
     "- Cite sources inline in parentheses: (T-12), (CoStar Q3 '24), (broker OM), (internal UW). If the source is missing, tag the bullet UNVERIFIED.\n" +
     "- For returns/exit/risk sections, show base / downside / upside on one inline line each, not three paragraphs.",
@@ -433,6 +434,18 @@ function buildDealContext(
   return lines.join("\n");
 }
 
+// Render a markdown table from a headers row + data rows. Pads cells with
+// non-breaking alignment and writes the standard `| --- |` separator row so
+// the shared markdownToDocx / markdownToPptxBlocks renderers recognize it.
+// Deterministic — the memo model is told to paste this output verbatim.
+function renderMarkdownTable(headers: string[], rows: string[][]): string {
+  const cleanCell = (c: string) => String(c ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
+  const headerLine = `| ${headers.map(cleanCell).join(" | ")} |`;
+  const sepLine = `| ${headers.map(() => "---").join(" | ")} |`;
+  const rowLines = rows.map((r) => `| ${r.map(cleanCell).join(" | ")} |`);
+  return [headerLine, sepLine, ...rowLines].join("\n");
+}
+
 function buildSectionContext(
   sectionId: string, deal: AnyRecord, uw: AnyRecord | null, om: AnyRecord | null,
   docs: AnyRecord[], checklist: AnyRecord[], photos: AnyRecord[],
@@ -596,10 +609,10 @@ function buildSectionContext(
 
     case "financial_summary": {
       if (!uw) return "No underwriting data available.";
-      // Ground-up deals don't have a purchase price or closing costs. They
-      // have a land cost and a dev_budget_items[] line-item list (hard + soft
-      // categories, amounts already computed) that must be summed differently
-      // from capex_items.
+      // Ground-up deals have Land + dev_budget_items. Acquisition deals have
+      // Purchase Price + closing + capex. Both branches emit a single
+      // Sources & Uses markdown table so the memo reads like the
+      // Underwriting page's own sources/uses block.
       const isGroundUpFin = !!uw.development_mode;
       const devBudgetItems = Array.isArray(uw.dev_budget_items) ? uw.dev_budget_items : [];
       const devBudgetTotal = devBudgetItems.reduce((s: number, it: AnyRecord) => s + n(it.amount), 0);
@@ -613,43 +626,75 @@ function buildSectionContext(
         : n(uw.purchase_price) + closingCosts + capex;
       const units = n(deal.units);
       const sf = n(deal.square_footage) || n(uw.max_gsf);
-      const perUnit = units > 0 ? Math.round(totalCost / units) : 0;
-      const perSF = sf > 0 ? (totalCost / sf) : 0;
-      const ppUnit = units > 0 ? Math.round(n(uw.purchase_price) / units) : 0;
-      const ppSF = sf > 0 ? (n(uw.purchase_price) / sf) : 0;
       const loanBasis = isGroundUpFin ? totalCost : n(uw.purchase_price);
       const loan = uw.has_financing ? loanBasis * (n(uw.acq_ltc) / 100) : 0;
       const equity = Math.max(0, totalCost - loan);
-      const basisLines = isGroundUpFin
-        ? [
-            `[BASIS]`,
-            `Land Cost: ${fc(landCost)}${sf > 0 ? ` | $${(landCost / sf).toFixed(0)}/GSF land` : ""}`,
-            `Hard Costs: ${fc(hardTotal)}${sf > 0 ? ` | $${(hardTotal / sf).toFixed(0)}/GSF` : ""}`,
-            `Soft Costs: ${fc(softTotal)}${hardTotal > 0 ? ` | ${((softTotal / hardTotal) * 100).toFixed(1)}% of hard` : ""}`,
-            `Total Development Budget: ${fc(devBudgetTotal)}`,
-            `Total Capitalization: ${fc(totalCost)}${perUnit ? ` | $${perUnit.toLocaleString()}/unit` : ""}${perSF ? ` | $${perSF.toFixed(0)}/GSF` : ""}`,
-          ]
-        : [
-            `[BASIS]`,
-            `Purchase Price: ${fc(n(uw.purchase_price))}${ppUnit ? ` | $${ppUnit.toLocaleString()}/unit` : ""}${ppSF ? ` | $${ppSF.toFixed(0)}/SF` : ""}`,
-            `Closing Costs: ${n(uw.closing_costs_pct)}% (${fc(closingCosts)})`,
-            `Total CapEx: ${fc(capex)}`,
-            `Total Capitalization: ${fc(totalCost)}${perUnit ? ` | $${perUnit.toLocaleString()}/unit` : ""}${perSF ? ` | $${perSF.toFixed(0)}/SF` : ""}`,
-          ];
+
+      // USES table — one row per major bucket with $, % of total, and
+      // $/unit + $/SF (or $/GSF for ground-up).
+      const usesRows: string[][] = [];
+      const usesHeader = ["Use", "$", "% of Total", units > 0 ? "$/Unit" : "", sf > 0 ? (isGroundUpFin ? "$/GSF" : "$/SF") : ""].filter(Boolean);
+      const pushUse = (label: string, amt: number) => {
+        const pct = totalCost > 0 ? `${((amt / totalCost) * 100).toFixed(1)}%` : "—";
+        const pu = units > 0 ? `$${Math.round(amt / units).toLocaleString()}` : "";
+        const ps = sf > 0 ? `$${(amt / sf).toFixed(0)}` : "";
+        usesRows.push([label, fc(amt), pct, pu, ps].filter((c, i) => i < usesHeader.length));
+      };
+      if (isGroundUpFin) {
+        if (landCost > 0) pushUse("Land", landCost);
+        if (hardTotal > 0) pushUse("Hard Costs", hardTotal);
+        if (softTotal > 0) pushUse("Soft Costs", softTotal);
+      } else {
+        pushUse("Purchase Price", n(uw.purchase_price));
+        if (closingCosts > 0) pushUse("Closing Costs", closingCosts);
+        if (capex > 0) pushUse("CapEx", capex);
+      }
+      usesRows.push(
+        [
+          "**Total Uses**",
+          `**${fc(totalCost)}**`,
+          "**100%**",
+          units > 0 ? `**$${Math.round(totalCost / units).toLocaleString()}**` : "",
+          sf > 0 ? `**$${(totalCost / sf).toFixed(0)}**` : "",
+        ].filter((c, i) => i < usesHeader.length)
+      );
+      const usesTable = renderMarkdownTable(usesHeader, usesRows);
+
+      // SOURCES table — debt + equity split.
+      const sourcesRows: string[][] = [];
+      const sourcesHeader = ["Source", "$", "% of Total", "Terms"];
+      if (uw.has_financing && loan > 0) {
+        const terms = `${uw.acq_ltc}% LTC, ${uw.acq_interest_rate}% rate, ${uw.acq_amort_years}yr amort${n(uw.acq_io_years) > 0 ? `, ${uw.acq_io_years}yr I/O` : ""}`;
+        sourcesRows.push(["Senior Debt", fc(loan), totalCost > 0 ? `${((loan / totalCost) * 100).toFixed(1)}%` : "—", terms]);
+      }
+      sourcesRows.push(["Equity", fc(equity), totalCost > 0 ? `${((equity / totalCost) * 100).toFixed(1)}%` : "—", uw.has_financing ? "Sponsor / LP" : "All-cash"]);
+      sourcesRows.push(["**Total Sources**", `**${fc(totalCost)}**`, "**100%**", ""]);
+      if (uw.has_refi) {
+        sourcesRows.push([`Refi Year ${uw.refi_year}`, "—", "—", `${uw.refi_ltv}% LTV @ ${uw.refi_rate}%, ${uw.refi_amort_years}yr amort`]);
+      }
+      const sourcesTable = renderMarkdownTable(sourcesHeader, sourcesRows);
+
+      // OPERATING ASSUMPTIONS table — vacancy / exit cap / hold.
+      const opsHeader = ["Assumption", "Value"];
+      const opsRows: string[][] = [];
+      if (!isGroundUpFin) opsRows.push(["In-Place Vacancy", `${n(uw.in_place_vacancy_rate)}%`]);
+      opsRows.push(["Pro Forma Vacancy", `${n(uw.vacancy_rate)}%`]);
+      opsRows.push(["Exit Cap", `${n(uw.exit_cap_rate)}%`]);
+      opsRows.push(["Hold Period", `${n(uw.hold_period_years)} years`]);
+      const opsTable = renderMarkdownTable(opsHeader, opsRows);
+
       return [
-        ...basisLines,
-        ``,
-        `[SOURCES & USES]`,
-        uw.has_financing ? `Senior Debt: ${fc(loan)} @ ${uw.acq_ltc}% LTC / ${uw.acq_interest_rate}% / ${uw.acq_amort_years}yr amort${n(uw.acq_io_years) > 0 ? ` / ${uw.acq_io_years}yr I/O` : ""}` : "Senior Debt: NONE — all-cash basis",
-        `Equity Check: ${fc(equity)}`,
-        uw.has_refi ? `Refi Year ${uw.refi_year}: ${uw.refi_ltv}% LTV @ ${uw.refi_rate}% / ${uw.refi_amort_years}yr amort` : "",
-        ``,
-        `[OPERATING ASSUMPTIONS]`,
-        `Vacancy: ${uw.vacancy_rate}% pro forma | ${uw.in_place_vacancy_rate}% in-place`,
-        `Exit Cap: ${uw.exit_cap_rate}% | Hold: ${uw.hold_period_years} years`,
+        "### Uses",
+        usesTable,
+        "",
+        "### Sources",
+        sourcesTable,
+        "",
+        "### Operating Assumptions",
+        opsTable,
         affSnippet,
-        ``,
-        `SHAPE: Takeaway sentence (strategy/size/basis/stabilized YoC/IRR/EM/hold). Then sources-and-uses as Label: value bullets. Then 1 bullet comparing $/unit or $/SF basis to sale comp average (spread in %). Flag closing costs / CapEx reserve / financing fees if under-reserved.`,
+        "",
+        `SHAPE: 1 takeaway sentence (strategy, total cap, stabilized YoC, levered IRR, EM, hold). Paste all three tables above VERBATIM in the order shown. Then 2-3 analytical bullets: (1) basis $/unit or $/SF vs. sale-comp average (cite bps spread), (2) whether soft-cost % / closing costs / CapEx reserve look adequate, (3) DSCR or debt-yield cushion at current rates. No prose recap of the table numbers.`,
       ].filter(Boolean).join("\n");
     }
 
@@ -659,28 +704,65 @@ function buildSectionContext(
       // "IP $0/mo" column reads as a data gap to the model. For ground-up
       // only show the stabilized (market) rent column.
       const isGroundUpUnits = !!uw?.development_mode;
-      const lines = unitGroups.map((g: AnyRecord) => {
-        const aff = g.is_affordable ? ` [AFFORDABLE${g.ami_pct ? ` @ ${g.ami_pct}% AMI` : ""}]` : "";
-        if (isMF) {
-          const parts = [`${g.label}${aff}: ${g.unit_count} units, ${g.bedrooms}BD/${g.bathrooms}BA, ${g.sf_per_unit}SF`];
+
+      // Build a markdown table the memo renders verbatim. The model gets
+      // told to PASTE this table unchanged and follow it with 2-3 analytical
+      // bullets — no re-summarizing every row in prose. This mirrors how
+      // the Underwriting and Programming pages present the mix.
+      let table: string;
+      if (isMF) {
+        const totalUnits = unitGroups.reduce((s: number, g: AnyRecord) => s + n(g.unit_count), 0);
+        const totalSF = unitGroups.reduce((s: number, g: AnyRecord) => s + n(g.unit_count) * n(g.sf_per_unit), 0);
+        const avgMkt = totalUnits ? unitGroups.reduce((s: number, g: AnyRecord) => s + n(g.unit_count) * n(g.market_rent_per_unit), 0) / totalUnits : 0;
+        const headers = isGroundUpUnits
+          ? ["Unit Type", "Units", "Mix %", "BD/BA", "SF", "Stabilized Rent", "$/SF", "Notes"]
+          : ["Unit Type", "Units", "Mix %", "BD/BA", "SF", "In-Place Rent", "Market Rent", "LTL"];
+        const rows = unitGroups.map((g: AnyRecord) => {
+          const units = n(g.unit_count);
+          const mixPct = totalUnits ? `${((units / totalUnits) * 100).toFixed(1)}%` : "—";
+          const sf = n(g.sf_per_unit);
+          const aff = g.is_affordable ? `AFFORDABLE${g.ami_pct ? ` @ ${g.ami_pct}% AMI` : ""}` : "";
           if (isGroundUpUnits) {
-            parts.push(`Stabilized $${n(g.market_rent_per_unit)}/mo`);
-          } else {
-            parts.push(`IP $${n(g.current_rent_per_unit)}/mo`);
-            parts.push(`Mkt $${n(g.market_rent_per_unit)}/mo`);
+            const mkt = n(g.market_rent_per_unit);
+            const perSF = sf > 0 ? (mkt * 12 / sf).toFixed(2) : "—";
+            return [g.label || "", units.toString(), mixPct, `${g.bedrooms ?? "—"}/${g.bathrooms ?? "—"}`, sf.toLocaleString(), `$${mkt.toLocaleString()}`, `$${perSF}`, aff];
           }
-          return parts.join(", ");
-        }
-        const parts = [`${g.label}${aff}: ${g.unit_count} units, ${g.sf_per_unit}SF`];
-        if (isGroundUpUnits) {
-          parts.push(`Stabilized $${n(g.market_rent_per_sf).toFixed(2)}/SF`);
-        } else {
-          parts.push(`IP $${n(g.current_rent_per_sf).toFixed(2)}/SF`);
-          parts.push(`Mkt $${n(g.market_rent_per_sf).toFixed(2)}/SF`);
-        }
-        return parts.join(", ");
-      });
-      return [lines.join("\n"), affSnippet].filter(Boolean).join("\n\n");
+          const ip = n(g.current_rent_per_unit);
+          const mkt = n(g.market_rent_per_unit);
+          const ltl = mkt > 0 ? `${(((mkt - ip) / mkt) * 100).toFixed(1)}%` : "—";
+          return [g.label || "", units.toString(), mixPct, `${g.bedrooms ?? "—"}/${g.bathrooms ?? "—"}`, sf.toLocaleString(), `$${ip.toLocaleString()}`, `$${mkt.toLocaleString()}`, ltl];
+        });
+        const totalRow = isGroundUpUnits
+          ? ["**Total**", `**${totalUnits}**`, "100%", "—", `**${totalSF.toLocaleString()}**`, `**$${Math.round(avgMkt).toLocaleString()}** avg`, "—", ""]
+          : ["**Total**", `**${totalUnits}**`, "100%", "—", `**${totalSF.toLocaleString()}**`, "—", `**$${Math.round(avgMkt).toLocaleString()}** avg`, "—"];
+        table = renderMarkdownTable(headers, [...rows, totalRow]);
+      } else {
+        // Commercial / by-SF deals
+        const totalUnits = unitGroups.reduce((s: number, g: AnyRecord) => s + n(g.unit_count), 0);
+        const totalSF = unitGroups.reduce((s: number, g: AnyRecord) => s + n(g.unit_count) * n(g.sf_per_unit), 0);
+        const headers = isGroundUpUnits
+          ? ["Type", "Count", "SF", "Stabilized $/SF"]
+          : ["Type", "Count", "SF", "In-Place $/SF", "Market $/SF"];
+        const rows = unitGroups.map((g: AnyRecord) => {
+          const units = n(g.unit_count);
+          const sf = n(g.sf_per_unit);
+          if (isGroundUpUnits) {
+            return [g.label || "", units.toString(), sf.toLocaleString(), `$${n(g.market_rent_per_sf).toFixed(2)}`];
+          }
+          return [g.label || "", units.toString(), sf.toLocaleString(), `$${n(g.current_rent_per_sf).toFixed(2)}`, `$${n(g.market_rent_per_sf).toFixed(2)}`];
+        });
+        const totalRow = isGroundUpUnits
+          ? ["**Total**", `**${totalUnits}**`, `**${totalSF.toLocaleString()}**`, "—"]
+          : ["**Total**", `**${totalUnits}**`, `**${totalSF.toLocaleString()}**`, "—", "—"];
+        table = renderMarkdownTable(headers, [...rows, totalRow]);
+      }
+
+      return [
+        table,
+        "",
+        `SHAPE: Paste the unit-mix table above VERBATIM (do not re-render values in prose). Then write 2-3 bullets commenting on what the mix implies: biggest cohort by count or NOI, loss-to-lease spread if acquisition, comp fit if ground-up. No per-row narration.`,
+        affSnippet,
+      ].filter(Boolean).join("\n");
     }
 
     case "affordability_strategy": {
@@ -702,11 +784,9 @@ function buildSectionContext(
     }
 
     case "rent_comps": {
-      // Merge two sources:
-      // 1. Legacy: rent_comps embedded in the underwriting JSONB (populated by
-      //    the existing /api/deals/[id]/rent-comps AI generator).
-      // 2. New: rows in the `comps` table with comp_type='rent' from the
-      //    Comps & Market tab (paste-mode extraction).
+      // Two sources merged into one rent-comp table:
+      //   1. Legacy uw.rent_comps (AI-generated, selected via selected_comp_ids).
+      //   2. Comps table rows with comp_type="rent" and selected !== false.
       const legacyRentComps: AnyRecord[] = uw?.rent_comps || [];
       const selectedLegacyIds = new Set(
         uw?.selected_comp_ids || legacyRentComps.map((_: unknown, i: number) => i)
@@ -717,58 +797,90 @@ function buildSectionContext(
       const tableRentComps = compsAll.filter(
         (c: AnyRecord) => c.comp_type === "rent" && c.selected !== false
       );
+      const allRent = [
+        ...legacySelected.map((c: AnyRecord) => ({ ...c, _src: "uw" })),
+        ...tableRentComps.map((c: AnyRecord) => ({ ...c, _src: "market" })),
+      ];
+      const saleComps = compsAll.filter(
+        (c: AnyRecord) => c.comp_type === "sale" && c.selected !== false
+      );
 
-      if (legacySelected.length === 0 && tableRentComps.length === 0) {
-        return "No rent comp data available.";
+      if (allRent.length === 0 && saleComps.length === 0) {
+        return "No rent or sale comp data available.";
       }
 
-      const lines: string[] = [];
+      const blocks: string[] = [];
 
-      if (legacySelected.length > 0) {
-        const legacyLines = legacySelected.map((c: AnyRecord) => {
-          const parts = [`${c.name} — ${c.address}`];
-          if (c.distance_mi) parts.push(`${c.distance_mi}mi away`);
-          if (c.year_built) parts.push(`Built ${c.year_built}`);
-          if (c.units) parts.push(`${c.units} units`);
-          if (c.total_sf) parts.push(`${Number(c.total_sf).toLocaleString()} SF`);
-          if (c.occupancy_pct) parts.push(`${c.occupancy_pct}% occ`);
-          if (c.rent_per_sf) parts.push(`$${Number(c.rent_per_sf).toFixed(2)}/SF`);
-          if (c.lease_type) parts.push(c.lease_type);
-          if (Array.isArray(c.unit_types)) {
-            const rents = c.unit_types
-              .map((ut: AnyRecord) => `${ut.type}: $${ut.rent}/mo (${ut.sf}SF)`)
-              .join(", ");
-            parts.push(`Rents: ${rents}`);
-          }
-          if (c.notes) parts.push(`Notes: ${c.notes}`);
-          return "  " + parts.join(" | ");
+      if (allRent.length > 0) {
+        const headers = ["Property", "Dist", "Yr", "Units", "Occ %", "$/Unit", "$/SF", "Notes"];
+        const rows = allRent.map((c: AnyRecord) => {
+          const dist = c.distance_mi != null ? `${Number(c.distance_mi).toFixed(1)} mi` : "—";
+          const year = c.year_built || "—";
+          const units = c.units ? String(c.units) : "—";
+          const occ = c.occupancy_pct != null ? `${c.occupancy_pct}%` : "—";
+          const ppu = c.rent_per_unit != null ? `$${Math.round(Number(c.rent_per_unit)).toLocaleString()}` : "—";
+          const ppsf = c.rent_per_sf != null ? `$${Number(c.rent_per_sf).toFixed(2)}` : "—";
+          const notes = c.source_note || c.notes || "";
+          const name = [c.name, c.address].filter(Boolean).join(", ") || "—";
+          return [name, dist, String(year), units, occ, ppu, ppsf, notes];
         });
-        lines.push(`Rent Comps (${legacySelected.length}):\n${legacyLines.join("\n")}`);
+        // Averages row
+        const rpu = allRent.map((c: AnyRecord) => Number(c.rent_per_unit)).filter((v) => !isNaN(v) && v > 0);
+        const rpsf = allRent.map((c: AnyRecord) => Number(c.rent_per_sf)).filter((v) => !isNaN(v) && v > 0);
+        const occs = allRent.map((c: AnyRecord) => Number(c.occupancy_pct)).filter((v) => !isNaN(v) && v > 0);
+        const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+        const avgPPU = avg(rpu);
+        const avgPSF = avg(rpsf);
+        const avgOcc = avg(occs);
+        rows.push([
+          "**Average**",
+          "—",
+          "—",
+          "—",
+          avgOcc ? `**${avgOcc.toFixed(1)}%**` : "—",
+          avgPPU ? `**$${Math.round(avgPPU).toLocaleString()}**` : "—",
+          avgPSF ? `**$${avgPSF.toFixed(2)}**` : "—",
+          "",
+        ]);
+        blocks.push(`### Rent Comps (${allRent.length})`);
+        blocks.push(renderMarkdownTable(headers, rows));
       }
 
-      if (tableRentComps.length > 0) {
-        const tableLines = tableRentComps.map((c: AnyRecord) => {
-          const parts: string[] = [];
-          if (c.name) parts.push(c.name);
-          if (c.address) parts.push(c.address);
-          if (c.distance_mi != null) parts.push(`${Number(c.distance_mi).toFixed(1)}mi`);
-          if (c.year_built) parts.push(`Built ${c.year_built}`);
-          if (c.units) parts.push(`${c.units} units`);
-          if (c.total_sf) parts.push(`${Number(c.total_sf).toLocaleString()} SF`);
-          if (c.occupancy_pct != null) parts.push(`${c.occupancy_pct}% occ`);
-          if (c.rent_per_unit != null) parts.push(`$${Math.round(Number(c.rent_per_unit)).toLocaleString()}/unit/mo`);
-          if (c.rent_per_sf != null) parts.push(`$${Number(c.rent_per_sf).toFixed(2)}/SF`);
-          if (c.rent_per_bed != null) parts.push(`$${Math.round(Number(c.rent_per_bed)).toLocaleString()}/bed/mo`);
-          if (c.lease_type) parts.push(c.lease_type);
-          if (c.source_note) parts.push(`Notes: ${c.source_note}`);
-          return "  " + parts.join(" | ");
+      if (saleComps.length > 0) {
+        const headers = ["Property", "Dist", "Sale $", "Cap", "$/Unit", "$/SF", "Date"];
+        const rows = saleComps.slice(0, 15).map((c: AnyRecord) => {
+          const dist = c.distance_mi != null ? `${Number(c.distance_mi).toFixed(1)} mi` : "—";
+          const sale = c.sale_price != null ? fc(Number(c.sale_price)) : "—";
+          const cap = c.cap_rate != null ? `${Number(c.cap_rate).toFixed(2)}%` : "—";
+          const ppu = c.price_per_unit != null ? `$${Math.round(Number(c.price_per_unit)).toLocaleString()}` : "—";
+          const psf = c.price_per_sf != null ? `$${Number(c.price_per_sf).toFixed(0)}` : "—";
+          const date = c.sale_date ? new Date(c.sale_date).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—";
+          const name = [c.name, c.address].filter(Boolean).join(", ") || "—";
+          return [name, dist, sale, cap, ppu, psf, date];
         });
-        lines.push(
-          `Rent Comps from Comps & Market tab (${tableRentComps.length}):\n${tableLines.join("\n")}`
-        );
+        const caps = saleComps.map((c: AnyRecord) => Number(c.cap_rate)).filter((v) => !isNaN(v) && v > 0);
+        const pus = saleComps.map((c: AnyRecord) => Number(c.price_per_unit)).filter((v) => !isNaN(v) && v > 0);
+        const psfs = saleComps.map((c: AnyRecord) => Number(c.price_per_sf)).filter((v) => !isNaN(v) && v > 0);
+        const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+        rows.push([
+          "**Average**",
+          "—",
+          "—",
+          caps.length ? `**${avg(caps).toFixed(2)}%**` : "—",
+          pus.length ? `**$${Math.round(avg(pus)).toLocaleString()}**` : "—",
+          psfs.length ? `**$${avg(psfs).toFixed(0)}**` : "—",
+          "—",
+        ]);
+        blocks.push("");
+        blocks.push(`### Sale Comps (${saleComps.length})`);
+        blocks.push(renderMarkdownTable(headers, rows));
       }
 
-      return lines.join("\n\n");
+      blocks.push("");
+      blocks.push(
+        `SHAPE: Paste the comp tables above VERBATIM. Then 2-3 bullets: (1) where subject rent sits vs. comp average and in what direction, (2) which 1-2 comps most resemble the subject (call out by name), (3) any vintage / occupancy / class outliers that qualify the average.`
+      );
+      return blocks.join("\n");
     }
 
     case "value_add": {
