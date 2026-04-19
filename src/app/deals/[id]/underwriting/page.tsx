@@ -1529,6 +1529,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [wizardType, setWizardType] = useState<ScenarioType>("custom");
   const [wizardMetric, setWizardMetric] = useState<WizardMetric>("em");
   const [wizardTarget, setWizardTarget] = useState<number>(0);
+  // Raw string buffer for the wizard's target input. Without this the
+  // controlled input force-parses every keystroke, so typing "0." or
+  // "0.07" gets snapped back to "0" mid-edit. We keep the typed string
+  // here and only commit a parsed number on blur / Enter.
+  const [wizardTargetRaw, setWizardTargetRaw] = useState<string>("");
   const [wizardResult, setWizardResult] = useState<{ value: number; label: string; scenarioOverrides: Partial<UWData> } | null>(null);
   const [wizardSolving, setWizardSolving] = useState(false);
   const [renamingScenarioId, setRenamingScenarioId] = useState<string | null>(null);
@@ -2301,7 +2306,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             );
           })}
           <button
-            onClick={() => { setShowScenarioWizard(true); setWizardStep(0); setWizardType("custom"); setWizardResult(null); setWizardTarget(businessPlan?.target_equity_multiple_min || 2); }}
+            onClick={() => {
+              const initial = businessPlan?.target_equity_multiple_min || 2;
+              setShowScenarioWizard(true);
+              setWizardStep(0);
+              setWizardType("custom");
+              setWizardResult(null);
+              setWizardTarget(initial);
+              setWizardTargetRaw(String(initial));
+            }}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors whitespace-nowrap border border-dashed border-border"
           >
             <Plus className="h-3 w-3" />
@@ -5176,13 +5189,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           createScenario("Custom Scenario", "custom", "Manual what-if adjustments", {});
                         } else {
                           // Set smart defaults from business plan
-                          if (st.type === "land_residual" || st.type === "rent_target") {
-                            setWizardMetric("em");
-                            setWizardTarget(businessPlan?.target_equity_multiple_min || 2);
-                          } else {
-                            setWizardMetric("em");
-                            setWizardTarget(businessPlan?.target_equity_multiple_min || 2);
-                          }
+                          const initial = businessPlan?.target_equity_multiple_min || 2;
+                          setWizardMetric("em");
+                          setWizardTarget(initial);
+                          setWizardTargetRaw(String(initial));
                           setWizardStep(1);
                         }
                       }}
@@ -5214,7 +5224,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             key={opt.key}
                             onClick={() => {
                               setWizardMetric(opt.key);
-                              if (bpVal) setWizardTarget(bpVal);
+                              if (bpVal) { setWizardTarget(bpVal); setWizardTargetRaw(String(bpVal)); }
                             }}
                             className={`p-3 rounded-lg border text-center transition-colors ${
                               wizardMetric === opt.key ? "border-primary bg-primary/5" : "hover:bg-muted/50"
@@ -5235,7 +5245,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       {businessPlan && activeMeta.bpKey && businessPlan[activeMeta.bpKey] != null && (
                         <button
                           className="ml-2 text-primary hover:underline"
-                          onClick={() => setWizardTarget(businessPlan[activeMeta.bpKey!]!)}
+                          onClick={() => {
+                            const v = businessPlan[activeMeta.bpKey!]!;
+                            setWizardTarget(v);
+                            setWizardTargetRaw(String(v));
+                          }}
                         >
                           Use plan min ({businessPlan[activeMeta.bpKey]}{suffix})
                         </button>
@@ -5245,9 +5259,30 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <input
                         type="text"
                         inputMode="decimal"
-                        value={wizardTarget || ""}
-                        onChange={e => setWizardTarget(parseFloat(e.target.value) || 0)}
-                        className="flex-1 px-3 py-2 text-sm outline-none bg-transparent text-blue-700"
+                        // Show the raw string while the user is typing
+                        // so values like "0.07" or "0." don't get
+                        // collapsed mid-edit. Falls back to the parsed
+                        // number when the buffer is empty (e.g. preset
+                        // click that bypassed the input).
+                        value={wizardTargetRaw !== "" ? wizardTargetRaw : (wizardTarget || "")}
+                        onChange={e => {
+                          const next = e.target.value.replace(/[^0-9.\-]/g, "");
+                          setWizardTargetRaw(next);
+                          const parsed = parseFloat(next);
+                          if (!Number.isNaN(parsed)) setWizardTarget(parsed);
+                          else if (next === "") setWizardTarget(0);
+                        }}
+                        onBlur={() => {
+                          const parsed = parseFloat(wizardTargetRaw);
+                          if (!Number.isNaN(parsed)) {
+                            setWizardTarget(parsed);
+                            setWizardTargetRaw(String(parsed));
+                          } else {
+                            setWizardTargetRaw("");
+                          }
+                        }}
+                        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                        className="flex-1 px-3 py-2 text-sm outline-none bg-transparent text-foreground tabular-nums"
                         placeholder="0"
                       />
                       <span className="px-2 text-sm text-muted-foreground bg-muted border-l">
