@@ -886,7 +886,21 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
           + (e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12
       : (d.parking_monthly || 0) * 12;
   const otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
-  const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry;
+  // Pro-forma `other_income_items` line items — anything the analyst
+  // typed in the Other Income table (Storage Fees, Pet Rent, Late Fees,
+  // etc.). Skip labels that already flow through the RUBS/laundry
+  // mirror in computePushedUw, and skip per_space items that are
+  // already covered by the per-space parking calc above — otherwise
+  // we'd double-count them.
+  const totalUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
+  const otherIncomeItemsPF = (d.other_income_items || []).reduce((s: number, item: any) => {
+    const label = (item.label || "").toLowerCase();
+    if (label.includes("rubs") || label.includes("laundry")) return s;
+    if (item.basis === "per_space") return s;
+    const mult = item.basis === "per_unit" ? totalUnitsForOtherIncome : 1;
+    return s + (item.amount || 0) * mult * 12;
+  }, 0);
+  const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry + otherIncomeItemsPF;
 
   // In-place other income — pulled from each line item's `ip_amount`
   // (monthly) field on acquisition deals. Ground-up deals have no
