@@ -617,10 +617,13 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         parking_reserved_rate: current.parking_reserved_rate || 200,
         parking_unreserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.3),
         parking_unreserved_rate: current.parking_unreserved_rate || 100,
-        // Legacy fields for backward compat
-        rubs_per_unit_monthly: otherIncomeItems.find(i => i.label.toLowerCase().includes("rubs"))?.amount || 0,
+        // Legacy other-income scalars — zeroed because the underwriting
+        // calc now sums d.other_income_items directly (source of truth
+        // in one place). Leaving them populated would double-count
+        // items whose labels include "rubs" / "laundry".
+        rubs_per_unit_monthly: 0,
         parking_monthly: 0,
-        laundry_monthly: otherIncomeItems.find(i => i.label.toLowerCase().includes("laundry"))?.amount || 0,
+        laundry_monthly: 0,
       };
       return merged;
   }, [zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanMassings]);

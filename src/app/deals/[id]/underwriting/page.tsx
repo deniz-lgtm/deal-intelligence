@@ -909,29 +909,31 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   // already covered by the per-space parking calc above — otherwise
   // we'd double-count them.
   const totalUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
+  const ipUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + (g.unit_count || 0), 0);
+  // Pro-forma sum of every Other Income line item. Intentionally
+  // mirrors inPlaceOtherIncome below (no label filters, no basis
+  // skips) so whatever shows in the IP column of the DCF flows into
+  // Year 1+. If PF $/Mo is blank on a row, fall back to the IP amount
+  // (acquisition convention — PF starts from IP unless overridden).
+  //
+  // Legacy `rubs_per_unit_monthly`, `parking_monthly`, and
+  // `laundry_monthly` are NOT added here — they're kept in UWData
+  // for back-compat with old deals but new syncs zero them out in
+  // computePushedUw, so including them would risk double-counting.
   const otherIncomeItemsPF = (d.other_income_items || []).reduce((s: number, item: any) => {
-    const label = (item.label || "").toLowerCase();
-    if (label.includes("rubs") || label.includes("laundry")) return s;
-    if (item.basis === "per_space") return s;
-    const mult = item.basis === "per_unit" ? totalUnitsForOtherIncome : 1;
-    // Acquisition convention: if the analyst entered an in-place
-    // amount but didn't override the pro-forma column, carry the IP
-    // value forward as the pro-forma baseline — otherwise the yearly
-    // DCF silently drops the income stream. Explicit pro-forma input
-    // still wins (including an explicit 0 after typing something, as
-    // long as the field value is stored). Ground-up deals have no
-    // ip_amount by design, so this collapses to item.amount.
+    const mult = item.basis === "per_unit"
+      ? totalUnitsForOtherIncome
+      : item.basis === "per_space"
+        ? (d.parking_reserved_spaces || 0)
+        : 1;
     const monthly = (item.amount || 0) > 0 ? item.amount : (item.ip_amount || 0);
     return s + monthly * mult * 12;
   }, 0);
-  const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry + otherIncomeItemsPF;
+  const totalOtherIncome = otherIncomeItemsPF;
 
-  // In-place other income — pulled from each line item's `ip_amount`
-  // (monthly) field on acquisition deals. Ground-up deals have no
-  // in-place revenue so this stays 0. Per_unit uses the raw unit_count
-  // sum (pre-renovation), per_space uses the reserved parking space
-  // count, per_property is flat.
-  const ipUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + (g.unit_count || 0), 0);
+  // In-place other income — uses the ip_amount column directly. Per-unit
+  // multiplier uses the raw unit_count sum (pre-renovation). Ground-up
+  // deals have no in-place revenue so this stays 0.
   const inPlaceOtherIncome = d.development_mode
     ? 0
     : (d.other_income_items || []).reduce((s: number, item: any) => {
