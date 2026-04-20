@@ -9,7 +9,7 @@ import {
 } from "@/lib/db";
 import { extractMarketReport } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { geocodeAddress } from "@/lib/geocode";
+import { geocodeAddress, placesLookupAddress } from "@/lib/geocode";
 import { uploadBlob } from "@/lib/blob-storage";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
@@ -290,6 +290,26 @@ async function geocodePipeline(
       out.push(p);
       continue;
     }
+
+    // Try Google Places first when the entry is project-name-only — Census
+    // can't resolve "The Aspen" but Places can. When Places returns a real
+    // street address, backfill `address` so the UI / map popover show it
+    // instead of just the project name.
+    if (!p.address && p.project_name) {
+      const query = [p.project_name, p.submarket, submarketFallback]
+        .filter((s) => s && String(s).trim())
+        .join(", ");
+      const hit = await placesLookupAddress(query);
+      if (hit) {
+        p.lat = hit.lat;
+        p.lng = hit.lng;
+        if (hit.address && !p.address) p.address = hit.address;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        out.push(p);
+        continue;
+      }
+    }
+
     const addressCandidates = [
       p.address ? `${p.address}, ${submarketFallback}` : null,
       p.address,
