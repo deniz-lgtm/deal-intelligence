@@ -843,22 +843,38 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const totalSF = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit, 0) : 0;
   const totalBeds = mode === "student_housing" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit, 0) : 0;
 
+  // ── Commercial tenant revenue (mixed-use / residential deals only) ───────
+  // On pure commercial deals (mode === "commercial") unit_groups with
+  // sf × market_rent_per_sf already cover it, so fold in only when
+  // unit_groups aren't the commercial source of truth. rent_per_sf on
+  // commercial_tenants is annual. Ground-up deals have no in-place
+  // tenants, so ctGPRip is zeroed there.
+  const commercialTenantGPR = mode === "commercial"
+    ? 0
+    : (d.commercial_tenants || []).reduce(
+        (s: number, t: any) => s + (t.sf || 0) * (t.rent_per_sf || 0),
+        0
+      );
+  const commercialTenantGPRip = d.development_mode ? 0 : commercialTenantGPR;
+
   // ── Revenue (market uses effective units at market rent, in-place uses current) ──
-  const gpr = mode === "student_housing"
+  const gpr = (mode === "student_housing"
     ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed * 12, 0)
     : mode === "multifamily"
     ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.market_rent_per_unit * 12, 0)
-    : d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit * g.market_rent_per_sf, 0);
-  const inPlaceGPR = mode === "student_housing"
+    : d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit * g.market_rent_per_sf, 0)
+  ) + commercialTenantGPR;
+  const inPlaceGPR = (mode === "student_housing"
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit * g.current_rent_per_bed * 12, 0)
     : mode === "multifamily"
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.current_rent_per_unit * 12, 0)
-    : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0);
+    : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0)
+  ) + commercialTenantGPRip;
 
   // ── Proforma GPR — blended rent reflecting renovation count ─────────────────
   // Ground-up: proforma = market (all units at market rent, no in-place)
   // Value-add: renovation_count units at market rent, remaining at in-place
-  const proformaGPR = d.development_mode ? gpr : d.unit_groups.reduce((s, g) => {
+  const proformaGPR = (d.development_mode ? gpr - commercialTenantGPR : d.unit_groups.reduce((s, g) => {
     const eu = effectiveUnits(g);
     const renoUnits = Math.min(g.renovation_count || 0, eu);
     const unrenoUnits = eu - renoUnits;
@@ -869,7 +885,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     } else {
       return s + (renoUnits * g.sf_per_unit * g.market_rent_per_sf + unrenoUnits * g.sf_per_unit * g.current_rent_per_sf);
     }
-  }, 0);
+  }, 0)) + commercialTenantGPR;
 
   // ── Other Income (RUBS, Parking, Laundry) ──────────────────────────────────
   const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
