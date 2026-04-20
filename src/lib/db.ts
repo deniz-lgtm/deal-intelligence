@@ -412,6 +412,19 @@ export async function ensureColumns(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_market_reports_deal_id ON market_reports(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_market_reports_as_of ON market_reports(deal_id, as_of_date DESC)`,
+    // ── Places cache ──────────────────────────────────────────────────────
+    // Google Places Text Search is billed per request. Re-extracting the same
+    // CBRE comp book (e.g. after a prompt tweak) otherwise re-queries Places
+    // for every property name. Cache the resolved address/coords keyed on a
+    // normalized query string so reruns are free and fast. 90-day TTL —
+    // addresses rarely change but we don't want infinitely stale results.
+    `CREATE TABLE IF NOT EXISTS places_cache (
+      query TEXT PRIMARY KEY,
+      result JSONB,
+      hit BOOLEAN NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_places_cache_created ON places_cache(created_at)`,
     // ── Location Intelligence ─────────────────────────────────────────────
     `CREATE TABLE IF NOT EXISTS location_intelligence (
       id TEXT PRIMARY KEY,
@@ -2662,6 +2675,37 @@ export const marketReportsQueries = {
 };
 
 // ─── Location Intelligence queries ────────────────────────────────────────────
+
+// ─── Places cache queries ─────────────────────────────────────────────────
+//
+// Memoize Google Places Text Search results so re-extracting the same comp
+// book doesn't re-bill for queries we've already resolved. Hit==true rows
+// store the full lookup result; hit==false rows are negative-cached for
+// 24h (the raw query miss, in case the analyst later enriches the query).
+
+export const placesCacheQueries = {
+  get: async (query: string): Promise<{ result: unknown; hit: boolean; created_at: string } | null> => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT result, hit, created_at FROM places_cache WHERE query = $1",
+      [query]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  set: async (query: string, result: unknown, hit: boolean): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO places_cache (query, result, hit, created_at)
+         VALUES ($1, $2::jsonb, $3, NOW())
+       ON CONFLICT (query) DO UPDATE SET
+         result = EXCLUDED.result,
+         hit = EXCLUDED.hit,
+         created_at = NOW()`,
+      [query, JSON.stringify(result ?? null), hit]
+    );
+  },
+};
 
 export const locationIntelligenceQueries = {
   getByDealId: async (dealId: string) => {

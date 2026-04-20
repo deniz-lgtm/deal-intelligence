@@ -31,6 +31,29 @@ export interface GeocodeResult {
   matched_address: string;
 }
 
+/**
+ * Great-circle distance in statute miles between two (lat, lng) pairs.
+ * Standard haversine formula — Earth as a sphere of radius 3958.8mi, plenty
+ * accurate for comp distance in the tens-to-hundreds-of-miles range we
+ * care about.
+ */
+export function haversineMiles(
+  aLat: number,
+  aLng: number,
+  bLat: number,
+  bLng: number
+): number {
+  const R = 3958.8;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+  return R * c;
+}
+
 interface CensusGeocodeResponse {
   result?: {
     addressMatches?: Array<{
@@ -213,6 +236,29 @@ export async function placesLookupAddress(
   if (!apiKey) return null;
   if (!query || query.trim().length < 3) return null;
 
+  // Normalize the cache key so trivially-different queries ("Linda Gardens
+  // Apartments,  El Cajon, CA" vs "Linda Gardens Apartments, El Cajon, CA")
+  // share a cache row.
+  const cacheKey = query.toLowerCase().replace(/\s+/g, " ").trim();
+
+  // DB cache: 90-day TTL on hits, 24h on negative results. Importing the
+  // queries module lazily avoids a circular dep between geocode.ts and db.ts.
+  try {
+    const { placesCacheQueries } = await import("./db");
+    const cached = await placesCacheQueries.get(cacheKey);
+    if (cached) {
+      const ageMs = Date.now() - new Date(cached.created_at).getTime();
+      const TTL_HIT = 90 * 24 * 60 * 60 * 1000;
+      const TTL_MISS = 24 * 60 * 60 * 1000;
+      const ttl = cached.hit ? TTL_HIT : TTL_MISS;
+      if (ageMs < ttl) {
+        return cached.hit ? (cached.result as PlacesLookupResult) : null;
+      }
+    }
+  } catch (err) {
+    console.warn("places_cache read failed (continuing uncached):", err);
+  }
+
   const url =
     `https://maps.googleapis.com/maps/api/place/textsearch/json` +
     `?query=${encodeURIComponent(query)}` +
@@ -226,6 +272,15 @@ export async function placesLookupAddress(
     return null;
   }
 
+  const writeCache = async (result: PlacesLookupResult | null) => {
+    try {
+      const { placesCacheQueries } = await import("./db");
+      await placesCacheQueries.set(cacheKey, result, result != null);
+    } catch (err) {
+      console.warn("places_cache write failed:", err);
+    }
+  };
+
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) {
@@ -234,11 +289,13 @@ export async function placesLookupAddress(
     }
     const json = (await res.json()) as PlacesTextSearchResponse;
     if (json.status !== "OK" || !json.results || json.results.length === 0) {
+      await writeCache(null);
       return null;
     }
     const top = json.results[0];
     const loc = top.geometry?.location;
     if (!loc || typeof loc.lat !== "number" || typeof loc.lng !== "number") {
+      await writeCache(null);
       return null;
     }
 
@@ -269,7 +326,7 @@ export async function placesLookupAddress(
     // the user's original name with a duplicate.
     const looksLikeStreet = street != null && /\d/.test(street);
 
-    return {
+    const result: PlacesLookupResult = {
       address: looksLikeStreet ? street : null,
       formatted_address: formatted,
       city,
@@ -278,6 +335,8 @@ export async function placesLookupAddress(
       lng: loc.lng,
       place_id: top.place_id,
     };
+    await writeCache(result);
+    return result;
   } catch (err) {
     console.error(`Google Places error for "${query}":`, err);
     return null;

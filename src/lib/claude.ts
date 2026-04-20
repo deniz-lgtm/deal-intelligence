@@ -492,6 +492,12 @@ export function diffRentRolls(
 // server-side (see src/lib/web-allowlist.ts and FEATURE_ROADMAP_BACKLOG.md).
 // The URL field is stored as a reference only.
 
+// Which source filled a given field. Lets the review UI show badges so the
+// analyst knows whether to double-check a number (e.g. a Places-resolved
+// address should be verified; a computed price_per_unit is as trustworthy
+// as its inputs).
+export type CompFieldSource = "llm" | "places" | "computed" | "assessor";
+
 export interface ExtractedCompDraft {
   comp_type: "sale" | "rent";
   name: string | null;
@@ -524,6 +530,10 @@ export interface ExtractedCompDraft {
   // configured or the lookup didn't resolve.
   lat?: number | null;
   lng?: number | null;
+  // Per-field provenance map. Optional — absent when the draft came straight
+  // from the LLM with no post-processing. Keys that aren't in the map should
+  // be treated as "llm" by consumers.
+  _provenance?: Partial<Record<string, CompFieldSource>>;
 }
 
 const COMP_EXTRACTION_PROMPT = `You are a commercial real estate analyst extracting a single comparable property from listing material an analyst has supplied (pasted text, screenshots, and/or a source URL slug). The analyst already viewed the source themselves.

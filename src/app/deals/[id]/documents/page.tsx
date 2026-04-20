@@ -120,6 +120,32 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
     }
   }, []);
 
+  const [reExtracting, setReExtracting] = useState<string | null>(null);
+  const reExtract = useCallback(
+    async (docId: string) => {
+      setReExtracting(docId);
+      try {
+        const res = await fetch(
+          `/api/deals/${params.id}/documents/${docId}/re-extract`,
+          { method: "POST" }
+        );
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          toast.error(err.error || "Re-extraction failed");
+          return;
+        }
+        toast.success(
+          "Re-extracted — submarket metrics and market report refreshed"
+        );
+      } catch {
+        toast.error("Re-extraction failed");
+      } finally {
+        setReExtracting(null);
+      }
+    },
+    [params.id]
+  );
+
   const handleUploadComplete = () => {
     setShowUpload(false);
     loadDocuments();
@@ -281,8 +307,10 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           onRecategorize={recategorize}
           onToggleKey={toggleKeyDocument}
           onShowVersions={(doc) => setVersionsForDoc(doc)}
+          onReExtract={reExtract}
           recategorizing={recategorizing}
           deleting={deleting}
+          reExtracting={reExtracting}
         />
       ) : (
         <GridView
@@ -348,8 +376,10 @@ function FolderView({
   onRecategorize,
   onToggleKey,
   onShowVersions,
+  onReExtract,
   recategorizing,
   deleting,
+  reExtracting,
 }: {
   byCategory: Record<string, Document[]>;
   filledCategories: DocumentCategory[];
@@ -359,8 +389,10 @@ function FolderView({
   onRecategorize: (docId: string, cat: DocumentCategory) => void;
   onToggleKey: (docId: string, isKey: boolean) => void;
   onShowVersions: (doc: Document) => void;
+  onReExtract?: (docId: string) => void;
   recategorizing: string | null;
   deleting: string | null;
+  reExtracting?: string | null;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(filledCategories));
 
@@ -414,8 +446,10 @@ function FolderView({
                     onRecategorize={onRecategorize}
                     onToggleKey={onToggleKey}
                     onShowVersions={onShowVersions}
+                    onReExtract={onReExtract}
                     recategorizing={recategorizing}
                     deleting={deleting}
+                    reExtracting={reExtracting}
                   />
                 ))}
               </div>
@@ -485,8 +519,10 @@ function DocRow({
   onRecategorize,
   onToggleKey,
   onShowVersions,
+  onReExtract,
   recategorizing,
   deleting,
+  reExtracting,
 }: {
   doc: Document & { is_key?: boolean };
   onDelete: (id: string) => void;
@@ -494,8 +530,10 @@ function DocRow({
   onRecategorize: (docId: string, cat: DocumentCategory) => void;
   onToggleKey: (docId: string, isKey: boolean) => void;
   onShowVersions: (doc: Document) => void;
+  onReExtract?: (docId: string) => void;
   recategorizing: string | null;
   deleting: string | null;
+  reExtracting?: string | null;
 }) {
   const [showCatMenu, setShowCatMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -594,6 +632,20 @@ function DocRow({
             title="Version history + changes"
           >
             <History className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {onReExtract && doc.category === "market" && (
+          <button
+            onClick={() => onReExtract(doc.id)}
+            disabled={reExtracting === doc.id}
+            className="text-muted-foreground hover:text-primary transition-colors"
+            title="Re-run AI extraction (refresh submarket metrics)"
+          >
+            {reExtracting === doc.id ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
           </button>
         )}
         {/* Recategorize button */}

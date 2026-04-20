@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
-import {
-  dealQueries,
-  documentQueries,
-  marketReportsQueries,
-  submarketMetricsQueries,
-} from "@/lib/db";
+import { dealQueries, documentQueries, marketReportsQueries } from "@/lib/db";
 import { extractMarketReport } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { geocodeAddress, placesLookupAddress } from "@/lib/geocode";
 import { uploadBlob } from "@/lib/blob-storage";
+import { persistMarketReport } from "@/lib/market-extraction";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -174,75 +170,14 @@ export async function POST(
       }
     }
 
-    const id = uuidv4();
-    const row = await marketReportsQueries.create(params.id, id, {
-      publisher: extraction.publisher,
-      report_name: extraction.report_name,
-      asset_class: extraction.asset_class,
-      msa: extraction.msa,
-      submarket: extraction.submarket,
-      as_of_date: extraction.as_of_date,
-      source_document_id: sourceDocumentId,
-      source_url: sourceUrl || extraction.source_url,
-      metrics: extraction.metrics as Record<string, unknown>,
-      pipeline: enrichedPipeline,
-      top_employers: extraction.top_employers,
-      top_deliveries: extraction.top_deliveries,
-      narrative: extraction.narrative,
-      // Keep a truncated excerpt so we have provenance without blowing up the row.
-      raw_text: rawText ? rawText.slice(0, 20_000) : null,
+    const row = await persistMarketReport({
+      dealId: params.id,
+      extraction,
+      sourceDocumentId,
+      sourceUrl,
+      rawText,
+      pipelineEnriched: enrichedPipeline,
     });
-
-    // Mirror the canonical submarket fields into submarket_metrics so the
-    // Comps & Market panel, Co-Pilot benchmarks, DD abstract, and investment
-    // package all pick up the fresh vintage without the analyst having to
-    // re-type anything. market_reports stays the source of truth (with QoQ
-    // history); submarket_metrics is the "current" snapshot keyed 1:1 with
-    // the deal. Only write when we have at least one field worth saving.
-    try {
-      const m = extraction.metrics || {};
-      const capAvg =
-        m.cap_rate_avg_pct != null
-          ? Number(m.cap_rate_avg_pct)
-          : m.cap_rate_low_pct != null && m.cap_rate_high_pct != null
-            ? (Number(m.cap_rate_low_pct) + Number(m.cap_rate_high_pct)) / 2
-            : null;
-      const smFields: Record<string, unknown> = {
-        submarket_name: extraction.submarket ?? null,
-        msa: extraction.msa ?? null,
-        market_cap_rate: capAvg,
-        market_rent_growth: m.rent_growth_yoy_pct ?? null,
-        market_vacancy: m.vacancy_pct ?? m.availability_pct ?? null,
-        absorption_units: m.absorption_units_ytd ?? null,
-        deliveries_units: m.deliveries_units_ytd ?? null,
-        narrative: extraction.narrative ?? null,
-        sources: [
-          [extraction.publisher, extraction.report_name, extraction.as_of_date]
-            .filter(Boolean)
-            .join(" — "),
-        ].filter(Boolean),
-      };
-      const hasAnyValue = [
-        smFields.submarket_name,
-        smFields.msa,
-        smFields.market_cap_rate,
-        smFields.market_rent_growth,
-        smFields.market_vacancy,
-        smFields.absorption_units,
-        smFields.deliveries_units,
-        smFields.narrative,
-      ].some((v) => v != null && v !== "");
-      if (hasAnyValue) {
-        const existing = await submarketMetricsQueries.getByDealId(params.id);
-        await submarketMetricsQueries.upsert(
-          params.id,
-          existing?.id ?? uuidv4(),
-          smFields
-        );
-      }
-    } catch (err) {
-      console.error("market-reports: submarket_metrics upsert failed:", err);
-    }
 
     return NextResponse.json({ data: row });
   } catch (error) {
