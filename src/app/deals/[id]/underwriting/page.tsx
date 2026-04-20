@@ -888,6 +888,23 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
   const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry;
 
+  // In-place other income — pulled from each line item's `ip_amount`
+  // (monthly) field on acquisition deals. Ground-up deals have no
+  // in-place revenue so this stays 0. Per_unit uses the raw unit_count
+  // sum (pre-renovation), per_space uses the reserved parking space
+  // count, per_property is flat.
+  const ipUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + (g.unit_count || 0), 0);
+  const inPlaceOtherIncome = d.development_mode
+    ? 0
+    : (d.other_income_items || []).reduce((s: number, item: any) => {
+        const mult = item.basis === "per_unit"
+          ? ipUnitsForOtherIncome
+          : item.basis === "per_space"
+            ? (d.parking_reserved_spaces || 0)
+            : 1;
+        return s + (item.ip_amount || 0) * mult * 12;
+      }, 0);
+
   const ipVacRate = d.in_place_vacancy_rate ?? d.vacancy_rate;
   const vacancyLoss = gpr * (d.vacancy_rate / 100);
   const inPlaceVacancyLoss = inPlaceGPR * (ipVacRate / 100);
@@ -948,7 +965,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     }
   }
   const effectiveRevenue = egi + reimbursements;
-  const inPlaceEffectiveRevenue = inPlaceEGI + ipReimbursements;
+  const inPlaceEffectiveRevenue = inPlaceEGI + ipReimbursements + inPlaceOtherIncome;
   const proformaEffectiveRevenue = proformaEGI + reimbursements + totalOtherIncome;
 
   // ── Leasing Commissions (annualized) ─────────────────────────────────────────
@@ -1263,7 +1280,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     gpr, inPlaceGPR, proformaGPR, vacancyLoss, inPlaceVacancyLoss, proformaVacancyLoss, egi, inPlaceEGI, proformaEGI,
     reimbursements, ipReimbursements, camPool, ipCamPool, effectiveRevenue, inPlaceEffectiveRevenue, proformaEffectiveRevenue,
     leasingCommissions, ipLeasingCommissions,
-    totalOtherIncome, otherIncomeRUBS, otherIncomeParking, otherIncomeLaundry,
+    totalOtherIncome, inPlaceOtherIncome, otherIncomeRUBS, otherIncomeParking, otherIncomeLaundry,
     mgmtFee, proformaMgmtFee, inPlaceMgmtFee, totalOpEx, proformaTotalOpEx, inPlaceTotalOpEx,
     noi, inPlaceNOI, proformaNOI,
     grm, proformaGRM, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
@@ -3449,7 +3466,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 <tr className="bg-muted/30 border-b">
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Source</th>
                   <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Basis</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">$/Mo</th>
+                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]" title="In-place monthly amount (T12 / trailing)">In-Place $/Mo</th>}
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">{isGroundUp ? "$/Mo" : "Pro Forma $/Mo"}</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Annual</th>
                   <th className="w-[24px]" />
                 </tr>
@@ -3458,12 +3476,23 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 {(d.other_income_items || []).map((item: any, i: number) => {
                   const updOI = (upd: Record<string, any>) => setData(p => ({ ...p, other_income_items: (p.other_income_items || []).map((oi: any, j: number) => j === i ? { ...oi, ...upd } : oi) }));
                   const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1;
+                  const ipMult = item.basis === "per_unit"
+                    ? (d.unit_groups || []).reduce((s: number, g: any) => s + (g.unit_count || 0), 0)
+                    : item.basis === "per_space"
+                      ? (d.parking_reserved_spaces || 0)
+                      : 1;
                   return (
                     <tr key={item.id || i} className="border-b hover:bg-muted/10 group">
                       <td className="px-2 py-1.5"><input type="text" value={item.label} onChange={e => updOI({ label: e.target.value })} className="w-full bg-transparent text-sm outline-none" /></td>
                       <td className="px-2 py-1.5"><select value={item.basis} onChange={e => updOI({ basis: e.target.value })} className="w-full bg-background text-foreground text-xs outline-none rounded border border-border/40"><option value="per_unit">Per Unit ({m.totalUnits})</option><option value="per_property">Per Property</option><option value="per_space">Per Space</option></select></td>
+                      {!isGroundUp && <td className="px-2 py-1.5"><CellInput value={item.ip_amount || 0} onChange={v => updOI({ ip_amount: v })} prefix="$" placeholder={item.amount > 0 ? `${Math.round(item.amount).toLocaleString()}` : undefined} /></td>}
                       <td className="px-2 py-1.5"><CellInput value={item.amount || 0} onChange={v => updOI({ amount: v })} prefix="$" /></td>
-                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc((item.amount || 0) * mult * 12)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">
+                        {fc((item.amount || 0) * mult * 12)}
+                        {!isGroundUp && (item.ip_amount || 0) > 0 && (
+                          <span className="block text-[10px] text-muted-foreground/70 tabular-nums">IP {fc((item.ip_amount || 0) * ipMult * 12)}</span>
+                        )}
+                      </td>
                       <td className="px-1"><button onClick={() => setData(p => ({ ...p, other_income_items: (p.other_income_items || []).filter((_: any, j: number) => j !== i) }))} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button></td>
                     </tr>
                   );
@@ -3472,7 +3501,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               {(d.other_income_items || []).length > 0 && (
                 <tfoot>
                   <tr className="border-t bg-muted/20 font-semibold">
-                    <td colSpan={3} className="px-2 py-1.5 text-right">Total Other Income</td>
+                    <td colSpan={2} className="px-2 py-1.5 text-right">Total Other Income</td>
+                    {!isGroundUp && (
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fc(m.inPlaceOtherIncome)}</td>
+                    )}
+                    <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{isGroundUp ? "" : "Pro forma:"}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1; return s + (item.amount || 0) * mult * 12; }, 0))}</td>
                     <td />
                   </tr>
@@ -5041,7 +5074,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <DCFRow label="Gross Potential Rent" yr0={isGroundUp ? m.proformaGPR : m.inPlaceGPR} yr1to5={m.yearlyDCF.map(y => y.gpr)} />
               <DCFRow label="Less Vacancy" yr0={isGroundUp ? -m.proformaVacancyLoss : -m.inPlaceVacancyLoss} yr1to5={m.yearlyDCF.map(y => -y.vacancyLoss)} muted />
               {m.reimbursements > 0 && <DCFRow label="CAM Reimbursements" yr0={isGroundUp ? m.reimbursements : m.ipReimbursements} yr1to5={m.yearlyDCF.map(y => y.reimbursements)} muted />}
-              {m.totalOtherIncome > 0 && <DCFRow label="Other Income" yr0={isGroundUp ? m.totalOtherIncome : 0} yr1to5={m.yearlyDCF.map(y => y.otherIncome)} muted />}
+              {(m.totalOtherIncome > 0 || m.inPlaceOtherIncome > 0) && <DCFRow label="Other Income" yr0={isGroundUp ? m.totalOtherIncome : m.inPlaceOtherIncome} yr1to5={m.yearlyDCF.map(y => y.otherIncome)} muted />}
               <DCFRow label="Effective Gross Income" yr0={isGroundUp ? m.proformaEffectiveRevenue : m.inPlaceEffectiveRevenue} yr1to5={m.yearlyDCF.map(y => y.egi + y.reimbursements + y.otherIncome)} bold />
               <tr><td colSpan={7} className="px-4"><div className="border-t" /></td></tr>
               <DCFRow label="Total Operating Expenses" yr0={isGroundUp ? -m.proformaTotalOpEx : -m.inPlaceTotalOpEx} yr1to5={m.yearlyDCF.map(y => -y.totalOpEx)} />
