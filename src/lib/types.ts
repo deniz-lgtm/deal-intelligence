@@ -492,6 +492,15 @@ export interface UnitGroup {
   unit_count: number;
   will_renovate: boolean;
   renovation_cost_per_unit: number;
+  // How units transition to market rent over the hold.
+  //   - `annual_turnover_pct`: default mechanism. % of units/yr that roll to
+  //     market rent as leases expire. Applied cumulatively, clamped to unit
+  //     count. Independent of `renovation_count` (which is capex-only).
+  //   - `market_rent_schedule`: optional override. Units hitting market rent
+  //     each year, indexed by year (0 = yr 1). When present, `annual_turnover_pct`
+  //     is ignored.
+  annual_turnover_pct?: number;
+  market_rent_schedule?: number[];
   // Multifamily (bed-based) — used when property_type is multifamily / student_housing
   beds_per_unit?: number;
   current_rent_per_bed?: number;  // monthly $/bed

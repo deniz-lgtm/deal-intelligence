@@ -9,6 +9,10 @@ export type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 export interface UnitGroup {
   id: string; label: string; unit_count: number;
   renovation_count: number; renovation_cost_per_unit: number;
+  // Rent-to-market transition (see types.ts UnitGroup for semantics).
+  // `renovation_count` is capex-only; these drive when units reach market rent.
+  annual_turnover_pct?: number;
+  market_rent_schedule?: number[];
   unit_change: "none" | "add" | "remove"; unit_change_count: number;
   bedrooms: number; bathrooms: number; sf_per_unit: number;
   current_rent_per_sf: number; market_rent_per_sf: number;
@@ -304,6 +308,30 @@ export function effectiveUnits(g: UnitGroup): number {
   return g.unit_count;
 }
 
+// Cumulative count of units on the mark-to-market side of the blend at the
+// end of `yr` (1-indexed). Three resolution modes, in priority order:
+//   1. `market_rent_schedule` present — sum entries [0..yr-1], clamp to eu.
+//   2. `annual_turnover_pct` > 0 — eu * pct/100 * yr, clamp to eu.
+//   3. Legacy fallback — `renovation_count` units at market from year 1.
+// Returns a possibly-fractional count (intentional: smooths the DCF curve).
+export function unitsAtMarket(g: UnitGroup, yr: number): number {
+  const eu = effectiveUnits(g);
+  if (eu <= 0 || yr <= 0) return 0;
+  const sched = g.market_rent_schedule;
+  if (sched && sched.length > 0) {
+    let cum = 0;
+    for (let i = 0; i < Math.min(yr, sched.length); i++) cum += sched[i] || 0;
+    return Math.min(eu, Math.max(0, cum));
+  }
+  const pct = g.annual_turnover_pct;
+  if (pct !== undefined && pct > 0) {
+    return Math.min(eu, eu * (pct / 100) * yr);
+  }
+  // Back-compat: renovation_count used to drive both capex AND units-at-market.
+  // Preserve the old blend for deals saved before turnover/schedule existed.
+  return Math.min(eu, g.renovation_count || 0);
+}
+
 export function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing") {
   const totalUnits = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
   const ipTotalUnits = d.unit_groups.reduce((s, g) => s + g.unit_count, 0);
@@ -323,18 +351,28 @@ export function calc(d: UWData, mode: "commercial" | "multifamily" | "student_ho
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.current_rent_per_unit * 12, 0)
     : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0);
 
-  const proformaGPR = d.development_mode ? gpr : d.unit_groups.reduce((s, g) => {
+  // Blended GPR for a unit group at year `yr` (market-rate units at market
+  // rent, the rest at in-place). Used for both the stabilized headline
+  // `proformaGPR` and the per-year DCF loop below.
+  const groupBlendedGPR = (g: UnitGroup, yr: number): number => {
     const eu = effectiveUnits(g);
-    const renoUnits = Math.min(g.renovation_count || 0, eu);
-    const unrenoUnits = eu - renoUnits;
+    const mkt = unitsAtMarket(g, yr);
+    const ip = Math.max(0, eu - mkt);
     if (mode === "student_housing") {
-      return s + (renoUnits * g.beds_per_unit * g.market_rent_per_bed + unrenoUnits * g.beds_per_unit * g.current_rent_per_bed) * 12;
+      return (mkt * g.beds_per_unit * g.market_rent_per_bed + ip * g.beds_per_unit * g.current_rent_per_bed) * 12;
     } else if (mode === "multifamily") {
-      return s + (renoUnits * g.market_rent_per_unit + unrenoUnits * g.current_rent_per_unit) * 12;
+      return (mkt * g.market_rent_per_unit + ip * g.current_rent_per_unit) * 12;
     } else {
-      return s + (renoUnits * g.sf_per_unit * g.market_rent_per_sf + unrenoUnits * g.sf_per_unit * g.current_rent_per_sf);
+      return (mkt * g.sf_per_unit * g.market_rent_per_sf + ip * g.sf_per_unit * g.current_rent_per_sf);
     }
-  }, 0);
+  };
+  // Headline proforma = stabilized state at the end of the hold. For turnover
+  // or schedule models this is when the rollover has fully played out; for
+  // the legacy renovation_count fallback it's identical year-to-year.
+  const stabilizedYr = d.hold_period_years || 5;
+  const proformaGPR = d.development_mode
+    ? gpr
+    : d.unit_groups.reduce((s, g) => s + groupBlendedGPR(g, stabilizedYr), 0);
 
   const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
   const parkingEntries = d.parking?.entries || [];
@@ -553,7 +591,12 @@ export function calc(d: UWData, mode: "commercial" | "multifamily" | "student_ho
     const rentMult = Math.pow(1 + rg, yr);
     const expMult = Math.pow(1 + eg, yr);
     const leaseUpFactor = yr === 1 ? yr1LeaseUpFactor : (yr === 2 && yr1LeaseUpFactor < 0.8) ? Math.min(1, yr1LeaseUpFactor + 0.5) : 1;
-    const yrGPR = proformaGPR * rentMult * leaseUpFactor;
+    // Value-add deals ramp to market over time (turnover % or schedule);
+    // ground-up is market from the start (lease-up factor handles timing).
+    const yrRawGPR = d.development_mode
+      ? gpr
+      : d.unit_groups.reduce((s, g) => s + groupBlendedGPR(g, yr), 0);
+    const yrGPR = yrRawGPR * rentMult * leaseUpFactor;
     const yrVacLoss = yrGPR * (d.vacancy_rate / 100);
     const yrEGI = yrGPR - yrVacLoss;
     const yrOtherIncome = totalOtherIncome * rentMult;

@@ -40,6 +40,10 @@ type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 interface UnitGroup {
   id: string; label: string; unit_count: number;
   renovation_count: number; renovation_cost_per_unit: number;
+  // Rent transition: turnover % (default) or per-year schedule (override).
+  // `renovation_count` is capex-only.
+  annual_turnover_pct?: number;
+  market_rent_schedule?: number[];
   unit_change: "none" | "add" | "remove"; unit_change_count: number;
   // Shared
   bedrooms: number; bathrooms: number; sf_per_unit: number;
@@ -835,6 +839,25 @@ function effectiveUnits(g: UnitGroup): number {
   return g.unit_count;
 }
 
+// Cumulative units at market rent at the end of year `yr` (1-indexed).
+// Resolution order: market_rent_schedule → annual_turnover_pct → legacy
+// renovation_count fallback. Mirrors underwriting-calc.ts.
+function unitsAtMarket(g: UnitGroup, yr: number): number {
+  const eu = effectiveUnits(g);
+  if (eu <= 0 || yr <= 0) return 0;
+  const sched = g.market_rent_schedule;
+  if (sched && sched.length > 0) {
+    let cum = 0;
+    for (let i = 0; i < Math.min(yr, sched.length); i++) cum += sched[i] || 0;
+    return Math.min(eu, Math.max(0, cum));
+  }
+  const pct = g.annual_turnover_pct;
+  if (pct !== undefined && pct > 0) {
+    return Math.min(eu, eu * (pct / 100) * yr);
+  }
+  return Math.min(eu, g.renovation_count || 0);
+}
+
 // Auto-generated Notes label for the Revenue table when the user
 // hasn't typed their own note. Flags AMI-affordable rows with their
 // AMI tier so readers don't have to decode the label. AI rents
@@ -885,21 +908,29 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0)
   ) + commercialTenantGPRip;
 
-  // ── Proforma GPR — blended rent reflecting renovation count ─────────────────
-  // Ground-up: proforma = market (all units at market rent, no in-place)
-  // Value-add: renovation_count units at market rent, remaining at in-place
-  const proformaGPR = (d.development_mode ? gpr - commercialTenantGPR : d.unit_groups.reduce((s, g) => {
+  // ── Proforma GPR — blended rent reflecting units at market by hold end ─────
+  // Ground-up: proforma = market (all units at market rent, no in-place).
+  // Value-add: fraction of units at market rent determined by turnover %
+  // or schedule (with legacy renovation_count as fallback). The headline
+  // proforma reports the stabilized state at the end of the hold; the
+  // yearly DCF below walks the ramp year-by-year.
+  const groupBlendedGPR = (g: UnitGroup, yr: number): number => {
     const eu = effectiveUnits(g);
-    const renoUnits = Math.min(g.renovation_count || 0, eu);
-    const unrenoUnits = eu - renoUnits;
+    const mkt = unitsAtMarket(g, yr);
+    const ip = Math.max(0, eu - mkt);
     if (mode === "student_housing") {
-      return s + (renoUnits * g.beds_per_unit * g.market_rent_per_bed + unrenoUnits * g.beds_per_unit * g.current_rent_per_bed) * 12;
+      return (mkt * g.beds_per_unit * g.market_rent_per_bed + ip * g.beds_per_unit * g.current_rent_per_bed) * 12;
     } else if (mode === "multifamily") {
-      return s + (renoUnits * g.market_rent_per_unit + unrenoUnits * g.current_rent_per_unit) * 12;
+      return (mkt * g.market_rent_per_unit + ip * g.current_rent_per_unit) * 12;
     } else {
-      return s + (renoUnits * g.sf_per_unit * g.market_rent_per_sf + unrenoUnits * g.sf_per_unit * g.current_rent_per_sf);
+      return (mkt * g.sf_per_unit * g.market_rent_per_sf + ip * g.sf_per_unit * g.current_rent_per_sf);
     }
-  }, 0)) + commercialTenantGPR;
+  };
+  const stabilizedYr = d.hold_period_years || 5;
+  const proformaGPR = (d.development_mode
+    ? gpr - commercialTenantGPR
+    : d.unit_groups.reduce((s, g) => s + groupBlendedGPR(g, stabilizedYr), 0)
+  ) + commercialTenantGPR;
 
   // ── Other Income (RUBS, Parking, Laundry) ──────────────────────────────────
   const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
@@ -1222,7 +1253,10 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     const rentMult = Math.pow(1 + rg, yr);
     const expMult = Math.pow(1 + eg, yr);
     const leaseUpFactor = yr === 1 ? yr1LeaseUpFactor : (yr === 2 && yr1LeaseUpFactor < 0.8) ? Math.min(1, yr1LeaseUpFactor + 0.5) : 1;
-    const yrGPR = proformaGPR * rentMult * leaseUpFactor;
+    const yrRawGPR = d.development_mode
+      ? gpr
+      : d.unit_groups.reduce((s, g) => s + groupBlendedGPR(g, yr), 0) + commercialTenantGPR;
+    const yrGPR = yrRawGPR * rentMult * leaseUpFactor;
     const yrVacLoss = yrGPR * (d.vacancy_rate / 100);
     const yrEGI = yrGPR - yrVacLoss;
     const yrOtherIncome = totalOtherIncome * rentMult;
@@ -3081,7 +3115,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[50px]">Beds</th>
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">In-Place/Bed</th>}
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">{isGroundUp ? "Rent/Bed" : "Market/Bed"}</th>
-                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
+                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]" title="# of units getting physical renovation — drives linked CapEx line. Independent of which units reach market rent.">Reno #</th>}
+                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]" title="Annual unit turnover — fraction of units that roll to market rent per year as leases expire. Blank = all units at in-place rent (unless schedule/legacy Reno # is set).">Turn %/yr</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma/Bed</th>}
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Notes</th>
@@ -3095,7 +3130,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">SF</th>
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">In-Place Rent</th>}
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">{isGroundUp ? "Rent/Unit" : "Market Rent"}</th>
-                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
+                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]" title="# of units getting physical renovation — drives linked CapEx line. Independent of which units reach market rent.">Reno #</th>}
+                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]" title="Annual unit turnover — fraction of units that roll to market rent per year as leases expire. Blank = all units at in-place rent (unless schedule/legacy Reno # is set).">Turn %/yr</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Proforma</th>}
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Annual Rev</th>
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground w-[120px]">Notes</th>
@@ -3108,7 +3144,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[60px]">Lease</th>
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Curr $/SF</th>}
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">{isGroundUp ? "Rent $/SF" : "Mkt $/SF"}</th>
-                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]">Reno #</th>}
+                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[55px]" title="# of suites getting physical renovation — drives linked CapEx line. Independent of which suites reach market rent.">Reno #</th>}
+                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[70px]" title="Annual rollover — fraction of suites hitting market rent per year (lease expirations). Blank = all suites at in-place rent (unless schedule/legacy Reno # is set).">Turn %/yr</th>}
                   {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Proforma</th>}
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Annual Rev</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">CAM $/SF</th>
@@ -3145,13 +3182,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   ? effectiveUnits(g) * g.market_rent_per_unit * 12
                   : effectiveUnits(g) * g.sf_per_unit * g.market_rent_per_sf;
                 const eu = effectiveUnits(g);
-                const renoUnits = Math.min(g.renovation_count || 0, eu);
-                const unrenoUnits = eu - renoUnits;
+                // Stabilized proforma blend per row (same basis as the headline GPR):
+                // units at market rent at end-of-hold × market rent + remainder × in-place.
+                const holdStabYr = d.hold_period_years || 5;
+                const mktUnits = unitsAtMarket(g, holdStabYr);
+                const ipUnits = Math.max(0, eu - mktUnits);
                 const proformaAnnual = isSH
-                  ? (renoUnits * g.beds_per_unit * g.market_rent_per_bed + unrenoUnits * g.beds_per_unit * g.current_rent_per_bed) * 12
+                  ? (mktUnits * g.beds_per_unit * g.market_rent_per_bed + ipUnits * g.beds_per_unit * g.current_rent_per_bed) * 12
                   : isMF
-                  ? (renoUnits * g.market_rent_per_unit + unrenoUnits * g.current_rent_per_unit) * 12
-                  : (renoUnits * g.sf_per_unit * g.market_rent_per_sf + unrenoUnits * g.sf_per_unit * g.current_rent_per_sf);
+                  ? (mktUnits * g.market_rent_per_unit + ipUnits * g.current_rent_per_unit) * 12
+                  : (mktUnits * g.sf_per_unit * g.market_rent_per_sf + ipUnits * g.sf_per_unit * g.current_rent_per_sf);
                 const uc = g.unit_change || "none";
                 const unitChangeCell = (
                   <td className="px-1 py-1">
@@ -3223,6 +3263,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                         <CellInput value={g.market_rent_per_bed} onChange={v => upd(g.id, { market_rent_per_bed: v })} prefix="$" />
                       </td>
                       {!isGroundUp && <td className="px-2 py-1"><CellInput value={g.renovation_count || 0} onChange={v => updFn(g.id, { renovation_count: v })} /></td>}
+                      {!isGroundUp && <td className="px-2 py-1"><CellInput value={g.annual_turnover_pct ?? 0} onChange={v => upd(g.id, { annual_turnover_pct: v } as Partial<UnitGroup>)} suffix="%" /></td>}
                       {!isGroundUp && (
                         <td className="px-2 py-1">
                           <span className="block text-right text-sm tabular-nums font-medium">{eu > 0 && g.beds_per_unit > 0 ? fc(Math.round(proformaAnnual / eu / g.beds_per_unit / 12)) : "—"}</span>
@@ -3253,6 +3294,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                         <CellInput value={g.market_rent_per_unit} onChange={v => upd(g.id, { market_rent_per_unit: v })} prefix="$" />
                       </td>
                       {!isGroundUp && <td className="px-2 py-1"><CellInput value={g.renovation_count || 0} onChange={v => updFn(g.id, { renovation_count: v })} /></td>}
+                      {!isGroundUp && <td className="px-2 py-1"><CellInput value={g.annual_turnover_pct ?? 0} onChange={v => upd(g.id, { annual_turnover_pct: v } as Partial<UnitGroup>)} suffix="%" /></td>}
                       {!isGroundUp && (
                         <td className="px-2 py-1">
                           <span className="block text-right text-sm tabular-nums font-medium">{eu > 0 ? fc(Math.round(proformaAnnual / eu / 12)) : "—"}</span>
@@ -3290,6 +3332,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                         <p className="text-[10px] text-muted-foreground/60 text-right tabular-nums">{g.market_rent_per_sf > 0 ? `$${(g.market_rent_per_sf / 12).toFixed(2)}/mo` : ""}</p>
                       </td>
                       {!isGroundUp && <td className="px-2 py-1"><CellInput value={g.renovation_count || 0} onChange={v => updFn(g.id, { renovation_count: v })} /></td>}
+                      {!isGroundUp && <td className="px-2 py-1"><CellInput value={g.annual_turnover_pct ?? 0} onChange={v => upd(g.id, { annual_turnover_pct: v } as Partial<UnitGroup>)} suffix="%" /></td>}
                       {!isGroundUp && (
                         <td className="px-2 py-1">
                           <span className="block text-right text-sm tabular-nums font-medium">{eu > 0 && g.sf_per_unit > 0 ? `$${(proformaAnnual / eu / g.sf_per_unit).toFixed(2)}` : "—"}</span>
