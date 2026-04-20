@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import path from "path";
 import { v4 as uuidv4 } from "uuid";
-import { dealQueries, marketReportsQueries } from "@/lib/db";
+import {
+  dealQueries,
+  documentQueries,
+  marketReportsQueries,
+  submarketMetricsQueries,
+} from "@/lib/db";
 import { extractMarketReport } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { geocodeAddress } from "@/lib/geocode";
+import { uploadBlob } from "@/lib/blob-storage";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -66,11 +73,13 @@ export async function POST(
     let rawText = "";
     let sourceUrl: string | null = null;
     let hintedPublisher: string | null = null;
+    let uploadedFile: File | null = null;
 
     const contentType = req.headers.get("content-type") || "";
     if (contentType.includes("multipart/form-data")) {
       const form = await req.formData();
       const file = form.get("file") as File | null;
+      uploadedFile = file;
       sourceUrl = (form.get("source_url") as string | null) || null;
       hintedPublisher = (form.get("publisher") as string | null) || null;
       if (file && file.type === "application/pdf") {
@@ -123,6 +132,48 @@ export async function POST(
     const submarket = [extraction.submarket, extraction.msa].filter(Boolean).join(", ");
     const enrichedPipeline = await geocodePipeline(extraction.pipeline, submarket);
 
+    // Persist the source PDF to the Documents tab (category = "market") so
+    // the analyst can re-open the report from the docs list and so downstream
+    // flows like /api/deals/:id/comps/extract-from-doc can operate on it.
+    // Paste-mode uploads have no file to save and are skipped.
+    let sourceDocumentId: string | null = null;
+    if (uploadedFile) {
+      try {
+        const docId = uuidv4();
+        const ext = path.extname(uploadedFile.name) || ".pdf";
+        const blobPath = `${params.id}/${docId}${ext}`;
+        const fileBuffer = pdfBuffer ?? Buffer.from(await uploadedFile.arrayBuffer());
+        const fileUrl = await uploadBlob(
+          blobPath,
+          fileBuffer,
+          uploadedFile.type || "application/pdf"
+        );
+        const reportLabel = [extraction.publisher, extraction.report_name]
+          .filter(Boolean)
+          .join(" — ");
+        await documentQueries.create({
+          id: docId,
+          deal_id: params.id,
+          name: uploadedFile.name.replace(ext, "").slice(0, 200),
+          original_name: uploadedFile.name,
+          category: "market",
+          file_path: fileUrl,
+          file_size: fileBuffer.length,
+          mime_type: uploadedFile.type || "application/pdf",
+          content_text: rawText ? rawText.slice(0, 200_000) : null,
+          ai_summary: reportLabel || null,
+          ai_tags: ["market-research", extraction.publisher, extraction.asset_class].filter(
+            (t): t is string => Boolean(t)
+          ),
+        });
+        sourceDocumentId = docId;
+      } catch (err) {
+        // Don't fail the whole extraction if blob/doc persistence hiccups —
+        // the analyst still gets their market_reports row back.
+        console.error("market-reports: source document save failed:", err);
+      }
+    }
+
     const id = uuidv4();
     const row = await marketReportsQueries.create(params.id, id, {
       publisher: extraction.publisher,
@@ -131,6 +182,7 @@ export async function POST(
       msa: extraction.msa,
       submarket: extraction.submarket,
       as_of_date: extraction.as_of_date,
+      source_document_id: sourceDocumentId,
       source_url: sourceUrl || extraction.source_url,
       metrics: extraction.metrics as Record<string, unknown>,
       pipeline: enrichedPipeline,
@@ -140,6 +192,57 @@ export async function POST(
       // Keep a truncated excerpt so we have provenance without blowing up the row.
       raw_text: rawText ? rawText.slice(0, 20_000) : null,
     });
+
+    // Mirror the canonical submarket fields into submarket_metrics so the
+    // Comps & Market panel, Co-Pilot benchmarks, DD abstract, and investment
+    // package all pick up the fresh vintage without the analyst having to
+    // re-type anything. market_reports stays the source of truth (with QoQ
+    // history); submarket_metrics is the "current" snapshot keyed 1:1 with
+    // the deal. Only write when we have at least one field worth saving.
+    try {
+      const m = extraction.metrics || {};
+      const capAvg =
+        m.cap_rate_avg_pct != null
+          ? Number(m.cap_rate_avg_pct)
+          : m.cap_rate_low_pct != null && m.cap_rate_high_pct != null
+            ? (Number(m.cap_rate_low_pct) + Number(m.cap_rate_high_pct)) / 2
+            : null;
+      const smFields: Record<string, unknown> = {
+        submarket_name: extraction.submarket ?? null,
+        msa: extraction.msa ?? null,
+        market_cap_rate: capAvg,
+        market_rent_growth: m.rent_growth_yoy_pct ?? null,
+        market_vacancy: m.vacancy_pct ?? m.availability_pct ?? null,
+        absorption_units: m.absorption_units_ytd ?? null,
+        deliveries_units: m.deliveries_units_ytd ?? null,
+        narrative: extraction.narrative ?? null,
+        sources: [
+          [extraction.publisher, extraction.report_name, extraction.as_of_date]
+            .filter(Boolean)
+            .join(" — "),
+        ].filter(Boolean),
+      };
+      const hasAnyValue = [
+        smFields.submarket_name,
+        smFields.msa,
+        smFields.market_cap_rate,
+        smFields.market_rent_growth,
+        smFields.market_vacancy,
+        smFields.absorption_units,
+        smFields.deliveries_units,
+        smFields.narrative,
+      ].some((v) => v != null && v !== "");
+      if (hasAnyValue) {
+        const existing = await submarketMetricsQueries.getByDealId(params.id);
+        await submarketMetricsQueries.upsert(
+          params.id,
+          existing?.id ?? uuidv4(),
+          smFields
+        );
+      }
+    } catch (err) {
+      console.error("market-reports: submarket_metrics upsert failed:", err);
+    }
 
     return NextResponse.json({ data: row });
   } catch (error) {
