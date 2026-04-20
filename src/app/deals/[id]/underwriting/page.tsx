@@ -914,7 +914,15 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     if (label.includes("rubs") || label.includes("laundry")) return s;
     if (item.basis === "per_space") return s;
     const mult = item.basis === "per_unit" ? totalUnitsForOtherIncome : 1;
-    return s + (item.amount || 0) * mult * 12;
+    // Acquisition convention: if the analyst entered an in-place
+    // amount but didn't override the pro-forma column, carry the IP
+    // value forward as the pro-forma baseline — otherwise the yearly
+    // DCF silently drops the income stream. Explicit pro-forma input
+    // still wins (including an explicit 0 after typing something, as
+    // long as the field value is stored). Ground-up deals have no
+    // ip_amount by design, so this collapses to item.amount.
+    const monthly = (item.amount || 0) > 0 ? item.amount : (item.ip_amount || 0);
+    return s + monthly * mult * 12;
   }, 0);
   const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry + otherIncomeItemsPF;
 
@@ -3517,14 +3525,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     : item.basis === "per_space"
                       ? (d.parking_reserved_spaces || 0)
                       : 1;
+                  // Effective pro-forma monthly: user-entered amount
+                  // wins; otherwise default to ip_amount. Mirrors the
+                  // calc fallback so the row's Annual column shows what
+                  // will actually flow into the DCF.
+                  const pfMonthly = (item.amount || 0) > 0 ? (item.amount || 0) : (item.ip_amount || 0);
                   return (
                     <tr key={item.id || i} className="border-b hover:bg-muted/10 group">
                       <td className="px-2 py-1.5"><input type="text" value={item.label} onChange={e => updOI({ label: e.target.value })} className="w-full bg-transparent text-sm outline-none" /></td>
                       <td className="px-2 py-1.5"><select value={item.basis} onChange={e => updOI({ basis: e.target.value })} className="w-full bg-background text-foreground text-xs outline-none rounded border border-border/40"><option value="per_unit">Per Unit ({m.totalUnits})</option><option value="per_property">Per Property</option><option value="per_space">Per Space</option></select></td>
                       {!isGroundUp && <td className="px-2 py-1.5"><CellInput value={item.ip_amount || 0} onChange={v => updOI({ ip_amount: v })} prefix="$" placeholder={item.amount > 0 ? `${Math.round(item.amount).toLocaleString()}` : undefined} /></td>}
-                      <td className="px-2 py-1.5"><CellInput value={item.amount || 0} onChange={v => updOI({ amount: v })} prefix="$" /></td>
+                      <td className="px-2 py-1.5"><CellInput value={item.amount || 0} onChange={v => updOI({ amount: v })} prefix="$" placeholder={!isGroundUp && (item.ip_amount || 0) > 0 ? `${Math.round(item.ip_amount).toLocaleString()}` : undefined} /></td>
                       <td className="px-2 py-1.5 text-right tabular-nums font-medium">
-                        {fc((item.amount || 0) * mult * 12)}
+                        {fc(pfMonthly * mult * 12)}
                         {!isGroundUp && (item.ip_amount || 0) > 0 && (
                           <span className="block text-[10px] text-muted-foreground/70 tabular-nums">IP {fc((item.ip_amount || 0) * ipMult * 12)}</span>
                         )}
@@ -3542,7 +3555,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <td className="px-2 py-1.5 text-right tabular-nums">{fc(m.inPlaceOtherIncome)}</td>
                     )}
                     <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{isGroundUp ? "" : "Pro forma:"}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1; return s + (item.amount || 0) * mult * 12; }, 0))}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1; const pfMonthly = (item.amount || 0) > 0 ? (item.amount || 0) : (item.ip_amount || 0); return s + pfMonthly * mult * 12; }, 0))}</td>
                     <td />
                   </tr>
                 </tfoot>
