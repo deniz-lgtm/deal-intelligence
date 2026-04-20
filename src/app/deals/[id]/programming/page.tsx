@@ -822,6 +822,24 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         live = computePushedUw(s, live);
       }
 
+      // Prune orphan unit_groups whose site_plan_building_id no longer
+      // maps to a current massing's building. Without this, a legacy
+      // "Building 1" (from an old single-building site plan) or a
+      // building that was renamed / deleted keeps showing up in the
+      // Revenue table as a phantom header. Untagged groups
+      // (site_plan_building_id === null/undefined) are legacy flat-mode
+      // rows and are always kept.
+      const liveBuildingIds = new Set<string>(
+        sitePlanMassings.flatMap((m) => m.buildings.map((b) => b.id))
+      );
+      live = {
+        ...live,
+        unit_groups: (live.unit_groups || []).filter((g: any) => {
+          const bid = g.site_plan_building_id;
+          return !bid || liveBuildingIds.has(bid);
+        }),
+      };
+
       // 2) Build updated scenario snapshots for every massing.
       const existingScenarios: any[] = Array.isArray(live.uw_scenarios) ? live.uw_scenarios : [];
       const updatedScenarios: any[] = [];
@@ -839,6 +857,16 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         for (const s of mngBuildings) {
           scnState = computePushedUw(s, scnState);
         }
+        // Prune orphans inside this scenario too — keep only unit_groups
+        // tied to this massing's buildings (or untagged legacy rows).
+        const scnBuildingIds = new Set<string>(mng.buildings.map((b) => b.id));
+        scnState = {
+          ...scnState,
+          unit_groups: (scnState.unit_groups || []).filter((g: any) => {
+            const bid = g.site_plan_building_id;
+            return !bid || scnBuildingIds.has(bid);
+          }),
+        };
         // Quick structural summary for the saved-scenarios card.
         const summary = mngBuildings.reduce(
           (acc: any, s: any) => {
