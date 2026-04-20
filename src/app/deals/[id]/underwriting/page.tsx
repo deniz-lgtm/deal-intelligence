@@ -835,6 +835,20 @@ function effectiveUnits(g: UnitGroup): number {
   return g.unit_count;
 }
 
+// Auto-generated Notes label for the Revenue table when the user
+// hasn't typed their own note. Flags AMI-affordable rows with their
+// AMI tier so readers don't have to decode the label. AI rents
+// already get an explicit "AI generated" note written at generation
+// time, so no placeholder is needed for that case.
+function synthNote(g: UnitGroup): string {
+  const maybeAff = g as unknown as { is_affordable?: boolean; ami_pct?: number };
+  if (maybeAff.is_affordable) {
+    const pct = maybeAff.ami_pct;
+    return pct ? `${pct}% AMI affordable` : "AMI affordable";
+  }
+  return "";
+}
+
 function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing") {
   const totalUnits = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
   const ipTotalUnits = d.unit_groups.reduce((s, g) => s + g.unit_count, 0);
@@ -3193,7 +3207,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       </td>
                       <td className="px-1 py-1">
                         <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
+                          placeholder={synthNote(g)} className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
                       </td>
                     </>) : isMF ? (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 1BR/1BA" /></td>
@@ -3223,7 +3237,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       </td>
                       <td className="px-1 py-1">
                         <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
+                          placeholder={synthNote(g)} className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
                       </td>
                     </>) : (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. Suite A" /></td>
@@ -3270,7 +3284,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       </td>
                       <td className="px-1 py-1">
                         <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
+                          placeholder={synthNote(g)} className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
                       </td>
                     </>)}
                     <td className="px-1 py-1">

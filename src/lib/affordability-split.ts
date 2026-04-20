@@ -414,6 +414,10 @@ export function splitUnitGroupsByAffordability<T extends LooseUnitGroup>(
           current_rent_per_unit: rent,
           is_affordable: true,
           ami_pct: tier.ami_pct,
+          // Default Notes text so the Revenue table shows the
+          // affordability reason at a glance. User-entered notes
+          // (non-empty) take precedence when re-splitting.
+          notes: ((base as unknown as { notes?: string })?.notes) || `${tier.ami_pct}% AMI affordable`,
           site_plan_building_id:
             buildingId === NO_BUILDING ? (base?.site_plan_building_id ?? null) : buildingId,
         } as T);
