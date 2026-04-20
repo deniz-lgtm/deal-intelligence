@@ -1067,10 +1067,16 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   let closingCosts: number, totalCost: number;
   if (d.development_mode) {
     closingCosts = d.land_cost * (d.closing_costs_pct / 100);
+    // Ground-up: lostIncome doesn't apply (no pre-existing asset to
+    // lose income on), so don't capitalize it here.
     totalCost = d.land_cost + totalHardCosts + softCostsTotal + totalParkingCost + closingCosts + demolitionCosts;
   } else {
     closingCosts = d.purchase_price * (d.closing_costs_pct / 100);
-    totalCost = d.purchase_price + closingCosts + capexTotal;
+    // Acquisition redevelopment: during the vacancy + demolition
+    // window the existing NOI goes to zero. That forgone cashflow is
+    // a real carry cost funded from equity, so fold it into the cost
+    // basis. Zero when redev is off.
+    totalCost = d.purchase_price + closingCosts + capexTotal + lostIncome;
   }
 
   // ── Cap Rates ───────────────────────────────────────────────────────────────
