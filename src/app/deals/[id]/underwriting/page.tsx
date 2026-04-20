@@ -1652,6 +1652,33 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
   const isGroundUp = deal?.investment_strategy === "ground_up";
 
+  // Revenue-table display order: group rows by site_plan_building_id so
+  // market + affordable rows for the same building render together
+  // under a single header (instead of a "Podium market" section, then
+  // Townhouses, Garden, then a duplicate "Podium" section once the
+  // affordable rows appear). Building order is the order each id was
+  // first encountered in the raw array, so the analyst's manual
+  // reordering is preserved where possible. Untagged legacy rows
+  // trail the grouped buildings.
+  const sortedUnitGroups = React.useMemo(() => {
+    const groups = data.unit_groups || [];
+    const order: Array<string | null> = [];
+    const seen = new Set<string>();
+    for (const g of groups) {
+      const bid = (g as { site_plan_building_id?: string | null }).site_plan_building_id || null;
+      const key = String(bid);
+      if (!seen.has(key)) { order.push(bid); seen.add(key); }
+    }
+    const out: UnitGroup[] = [];
+    for (const bid of order) {
+      for (const g of groups) {
+        const gbid = (g as { site_plan_building_id?: string | null }).site_plan_building_id || null;
+        if (gbid === bid) out.push(g);
+      }
+    }
+    return out;
+  }, [data.unit_groups]);
+
   // Auto-seed the itemized dev budget the moment a ground-up deal has
   // something worth sizing (a pushed massing or a manual GSF), so the
   // Hard Costs table renders with the right per-building rows without
@@ -3091,9 +3118,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </tr>
             </thead>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleReorderUnits}>
-            <SortableContext items={d.unit_groups.map(g => g.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={sortedUnitGroups.map(g => g.id)} strategy={verticalListSortingStrategy}>
             <tbody>
-              {d.unit_groups.map((g, i) => {
+              {sortedUnitGroups.map((g, i) => {
                 // Insert a building header row whenever site_plan_building_id
                 // transitions from the previous row. We render the header
                 // inline (not a separate map) so React's key ordering and
@@ -3103,7 +3130,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 // identical to before.
                 const curBid = (g as { site_plan_building_id?: string }).site_plan_building_id || null;
                 const prevBid = i > 0
-                  ? ((d.unit_groups[i - 1] as { site_plan_building_id?: string }).site_plan_building_id || null)
+                  ? ((sortedUnitGroups[i - 1] as { site_plan_building_id?: string }).site_plan_building_id || null)
                   : undefined; // `undefined` on first row forces a header render
                 const showBuildingHeader = curBid && curBid !== prevBid;
                 const buildingLabel = curBid ? (sitePlanBuildingLabels[curBid] || "Building") : null;
