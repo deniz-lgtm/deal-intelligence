@@ -4,6 +4,11 @@ import { hashInviteToken } from "@/lib/deal-room";
 import { progressReportInviteQueries, progressReportPhotoQueries } from "@/lib/db";
 import { uploadBlob } from "@/lib/blob-storage";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 // ── POST — upload photos for a progress report ──────────────────────────
 
 export async function POST(

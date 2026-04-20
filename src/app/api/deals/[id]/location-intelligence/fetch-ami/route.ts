@@ -4,6 +4,11 @@ import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { assertAllowedFetchUrl } from "@/lib/web-allowlist";
 import { buildAmiTables } from "@/lib/ami-calc";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 // ── HUD Income Limits / Area Median Income (AMI) ─────────────────────────────
 //
 // Published annually by HUD. The official data source for:
@@ -50,12 +55,12 @@ interface AmiData {
   // Max rents at each AMI level (30% of monthly income, for common unit sizes)
   // Standard: rent = (AMI_limit × 30%) / 12, minus utility allowance
   max_rents: {
-    ami_30: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_50: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_60: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_80: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_100: { studio: number; one_br: number; two_br: number; three_br: number };
-    ami_120: { studio: number; one_br: number; two_br: number; three_br: number };
+    ami_30: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_50: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_60: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_80: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_100: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
+    ami_120: { studio: number; one_br: number; two_br: number; three_br: number; four_br: number };
   };
 }
 

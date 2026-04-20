@@ -4,6 +4,11 @@ import { requireAdmin } from "@/lib/auth";
 import { recordAudit } from "@/lib/admin-helpers";
 import { DEAL_PIPELINE, DEAL_STAGE_LABELS } from "@/lib/types";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const { errorResponse } = await requireAdmin();
   if (errorResponse) return errorResponse;

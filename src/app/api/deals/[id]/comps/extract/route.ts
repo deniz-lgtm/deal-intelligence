@@ -6,6 +6,11 @@ import {
 } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 const SUPPORTED_IMAGE_TYPES: ExtractCompImage["mediaType"][] = [
   "image/png",
   "image/jpeg",

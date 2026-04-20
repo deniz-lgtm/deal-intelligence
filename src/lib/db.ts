@@ -4,12 +4,37 @@ import { Pool } from "pg";
 
 let _pool: Pool | null = null;
 
+// Build-phase stub pool. Returned from getPool() when DATABASE_URL isn't set
+// AND we're running inside `next build`. Routes that actually run during the
+// static-page-generation phase (despite `export const dynamic = "force-dynamic"`)
+// will pull this back, attempt a query, and get a clean rejected promise that
+// bubbles into the route's try/catch as a normal error response. Critically,
+// getPool() ITSELF no longer throws at module-eval / build time — that was
+// causing Railway's "Generating static pages" phase to fail the entire build
+// every time we deployed without a Postgres plugin attached to the build env.
+function makeBuildStubPool(): Pool {
+  const reject = () =>
+    Promise.reject(new Error("Database unavailable during build (DATABASE_URL not set)"));
+  // The routes only call .query(); no need to stub the entire Pool surface.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return { query: reject, on: () => undefined, end: reject } as any;
+}
+
 export function getPool(): Pool {
   if (_pool) return _pool;
 
   const connectionString = process.env.DATABASE_URL;
 
   if (!connectionString) {
+    // During the Next.js build phase, return the stub instead of throwing.
+    // The error will surface at .query() time and be caught by the route's
+    // try/catch, which produces a 500 — not a build failure. At true
+    // runtime in production, the same path is taken but should never hit
+    // because Railway injects DATABASE_URL when a Postgres plugin is
+    // attached to the service.
+    if (process.env.NEXT_PHASE === "phase-production-build") {
+      return makeBuildStubPool();
+    }
     throw new Error(
       "DATABASE_URL environment variable is not set. " +
         "Add a Postgres database in your Railway project and it will be set automatically."
@@ -74,6 +99,7 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS deal_scope TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS owner_id TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
@@ -407,6 +433,19 @@ export async function ensureColumns(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_generated_reports_deal_id ON generated_reports(deal_id, created_at DESC)`,
+    // ── Places cache ──────────────────────────────────────────────────────
+    // Google Places Text Search is billed per request. Re-extracting the same
+    // CBRE comp book (e.g. after a prompt tweak) otherwise re-queries Places
+    // for every property name. Cache the resolved address/coords keyed on a
+    // normalized query string so reruns are free and fast. 90-day TTL —
+    // addresses rarely change but we don't want infinitely stale results.
+    `CREATE TABLE IF NOT EXISTS places_cache (
+      query TEXT PRIMARY KEY,
+      result JSONB,
+      hit BOOLEAN NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_places_cache_created ON places_cache(created_at)`,
     // ── Location Intelligence ─────────────────────────────────────────────
     `CREATE TABLE IF NOT EXISTS location_intelligence (
       id TEXT PRIMARY KEY,
@@ -1366,6 +1405,7 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dropbox_folder_path TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS investment_strategy TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS deal_scope TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE photos ADD COLUMN IF NOT EXISTS is_cover BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score INTEGER",
@@ -1475,6 +1515,10 @@ export const dealQueries = {
     if (deal.investment_strategy) {
       cols.push("investment_strategy");
       vals.push(deal.investment_strategy);
+    }
+    if (deal.deal_scope) {
+      cols.push("deal_scope");
+      vals.push(deal.deal_scope);
     }
     if (deal.land_acres != null) {
       cols.push("land_acres");
@@ -1646,6 +1690,39 @@ export const dealNoteQueries = {
   },
 
   /** Get concatenated text of all memory-included notes for AI consumption */
+  /** Workspace-wide list: every note across every deal the user can access.
+   * Powers the /notes hub. Joined with deals.name so the UI can render
+   * the parent deal without a second round-trip. Returns most-recent first. */
+  getAllAccessible: async (userId: string, opts?: { limit?: number; dealId?: string }): Promise<Array<{
+    id: string;
+    deal_id: string;
+    deal_name: string;
+    text: string;
+    category: string;
+    source: string;
+    created_at: string;
+  }>> => {
+    const pool = getPool();
+    const limit = Math.max(1, Math.min(1000, opts?.limit ?? 500));
+    const params: unknown[] = [userId];
+    let dealFilter = "";
+    if (opts?.dealId) {
+      params.push(opts.dealId);
+      dealFilter = ` AND n.deal_id = $${params.length}`;
+    }
+    const res = await pool.query(
+      `SELECT n.id, n.deal_id, d.name as deal_name, n.text, n.category, n.source, n.created_at
+         FROM deal_notes n
+         JOIN deals d ON d.id = n.deal_id
+         LEFT JOIN deal_shares s ON s.deal_id = d.id AND s.user_id = $1
+        WHERE (d.owner_id = $1 OR s.deal_id IS NOT NULL)${dealFilter}
+        ORDER BY n.created_at DESC
+        LIMIT ${limit}`,
+      params
+    );
+    return res.rows;
+  },
+
   getMemoryText: async (dealId: string): Promise<string> => {
     const pool = getPool();
     const res = await pool.query(
@@ -2696,6 +2773,37 @@ export const generatedReportsQueries = {
 };
 
 // ─── Location Intelligence queries ────────────────────────────────────────────
+
+// ─── Places cache queries ─────────────────────────────────────────────────
+//
+// Memoize Google Places Text Search results so re-extracting the same comp
+// book doesn't re-bill for queries we've already resolved. Hit==true rows
+// store the full lookup result; hit==false rows are negative-cached for
+// 24h (the raw query miss, in case the analyst later enriches the query).
+
+export const placesCacheQueries = {
+  get: async (query: string): Promise<{ result: unknown; hit: boolean; created_at: string } | null> => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT result, hit, created_at FROM places_cache WHERE query = $1",
+      [query]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  set: async (query: string, result: unknown, hit: boolean): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO places_cache (query, result, hit, created_at)
+         VALUES ($1, $2::jsonb, $3, NOW())
+       ON CONFLICT (query) DO UPDATE SET
+         result = EXCLUDED.result,
+         hit = EXCLUDED.hit,
+         created_at = NOW()`,
+      [query, JSON.stringify(result ?? null), hit]
+    );
+  },
+};
 
 export const locationIntelligenceQueries = {
   getByDealId: async (dealId: string) => {
@@ -5116,5 +5224,121 @@ export const dealContactQueries = {
   unlink: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_contacts WHERE id = $1", [id]);
+  },
+};
+
+// ─── Usage / storage rollups ─────────────────────────────────────────────────
+//
+// Per-user totals across the file-storing tables. Powers the Storage panel
+// on the admin page so you can see at a glance who's consuming what — and
+// catch a runaway uploader before R2 + Postgres bills surprise anyone.
+// We bucket per-table sums in subqueries before joining so the LEFT JOINs
+// don't multiply rows (a Cartesian product of documents × photos for a
+// single deal would inflate sizes by 100x).
+
+export interface UserStorageRow {
+  user_id: string;
+  email: string;
+  name: string | null;
+  deal_count: number;
+  doc_count: number;
+  doc_bytes: number;
+  photo_count: number;
+  photo_bytes: number;
+  total_bytes: number;
+}
+
+export interface StorageTotals {
+  user_count: number;
+  deal_count: number;
+  doc_count: number;
+  doc_bytes: number;
+  photo_count: number;
+  photo_bytes: number;
+  total_bytes: number;
+}
+
+export const usageQueries = {
+  /**
+   * Per-user storage rollup, sorted by largest footprint first.
+   * Includes users with zero owned deals so admins can see the full
+   * roster (a brand-new user is just a row of zeros, not a missing one).
+   */
+  getStorageByUser: async (): Promise<UserStorageRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(`
+      SELECT
+        u.id   AS user_id,
+        u.email,
+        u.name,
+        COALESCE(d.deal_count, 0)::int   AS deal_count,
+        COALESCE(doc.cnt, 0)::int        AS doc_count,
+        COALESCE(doc.bytes, 0)::bigint   AS doc_bytes,
+        COALESCE(ph.cnt, 0)::int         AS photo_count,
+        COALESCE(ph.bytes, 0)::bigint    AS photo_bytes,
+        (COALESCE(doc.bytes, 0) + COALESCE(ph.bytes, 0))::bigint AS total_bytes
+      FROM users u
+      LEFT JOIN (
+        SELECT owner_id, COUNT(*) AS deal_count
+        FROM deals
+        WHERE owner_id IS NOT NULL
+        GROUP BY owner_id
+      ) d ON d.owner_id = u.id
+      LEFT JOIN (
+        SELECT deals.owner_id, COUNT(*) AS cnt, SUM(documents.file_size) AS bytes
+        FROM documents
+        JOIN deals ON deals.id = documents.deal_id
+        WHERE deals.owner_id IS NOT NULL
+        GROUP BY deals.owner_id
+      ) doc ON doc.owner_id = u.id
+      LEFT JOIN (
+        SELECT deals.owner_id, COUNT(*) AS cnt, SUM(photos.file_size) AS bytes
+        FROM photos
+        JOIN deals ON deals.id = photos.deal_id
+        WHERE deals.owner_id IS NOT NULL
+        GROUP BY deals.owner_id
+      ) ph ON ph.owner_id = u.id
+      ORDER BY total_bytes DESC, u.email ASC
+    `);
+    return res.rows.map((r) => ({
+      user_id: r.user_id,
+      email: r.email,
+      name: r.name,
+      deal_count: Number(r.deal_count) || 0,
+      doc_count: Number(r.doc_count) || 0,
+      doc_bytes: Number(r.doc_bytes) || 0,
+      photo_count: Number(r.photo_count) || 0,
+      photo_bytes: Number(r.photo_bytes) || 0,
+      total_bytes: Number(r.total_bytes) || 0,
+    }));
+  },
+
+  /**
+   * Workspace-wide totals — handy as a single hero number on the admin
+   * page so you can spot trend changes without scanning the per-user table.
+   */
+  getStorageTotals: async (): Promise<StorageTotals> => {
+    const pool = getPool();
+    const res = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM users)::int AS user_count,
+        (SELECT COUNT(*) FROM deals)::int AS deal_count,
+        (SELECT COUNT(*) FROM documents)::int AS doc_count,
+        COALESCE((SELECT SUM(file_size) FROM documents), 0)::bigint AS doc_bytes,
+        (SELECT COUNT(*) FROM photos)::int AS photo_count,
+        COALESCE((SELECT SUM(file_size) FROM photos), 0)::bigint AS photo_bytes
+    `);
+    const r = res.rows[0] || {};
+    const docBytes = Number(r.doc_bytes) || 0;
+    const photoBytes = Number(r.photo_bytes) || 0;
+    return {
+      user_count: Number(r.user_count) || 0,
+      deal_count: Number(r.deal_count) || 0,
+      doc_count: Number(r.doc_count) || 0,
+      doc_bytes: docBytes,
+      photo_count: Number(r.photo_count) || 0,
+      photo_bytes: photoBytes,
+      total_bytes: docBytes + photoBytes,
+    };
   },
 };

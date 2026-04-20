@@ -12,6 +12,11 @@ import { requireAuth, requireDealAccess } from "@/lib/auth";
 import Anthropic from "@anthropic-ai/sdk";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
@@ -266,8 +271,8 @@ export async function POST(
 
     const toneInstruction =
       reportType === "weekly"
-        ? "Keep it brief and actionable. Use bullet points. Focus on what happened this week and blockers."
-        : "This will be shared with investors. Professional tone, highlight milestones achieved, budget health, and any concerns with mitigations.";
+        ? "WEEKLY: bullets only, 4-6 per section. Cite numbers. Every bullet = what happened OR a blocker."
+        : "MONTHLY (LP-facing): 1 bold takeaway sentence per section + 4-6 bullets. Numbers, not adjectives. Risks get mitigants in the same bullet.";
 
     const sectionList = sections.map((s) => `"${s}"`).join(", ");
 
@@ -312,11 +317,11 @@ ${milestoneContext}
 
 Generate the following sections as JSON: {${sectionList}}
 
-Each value should be a string containing the narrative for that section.
-- executive_summary: High-level project status overview
-- budget_narrative: Financial health, spend tracking, contingency status
-- schedule_narrative: Timeline progress, phase completions, upcoming work
-- risk_narrative: Active risks, issues, mitigations, weather impact
+Each value is a markdown string — bullets only, no multi-sentence paragraphs:
+- executive_summary: % complete, schedule vs. plan, budget vs. plan, top risk. 4-6 bullets.
+- budget_narrative: total committed vs. budget, contingency remaining, variance drivers. 4-6 bullets.
+- schedule_narrative: phase completions this period, critical-path milestones ahead, slip vs. baseline. 4-6 bullets.
+- risk_narrative: active issues with mitigants inline, weather impact days, permitting status. 3-5 bullets.
 
 Only include the sections requested: ${sectionList}.
 Respond ONLY with valid JSON — no markdown fences, no commentary.`;

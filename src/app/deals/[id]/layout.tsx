@@ -35,10 +35,12 @@ import {
   FileWarning,
   Layers,
   Globe,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
-import type { DealStatus, ExecutionPhase } from "@/lib/types";
+import type { DealStatus, DealScope, ExecutionPhase } from "@/lib/types";
 import { useAuth } from "@clerk/nextjs";
 import ShareDealDialog from "@/components/ShareDealDialog";
 import { usePermissions } from "@/lib/usePermissions";
@@ -53,11 +55,20 @@ interface Deal {
   starred: boolean;
   owner_id: string | null;
   execution_phase: ExecutionPhase | null;
+  deal_scope: DealScope | null;
 }
+
+type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  muted?: boolean;
+  mutedReason?: string;
+};
 
 type NavGroup = {
   label: string | null;
-  items: { href: string; label: string; icon: typeof LayoutDashboard }[];
+  items: NavItem[];
 };
 
 const BASE_NAV_GROUPS: NavGroup[] = [
@@ -119,12 +130,37 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
   ],
 };
 
-function getNavGroups(executionPhase: ExecutionPhase | null): NavGroup[] {
-  if (!executionPhase) return BASE_NAV_GROUPS;
-  // Insert Construction group after Execution (index 3)
-  const groups = [...BASE_NAV_GROUPS];
-  groups.splice(4, 0, CONSTRUCTION_NAV_GROUP);
-  return groups;
+// Acquisition deals don't add new SF, so Programming (unit mix / massing) and
+// Site & Zoning (density bonuses / site plan drawing) are rarely needed. We
+// keep the nav items clickable but de-emphasize them so users aren't funneled
+// into ground-up workflows for a straight buy-and-operate deal.
+const ACQUISITION_MUTED_HREFS = new Set(["/programming", "/site-zoning"]);
+const MUTED_REASON_ACQUISITION = "Not typically used for acquisition deals.";
+
+function applyScopeGating(groups: NavGroup[], dealScope: DealScope | null): NavGroup[] {
+  if (dealScope !== "acquisition") return groups;
+  return groups.map((group) => ({
+    ...group,
+    items: group.items.map((item) =>
+      ACQUISITION_MUTED_HREFS.has(item.href)
+        ? { ...item, muted: true, mutedReason: MUTED_REASON_ACQUISITION }
+        : item
+    ),
+  }));
+}
+
+function getNavGroups(
+  executionPhase: ExecutionPhase | null,
+  dealScope: DealScope | null
+): NavGroup[] {
+  const base = executionPhase
+    ? (() => {
+        const groups = [...BASE_NAV_GROUPS];
+        groups.splice(4, 0, CONSTRUCTION_NAV_GROUP);
+        return groups;
+      })()
+    : BASE_NAV_GROUPS;
+  return applyScopeGating(base, dealScope);
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -154,18 +190,39 @@ export default function DealLayout({
   const { can, isAdmin } = usePermissions();
   const [deal, setDeal] = useState<Deal | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Per-group collapse state keyed by group label. Overview (no label) is
+  // never collapsible. Defaults: Analysis open, everything else closed so
+  // the sidebar reads as a lean nav with optional disclosure.
+  const [navGroupsCollapsed, setNavGroupsCollapsed] = useState<Record<string, boolean>>({
+    Files: true,
+    Execution: true,
+    Activity: true,
+    Construction: true,
+  });
   const pathname = usePathname();
   const { userId } = useAuth();
 
   useEffect(() => {
     const stored = localStorage.getItem("dealSidebarCollapsed");
     if (stored !== null) setSidebarCollapsed(stored === "1");
+    const storedGroups = localStorage.getItem("dealNavGroupsCollapsed");
+    if (storedGroups) {
+      try { setNavGroupsCollapsed(JSON.parse(storedGroups)); } catch {}
+    }
   }, []);
 
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
       const next = !prev;
       localStorage.setItem("dealSidebarCollapsed", next ? "1" : "0");
+      return next;
+    });
+  };
+
+  const toggleNavGroup = (label: string) => {
+    setNavGroupsCollapsed((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
+      localStorage.setItem("dealNavGroupsCollapsed", JSON.stringify(next));
       return next;
     });
   };
@@ -264,17 +321,31 @@ export default function DealLayout({
           )}
         >
           <nav className="py-3 px-2 flex flex-col gap-4 min-h-full">
-            {getNavGroups(deal?.execution_phase ?? null).map((group, gi) => (
+            {getNavGroups(deal?.execution_phase ?? null, deal?.deal_scope ?? null).map((group, gi) => {
+              // Groups with a label can be collapsed by the user. When the
+              // whole sidebar is in icon-only mode we ignore per-group
+              // collapse so all icons remain reachable — the compact mode
+              // already hides labels anyway.
+              const groupCollapsed = !!(group.label && !sidebarCollapsed && navGroupsCollapsed[group.label]);
+              return (
               <div key={gi} className="flex flex-col gap-0.5">
                 {group.label && !sidebarCollapsed && (
-                  <div className="px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 font-medium">
-                    {group.label}
-                  </div>
+                  <button
+                    onClick={() => toggleNavGroup(group.label!)}
+                    className="w-full flex items-center gap-1 px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 hover:text-muted-foreground font-medium text-left"
+                  >
+                    {groupCollapsed ? (
+                      <ChevronRight className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                    <span>{group.label}</span>
+                  </button>
                 )}
                 {group.label && sidebarCollapsed && gi > 0 && (
                   <div className="mx-2 mb-1 border-t border-border/30" />
                 )}
-                {group.items.map((item) => {
+                {!groupCollapsed && group.items.map((item) => {
                   const fullPath = `${basePath}${item.href}`;
                   const isActive =
                     item.href === ""
@@ -282,14 +353,22 @@ export default function DealLayout({
                       : pathname.startsWith(fullPath);
                   const Icon = item.icon;
 
+                  const linkTitle = item.muted
+                    ? `${item.label} — ${item.mutedReason ?? ""}`.trim()
+                    : sidebarCollapsed
+                    ? item.label
+                    : undefined;
+
                   return (
-                    <Link key={item.href} href={fullPath} title={sidebarCollapsed ? item.label : undefined}>
+                    <Link key={item.href} href={fullPath} title={linkTitle}>
                       <button
                         className={cn(
                           "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
                           sidebarCollapsed && "justify-center",
                           isActive
                             ? "gradient-gold text-primary-foreground shadow-sm"
+                            : item.muted
+                            ? "text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/30"
                             : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                         )}
                       >
@@ -302,7 +381,8 @@ export default function DealLayout({
                   );
                 })}
               </div>
-            ))}
+              );
+            })}
 
             {isAdmin && (
               <div className="mt-auto flex flex-col gap-0.5 pt-3 border-t border-border/30">

@@ -11,6 +11,7 @@ import PipelinePanel from "./PipelinePanel";
 import ChecklistTemplatePanel from "./ChecklistTemplatePanel";
 import ContactsPanel from "./ContactsPanel";
 import AuditLogPanel from "./AuditLogPanel";
+import StoragePanel from "./StoragePanel";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,7 @@ export default async function AdminPage() {
 
           <InvitationsPanel />
           <SignupAllowlistPanel />
+          <StoragePanel />
           <ContactsPanel />
           <AiConfigPanel />
           <PipelinePanel />

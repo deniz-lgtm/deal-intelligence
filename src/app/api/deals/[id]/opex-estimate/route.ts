@@ -5,7 +5,27 @@ import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 import { parseJsonObject } from "@/lib/parse-json";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 const MODEL = "claude-sonnet-4-6";
+
+export interface OpexItemNotes {
+  vacancy_rate?: string;
+  management_fee_pct?: string;
+  taxes_annual?: string;
+  insurance_annual?: string;
+  repairs_annual?: string;
+  utilities_annual?: string;
+  ga_annual?: string;
+  marketing_annual?: string;
+  reserves_annual?: string;
+  other_expenses_annual?: string;
+  contracts_annual?: string;
+  staff_annual?: string;
+}
 
 interface OpexEstimate {
   vacancy_rate: number;
@@ -18,7 +38,10 @@ interface OpexEstimate {
   marketing_annual: number;
   reserves_annual: number;
   other_expenses_annual: number;
+  contracts_annual: number;
+  staff_annual: number;
   basis: string;
+  item_notes: OpexItemNotes;
 }
 
 const FALLBACK: OpexEstimate = {
@@ -26,7 +49,9 @@ const FALLBACK: OpexEstimate = {
   taxes_annual: 0, insurance_annual: 0, repairs_annual: 0,
   utilities_annual: 0, ga_annual: 0, marketing_annual: 0,
   reserves_annual: 0, other_expenses_annual: 0,
+  contracts_annual: 0, staff_annual: 0,
   basis: "Unable to estimate",
+  item_notes: {},
 };
 
 /**
@@ -116,6 +141,8 @@ ${isMF ? `MULTIFAMILY / STUDENT HOUSING:
 - General & Admin: typically $200-500/unit/year (accounting, legal, admin)
 - Marketing / Leasing: typically $100-400/unit/year
 - Reserves: typically $250-500/unit/year for replacement reserves
+- Contracts: typically $250-600/unit/year for recurring service contracts (landscaping, pest control, elevator service, trash, pool, security monitoring); higher for amenity-heavy / high-rise assets
+- Staff (on-site payroll): typically $400-1,200/unit/year for properties 150+ units (community manager, leasing, maintenance); $0-200/unit/year for smaller deals managed off-site under a flat management fee
 - Other: misc items not covered above` : `COMMERCIAL (Industrial / Office / Retail):
 - Property Taxes: typically 1.0-2.5% of purchase price/assessed value
 - Insurance: typically $0.50-1.50/SF/year
@@ -124,6 +151,8 @@ ${isMF ? `MULTIFAMILY / STUDENT HOUSING:
 - General & Admin: typically $0.15-0.50/SF/year
 - Marketing / Leasing: typically $0.10-0.30/SF/year, higher with vacancy
 - Reserves: typically $0.15-0.40/SF/year
+- Contracts: typically $0.25-0.75/SF/year for service contracts (janitorial on gross, HVAC service, elevator, security, landscaping, pest); $0 on pure NNN where tenants contract directly
+- Staff (on-site payroll): typically $0 for small / NNN assets; $0.25-1.00/SF/year for larger office / mixed-use with an on-site engineer or property admin
 - Other: misc items`}
 
 - Management Fee: as a percentage of EGI (typically 3-8%, higher for smaller properties)
@@ -141,7 +170,23 @@ Return ONLY a JSON object:
   "marketing_annual": 6000,
   "reserves_annual": 10000,
   "other_expenses_annual": 0,
-  "basis": "Brief 1-2 sentence explanation of what drove the estimates (e.g. tax rate, market benchmarks, property age)"
+  "contracts_annual": 15000,
+  "staff_annual": 40000,
+  "basis": "Brief 1-2 sentence overview of the main drivers",
+  "item_notes": {
+    "taxes_annual": "Short reason (≤18 words): e.g. '1.2% of purchase price at LA County millage'",
+    "insurance_annual": "e.g. '$650/unit, priced up for CA wildfire exposure'",
+    "repairs_annual": "e.g. '$800/unit; stabilized asset built 2018'",
+    "utilities_annual": "e.g. 'Tenant-paid except water/trash'",
+    "ga_annual": "e.g. 'Standard $300/unit for admin/legal'",
+    "marketing_annual": "e.g. 'Low at stabilization, $150/unit'",
+    "reserves_annual": "e.g. '$350/unit replacement reserves'",
+    "contracts_annual": "e.g. 'Landscaping, pest, elevator service'",
+    "staff_annual": "e.g. '160 units, on-site manager + maintenance'",
+    "other_expenses_annual": "e.g. 'Buffer for uncategorized'",
+    "vacancy_rate": "e.g. 'Submarket stabilized vacancy is 5%'",
+    "management_fee_pct": "e.g. 'Market rate for 160-unit MF'"
+  }
 }
 
 Rules:
@@ -149,7 +194,9 @@ Rules:
 - vacancy_rate and management_fee_pct as whole-number percentages (5 = 5%)
 - Base estimates on the specific location, property type, size, and age
 - If in-place expenses are available, use them as a floor/reference but adjust for pro forma (stabilized) assumptions
-- Do NOT return null values — estimate every category even if small`;
+- Do NOT return null values — estimate every category even if small
+- Each item_notes entry must be ≤ 18 words, one sentence, concrete (cite $/unit, $/SF, %, or a market fact). Never repeat the main "basis" text.
+- contracts_annual and staff_annual should reflect a stabilized third-party-managed asset; for small deals where the management fee fully covers staff, it's fine to return 0 for staff_annual — note why in item_notes.staff_annual`;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 25_000);

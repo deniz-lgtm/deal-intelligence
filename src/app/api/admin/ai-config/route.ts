@@ -4,6 +4,11 @@ import { requireAdmin } from "@/lib/auth";
 import { getSetting, setSetting, recordAudit } from "@/lib/admin-helpers";
 import { clearAiConfigCache } from "@/lib/claude";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 const AVAILABLE_MODELS = [

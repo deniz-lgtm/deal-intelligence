@@ -15,6 +15,11 @@ import type { ChecklistItem, DealNote, BusinessPlan } from "@/lib/types";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 import { formatLocationIntelContext } from "@/lib/location-intel-context";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 const MODEL = "claude-sonnet-4-6";
 let _client: Anthropic | null = null;
 function getClient() {
@@ -109,7 +114,11 @@ export async function POST(
     }
 
     // Parse JSON from response — be lenient
-    let parsed: { deal_score: number; score_reasoning: string };
+    let parsed: {
+      deal_score: number;
+      score_reasoning: string;
+      bullet_points?: string[];
+    };
     try {
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       parsed = jsonMatch
@@ -121,13 +130,32 @@ export async function POST(
     }
 
     const score = Math.max(1, Math.min(10, Math.round(parsed.deal_score ?? 5)));
-    const reasoning = parsed.score_reasoning ?? "";
+    // Bullets are the new primary surface; serialize them back into
+    // score_reasoning (the persisted column) as "• line\n• line" so the
+    // existing legacy renderer still shows something useful if it reads
+    // this column directly. The UW page will prefer bullet_points when
+    // present.
+    const bulletPoints = Array.isArray(parsed.bullet_points)
+      ? parsed.bullet_points
+          .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
+          .slice(0, 5)
+      : [];
+    const reasoning = parsed.score_reasoning
+      ?? (bulletPoints.length > 0 ? bulletPoints.map((b) => `• ${b}`).join("\n") : "");
 
-    // Store on the deal
+    // Store on the deal. We encode bullets into the reasoning column as a
+    // marker-prefixed JSON blob so the existing column keeps working while
+    // the UI can round-trip structured bullets. Older readers just see the
+    // JSON text; new readers parse it.
+    const storedReasoning =
+      bulletPoints.length > 0
+        ? `__STRUCTURED__${JSON.stringify({ reasoning, bullets: bulletPoints })}`
+        : reasoning;
+
     const updateField =
       stage === "underwriting"
-        ? { uw_score: score, uw_score_reasoning: reasoning }
-        : { final_score: score, final_score_reasoning: reasoning };
+        ? { uw_score: score, uw_score_reasoning: storedReasoning }
+        : { final_score: score, final_score_reasoning: storedReasoning };
 
     const updated = await dealQueries.update(params.id, updateField);
 
@@ -136,6 +164,7 @@ export async function POST(
         stage,
         score,
         reasoning,
+        bullet_points: bulletPoints,
         om_score: omAnalysis?.deal_score ?? null,
         om_reasoning: omAnalysis?.score_reasoning ?? null,
         uw_score: updated.uw_score ?? null,
@@ -234,9 +263,55 @@ function buildScorePrompt(
       (s: number, c: any) => s + (c.quantity || 0) * (c.cost_per_unit || 0),
       0
     );
+
+    // Ground-up vs. acquisition cost basis. For development_mode deals
+    // there's no purchase price — the cost basis is land + hard + soft +
+    // parking + capitalized interest + closing + demolition. Mirrors
+    // the UW page's calc (src/app/deals/[id]/underwriting/page.tsx
+    // around the totalCost block) so the score's view of the deal
+    // matches what the analyst sees on the page.
+    const isGroundUp = !!uw.development_mode;
     const purchasePrice = uw.purchase_price || 0;
-    const closingCosts = purchasePrice * ((uw.closing_costs_pct || 0) / 100);
-    const totalCost = purchasePrice + closingCosts + capexTotal;
+
+    let totalHardCosts = 0;
+    let softCostsTotal = 0;
+    let landCost = 0;
+    let parkingCost = 0;
+    let demolitionCosts = 0;
+    let closingCosts = 0;
+    let totalCost = 0;
+
+    if (isGroundUp) {
+      // Itemized dev budget wins over the legacy hard_cost_per_sf shortcut.
+      const devItems = uw.dev_budget_items || [];
+      const hasItemized = devItems.length > 0 && devItems.some((i: any) =>
+        (i.amount || 0) > 0 || (i.is_pct && (i.pct_value || 0) > 0)
+      );
+      if (hasItemized) {
+        totalHardCosts = devItems
+          .filter((i: any) => i.category === "hard")
+          .reduce((s: number, i: any) => s + (i.amount || 0), 0);
+        softCostsTotal = devItems
+          .filter((i: any) => i.category === "soft")
+          .reduce((s: number, i: any) => s + (i.amount || 0), 0);
+      } else {
+        totalHardCosts = (uw.hard_cost_per_sf || 0) * (uw.max_gsf || 0);
+        softCostsTotal = totalHardCosts * ((uw.soft_cost_pct || 0) / 100);
+      }
+      const parking = uw.parking?.entries || [];
+      parkingCost = parking.reduce(
+        (s: number, e: any) => s + (e.spaces || 0) * (e.cost_per_space || 0),
+        0
+      );
+      landCost = uw.land_cost || 0;
+      demolitionCosts = (uw.redevelopment?.demolition_cost || 0);
+      closingCosts = landCost * ((uw.closing_costs_pct || 0) / 100);
+      totalCost = landCost + totalHardCosts + softCostsTotal + parkingCost + closingCosts + demolitionCosts;
+    } else {
+      closingCosts = purchasePrice * ((uw.closing_costs_pct || 0) / 100);
+      totalCost = purchasePrice + closingCosts + capexTotal;
+    }
+    const costBasis = isGroundUp ? totalCost : purchasePrice;
 
     const totalUnits = groups.reduce(
       (s: number, g: any) => s + (g.unit_count || 0),
@@ -263,18 +338,29 @@ function buildScorePrompt(
     const fixedOpEx = (uw.taxes_annual || 0) + (uw.insurance_annual || 0) +
       (uw.repairs_annual || 0) + (uw.utilities_annual || 0) +
       (uw.ga_annual || 0) + (uw.marketing_annual || 0) +
-      (uw.reserves_annual || 0) + (uw.other_expenses_annual || 0);
+      (uw.reserves_annual || 0) + (uw.other_expenses_annual || 0) +
+      // Custom rows (Contracts, Staff, etc.) are part of the OpEx stack
+      // on the UW page — include them so the score's NOI matches.
+      (uw.custom_opex || []).reduce((s: number, r: any) => s + (r.pf_annual || 0), 0);
     const proformaNOI = proformaEGI - mgmtFee - fixedOpEx;
+    // Cap rate: applied against the chosen basis (purchase price for
+    // acquisitions, total cost basis for ground-up).
     const proformaCapRate =
-      purchasePrice > 0 ? (proformaNOI / purchasePrice) * 100 : 0;
+      costBasis > 0 ? (proformaNOI / costBasis) * 100 : 0;
     const yoc = totalCost > 0 ? (proformaNOI / totalCost) * 100 : 0;
 
-    // Financing metrics
+    // Financing metrics — handle ground-up LTC vs. acquisition LTV split.
     let dscr = 0, cashOnCash = 0, equityMultiple = 0, loanAmount = 0, equity = 0;
     if (uw.has_financing && totalCost > 0) {
-      const ppLtv = uw.acq_pp_ltv ?? uw.acq_ltc ?? 65;
-      const capexLtv = uw.acq_capex_ltv ?? uw.acq_ltc ?? 100;
-      loanAmount = (purchasePrice + closingCosts) * (ppLtv / 100) + capexTotal * (capexLtv / 100);
+      if (isGroundUp) {
+        // Ground-up: single LTC against full development cost.
+        const ltc = uw.acq_ltc ?? uw.acq_pp_ltv ?? 65;
+        loanAmount = totalCost * (ltc / 100);
+      } else {
+        const ppLtv = uw.acq_pp_ltv ?? uw.acq_ltc ?? 65;
+        const capexLtv = uw.acq_capex_ltv ?? uw.acq_ltc ?? 100;
+        loanAmount = (purchasePrice + closingCosts) * (ppLtv / 100) + capexTotal * (capexLtv / 100);
+      }
       equity = totalCost - loanAmount;
       const rate = (uw.acq_interest_rate || 7) / 100;
       const amort = uw.acq_amort_years || 0;
@@ -314,9 +400,15 @@ function buildScorePrompt(
       }
     }
 
+    const basisLabel = isGroundUp ? "Total Cost Basis (ground-up)" : "Purchase Price";
+    const basisDetail = isGroundUp
+      ? `Land ${fc(landCost)} + Hard ${fc(totalHardCosts)} + Soft ${fc(softCostsTotal)}${parkingCost ? ` + Parking ${fc(parkingCost)}` : ""}${closingCosts ? ` + Closing ${fc(closingCosts)}` : ""}${demolitionCosts ? ` + Demo ${fc(demolitionCosts)}` : ""}`
+      : `incl. ${fc(capexTotal)} CapEx + ${fc(closingCosts)} closing`;
+
     uwBlock = `\nUNDERWRITING METRICS (COMPUTED FROM MODEL):
-- Purchase Price: ${fc(purchasePrice)}
-- Total Cost Basis: ${fc(totalCost)} (incl. ${fc(capexTotal)} CapEx + ${fc(closingCosts)} closing)
+- Deal Type: ${isGroundUp ? "Ground-Up Development" : "Acquisition"}
+- ${basisLabel}: ${fc(costBasis)}
+- Total Cost Basis: ${fc(totalCost)} (${basisDetail})
 - Total Units: ${totalUnits}
 - Proforma GPR: ${fc(proformaGPR)}
 - Vacancy Rate: ${vacancyRate}%
@@ -324,13 +416,13 @@ function buildScorePrompt(
 - Proforma NOI: ${fc(proformaNOI)}
 - Proforma Cap Rate: ${fp(proformaCapRate)}
 - Yield on Cost: ${fp(yoc)}
-- CapEx Budget: ${fc(capexTotal)} across ${capexItems.length} items
+- ${isGroundUp ? `Hard Costs: ${fc(totalHardCosts)} ($${(uw.hard_cost_per_sf || 0).toFixed(0)}/GSF on ${(uw.max_gsf || 0).toLocaleString()} GSF)` : `CapEx Budget: ${fc(capexTotal)} across ${capexItems.length} items`}
 - Hold Period: ${uw.hold_period_years || "?"} years
 - Exit Cap Rate: ${uw.exit_cap_rate || "?"}%
 ${uw.has_financing ? `- DSCR: ${dscr > 0 ? dscr.toFixed(2) + "x" : "N/A"}
 - Cash-on-Cash Return: ${cashOnCash !== 0 ? cashOnCash.toFixed(2) + "%" : "N/A"}
 - Equity Multiple: ${equityMultiple > 0 ? equityMultiple.toFixed(2) + "x" : "N/A"}
-- Loan Amount: ${fc(loanAmount)}
+- Loan Amount: ${fc(loanAmount)} ${isGroundUp ? `(${(uw.acq_ltc ?? uw.acq_pp_ltv ?? 65)}% LTC)` : ""}
 - Equity Required: ${fc(equity)}` : "- No financing assumed (all-cash)"}
 `;
   }
@@ -376,8 +468,21 @@ Score this deal based on the ACTUAL underwriting numbers. Consider:
 Return ONLY a JSON object:
 {
   "deal_score": 7,
-  "score_reasoning": "2-4 sentences — reference SPECIFIC numbers from the UW metrics. State the YoC, DSCR, EM, CoC. Explain why this is better or worse than the OM score."
+  "score_reasoning": "1 sentence summary — will only show as a tooltip/fallback.",
+  "bullet_points": [
+    "YoC 8.4% vs 7% target — above threshold",
+    "DSCR 1.42x; IO years cover construction risk",
+    "EM 2.1x at 5yr hold, CoC ramps to 12% Y3",
+    "Three OM red flags addressed in notes",
+    "Still sensitive to exit cap > 5.75%"
+  ]
 }
+
+Rules for bullet_points:
+- 3 to 5 bullets, each ≤ 14 words
+- Reference concrete numbers (YoC, DSCR, EM, CoC, cap rate, etc.)
+- Cover the most important positive(s), the biggest risk/caveat, and the business-plan fit
+- No leading dashes or bullets in the strings — just the text
 
 Score guide:
 1-3: Pass — UW reveals fatal flaws (negative NOI, sub-1.0 DSCR, negative leverage)
@@ -412,8 +517,20 @@ Provide a comprehensive final score considering:
 Return ONLY a JSON object:
 {
   "deal_score": 7,
-  "score_reasoning": "3-5 sentences — comprehensive final assessment. Reference the score progression (OM → UW → Final), what was confirmed, what changed, and whether the deal is ready for presentation. Be specific about any remaining concerns."
+  "score_reasoning": "1 sentence summary — will only show as a tooltip/fallback.",
+  "bullet_points": [
+    "UW confirmed 8% YoC; OM score validated",
+    "Checklist clean; zoning + env resolved",
+    "EM 2.2x over 5yr hold; hits BP target",
+    "Last risk: rent-growth sensitivity above 3%",
+    "Ready for IC"
+  ]
 }
+
+Rules for bullet_points:
+- 3 to 5 bullets, each ≤ 14 words
+- Note the OM → UW → Final progression, what was validated, remaining risks, and IC readiness
+- No leading dashes or bullets in the strings — just the text
 
 Score guide (final assessment):
 1-3: Do not proceed — fundamental issues remain unresolved

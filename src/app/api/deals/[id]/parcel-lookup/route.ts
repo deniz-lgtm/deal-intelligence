@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { lookupParcelApn } from "@/lib/claude";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/deals/[id]/parcel-lookup
  *

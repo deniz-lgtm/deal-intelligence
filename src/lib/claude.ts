@@ -492,6 +492,12 @@ export function diffRentRolls(
 // server-side (see src/lib/web-allowlist.ts and FEATURE_ROADMAP_BACKLOG.md).
 // The URL field is stored as a reference only.
 
+// Which source filled a given field. Lets the review UI show badges so the
+// analyst knows whether to double-check a number (e.g. a Places-resolved
+// address should be verified; a computed price_per_unit is as trustworthy
+// as its inputs).
+export type CompFieldSource = "llm" | "places" | "computed" | "assessor";
+
 export interface ExtractedCompDraft {
   comp_type: "sale" | "rent";
   name: string | null;
@@ -519,6 +525,15 @@ export interface ExtractedCompDraft {
   distance_mi: number | null;
   confidence: number; // 0-1, Claude's self-assessment
   notes: string | null;
+  // Populated by post-extraction Google Places backfill when the extractor
+  // couldn't find a street address directly. Stay null when Places is not
+  // configured or the lookup didn't resolve.
+  lat?: number | null;
+  lng?: number | null;
+  // Per-field provenance map. Optional — absent when the draft came straight
+  // from the LLM with no post-processing. Keys that aren't in the map should
+  // be treated as "llm" by consumers.
+  _provenance?: Partial<Record<string, CompFieldSource>>;
 }
 
 const COMP_EXTRACTION_PROMPT = `You are a commercial real estate analyst extracting a single comparable property from listing material an analyst has supplied (pasted text, screenshots, and/or a source URL slug). The analyst already viewed the source themselves.
@@ -722,27 +737,50 @@ Rules:
 - cap_rate, occupancy_pct, rent_per_sf are displayed values (5.5 not 0.055).
 - rent_per_unit is MONTHLY. rent_per_sf is ANNUAL.
 - sale_date must be ISO YYYY-MM-DD or null.
+- For "address": prefer the full street address ("1234 Main St") when the document shows one — check comp grid footers, property summary boxes, photo captions, and any appendix tables. Only fall back to property name + city when no street address appears anywhere. Never invent a street number.
 - confidence is your honest 0-1 estimate per-comp.
 - If the document has NO comps at all, return { "summary": "No comparable properties found in this document", "comps": [] }.
 - Respond with ONLY the JSON object. No markdown fences, no explanation.`;
 
 export async function extractCompsFromDocument(
   contentText: string,
-  opts: { documentName?: string } = {}
+  opts: { documentName?: string; pdfBuffer?: Buffer | null } = {}
 ): Promise<ExtractedCompsBatch | null> {
-  if (!contentText || contentText.trim().length < 40) return null;
+  const hasPdf = !!(opts.pdfBuffer && opts.pdfBuffer.length > 0);
+  const hasText = !!(contentText && contentText.trim().length >= 40);
+  if (!hasPdf && !hasText) return null;
 
   try {
     const header = opts.documentName
       ? `Document name: ${opts.documentName}\n\n`
       : "";
-    const userContent =
-      `${header}DOCUMENT CONTENT:\n"""\n${contentText.slice(0, 40000)}\n"""\n\n${COMPS_FROM_DOC_PROMPT}`;
+
+    // Prefer the native PDF document block when available: Claude reads the
+    // whole file including tables, page footers, and photo captions where
+    // street addresses actually live in CBRE/JLL/M&M comp books. Falling
+    // back to text truncates at 40k chars, which cuts off long appendices.
+    const textBlock = hasText
+      ? `${header}DOCUMENT CONTENT:\n"""\n${contentText.slice(0, 120000)}\n"""\n\n${COMPS_FROM_DOC_PROMPT}`
+      : `${header}${COMPS_FROM_DOC_PROMPT}`;
+
+    const msgContent: unknown[] = [];
+    if (hasPdf) {
+      msgContent.push({
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: opts.pdfBuffer!.toString("base64"),
+        },
+      });
+    }
+    msgContent.push({ type: "text", text: textBlock });
 
     const response = await getClient().messages.create({
       model: await getActiveModel(),
       max_tokens: 8000,
-      messages: [{ role: "user", content: userContent }],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      messages: [{ role: "user", content: msgContent as any }],
     });
 
     const raw =
@@ -1520,25 +1558,49 @@ export interface UnderwritingSnapshot {
   uwData?: Record<string, unknown> | null;
 }
 
+// Section prompts for the DD Abstract. Each entry is a heading + a short
+// spec. The spec tells Claude: (a) the 1-sentence takeaway to open with,
+// (b) the exact bullets to produce, (c) the cap on output length. No
+// section asks for "prose" or "paragraphs" — all output is bulleted.
 const SECTION_PROMPTS: Record<string, string> = {
   executive_summary:
-    "**Executive Summary** — IC-grade thesis opening. Lead with the one-sentence investment thesis, then a bulleted metrics table (purchase price, basis $/unit or $/SF, going-in cap, stabilized yield-on-cost, levered IRR, equity multiple, hold, total equity). Close with the 2-3 reasons this deal works and the 1-2 reasons it could fail. No marketing language.",
+    "## Executive Summary\n" +
+    "Lead with 1 bold sentence: deal name, strategy, size, basis ($/unit or $/SF), stabilized YoC, levered IRR, EM, hold.\n" +
+    "Then a single bulleted metrics block (Label: value, one line each): Purchase Price, Total Cap, Basis $/unit + $/SF, Going-in Cap, Stabilized YoC, Levered IRR, EM, DSCR, Hold, Equity Check.\n" +
+    "Then 3 bullets — reasons this works (cite a number each).\n" +
+    "Then 2 bullets — reasons this fails (cite a number each).",
   property_overview:
-    "**Property Overview** — Physical description tight enough for an IC member who has never seen the site. Cover: address / submarket / year built / land area / rentable SF or unit count, construction type, condition, parking, zoning classification, current occupancy, and any site plan / massing / buildable envelope facts if this is a ground-up or redevelopment deal. Flag gaps in physical due diligence explicitly.",
+    "## Property Overview\n" +
+    "6-10 bullets covering: address + submarket, year built, land area, SF or unit count, construction type, condition, parking ratio, zoning designation, current occupancy, and (for ground-up / redev) the site plan + massing facts.\n" +
+    "Flag missing physical diligence explicitly as `DATA GAP:`.",
   underwriting_summary:
-    "**Underwriting Summary** — Show the COMPUTED RETURNS from the internal model in a structured bullet list: purchase price, total capitalization, stabilized NOI, going-in cap, stabilized yield-on-cost, untrended YoC, cash-on-cash, levered IRR, equity multiple, DSCR at stabilization, refi proceeds (if modeled), exit cap, hold. Immediately follow with the 3-5 assumptions that drive the return (rent growth, exit cap compression/expansion, LTC, CapEx timing, lease-up speed) and flag which look aggressive vs. consensus. All percentage values are already in percent form — do NOT multiply by 100.",
+    "## Underwriting Summary\n" +
+    "Computed-returns bullet block (one per line, Label: value): Purchase Price, Total Cap, Stabilized NOI, Going-in Cap, Stabilized YoC, Untrended YoC, CoC, Levered IRR, EM, DSCR at stabilization, Refi Proceeds, Exit Cap, Hold.\n" +
+    "Then 4-5 bullets — the assumptions driving those returns (rent growth, exit cap, LTC, CapEx timing, lease-up). Flag each as AGGRESSIVE / IN-LINE / CONSERVATIVE vs. submarket consensus.\n" +
+    "All percentages are already in percent form (5 = 5%). Do not multiply by 100.",
   revenue_expense:
-    "**Revenue & Expense Analysis** — Unit mix with in-place vs. market rents and the implied loss-to-lease, other income line items, vacancy/credit loss assumptions vs. submarket, OpEx build-up with $/unit or $/SF benchmarks, payroll and management load, real estate taxes (flag reassessment risk post-close), insurance at current hard-market rates, R&M adequacy. Call out any expense ratio that is more than ~10% outside submarket norms.",
+    "## Revenue & Expense Analysis\n" +
+    "3-4 bullets on revenue: total units, in-place vs. market rent with loss-to-lease in bps, other income items, vacancy assumption vs. submarket.\n" +
+    "Then 4-6 OpEx bullets (one per line): Taxes, Insurance, R&M, Utilities, Payroll, Mgmt Fee — each with $/unit or $/SF. Flag any line > 10% outside submarket benchmark with AGGRESSIVE or CONSERVATIVE.",
   document_review:
-    "**Document Review Status** — What has been received and reviewed, what is outstanding, and what is materially impairing diligence. Organize by workstream (title, survey, zoning, environmental, engineering, financial, legal, tax, insurance). Be specific — don't just say 'title pending', say 'Prelim title report not yet received; exceptions and easements unknown'.",
+    "## Document Review Status\n" +
+    "4-6 bullets grouped by workstream (Title, Survey, Zoning, Environmental, Engineering, Financial). Each bullet: what is in, what is out, and the specific impact of what is out. Never say 'pending' without naming the missing exception or schedule.",
   key_findings:
-    "**Key Findings** — Organize by workstream: Title & Survey, Zoning & Entitlements, Environmental, Physical / PCA, Financial, Legal, Tax & Insurance, Market. For each, state what was verified and what the finding means for value, closing, or the business plan. Quantify impact in $ or bps where possible.",
+    "## Key Findings\n" +
+    "5-7 bullets, one per workstream (Title & Survey, Zoning, Environmental, Physical / PCA, Financial, Legal, Market). Each bullet quantifies the impact in $ or bps.",
   red_flags:
-    "**Red Flags & Issues** — Rank each risk by severity (HIGH / MEDIUM / LOW) and category. For each: the risk, the dollar or probability impact, and the proposed mitigant (rep, escrow, price reduction, carve-out, walk). This is the section an IC member reads first — be direct, prioritized, and specific.",
+    "## Red Flags & Issues\n" +
+    "Up to 6 bullets, sorted HIGH → MEDIUM → LOW. Each bullet format: `[HIGH|MED|LOW] <risk> — <$ or bps impact> — mitigant: <rep/escrow/price/carve-out/walk>`.\n" +
+    "No generic 'market risk' or 'execution risk' bullets — every bullet names a specific cause.",
   outstanding_items:
-    "**Outstanding Items & Path to Closing** — A closing checklist: open items, owner, target date, and which are CPs to close vs. post-close. Flag anything that could push timing or require re-trade.",
+    "## Outstanding Items & Path to Closing\n" +
+    "Up to 8 bullets. Each: `<item> — owner: <name> — due: <date> — <CP-to-close | post-close>`. Flag anything that could push timing or require re-trade.",
   recommendation:
-    "**Recommendation** — Open with: PROCEED / PROCEED WITH CONDITIONS / RE-TRADE / DO NOT PROCEED. Follow with the rationale in 3-5 crisp bullets tying back to thesis and risks. If conditions, list them (price, reps, escrows, carve-outs, debt terms). State the go / no-go decision point the committee is being asked to approve.",
+    "## Recommendation\n" +
+    "Line 1: one of PROCEED / PROCEED WITH CONDITIONS / RE-TRADE / DO NOT PROCEED, in caps.\n" +
+    "Then 3-5 bullets — the rationale, each citing one specific number or risk.\n" +
+    "If 'proceed with conditions', list the conditions as a second bullet block (price reduction, rep, escrow, carve-out, debt term).\n" +
+    "Close with 1 bullet naming the specific decision the committee is being asked to approve.",
 };
 
 function buildSectionInstructions(sections?: string[]): string {
@@ -1593,16 +1655,11 @@ export async function generateDDAbstract(
 
   const prompt = `${CONCISE_STYLE}
 
-ROLE: You are a senior real estate investment professional writing the Due Diligence Abstract that precedes a Blackstone-style Investment Committee memo. Your reader is a Managing Director who will spend less than ten minutes on this document before the IC. They already understand real estate — they need signal, not explanation.
+ROLE: Senior investment professional drafting the Due Diligence Abstract. Reader is a Managing Director with 10 minutes before IC. They need signal, not education.
 
-VOICE: Skeptical, analytical, institutional. Challenge every assumption: rent growth, exit cap, lease-up, basis, insurance, taxes post-reassessment. Distinguish what is UNDERWRITTEN (in the model), what is VERIFIED (in diligence), and what is ASSUMED (neither). Quantify risk in dollars or basis points. Absolutely no marketing language, no hedging boilerplate, no "it is important to note".
+TAG DISCIPLINE: Distinguish UNDERWRITTEN (in the model), VERIFIED (in diligence), ASSUMED (neither), DATA GAP (missing input we need). Use these as inline tags on bullets — not as separate paragraphs.
 
-FORMAT:
-- Markdown. H2 for each section header. Bullets (leading "-") inside sections, not paragraphs.
-- Lead each section with the bottom line. Supporting detail follows.
-- Cite the specific number AND where it came from (OM, rent roll, T-12, model, broker, comp). If the source is missing, flag it.
-- Use $/unit, $/SF, bps, % deltas vs. submarket — not vague words like "strong" or "healthy".
-- If a data input is missing, write "UNDERWRITTEN BUT NOT VERIFIED" or "DATA GAP — [what's needed]". Do not invent.
+SOURCE CITATIONS: Each bullet cites the source in parentheses: (T-12), (rent roll), (OM), (model), (comp), (broker). If absent, tag the bullet UNVERIFIED.
 ${memorySection}
 DEAL: ${deal.name}
 Address: ${[deal.address, deal.city, deal.state].filter(Boolean).join(", ")}
@@ -1615,16 +1672,17 @@ ${docContext || "No documents with summaries yet."}
 DILIGENCE CHECKLIST STATUS:
 ${checklistSummary || "Checklist not yet completed."}
 
-Write the due diligence abstract in markdown with ONLY the following requested sections, in this order:
+Write the DD abstract. Markdown only. Output ONLY these sections, in this order, with their specified output shape. Every section output is bullets — no paragraphs.
+
 ${buildSectionInstructions(sections)}
 
-NUMERIC CONVENTION: all rates (vacancy, cap rate, interest rate, IRR, etc.) in the underwriting block are ALREADY in percent form — 5 means 5%, not 500%. Do not multiply by 100.
+NUMERIC CONVENTION: rates in the UW block are already in percent form (5 = 5%). Do not multiply by 100.
 
-ANTI-PATTERNS TO AVOID:
-- Restating the OM. The reader has read it.
-- Generic statements ("the property is well-located"). Replace with: drive time to top employer, submarket rent growth %, comp cap rates, specific demographics.
-- Burying risk. If something is HIGH severity, it goes in the first bullet of the relevant section, not the last.
-- Recommending "proceed with further diligence" as a default. Take a position.`;
+DO NOT:
+- Restate the OM.
+- Write "the property is well-located" or any similar adjective-only bullet.
+- Bury HIGH-severity risks. They go first.
+- Default to "proceed with further diligence." Take a position.`;
 
   const response = await getClient().messages.create({
     model: await getActiveModel(),
@@ -1820,11 +1878,11 @@ Respond with valid JSON only (no markdown):
       }
     ]
   },
-  "narrative": "<detailed markdown-formatted zoning memo covering: zoning designation, dimensional standards, permitted uses, overlays, density bonuses, potential conflicts, recommendations for the developer>",
+  "narrative": "<markdown. 1 bold takeaway sentence (max 20 words), then 4-7 bullets max 20 words each. Cite code section inline in parentheses, e.g. '(§17.64.030)'. No paragraphs. No generic advice. Every bullet names a specific dimensional standard, overlay, bonus, or conflict with the intended use. Cover: designation + permitted use fit, FAR/height/setback/coverage, overlays, bonus eligibility, and the one legislative change most likely to affect this deal. Tag any uncertain value UNVERIFIED inline.>",
   "sources": ["<source description or URL>"]
 }
 
-Be thorough in the narrative. Include specific code references where possible. If you're uncertain about specific values, note that in the narrative and provide your best estimate with caveats.`;
+If uncertain about a value, still write the bullet with the best estimate and tag it UNVERIFIED inline. No caveat paragraphs.`;
 
   const response = await getClient().messages.create({
     model: await getActiveModel(),
@@ -2389,7 +2447,7 @@ EXTRACTION RULES:
 7. Prefer "effective" rent over "asking" rent when both are published.
 8. For \`pipeline\`, extract every named under-construction / planned project in the report (cap at 25). Set status based on the publisher's labeling. If the publisher only gives totals, the pipeline array can be empty — the under_construction_units/sf totals go in \`metrics\` instead.
 9. Top employers + top deliveries: cap at 10 each; include only if explicitly listed.
-10. \`narrative\`: 2-4 crisp sentences synthesizing the publisher's overall read on the market — NOT a re-summary of every metric. Tie to the deal context when one is supplied.
+10. \`narrative\`: 1 takeaway sentence (≤ 25 words) stating the publisher's read on the market. Not a re-summary of the metrics above. Tie to deal context when supplied. No prose.
 11. If a field is not in the report, return \`null\`. Do NOT guess.
 ${deal}
 Return ONLY a JSON object in the shape below, no explanation, no code fence:
@@ -2419,7 +2477,7 @@ Return ONLY a JSON object in the shape below, no explanation, no code fence:
   ],
   "top_employers": [ { "name": "Dell Technologies", "industry": "Tech", "employees": 13000 } ],
   "top_deliveries": [ { "project_name": "Riverfront East", "units": 412, "sf": null, "delivered": "2024-Q2" } ],
-  "narrative": "Austin MF is in a supply-driven reset: 28.5k units under construction on a 285k base, +2.1% rent decline YTD, concessions at 6.2 weeks. Absorption is strong (5.2k YTD) but well below deliveries — expect 12-18 more months of pressure before rent growth turns."
+  "narrative": "Austin MF in a supply-driven reset: 28.5k UC on 285k base, rents -2.1% YTD, concessions 6.2 weeks — expect 12-18 more months of pressure before rent growth turns."
 }`;
 }
 

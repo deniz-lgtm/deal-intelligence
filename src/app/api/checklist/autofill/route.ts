@@ -5,6 +5,11 @@ import { autoFillChecklist } from "@/lib/claude";
 import { DILIGENCE_CHECKLIST_TEMPLATE } from "@/lib/types";
 import type { Document } from "@/lib/types";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();

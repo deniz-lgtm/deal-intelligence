@@ -3,6 +3,11 @@ import { getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { DEFAULT_PREDEV_THRESHOLDS } from "@/lib/types";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }

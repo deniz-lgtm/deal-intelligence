@@ -67,6 +67,7 @@ export interface Deal {
   zip: string;
   property_type: PropertyType;
   investment_strategy: InvestmentThesis | null;
+  deal_scope: DealScope | null;
   status: DealStatus;
   starred: boolean;
   asking_price: number | null;
@@ -144,6 +145,34 @@ export const INVESTMENT_THESIS_DESCRIPTIONS: Record<InvestmentThesis, string> = 
   core_plus: "Acquire quality assets with minor value-add potential through light improvements or lease-up",
   opportunistic: "High-risk/high-return strategies including distressed assets, heavy rehab, or market turnarounds",
 };
+
+// ─── Deal Scope ────────────────────────────────────────────────────────────
+// Orthogonal to InvestmentThesis: drives UI complexity (which sections matter).
+// Acquisition → underwriting-focused; Programming + Site & Zoning are de-emphasized.
+// Value-Add + Expansion → adds new SF (vertical additions, ADUs, phased adds); full flow.
+// Ground-Up → new construction; full flow with programming, site, and zoning defaults.
+
+export type DealScope = "acquisition" | "value_add_expansion" | "ground_up";
+
+export const DEAL_SCOPE_LABELS: Record<DealScope, string> = {
+  acquisition: "Acquisition",
+  value_add_expansion: "Value-Add + Expansion",
+  ground_up: "Ground-Up Development",
+};
+
+export const DEAL_SCOPE_DESCRIPTIONS: Record<DealScope, string> = {
+  acquisition: "Buy and operate, or interior renovation only. No new SF. Underwriting-focused.",
+  value_add_expansion: "Reposition with added square footage — vertical additions, ADUs, new phases.",
+  ground_up: "New construction on raw or entitled land. Full programming, site, and zoning flow.",
+};
+
+// Suggest a default scope from an investment thesis. User can always override.
+export function suggestScopeFromStrategy(strategy: InvestmentThesis | null | ""): DealScope | null {
+  if (strategy === "ground_up") return "ground_up";
+  if (strategy === "value_add") return "value_add_expansion";
+  if (strategy === "core" || strategy === "core_plus") return "acquisition";
+  return null;
+}
 
 export const PREDEFINED_MARKETS = [
   "DFW", "Houston", "San Antonio", "Austin", "Tampa", "Orlando", "Jacksonville",
@@ -1696,11 +1725,20 @@ export interface DevBudgetLineItem {
   pct_basis: "hard_costs" | "total_project" | "none";
   pct_value: number;
   notes: string;
+  // When set, the quantity is live-computed from the massing on every
+  // render instead of relying on the (possibly stale) saved value.
+  // Supported sources mirror seedDevBudget: land_sf / max_gsf /
+  // max_nrsf / parking_spaces / total_units / frontage_length_ft.
+  auto_qty_source?: string;
+  // For per-building fanout. When set, the live quantity is pulled
+  // from the matching scenario in building_program, so each building
+  // can carry its own GSF/NRSF/parking-space count.
+  site_plan_building_id?: string | null;
 }
 
 export const DEFAULT_DEV_BUDGET_HARD: Array<{ label: string; subcategory: string; unit_label: string; auto_qty_source: string }> = [
   { label: "Site Work", subcategory: "site_work", unit_label: "SF", auto_qty_source: "land_sf" },
-  { label: "Off-Sites", subcategory: "off_sites", unit_label: "LF", auto_qty_source: "manual" },
+  { label: "Off-Sites", subcategory: "off_sites", unit_label: "Linear SF", auto_qty_source: "frontage_length_ft" },
   { label: "Vertical Construction (Shell & Core)", subcategory: "vertical", unit_label: "GSF", auto_qty_source: "max_gsf" },
   { label: "Parking Structure", subcategory: "parking_structure", unit_label: "space", auto_qty_source: "parking_spaces" },
   { label: "FF&E / Amenities", subcategory: "ffe_amenities", unit_label: "NRSF", auto_qty_source: "max_nrsf" },
@@ -1803,6 +1841,15 @@ export interface ConstructionLoanConfig {
   ltc_pct: number;
   rate: number;
   term_months: number;
+  // Draw curve shape — "s_curve" generates a bell-curve (Gaussian) draw
+  // profile: slow start, ramp up in the middle, slow tail. Its cumulative
+  // form is an S-curve, which is how real construction draws look.
+  // "linear" draws equal monthly tranches. "custom" uses draw_schedule.
+  draw_curve?: "s_curve" | "linear" | "custom";
+  // Standard deviation (in months) of the bell curve. Lower = more
+  // concentrated draws in the middle (steep ramp). Higher = flatter /
+  // more spread out. Typical: term_months / 4.
+  draw_std_dev_months?: number;
   draw_schedule: ConstructionDrawPeriod[];
 }
 
@@ -2141,7 +2188,13 @@ export interface MassingScenario {
   is_baseline: boolean;
   linked_uw_scenario_id: string | null;
   unit_mix: UnitMixEntry[];
-  parking_sf_per_space: number;  // avg SF per parking stall (default 350; surface ~325, structured ~350, underground ~375)
+  parking_sf_per_space: number;  // legacy single rate; kept for backwards compat
+  // Per-parking-type SF/space rates. Above-grade parking uses the
+  // structured rate; below-grade uses the underground rate; surface is
+  // carried for reference / future site-plan integrations.
+  parking_surface_sf_per_space?: number;
+  parking_structured_sf_per_space?: number;
+  parking_underground_sf_per_space?: number;
   // Optional link to a building drawn on the site plan. When set, the
   // scenario's footprint_sf is sourced from that building's area_sf. When
   // null, the scenario uses its own typed footprint (legacy behaviour).

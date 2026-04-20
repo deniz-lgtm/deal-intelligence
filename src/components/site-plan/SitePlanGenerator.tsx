@@ -1045,8 +1045,13 @@ export default function SitePlanGenerator({
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="relative border border-border/60 rounded-xl overflow-hidden bg-black" style={{ height }}>
-      {/* Toolbar (positioned over the map) */}
-      <div className="absolute top-3 left-3 z-[500] flex flex-col gap-1.5">
+      {/* Toolbar (positioned over the map). items-start keeps each
+          stacked panel at its natural width — without it, flex-col
+          stretches every child to match the widest one (the snap-toggles
+          panel with the "Right-angle snap" label), padding the narrow
+          Duplicate / Finish bars with dead black space that obscures
+          the map below. */}
+      <div className="absolute top-3 left-3 z-[500] flex flex-col items-start gap-1.5">
         <div className="bg-background/95 backdrop-blur-sm border border-border/60 rounded-lg shadow-card p-1 flex items-center gap-1">
           <ToolButton
             active={tool === "pan"}
@@ -1264,8 +1269,10 @@ export default function SitePlanGenerator({
         </div>
       </div>
 
-      {/* Clear buttons — top right */}
-      <div className="absolute top-3 right-3 z-[500] flex flex-col gap-1.5">
+      {/* Clear buttons — top right. items-end mirrors the top-left
+          stack so each panel shrinks to its own content instead of
+          stretching to match the widest sibling. */}
+      <div className="absolute top-3 right-3 z-[500] flex flex-col items-end gap-1.5">
         <div className="bg-background/95 backdrop-blur-sm border border-border/60 rounded-lg shadow-card p-1 flex items-center gap-1">
           <button
             disabled={parcelPoints.length === 0}

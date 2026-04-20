@@ -10,8 +10,13 @@ import {
   resolveBranding,
   inlineToDocxRuns,
   markdownToDocx,
-  DOCX_NUMBERING,
+  shadeHex,
 } from "@/lib/export-markdown";
+
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRec = Record<string, any>;
@@ -226,7 +231,7 @@ export async function POST(
 
     // ── Branded footer ──────────────────────────────────────────────────
     children.push(new Paragraph({
-      border: { top: { style: BorderStyle.SINGLE, size: 2, color: theme.primaryColor + "66" } },
+      border: { top: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.55) } },
       spacing: { before: 400 },
     }));
     if (theme.footerText || theme.companyName) {
@@ -245,21 +250,12 @@ export async function POST(
       }));
     }
 
+    // Minimum viable Document config — no numbering registration and no
+    // custom paragraphStyles. Both have been triggers for Packer.toBuffer()
+    // crashes on certain docx@9.x patch versions.
     const doc = new Document({
-      numbering: DOCX_NUMBERING,
       styles: {
         default: { document: { run: { font: bFont, size: 20 } } },
-        paragraphStyles: [
-          { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal",
-            run: { size: 32, bold: true, color: theme.secondaryColor, font: hFont },
-            paragraph: { spacing: { before: 320, after: 160 } } },
-          { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal",
-            run: { size: 26, bold: true, color: theme.primaryColor, font: hFont },
-            paragraph: { spacing: { before: 260, after: 120 } } },
-          { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal",
-            run: { size: 22, bold: true, color: theme.accentColor, font: hFont },
-            paragraph: { spacing: { before: 200, after: 100 } } },
-        ],
       },
       sections: [{ children }],
     });
@@ -278,7 +274,11 @@ export async function POST(
     });
   } catch (error) {
     console.error("Zoning export error:", error);
-    return NextResponse.json({ error: "Export failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: `Export failed: ${message.slice(0, 300)}` },
+      { status: 500 }
+    );
   }
 }
 
@@ -292,7 +292,7 @@ function sectionHeading(
     children: [new TextRun({ text, bold: true, size: 26, color: theme.primaryColor, font: theme.headerFont })],
     heading: HeadingLevel.HEADING_2,
     spacing: { before: 300, after: 150 },
-    border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: theme.primaryColor + "40" } },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.75) } },
   });
 }
 

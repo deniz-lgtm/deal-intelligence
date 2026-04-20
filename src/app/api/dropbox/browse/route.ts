@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { dropboxQueries } from "@/lib/db";
 import { listFolder, refreshAccessToken, isSupportedFile } from "@/lib/dropbox";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 async function getValidAccessToken(): Promise<string> {
   const account = await dropboxQueries.get();
   if (!account) throw new Error("Not connected");

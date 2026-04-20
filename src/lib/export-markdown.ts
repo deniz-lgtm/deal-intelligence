@@ -24,7 +24,6 @@ import {
   TableRow,
   TableCell,
   WidthType,
-  AlignmentType,
 } from "docx";
 
 // ─── Branding theme ─────────────────────────────────────────────────────────
@@ -273,14 +272,20 @@ export function markdownToDocx(
       continue;
     }
 
-    // Ordered list — use Word numbering reference (registered by caller)
+    // Ordered list — render as a plain indented paragraph with a literal
+    // numeric prefix. We deliberately do NOT use docx's numbering.reference
+    // feature because docx@9.x has been inconsistent about accepting the
+    // INumberingOptions shape; a single malformed field crashes the whole
+    // Packer.toBuffer() with the opaque error users saw as "Export failed".
+    // A literal "1. foo" paragraph survives every version.
     const olMatch = raw.match(/^(\s*)(\d+)\.\s+(.+)/);
     if (olMatch) {
-      const indent = olMatch[1].length;
-      const level = Math.min(2, Math.floor(indent / 2));
+      const indentCols = olMatch[1].length;
+      const level = Math.min(2, Math.floor(indentCols / 2));
+      const leftIndent = 360 + level * 360;
       children.push(new Paragraph({
-        numbering: { reference: "md-numbering", level },
-        children: inlineToDocxRuns(olMatch[3], { size: bodySize, color: bodyColor, font: bFont }),
+        indent: { left: leftIndent, hanging: 260 },
+        children: inlineToDocxRuns(`${olMatch[2]}.  ${olMatch[3]}`, { size: bodySize, color: bodyColor, font: bFont }),
         spacing: { before: 40, after: 40 },
       }));
       continue;
@@ -334,8 +339,8 @@ function renderDocxTable(
     rows: trs,
     width: { size: 100, type: WidthType.PERCENTAGE },
     borders: {
-      top: { style: BorderStyle.SINGLE, size: 2, color: theme.primaryColor + "66" },
-      bottom: { style: BorderStyle.SINGLE, size: 2, color: theme.primaryColor + "66" },
+      top: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.55) },
+      bottom: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.55) },
       left: { style: BorderStyle.SINGLE, size: 2, color: "E5E7EB" },
       right: { style: BorderStyle.SINGLE, size: 2, color: "E5E7EB" },
       insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "E5E7EB" },
@@ -344,38 +349,43 @@ function renderDocxTable(
   });
 }
 
-// Shared numbering config — pass into `new Document({ numbering: DOCX_NUMBERING, ... })`
-// so that ordered list paragraphs referencing `md-numbering` render as real
-// Word numbered lists (auto-renumbering, nested levels) instead of literal
-// "1. foo" text.
-export const DOCX_NUMBERING = {
-  config: [{
-    reference: "md-numbering",
-    levels: [
-      {
-        level: 0,
-        format: "decimal" as const,
-        text: "%1.",
-        alignment: AlignmentType.START,
-        style: { paragraph: { indent: { left: 360, hanging: 260 } } },
-      },
-      {
-        level: 1,
-        format: "lowerLetter" as const,
-        text: "%2.",
-        alignment: AlignmentType.START,
-        style: { paragraph: { indent: { left: 720, hanging: 260 } } },
-      },
-      {
-        level: 2,
-        format: "lowerRoman" as const,
-        text: "%3.",
-        alignment: AlignmentType.START,
-        style: { paragraph: { indent: { left: 1080, hanging: 260 } } },
-      },
-    ],
-  }],
-};
+// Historically we registered a real docx INumberingOptions config here so
+// ordered list paragraphs could reference it via `numbering.reference`.
+// That feature crashed Packer.toBuffer() on certain docx@9.x patch versions
+// (the symptom users saw was the opaque "Export failed" toast).
+// markdownToDocx() now renders ordered lists as plain paragraphs with a
+// literal "1. foo" prefix, so no numbering registration is needed. This
+// export is kept as an empty-shape stub so legacy callers compile cleanly;
+// passing it into new Document({ numbering: DOCX_NUMBERING, ... }) is a
+// no-op on a Document that has no numbering.reference paragraphs.
+export const DOCX_NUMBERING = { config: [] as unknown[] };
+
+// Lighten (positive amt) or darken (negative amt) a 6-char hex color.
+// amt in [-1, 1]. 0.7 blends 70% toward white — good for light tinted
+// borders. -0.2 mixes 20% black — good for subtle darker accents.
+//
+// CRITICAL: docx@9.x only accepts 6-digit hex color values. Earlier
+// versions of these exports tried to get a semi-transparent border by
+// concatenating `primaryColor + "66"` (8-digit hex with alpha), which
+// caused "Invalid hex value" errors at Packer.toBuffer() time — the
+// symptom users saw was "Export failed: Invalid hex value '4F46E566'".
+// Callers that want a light-tinted border should use shadeHex(color, 0.7)
+// instead of string-concatenating an alpha suffix.
+export function shadeHex(hex: string, amt: number): string {
+  const h = (hex || "").replace("#", "");
+  if (h.length !== 6) return hex;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return hex;
+  const adj = (c: number) => {
+    const t = amt < 0 ? 0 : 255;
+    const p = Math.abs(amt);
+    return Math.round((t - c) * p + c);
+  };
+  const toHex = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0");
+  return toHex(adj(r)) + toHex(adj(g)) + toHex(adj(b));
+}
 
 // ─── PPTX: inline-run rendering + paragraph building ────────────────────────
 
@@ -480,6 +490,30 @@ export function markdownToPptxBlocks(
       blocks.push({
         text: h[2].replace(/\*\*/g, "").replace(/`/g, ""),
         options: { fontSize: size, color, bold: true, fontFace: theme.headerFont, paraSpaceBefore: lastWasBlank ? 12 : 8, breakType: "none" as const },
+      });
+      lastWasBlank = false;
+      continue;
+    }
+
+    // Emphasized-only line → render as a mini subheading. The AI memo
+    // prompts emit labels like `**THESIS**`, `**THREE REASONS THIS WORKS**`,
+    // and `**THREE REASONS IT FAILS**` on their own lines. Without this
+    // carve-out they'd render as plain inline bold with no visible hierarchy
+    // on the slide. Matches the whole line being wrapped in `**...**` with
+    // no other content.
+    const emph = trimmed.match(/^\*\*(.+?)\*\*:?$/);
+    if (emph && !emph[1].includes("**")) {
+      blocks.push({
+        text: emph[1].toUpperCase(),
+        options: {
+          fontSize: 12,
+          color: accent,
+          bold: true,
+          fontFace: theme.headerFont,
+          charSpacing: 4,
+          paraSpaceBefore: lastWasBlank ? 14 : 10,
+          breakType: "none" as const,
+        },
       });
       lastWasBlank = false;
       continue;

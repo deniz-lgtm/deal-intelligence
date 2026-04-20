@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
   Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3, Target, Pencil, GitCompare,
-  Car, Building2, Layers, Construction, ArrowDownUp,
+  Car, Building2, Layers, Construction, ArrowDownUp, Info,
 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -31,6 +32,8 @@ import {
 } from "@/lib/types";
 import { useViewMode } from "@/lib/use-view-mode";
 import ViewModeToggle from "@/components/ViewModeToggle";
+import { DocCoverageChip } from "@/components/ai";
+import type { Document } from "@/lib/types";
 
 type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 
@@ -212,6 +215,10 @@ interface UWData {
   site_info: any;
   // AI estimate narratives
   opex_narrative: string;
+  // Per-line-item AI notes that show up as hover popovers next to each
+  // OpEx label. Empty object by default; populated by the opex-estimate
+  // API route alongside the numeric fields.
+  opex_item_notes: Record<string, string>;
   loan_narrative: string;
   // Affordability config (set from Programming page or the in-page
   // AffordabilityPlanner). The shape is owned by AffordabilityPlanner — see
@@ -286,6 +293,7 @@ const DEFAULT: UWData = {
   other_income_items: [],
   site_info: null,
   opex_narrative: "",
+  opex_item_notes: {},
   loan_narrative: "",
   affordability_config: null,
 };
@@ -356,9 +364,25 @@ const newGroup = (): UnitGroup => ({
 const newCapex = (): CapexItem => ({ id: uuidv4(), label: "CapEx Item", quantity: 1, cost_per_unit: 0 });
 
 // ── Factory helpers for new feature types ────────────────────────────────
-function newDevBudgetItem(label: string, category: "hard" | "soft", subcategory: string, unit_label: string): DevBudgetLineItem {
+function newDevBudgetItem(
+  label: string,
+  category: "hard" | "soft",
+  subcategory: string,
+  unit_label: string,
+  auto_qty_source?: string,
+  site_plan_building_id?: string | null,
+): DevBudgetLineItem {
   const isPct = unit_label === "% of hard";
-  return { id: uuidv4(), label, category, subcategory, amount: 0, quantity: 0, unit_cost: 0, unit_label, is_pct: isPct, pct_basis: isPct ? "hard_costs" : "none", pct_value: isPct ? (subcategory === "contingency" ? 5 : subcategory === "general_conditions" || subcategory === "contractor_fee" ? 4 : subcategory === "dev_fee" ? 4 : subcategory === "a_and_e" ? 8 : 0) : 0, notes: "" };
+  return {
+    id: uuidv4(), label, category, subcategory, amount: 0, quantity: 0, unit_cost: 0,
+    unit_label, is_pct: isPct, pct_basis: isPct ? "hard_costs" : "none",
+    pct_value: isPct ? (subcategory === "contingency" ? 5 : subcategory === "general_conditions" || subcategory === "contractor_fee" ? 4 : subcategory === "dev_fee" ? 4 : subcategory === "a_and_e" ? 8 : 0) : 0,
+    notes: "",
+    ...(auto_qty_source && auto_qty_source !== "pct" && auto_qty_source !== "manual" && auto_qty_source !== "computed"
+      ? { auto_qty_source }
+      : {}),
+    ...(site_plan_building_id ? { site_plan_building_id } : {}),
+  };
 }
 
 function seedDevBudget(d?: UWData): DevBudgetLineItem[] {
@@ -378,18 +402,190 @@ function seedDevBudget(d?: UWData): DevBudgetLineItem[] {
     return 0;
   };
 
+  // Detect a multi-building active massing so the SF-driven hard
+  // costs (Vertical Construction, Parking Structure, FF&E) can fan
+  // out into one row per building. The analyst can then set a
+  // different $/SF per building (podium vs townhouse vs garden)
+  // and the aggregate still ties back to max_gsf.
+  const bp = d?.building_program as
+    | {
+        active_scenario_id?: string;
+        scenarios?: Array<{
+          id: string;
+          name?: string;
+          site_plan_scenario_id?: string | null;
+          site_plan_building_id?: string | null;
+          floors?: unknown[];
+        }>;
+      }
+    | null
+    | undefined;
+  const activeScenario = bp?.scenarios?.find((s) => s.id === bp.active_scenario_id);
+  const massingId = activeScenario?.site_plan_scenario_id || null;
+  const buildings = massingId
+    ? (bp?.scenarios || []).filter((s) => s.site_plan_scenario_id === massingId)
+    : [];
+  const multiBuilding = buildings.length > 1;
+  type BuildingTotals = { label: string; gsf: number; nrsf: number; parking: number };
+  const perBuilding: BuildingTotals[] = multiBuilding
+    ? (() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { computeMassingSummary } = require("@/components/massing/massing-utils");
+        const zoningStub = {
+          land_sf: 0,
+          far: 0,
+          lot_coverage_pct: 0,
+          height_limit_ft: 0,
+          height_limit_stories: 0,
+        };
+        return buildings.map((b) => {
+          const sm = computeMassingSummary(b, zoningStub);
+          return {
+            label: b.name || "Building",
+            gsf: sm.total_gsf,
+            nrsf: sm.total_nrsf,
+            parking: sm.total_parking_spaces_est,
+          };
+        });
+      })()
+    : [];
+
+  const perBuildingSources = new Set(["max_gsf", "max_nrsf", "parking_spaces"]);
+
+  const hardRows: DevBudgetLineItem[] = DEFAULT_DEV_BUDGET_HARD.flatMap((h) => {
+    if (multiBuilding && perBuildingSources.has(h.auto_qty_source)) {
+      return buildings.map((scenario, i) => {
+        const b = perBuilding[i];
+        const item = newDevBudgetItem(
+          `${h.label} — ${b.label}`,
+          "hard",
+          h.subcategory,
+          h.unit_label,
+          h.auto_qty_source,
+          scenario.site_plan_building_id ?? scenario.id,
+        );
+        item.quantity =
+          h.auto_qty_source === "max_gsf"
+            ? b.gsf
+            : h.auto_qty_source === "max_nrsf"
+            ? b.nrsf
+            : b.parking;
+        return item;
+      });
+    }
+    const item = newDevBudgetItem(h.label, "hard", h.subcategory, h.unit_label, h.auto_qty_source);
+    if (h.auto_qty_source !== "pct" && h.auto_qty_source !== "manual") {
+      item.quantity = autoQty(h.auto_qty_source);
+    }
+    return [item];
+  });
+
   return [
-    ...DEFAULT_DEV_BUDGET_HARD.map(h => {
-      const item = newDevBudgetItem(h.label, "hard", h.subcategory, h.unit_label);
-      if (h.auto_qty_source !== "pct" && h.auto_qty_source !== "manual") item.quantity = autoQty(h.auto_qty_source);
-      return item;
-    }),
+    ...hardRows,
     ...DEFAULT_DEV_BUDGET_SOFT.map(s => {
-      const item = newDevBudgetItem(s.label, "soft", s.subcategory, s.unit_label);
+      const item = newDevBudgetItem(s.label, "soft", s.subcategory, s.unit_label, s.auto_qty_source);
       if (s.auto_qty_source !== "pct" && s.auto_qty_source !== "manual" && s.auto_qty_source !== "computed") item.quantity = autoQty(s.auto_qty_source);
       return item;
     }),
   ];
+}
+
+/**
+ * Dev-budget quantities that are tagged with an auto_qty_source read
+ * live from the current underwriting state / massing on every render
+ * — so a Vertical Construction row sized against a 48,800-GSF
+ * baseline automatically re-sizes the moment the massing grows to
+ * 334,000 GSF. Per-building rows (site_plan_building_id set) resolve
+ * against THAT building's own floor stack, so a 3-building massing
+ * shows three distinct GSF values. Items without auto_qty_source
+ * fall through to the saved quantity (manual entries / lump sums).
+ */
+function liveDevBudgetQty(item: DevBudgetLineItem, d: UWData): number {
+  if (!item.auto_qty_source) return item.quantity || 0;
+  const src = item.auto_qty_source;
+  if (src === "land_sf") return d.site_info?.land_sf || 0;
+  if (src === "frontage_length_ft") {
+    const sp = (d as unknown as {
+      site_plan?: {
+        scenarios?: Array<{ id: string; frontage_length_ft?: number }>;
+        active_scenario_id?: string | null;
+      };
+    }).site_plan;
+    const scen =
+      sp?.scenarios?.find((s) => s.id === sp?.active_scenario_id) ||
+      sp?.scenarios?.[0];
+    return scen?.frontage_length_ft || 0;
+  }
+  if (src === "total_units") {
+    return (d.unit_groups || []).reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
+  }
+  if (
+    item.site_plan_building_id &&
+    (src === "max_gsf" || src === "max_nrsf" || src === "parking_spaces")
+  ) {
+    const bp = d.building_program as
+      | { scenarios?: Array<{ id: string; site_plan_building_id?: string | null }> }
+      | null
+      | undefined;
+    const scenario = bp?.scenarios?.find(
+      (s) =>
+        s.site_plan_building_id === item.site_plan_building_id ||
+        s.id === item.site_plan_building_id,
+    );
+    if (scenario) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { computeMassingSummary } = require("@/components/massing/massing-utils");
+      const zoningStub = {
+        land_sf: 0, far: 0, lot_coverage_pct: 0, height_limit_ft: 0, height_limit_stories: 0,
+      };
+      const sm = computeMassingSummary(scenario, zoningStub);
+      if (src === "max_gsf") return sm.total_gsf;
+      if (src === "max_nrsf") return sm.total_nrsf;
+      if (src === "parking_spaces") return sm.total_parking_spaces_est;
+    }
+  }
+  if (src === "max_gsf") return d.max_gsf || 0;
+  if (src === "max_nrsf") return d.max_nrsf || 0;
+  if (src === "parking_spaces") {
+    return (d.parking?.entries || []).reduce(
+      (s: number, e: any) => s + (e.spaces || 0),
+      0,
+    );
+  }
+  return item.quantity || 0;
+}
+
+function liveDevBudgetAmount(item: DevBudgetLineItem, d: UWData): number {
+  if (item.is_pct) return 0;                     // resolved against hard base
+  if (item.subcategory === "interest_carry") return 0; // filled from construction loan
+  return liveDevBudgetQty(item, d) * (item.unit_cost || 0);
+}
+
+// ── Dev-budget unit-type menu ──
+// Each itemized line picks one of these. `source` is the auto_qty_source
+// stamped on the line so liveDevBudgetQty knows which number to pull
+// from the UW state; `label` is the short tag shown in the Unit column.
+// "manual" / "lump_sum" let the analyst type a quantity in directly.
+const DEV_BUDGET_UNIT_TYPES: Array<{ source: string; label: string; isPct?: boolean }> = [
+  { source: "max_gsf", label: "GSF" },
+  { source: "max_nrsf", label: "NRSF" },
+  { source: "land_sf", label: "Land SF" },
+  { source: "frontage_length_ft", label: "Linear SF" },
+  { source: "parking_spaces", label: "space" },
+  { source: "total_units", label: "per unit" },
+  { source: "manual", label: "lump sum" },
+  { source: "pct", label: "% of hard", isPct: true },
+];
+
+function findDevBudgetUnitType(item: DevBudgetLineItem) {
+  if (item.is_pct) return DEV_BUDGET_UNIT_TYPES.find((t) => t.isPct)!;
+  if (item.auto_qty_source) {
+    return (
+      DEV_BUDGET_UNIT_TYPES.find((t) => t.source === item.auto_qty_source) ||
+      DEV_BUDGET_UNIT_TYPES.find((t) => t.source === "manual")!
+    );
+  }
+  return DEV_BUDGET_UNIT_TYPES.find((t) => t.source === "manual")!;
 }
 
 function newParkingEntry(type: ParkingType = "surface"): ParkingEntry {
@@ -414,7 +610,7 @@ function defaultLeaseUp(): LeaseUpConfig {
 }
 
 function defaultConstructionLoan(): ConstructionLoanConfig {
-  return { ltc_pct: 65, rate: 7.5, term_months: 24, draw_schedule: [] };
+  return { ltc_pct: 65, rate: 7.5, term_months: 24, draw_curve: "s_curve", draw_std_dev_months: 6, draw_schedule: [] };
 }
 
 function newMixedUseComponent(type: MixedUseComponentType): MixedUseComponent {
@@ -547,6 +743,53 @@ function annualPayment(principal: number, rate: number, years: number): number {
   return (principal * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1)) * 12;
 }
 
+// Cumulative draw % schedule (length = term_months). Default "s_curve"
+// generates a bell-curve monthly draw (Gaussian centered at mid-term with
+// σ = draw_std_dev_months). Its cumulative is the S-curve construction
+// projects actually follow. "linear" = equal tranches. "custom" = honor
+// the explicit draw_schedule array.
+function buildCumulativeDrawSchedule(cl: ConstructionLoanConfig): number[] {
+  const n = Math.max(0, Math.floor(cl.term_months || 0));
+  if (n === 0) return [];
+  const curve = cl.draw_curve ?? (cl.draw_schedule?.length ? "custom" : "s_curve");
+  if (curve === "custom" && cl.draw_schedule && cl.draw_schedule.length > 0) {
+    const out: number[] = [];
+    let last = 0;
+    for (let m = 1; m <= n; m++) {
+      const draw = cl.draw_schedule.find(dp => dp.month === m);
+      if (draw) last = draw.cumulative_pct;
+      else {
+        const prior = cl.draw_schedule.filter(dp => dp.month <= m).pop();
+        if (prior) last = prior.cumulative_pct;
+      }
+      out.push(last);
+    }
+    return out;
+  }
+  if (curve === "linear") {
+    const out: number[] = [];
+    for (let m = 1; m <= n; m++) out.push((m / n) * 100);
+    return out;
+  }
+  const mean = (n + 1) / 2;
+  const sigma = Math.max(0.5, cl.draw_std_dev_months ?? n / 4);
+  const weights: number[] = [];
+  let total = 0;
+  for (let m = 1; m <= n; m++) {
+    const z = (m - mean) / sigma;
+    const w = Math.exp(-0.5 * z * z);
+    weights.push(w);
+    total += w;
+  }
+  const out: number[] = [];
+  let cum = 0;
+  for (let m = 0; m < n; m++) {
+    cum += (weights[m] / total) * 100;
+    out.push(cum);
+  }
+  return out;
+}
+
 /**
  * Remaining loan balance after `yearsPaid` years of a fully-amortizing loan.
  * Returns `principal` for IO / bullet loans (amortYears <= 0).
@@ -592,6 +835,20 @@ function effectiveUnits(g: UnitGroup): number {
   return g.unit_count;
 }
 
+// Auto-generated Notes label for the Revenue table when the user
+// hasn't typed their own note. Flags AMI-affordable rows with their
+// AMI tier so readers don't have to decode the label. AI rents
+// already get an explicit "AI generated" note written at generation
+// time, so no placeholder is needed for that case.
+function synthNote(g: UnitGroup): string {
+  const maybeAff = g as unknown as { is_affordable?: boolean; ami_pct?: number };
+  if (maybeAff.is_affordable) {
+    const pct = maybeAff.ami_pct;
+    return pct ? `${pct}% AMI affordable` : "AMI affordable";
+  }
+  return "";
+}
+
 function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing") {
   const totalUnits = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
   const ipTotalUnits = d.unit_groups.reduce((s, g) => s + g.unit_count, 0);
@@ -600,22 +857,38 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const totalSF = mode === "commercial" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit, 0) : 0;
   const totalBeds = mode === "student_housing" ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit, 0) : 0;
 
+  // ── Commercial tenant revenue (mixed-use / residential deals only) ───────
+  // On pure commercial deals (mode === "commercial") unit_groups with
+  // sf × market_rent_per_sf already cover it, so fold in only when
+  // unit_groups aren't the commercial source of truth. rent_per_sf on
+  // commercial_tenants is annual. Ground-up deals have no in-place
+  // tenants, so ctGPRip is zeroed there.
+  const commercialTenantGPR = mode === "commercial"
+    ? 0
+    : (d.commercial_tenants || []).reduce(
+        (s: number, t: any) => s + (t.sf || 0) * (t.rent_per_sf || 0),
+        0
+      );
+  const commercialTenantGPRip = d.development_mode ? 0 : commercialTenantGPR;
+
   // ── Revenue (market uses effective units at market rent, in-place uses current) ──
-  const gpr = mode === "student_housing"
+  const gpr = (mode === "student_housing"
     ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed * 12, 0)
     : mode === "multifamily"
     ? d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.market_rent_per_unit * 12, 0)
-    : d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit * g.market_rent_per_sf, 0);
-  const inPlaceGPR = mode === "student_housing"
+    : d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.sf_per_unit * g.market_rent_per_sf, 0)
+  ) + commercialTenantGPR;
+  const inPlaceGPR = (mode === "student_housing"
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.beds_per_unit * g.current_rent_per_bed * 12, 0)
     : mode === "multifamily"
     ? d.unit_groups.reduce((s, g) => s + g.unit_count * g.current_rent_per_unit * 12, 0)
-    : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0);
+    : d.unit_groups.reduce((s, g) => s + g.unit_count * g.sf_per_unit * g.current_rent_per_sf, 0)
+  ) + commercialTenantGPRip;
 
   // ── Proforma GPR — blended rent reflecting renovation count ─────────────────
   // Ground-up: proforma = market (all units at market rent, no in-place)
   // Value-add: renovation_count units at market rent, remaining at in-place
-  const proformaGPR = d.development_mode ? gpr : d.unit_groups.reduce((s, g) => {
+  const proformaGPR = (d.development_mode ? gpr - commercialTenantGPR : d.unit_groups.reduce((s, g) => {
     const eu = effectiveUnits(g);
     const renoUnits = Math.min(g.renovation_count || 0, eu);
     const unrenoUnits = eu - renoUnits;
@@ -626,7 +899,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     } else {
       return s + (renoUnits * g.sf_per_unit * g.market_rent_per_sf + unrenoUnits * g.sf_per_unit * g.current_rent_per_sf);
     }
-  }, 0);
+  }, 0)) + commercialTenantGPR;
 
   // ── Other Income (RUBS, Parking, Laundry) ──────────────────────────────────
   const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
@@ -643,7 +916,48 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
           + (e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12
       : (d.parking_monthly || 0) * 12;
   const otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
-  const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry;
+  // Pro-forma `other_income_items` line items — anything the analyst
+  // typed in the Other Income table (Storage Fees, Pet Rent, Late Fees,
+  // etc.). Skip labels that already flow through the RUBS/laundry
+  // mirror in computePushedUw, and skip per_space items that are
+  // already covered by the per-space parking calc above — otherwise
+  // we'd double-count them.
+  const totalUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
+  const ipUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + (g.unit_count || 0), 0);
+  // Pro-forma sum of every Other Income line item. Intentionally
+  // mirrors inPlaceOtherIncome below (no label filters, no basis
+  // skips) so whatever shows in the IP column of the DCF flows into
+  // Year 1+. If PF $/Mo is blank on a row, fall back to the IP amount
+  // (acquisition convention — PF starts from IP unless overridden).
+  //
+  // Legacy `rubs_per_unit_monthly`, `parking_monthly`, and
+  // `laundry_monthly` are NOT added here — they're kept in UWData
+  // for back-compat with old deals but new syncs zero them out in
+  // computePushedUw, so including them would risk double-counting.
+  const otherIncomeItemsPF = (d.other_income_items || []).reduce((s: number, item: any) => {
+    const mult = item.basis === "per_unit"
+      ? totalUnitsForOtherIncome
+      : item.basis === "per_space"
+        ? (d.parking_reserved_spaces || 0)
+        : 1;
+    const monthly = (item.amount || 0) > 0 ? item.amount : (item.ip_amount || 0);
+    return s + monthly * mult * 12;
+  }, 0);
+  const totalOtherIncome = otherIncomeItemsPF;
+
+  // In-place other income — uses the ip_amount column directly. Per-unit
+  // multiplier uses the raw unit_count sum (pre-renovation). Ground-up
+  // deals have no in-place revenue so this stays 0.
+  const inPlaceOtherIncome = d.development_mode
+    ? 0
+    : (d.other_income_items || []).reduce((s: number, item: any) => {
+        const mult = item.basis === "per_unit"
+          ? ipUnitsForOtherIncome
+          : item.basis === "per_space"
+            ? (d.parking_reserved_spaces || 0)
+            : 1;
+        return s + (item.ip_amount || 0) * mult * 12;
+      }, 0);
 
   const ipVacRate = d.in_place_vacancy_rate ?? d.vacancy_rate;
   const vacancyLoss = gpr * (d.vacancy_rate / 100);
@@ -705,7 +1019,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     }
   }
   const effectiveRevenue = egi + reimbursements;
-  const inPlaceEffectiveRevenue = inPlaceEGI + ipReimbursements;
+  const inPlaceEffectiveRevenue = inPlaceEGI + ipReimbursements + inPlaceOtherIncome;
   const proformaEffectiveRevenue = proformaEGI + reimbursements + totalOtherIncome;
 
   // ── Leasing Commissions (annualized) ─────────────────────────────────────────
@@ -726,15 +1040,23 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
 
   // Development budget: use itemized line items if populated, else fall back to legacy
   const devBudgetItems = d.dev_budget_items || [];
-  const hasItemizedBudget = d.development_mode && devBudgetItems.length > 0 && devBudgetItems.some(i => i.amount > 0);
+  const hasItemizedBudget =
+    d.development_mode &&
+    devBudgetItems.length > 0 &&
+    devBudgetItems.some((i) => i.amount > 0 || liveDevBudgetAmount(i, d) > 0 || (i.is_pct && i.pct_value > 0));
 
-  // Compute itemized hard/soft costs with % items resolving against non-% hard total
+  // Compute itemized hard/soft costs with % items resolving against
+  // non-% hard total. Amounts are resolved LIVE via liveDevBudgetAmount
+  // (quantity × unit_cost, with the quantity pulled from the current
+  // massing when the row has auto_qty_source) so a stale saved
+  // `item.amount` never wins against a freshly-updated massing.
   let itemizedHardBase = 0, itemizedSoftBase = 0;
   if (hasItemizedBudget) {
     // First pass: sum non-percentage items
     for (const item of devBudgetItems) {
-      if (!item.is_pct && item.category === "hard") itemizedHardBase += item.amount;
-      if (!item.is_pct && item.category === "soft") itemizedSoftBase += item.amount;
+      const amt = liveDevBudgetAmount(item, d);
+      if (!item.is_pct && item.category === "hard") itemizedHardBase += amt;
+      if (!item.is_pct && item.category === "soft") itemizedSoftBase += amt;
     }
     // Second pass: resolve percentage items against the base
     for (const item of devBudgetItems) {
@@ -752,29 +1074,30 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const totalHardCosts = d.development_mode
     ? (hasItemizedBudget ? itemizedHardBase : d.hard_cost_per_sf * (d.max_gsf || 0))
     : 0;
-  const softCostsTotal = d.development_mode
+  const softCostsBase = d.development_mode
     ? (hasItemizedBudget ? itemizedSoftBase : totalHardCosts * (d.soft_cost_pct / 100))
     : 0;
 
-  // Construction interest carry
+  // Construction interest carry — the Construction-Acquisition Loan
+  // funds both land takedown and improvements as one facility, so cap
+  // interest uses the acq loan's rate + LTC. The draw curve defaults to
+  // an S-curve (bell per-month, S-shape cumulative).
   let capitalizedInterest = 0;
   const cl = d.construction_loan;
-  if (d.development_mode && cl && cl.rate > 0 && cl.term_months > 0) {
-    const totalBudget = totalHardCosts + softCostsTotal + (d.development_mode ? totalParkingCost : 0);
-    const loanAmount = totalBudget * (cl.ltc_pct / 100);
-    const monthlyRate = cl.rate / 100 / 12;
-    if (cl.draw_schedule.length > 0) {
-      // Use explicit draw schedule
-      for (let m = 1; m <= cl.term_months; m++) {
-        const draw = cl.draw_schedule.find(dp => dp.month === m);
-        const cumPct = draw ? draw.cumulative_pct / 100 : (cl.draw_schedule.filter(dp => dp.month <= m).pop()?.cumulative_pct || 0) / 100;
-        capitalizedInterest += loanAmount * cumPct * monthlyRate;
-      }
-    } else {
-      // Linear draw: average 50% outstanding
-      capitalizedInterest = loanAmount * 0.5 * monthlyRate * cl.term_months;
+  if (d.development_mode && cl && cl.term_months > 0 && d.acq_interest_rate > 0 && d.has_financing) {
+    const totalBudget = totalHardCosts + softCostsBase + totalParkingCost;
+    const ltc = d.acq_pp_ltv ?? d.acq_ltc ?? 0;
+    const loanAmount = totalBudget * (ltc / 100);
+    const monthlyRate = d.acq_interest_rate / 100 / 12;
+    const cumPcts = buildCumulativeDrawSchedule(cl);
+    for (let mo = 1; mo <= cl.term_months; mo++) {
+      capitalizedInterest += loanAmount * ((cumPcts[mo - 1] || 0) / 100) * monthlyRate;
     }
   }
+
+  // Roll cap interest into soft costs so the dev budget footer matches
+  // the "Construction Interest Carry" line shown in the soft-costs table.
+  const softCostsTotal = softCostsBase + capitalizedInterest;
 
   // Redevelopment costs
   const redev = d.redevelopment;
@@ -784,10 +1107,16 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   let closingCosts: number, totalCost: number;
   if (d.development_mode) {
     closingCosts = d.land_cost * (d.closing_costs_pct / 100);
-    totalCost = d.land_cost + totalHardCosts + softCostsTotal + totalParkingCost + capitalizedInterest + closingCosts + demolitionCosts;
+    // Ground-up: lostIncome doesn't apply (no pre-existing asset to
+    // lose income on), so don't capitalize it here.
+    totalCost = d.land_cost + totalHardCosts + softCostsTotal + totalParkingCost + closingCosts + demolitionCosts;
   } else {
     closingCosts = d.purchase_price * (d.closing_costs_pct / 100);
-    totalCost = d.purchase_price + closingCosts + capexTotal;
+    // Acquisition redevelopment: during the vacancy + demolition
+    // window the existing NOI goes to zero. That forgone cashflow is
+    // a real carry cost funded from equity, so fold it into the cost
+    // basis. Zero when redev is off.
+    totalCost = d.purchase_price + closingCosts + capexTotal + lostIncome;
   }
 
   // ── Cap Rates ───────────────────────────────────────────────────────────────
@@ -1011,7 +1340,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     gpr, inPlaceGPR, proformaGPR, vacancyLoss, inPlaceVacancyLoss, proformaVacancyLoss, egi, inPlaceEGI, proformaEGI,
     reimbursements, ipReimbursements, camPool, ipCamPool, effectiveRevenue, inPlaceEffectiveRevenue, proformaEffectiveRevenue,
     leasingCommissions, ipLeasingCommissions,
-    totalOtherIncome, otherIncomeRUBS, otherIncomeParking, otherIncomeLaundry,
+    totalOtherIncome, inPlaceOtherIncome, otherIncomeRUBS, otherIncomeParking, otherIncomeLaundry,
     mgmtFee, proformaMgmtFee, inPlaceMgmtFee, totalOpEx, proformaTotalOpEx, inPlaceTotalOpEx,
     noi, inPlaceNOI, proformaNOI,
     grm, proformaGRM, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
@@ -1132,6 +1461,61 @@ function Section({ title, icon, children, open: defaultOpen = true }: { title: s
   );
 }
 
+// Parse the stored deal-score reasoning into compact bullets.
+// - New format: "__STRUCTURED__<json>" with {reasoning, bullets}.
+// - Legacy format: plain string; split into sentences and keep the
+//   first 3-5 as bullets so older scores still render tidily.
+function extractScoreBullets(reasoning?: string | null): { bullets: string[]; summary: string } {
+  if (!reasoning) return { bullets: [], summary: "" };
+  const STRUCT = "__STRUCTURED__";
+  if (reasoning.startsWith(STRUCT)) {
+    try {
+      const payload = JSON.parse(reasoning.slice(STRUCT.length));
+      const bullets = Array.isArray(payload.bullets)
+        ? payload.bullets.filter((b: unknown): b is string => typeof b === "string" && b.trim().length > 0)
+        : [];
+      return { bullets: bullets.slice(0, 5), summary: typeof payload.reasoning === "string" ? payload.reasoning : "" };
+    } catch {
+      return { bullets: [], summary: reasoning.slice(STRUCT.length) };
+    }
+  }
+  // Legacy: split sentences, trim, keep 3-5 non-empty lines.
+  const parts = reasoning
+    .split(/(?:\r?\n+)|(?<=[.!?])\s+(?=[A-Z0-9])/g)
+    .map((s) => s.replace(/^[\s•\-–*\d.)\]]+/, "").trim())
+    .filter((s) => s.length > 0);
+  if (parts.length >= 2) return { bullets: parts.slice(0, 5), summary: "" };
+  return { bullets: [], summary: reasoning };
+}
+
+// Small hover/click popover that surfaces the AI's short per-line-item
+// rationale next to an OpEx row. Replaces the big "AI Estimate Basis"
+// blob that used to sit under the OpEx table.
+function OpexNote({ note }: { note?: string }) {
+  const [open, setOpen] = useState(false);
+  if (!note) return null;
+  return (
+    <span className="relative inline-flex items-center align-middle">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className="ml-1 text-muted-foreground/50 hover:text-primary transition-colors"
+        title="AI estimate basis"
+        aria-label="AI estimate basis"
+      >
+        <Info className="h-3 w-3" />
+      </button>
+      {open && (
+        <span className="absolute left-4 top-0 z-20 w-64 rounded-md border bg-popover p-2 shadow-lifted-md text-xs text-popover-foreground whitespace-normal normal-case font-normal">
+          {note}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function ISRow({ label, ip, pf, proforma, muted, bold, hi, hideIp }: { label: string; ip: number; pf: number; proforma?: number; muted?: boolean; bold?: boolean; hi?: boolean; hideIp?: boolean; }) {
   const fmtVal = (v: number) => { const neg = v < 0; return neg ? `(${fc(Math.abs(v))})` : fc(Math.abs(v)); };
   return (
@@ -1190,7 +1574,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [rentEstimating, setRentEstimating] = useState(false);
   const [loanSizing, setLoanSizing] = useState(false);
   const [showDocPicker, setShowDocPicker] = useState(false);
-  const [docs, setDocs] = useState<Array<{ id: string; original_name: string; mime_type?: string }>>([]);
+  // Full Document shape so <DocCoverageChip> can rank by category +
+  // name/tag keywords. The narrow shape used elsewhere is a subset.
+  const [docs, setDocs] = useState<Document[]>([]);
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [docViewerOpen, setDocViewerOpen] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
@@ -1198,12 +1584,46 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [businessPlan, setBusinessPlan] = useState<{ target_irr_min?: number; target_irr_max?: number; target_equity_multiple_min?: number; target_equity_multiple_max?: number; hold_period_min?: number; hold_period_max?: number } | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null); // null = baseline
   const [activeMassingScenarioId, setActiveMassingScenarioId] = useState<string | null>(null); // site_plan_scenario_id — which massing to view
+
+  // Top-level tabs — the underwriting page is long; splitting it into
+  // 4 buckets keeps the analyst focused on whichever piece they're
+  // actively editing. Synced to ?tab= so a shared URL lands on the
+  // right view.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  type UWTab = "revenue_ops" | "capital" | "returns" | "scenarios";
+  const UW_TABS: { id: UWTab; label: string }[] = [
+    { id: "revenue_ops", label: "Revenue & Ops" },
+    { id: "capital", label: "Capital" },
+    { id: "returns", label: "Returns" },
+    { id: "scenarios", label: "Scenarios" },
+  ];
+  const initialTab = ((): UWTab => {
+    const t = searchParams?.get("tab") as UWTab | null;
+    return t && UW_TABS.some((x) => x.id === t) ? t : "revenue_ops";
+  })();
+  const [activeTab, setActiveTab] = useState<UWTab>(initialTab);
+  const changeTab = (t: UWTab) => {
+    setActiveTab(t);
+    const params = new URLSearchParams(searchParams?.toString() || "");
+    params.set("tab", t);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+  // Tailwind `hidden` rather than conditional render: preserves internal
+  // Section open/closed state when the analyst switches tabs.
+  const tabCls = (t: UWTab) => (activeTab === t ? "" : "hidden");
   const [activeMassingBuildingId, setActiveMassingBuildingId] = useState<string | null>(null); // building within that massing
   const [showScenarioWizard, setShowScenarioWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardType, setWizardType] = useState<ScenarioType>("custom");
   const [wizardMetric, setWizardMetric] = useState<WizardMetric>("em");
   const [wizardTarget, setWizardTarget] = useState<number>(0);
+  // Raw string buffer for the wizard's target input. Without this the
+  // controlled input force-parses every keystroke, so typing "0." or
+  // "0.07" gets snapped back to "0" mid-edit. We keep the typed string
+  // here and only commit a parsed number on blur / Enter.
+  const [wizardTargetRaw, setWizardTargetRaw] = useState<string>("");
   const [wizardResult, setWizardResult] = useState<{ value: number; label: string; scenarioOverrides: Partial<UWData> } | null>(null);
   const [wizardSolving, setWizardSolving] = useState(false);
   const [renamingScenarioId, setRenamingScenarioId] = useState<string | null>(null);
@@ -1231,6 +1651,29 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const isMF = deal?.property_type === "multifamily" || deal?.property_type === "sfr" || isSH || isMixedUseWithRes || isLandDevResidential;
   const calcMode = isSH ? "student_housing" as const : isMF ? "multifamily" as const : "commercial" as const;
   const isGroundUp = deal?.investment_strategy === "ground_up";
+
+  // Auto-seed the itemized dev budget the moment a ground-up deal has
+  // something worth sizing (a pushed massing or a manual GSF), so the
+  // Hard Costs table renders with the right per-building rows without
+  // a manual "Seed" click. The live quantity logic keeps the rows in
+  // sync with the massing on every subsequent change — this effect
+  // only handles the first-load shape. Skips if the user has already
+  // curated the budget.
+  useEffect(() => {
+    if (loading) return;
+    if (!isGroundUp) return;
+    const items = data.dev_budget_items || [];
+    if (items.length > 0) return;
+    const scenarios = (data.building_program as
+      | { scenarios?: Array<{ id: string }> }
+      | null
+      | undefined)?.scenarios;
+    const hasMassing = Array.isArray(scenarios) && scenarios.length > 0;
+    const hasSF = (data.max_gsf || 0) > 0;
+    if (!hasMassing && !hasSF) return;
+    setData((p) => ({ ...p, dev_budget_items: seedDevBudget(p) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, isGroundUp, data.dev_budget_items?.length, data.max_gsf, data.building_program]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1438,13 +1881,58 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "Estimation failed"); return; }
       if (isGroundUp && json.hard_cost_per_sf != null) {
-        // Ground-up: AI returns hard_cost_per_sf and soft_cost_pct directly
-        setData(p => ({
-          ...p,
-          hard_cost_per_sf: json.hard_cost_per_sf,
-          soft_cost_pct: json.soft_cost_pct ?? 25,
-        }));
-        toast.success(`Dev budget set: $${json.hard_cost_per_sf}/GSF hard costs, ${json.soft_cost_pct ?? 25}% soft costs`);
+        // Ground-up: AI returns an aggregate hard_cost_per_sf + soft_cost_pct
+        // AND a per-subcategory items array. We drop the items straight into
+        // dev_budget_items so the itemized budget table actually has numbers
+        // in it after a single click — the legacy hard_cost_per_sf /
+        // soft_cost_pct are also updated for the simple-budget fallback.
+        const items = Array.isArray(json.items) ? (json.items as Array<{
+          subcategory: string;
+          unit_cost?: number;
+          pct_value?: number;
+          is_pct?: boolean;
+        }>) : [];
+        setData(p => {
+          // Make sure the budget is seeded so we have rows to merge into.
+          const seeded = (p.dev_budget_items && p.dev_budget_items.length > 0)
+            ? p.dev_budget_items
+            : seedDevBudget(p);
+          const bySubcat = new Map(items.map((it) => [it.subcategory, it]));
+          const merged = seeded.map((row) => {
+            const hit = bySubcat.get(row.subcategory);
+            if (!hit) return row;
+            if (hit.is_pct || row.is_pct) {
+              const pctValue = hit.pct_value ?? row.pct_value;
+              return {
+                ...row,
+                is_pct: true,
+                pct_basis: "hard_costs" as const,
+                pct_value: pctValue ?? 0,
+                unit_label: "% of hard",
+              };
+            }
+            const unitCost = hit.unit_cost ?? row.unit_cost;
+            return {
+              ...row,
+              unit_cost: unitCost ?? 0,
+              // amount is re-derived from live qty × unit_cost in
+              // liveDevBudgetAmount, but we set it so the
+              // hasItemizedBudget gate flips to true on first render.
+              amount: (row.quantity || 0) * (unitCost ?? 0),
+            };
+          });
+          return {
+            ...p,
+            hard_cost_per_sf: json.hard_cost_per_sf,
+            soft_cost_pct: json.soft_cost_pct ?? 25,
+            dev_budget_items: merged,
+          };
+        });
+        toast.success(
+          items.length > 0
+            ? `Dev budget populated: ${items.length} line items, $${json.hard_cost_per_sf}/GSF blended`
+            : `Dev budget set: $${json.hard_cost_per_sf}/GSF hard costs, ${json.soft_cost_pct ?? 25}% soft costs`
+        );
       } else {
         // Value-add: show preview modal for capex line items
         const hasLinkedRenos = data.capex_items.some(c => c.linked_unit_group_id);
@@ -1474,20 +1962,40 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "OpEx estimation failed"); return; }
       const est = json.data;
-      setData(p => ({
-        ...p,
-        vacancy_rate: est.vacancy_rate ?? p.vacancy_rate,
-        management_fee_pct: est.management_fee_pct ?? p.management_fee_pct,
-        taxes_annual: est.taxes_annual ?? p.taxes_annual,
-        insurance_annual: est.insurance_annual ?? p.insurance_annual,
-        repairs_annual: est.repairs_annual ?? p.repairs_annual,
-        utilities_annual: est.utilities_annual ?? p.utilities_annual,
-        ga_annual: est.ga_annual ?? p.ga_annual,
-        marketing_annual: est.marketing_annual ?? p.marketing_annual,
-        reserves_annual: est.reserves_annual ?? p.reserves_annual,
-        other_expenses_annual: est.other_expenses_annual ?? p.other_expenses_annual,
-        opex_narrative: est.basis || est.narrative || "",
-      }));
+      setData(p => {
+        // Apply Contracts / Staff into the default custom_opex rows that
+        // every UW blob seeds with (default-contracts / default-staff).
+        // Match by label (case-insensitive) so rows users have renamed
+        // still pick up the estimate; only touch pf_annual so in-place
+        // columns stay user-owned. Leaves unrelated custom rows alone.
+        const custom = p.custom_opex || [];
+        const nextCustom = custom.map(row => {
+          const label = (row.label || "").toLowerCase();
+          if (label.includes("contract") && est.contracts_annual != null) {
+            return { ...row, pf_annual: est.contracts_annual };
+          }
+          if (label === "staff" && est.staff_annual != null) {
+            return { ...row, pf_annual: est.staff_annual };
+          }
+          return row;
+        });
+        return {
+          ...p,
+          vacancy_rate: est.vacancy_rate ?? p.vacancy_rate,
+          management_fee_pct: est.management_fee_pct ?? p.management_fee_pct,
+          taxes_annual: est.taxes_annual ?? p.taxes_annual,
+          insurance_annual: est.insurance_annual ?? p.insurance_annual,
+          repairs_annual: est.repairs_annual ?? p.repairs_annual,
+          utilities_annual: est.utilities_annual ?? p.utilities_annual,
+          ga_annual: est.ga_annual ?? p.ga_annual,
+          marketing_annual: est.marketing_annual ?? p.marketing_annual,
+          reserves_annual: est.reserves_annual ?? p.reserves_annual,
+          other_expenses_annual: est.other_expenses_annual ?? p.other_expenses_annual,
+          custom_opex: nextCustom,
+          opex_narrative: est.basis || est.narrative || "",
+          opex_item_notes: (est.item_notes && typeof est.item_notes === "object") ? est.item_notes : {},
+        };
+      });
       toast.success(est.basis ? `OpEx estimated — ${est.basis}` : "Operating expenses estimated");
     } catch { toast.error("OpEx estimation failed"); }
     finally { setOpexEstimating(false); }
@@ -1801,10 +2309,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <Button variant="outline" size="sm" onClick={openDocViewer}>
             <Eye className="h-4 w-4 mr-2" />Docs
           </Button>
-          <Button variant="outline" size="sm" onClick={openDocPicker} disabled={autofilling || saving}>
-            {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-            Autofill
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={openDocPicker} disabled={autofilling || saving}>
+              {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+              Autofill
+            </Button>
+            <DocCoverageChip documents={docs} section="revenue" />
+          </div>
           <Button size="sm" onClick={save} disabled={saving || autofilling}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
@@ -1885,7 +2396,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             );
           })}
           <button
-            onClick={() => { setShowScenarioWizard(true); setWizardStep(0); setWizardType("custom"); setWizardResult(null); setWizardTarget(businessPlan?.target_equity_multiple_min || 2); }}
+            onClick={() => {
+              const initial = businessPlan?.target_equity_multiple_min || 2;
+              setShowScenarioWizard(true);
+              setWizardStep(0);
+              setWizardType("custom");
+              setWizardResult(null);
+              setWizardTarget(initial);
+              setWizardTargetRaw(String(initial));
+            }}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors whitespace-nowrap border border-dashed border-border"
           >
             <Plus className="h-3 w-3" />
@@ -1923,7 +2442,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       {/* Returns — Before (In-Place) vs After (Pro Forma) */}
       <div className={`border rounded-xl bg-card overflow-hidden ${activeScenario ? "ring-2 ring-amber-300/50" : ""}`}>
         <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
-          <h3 className="font-semibold text-sm">{isGroundUp ? "Returns — Stabilized" : "Returns — In-Place vs Proforma"}{d.has_refi && d.has_financing ? " (Post-Refi)" : ""}</h3>
+          <h3 className="font-semibold text-sm">{isGroundUp ? "Returns — Stabilized" : "Returns — In-Place vs Proforma"}</h3>
           {activeScenario && (
             <span className="text-2xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">{activeScenario.name}</span>
           )}
@@ -1958,7 +2477,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           ))}
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-border border-t">
-          {/* Total Units with arrow */}
+          {/* Total Units with arrow. On mixed-use deals we also append
+              per-use commercial SF (retail / office / parking spaces)
+              so the analyst sees the full physical program in one box
+              rather than only the residential unit count. */}
           <div className="bg-card p-3">
             <p className="text-xs text-muted-foreground mb-2">{isSH ? "Total Beds" : isMF ? "Total Units" : "Total SF"}</p>
             {isGroundUp ? (
@@ -1976,6 +2498,29 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 </div>
               </div>
             )}
+            {d.mixed_use?.enabled && (d.mixed_use?.components?.length ?? 0) > 0 && (() => {
+              const nonRes = (d.mixed_use?.components || []).filter(
+                (c) => c.component_type !== "residential" && c.sf_allocation > 0,
+              );
+              if (nonRes.length === 0) return null;
+              return (
+                <div className="mt-2 pt-2 border-t border-border/40 space-y-0.5">
+                  {nonRes.map((c) => (
+                    <p
+                      key={c.id}
+                      className="text-[10px] text-muted-foreground tabular-nums flex items-center justify-between gap-2"
+                    >
+                      <span>{c.label}</span>
+                      <span className="font-medium text-muted-foreground/90">
+                        {c.component_type === "parking"
+                          ? `${fn(c.sf_allocation)} spaces`
+                          : `${fn(c.sf_allocation)} SF`}
+                      </span>
+                    </p>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
           {/* Price / Unit|SF|Bed: purchase → sale */}
           <div className="bg-card p-3">
@@ -2003,7 +2548,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   )])
                 : 0;
               return irrVal > 0
-                ? <p className="text-xs text-muted-foreground">IRR {irrVal.toFixed(1)}% · {d.hold_period_years}yr hold</p>
+                ? <p className="text-xs text-muted-foreground">IRR {irrVal.toFixed(2)}% · {d.hold_period_years}yr hold</p>
                 : <p className="text-xs text-muted-foreground">{d.hold_period_years}yr hold</p>;
             })()}
           </div>
@@ -2044,14 +2589,21 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         const landSF = d.site_info?.land_sf || (deal as any)?.land_acres * 43560 || 0;
         const zi = { land_sf: landSF, far: d.far || 0, lot_coverage_pct: d.lot_coverage_pct || 0, height_limit_ft: d.height_limit_stories * 10 || 0, height_limit_stories: d.height_limit_stories || 0 };
 
-        // Group building_program.scenarios by site_plan_scenario_id
+        // Group building_program.scenarios by site_plan_scenario_id.
+        // Skip orphans — scenarios whose site_plan_scenario_id no longer
+        // matches any known site-plan massing (dead data from a deleted
+        // or renamed massing). Without this filter those orphans show up
+        // as phantom "Massing 1" / "Massing 2" tabs in the strip.
         const groups: Record<string, any[]> = {};
         for (const s of allScenarios) {
           const key = s.site_plan_scenario_id || "__default";
+          const isOrphan = key !== "__default" && !sitePlanScenarioMeta[key];
+          if (isOrphan) continue;
           if (!groups[key]) groups[key] = [];
           groups[key].push(s);
         }
         const massingIds = Object.keys(groups);
+        if (massingIds.length === 0) return null;
 
         // Selected massing (level 1)
         const selectedMassingId = activeMassingScenarioId && groups[activeMassingScenarioId]
@@ -2149,6 +2701,30 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         );
       })()}
 
+      {/* ── Top-level tabs — groups 10+ sections into 4 buckets so the
+          page isn't one giant scroll. Massing Panel sits above so the
+          analyst always sees the building they're reasoning about,
+          regardless of which tab they're in; sections below swap in/out
+          via hidden class. */}
+      <div className="flex items-center gap-0 border-b border-border/40 overflow-x-auto">
+        {UW_TABS.map((t) => {
+          const active = activeTab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => changeTab(t.id)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors shrink-0 ${
+                active
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+              }`}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Saved Scenarios — named snapshots the analyst pushed from the
           Site Plan page via "Save as UW Scenario". Renders only when at
           least one is saved, so quiet for single-scenario deals.
@@ -2156,6 +2732,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           revenue lists with the snapshot; it does NOT touch cost basis,
           loan sizing, or other inputs that the analyst typically tunes
           independently of building mix. */}
+      <div className={tabCls("scenarios")}>
       {uwScenarios.length > 0 && (
         <Section title={`Saved Scenarios (${uwScenarios.length})`} icon={<Layers className="h-4 w-4 text-amber-400" />}>
           <div className="space-y-2">
@@ -2189,24 +2766,48 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       variant="outline"
                       onClick={() => {
                         if (!window.confirm(
-                          `Load "${sc.name}"? This replaces the current building program and unit mix with the snapshot.`
+                          `Load "${sc.name}"? This replaces the current underwriting state with the snapshot.`
                         )) return;
-                        setData((p) => ({
-                          ...p,
-                          ...(sc.building_program ? { building_program: sc.building_program as any } : {}),
-                          unit_groups: Array.isArray(sc.unit_groups)
-                            ? (sc.unit_groups.map((g: any) => ({ ...newGroup(), ...g })) as UnitGroup[])
-                            : p.unit_groups,
-                          ...(Array.isArray(sc.other_income_items)
-                            ? { other_income_items: sc.other_income_items as any }
-                            : {}),
-                          ...(Array.isArray(sc.commercial_tenants)
-                            ? { commercial_tenants: sc.commercial_tenants as any }
-                            : {}),
-                        }));
+                        setData((p) => {
+                          // Prefer the new full-state snapshot when
+                          // present — it carries rents, affordability,
+                          // OpEx, financing, dev budget, etc. Older
+                          // snapshots only stored a handful of fields;
+                          // fall back to merging what's available so
+                          // legacy saves keep working.
+                          const fullState = (sc as any).state;
+                          if (fullState && typeof fullState === "object") {
+                            return {
+                              ...p,
+                              ...fullState,
+                              unit_groups: Array.isArray(fullState.unit_groups)
+                                ? fullState.unit_groups.map((g: any) => ({ ...newGroup(), ...g })) as UnitGroup[]
+                                : p.unit_groups,
+                              // Never overwrite the scenario list itself
+                              // — that lives at the deal level, not in
+                              // any one scenario. The field isn't typed
+                              // on UWData (scenarios are a sibling blob
+                              // on the DB row) so cast through any.
+                              uw_scenarios: (p as any).uw_scenarios,
+                            } as UWData;
+                          }
+                          return {
+                            ...p,
+                            ...(sc.building_program ? { building_program: sc.building_program as any } : {}),
+                            unit_groups: Array.isArray(sc.unit_groups)
+                              ? (sc.unit_groups.map((g: any) => ({ ...newGroup(), ...g })) as UnitGroup[])
+                              : p.unit_groups,
+                            ...(Array.isArray(sc.other_income_items)
+                              ? { other_income_items: sc.other_income_items as any }
+                              : {}),
+                            ...(Array.isArray(sc.commercial_tenants)
+                              ? { commercial_tenants: sc.commercial_tenants as any }
+                              : {}),
+                          };
+                        });
                         toast.success(`Loaded "${sc.name}"`);
                       }}
-                      title="Replace current building program + unit mix with this snapshot"
+                      title="Replace the current underwriting state with this scenario snapshot"
                     >
                       Load
                     </Button>
@@ -2246,7 +2847,9 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         </Section>
       )}
+      </div>
 
+      <div className={tabCls("capital")}>
       <Section title={isGroundUp ? "Development Cost Basis" : "Purchase & Cost Basis"} icon={<DollarSign className="h-4 w-4 text-green-400" />}>
         {isGroundUp ? (
           <div className="mt-3 space-y-4">
@@ -2296,6 +2899,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         )}
       </Section>
+      </div>
 
       {/* Rent Comps live on the Comps page now — see
           src/app/deals/[id]/comps/page.tsx. Storage stays in this
@@ -2319,6 +2923,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           Hidden in Basic — only relevant for value-add / redevelopment
           plays where existing improvements are demolished or repositioned.
           Already collapsed by default in Advanced. */}
+      <div className={tabCls("capital")}>
       {!isBasic && (
       <Section title="Redevelopment Overlay" icon={<Building2 className="h-4 w-4 text-rose-400" />}>
         <div className="mt-3">
@@ -2425,118 +3030,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
       )}
+      </div>
 
+      <div className={tabCls("revenue_ops")}>
       <Section title="Revenue — Unit / Space Mix" icon={<Calculator className="h-4 w-4 text-indigo-400" />}>
-        {/* NRSF Budget — Ground-Up Only.
-            Pass-through from Programming: uses the active massing scenario's
-            GSF / NRSF directly (with max_gsf / max_nrsf as the fallback for
-            deals whose massing hasn't been re-saved). The old logic treated
-            max_nrsf as the target for residential-only unit allocation,
-            which over-counted on mixed-use deals because max_nrsf on the UW
-            blob is the TOTAL NRSF. We now split explicitly:
-               • Rev NRSF  = residential + commercial (from nrsf_by_use)
-               • Target    = residential NRSF (what the unit-mix table below
-                             actually budgets against)
-               • Non-Rev   = GSF − Rev NRSF (lobbies, circulation, mechanical,
-                             common area, etc.) */}
-        {isGroundUp && (() => {
-          const bp = d.building_program;
-          const activeS: { id?: string; is_baseline?: boolean; floors?: unknown[] } | undefined =
-            bp?.scenarios?.find((s: { is_baseline?: boolean }) => s.is_baseline) ||
-            bp?.scenarios?.find((s: { id?: string }) => s.id === bp.active_scenario_id) ||
-            bp?.scenarios?.[0];
-          let gsf = d.max_gsf || 0;
-          let totalNrsf = d.max_nrsf || 0;
-          let resNrsf = 0;
-          let comNrsf = 0;
-          if (activeS?.floors) {
-            // Lazy-import to avoid a top-level cycle with massing-utils.
-            const { computeMassingSummary } = require("@/components/massing/massing-utils");
-            const landSF = d.site_info?.land_sf || (deal as { land_acres?: number })?.land_acres ?
-              ((d.site_info?.land_sf || 0) || ((deal as { land_acres?: number }).land_acres! * 43560)) : 0;
-            const zi = { land_sf: landSF, far: d.far || 0, lot_coverage_pct: d.lot_coverage_pct || 0, height_limit_ft: (d.height_limit_stories || 0) * 10, height_limit_stories: d.height_limit_stories || 0 };
-            const summary = computeMassingSummary(activeS, zi);
-            gsf = summary.total_gsf || gsf;
-            totalNrsf = summary.total_nrsf || totalNrsf;
-            resNrsf = summary.nrsf_by_use?.residential || 0;
-            const retail = summary.nrsf_by_use?.retail || 0;
-            const office = summary.nrsf_by_use?.office || 0;
-            comNrsf = retail + office;
-          }
-          // If the massing didn't split by use (or there's no building_program
-          // yet), fall back to treating all NRSF as residential for MF/SH so
-          // the block still shows something useful.
-          if (resNrsf === 0 && comNrsf === 0 && totalNrsf > 0) resNrsf = totalNrsf;
-          if (gsf === 0 && totalNrsf === 0) return null;
-
-          const target = resNrsf > 0 ? resNrsf : totalNrsf;
-          const nonRev = Math.max(0, gsf - (resNrsf + comNrsf));
-          // Scope the "allocated" tally to just the unit groups tied to
-          // the active building. Without this, a 3-building massing would
-          // show allocated = sum across all buildings vs target = one
-          // building's residential NRSF, which always blew the budget.
-          const activeBid = (activeS as any)?.site_plan_building_id || null;
-          const buildingGroups = activeBid
-            ? d.unit_groups.filter((g: any) => (g.site_plan_building_id || null) === activeBid)
-            : d.unit_groups;
-          const allocatedNRSF = buildingGroups.reduce(
-            (s: number, g: UnitGroup) => s + effectiveUnits(g) * (g.sf_per_unit || 0),
-            0
-          );
-          const remainingNRSF = target - allocatedNRSF;
-          const pctUsed = target > 0 ? (allocatedNRSF / target) * 100 : 0;
-          const barColor = pctUsed > 100 ? "bg-red-500" : pctUsed > 90 ? "bg-amber-500" : "bg-emerald-500";
-
-          return (
-            <div className="mt-3 mb-4 p-4 border border-primary/30 rounded-lg bg-primary/5">
-              <div className="flex items-start justify-between mb-2 gap-4 flex-wrap">
-                <div>
-                  <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">NRSF Budget from Building Massing</h4>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    All values carry over from Programming. Adjust unit sizes
-                    or counts below so the residential NRSF target matches.
-                  </p>
-                </div>
-                <div className="text-right">
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Residential NRSF Target</div>
-                  <div className="text-lg font-bold text-primary tabular-nums">{fn(target)} <span className="text-xs text-muted-foreground">NRSF</span></div>
-                </div>
-              </div>
-
-              {/* Compact GSF / NRSF / Non-Rev breakdown carried from massing */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-[11px]">
-                <div className="px-2 py-1.5 rounded bg-background/60 border border-border/40">
-                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Total GSF</div>
-                  <div className="tabular-nums font-semibold">{fn(gsf)}</div>
-                </div>
-                <div className="px-2 py-1.5 rounded bg-background/60 border border-border/40">
-                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Residential NRSF</div>
-                  <div className="tabular-nums font-semibold">{fn(resNrsf)}</div>
-                </div>
-                <div className="px-2 py-1.5 rounded bg-background/60 border border-border/40">
-                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Commercial NRSF</div>
-                  <div className="tabular-nums font-semibold">{comNrsf > 0 ? fn(comNrsf) : "—"}</div>
-                </div>
-                <div className="px-2 py-1.5 rounded bg-background/60 border border-border/40">
-                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Non-Rev Space</div>
-                  <div className="tabular-nums font-semibold">{fn(nonRev)}</div>
-                  <div className="text-[9px] text-muted-foreground/80">GSF − NRSF</div>
-                </div>
-              </div>
-
-              <div className="h-3 bg-muted rounded-full overflow-hidden relative">
-                <div className={`h-full ${barColor} transition-all duration-300 rounded-full`} style={{ width: `${Math.min(pctUsed, 100)}%` }} />
-                <div className="absolute top-0 bottom-0 w-0.5 bg-primary" style={{ left: "100%" }} />
-              </div>
-              <div className="flex items-center justify-between mt-1.5 text-xs tabular-nums">
-                <span className="text-muted-foreground">Allocated: <span className="font-semibold text-foreground">{fn(allocatedNRSF)}</span> NRSF ({pctUsed.toFixed(1)}%)</span>
-                <span className={`font-semibold ${remainingNRSF < 0 ? "text-red-400" : remainingNRSF === 0 ? "text-emerald-400" : "text-amber-400"}`}>
-                  {remainingNRSF > 0 ? `${fn(remainingNRSF)} NRSF remaining` : remainingNRSF === 0 ? "Matches target" : `${fn(Math.abs(remainingNRSF))} NRSF over`}
-                </span>
-              </div>
-            </div>
-          );
-        })()}
+        {/* The NRSF Budget bar used to live here — a pass-through tally
+            showing residential NRSF target vs. allocated, pulled from
+            Programming's massing. It was mostly noise: Programming
+            already derives units from residential NRSF ÷ weighted avg
+            unit size, so the two sides always reconcile. If they drift
+            (manual unit_groups edits on UW, allocation %% ≠ 100 on
+            Programming), the warning lives on Programming where the
+            fix belongs — not here. */}
         <div className="mt-3 overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
@@ -2702,7 +3207,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       </td>
                       <td className="px-1 py-1">
                         <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
+                          placeholder={synthNote(g)} className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
                       </td>
                     </>) : isMF ? (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. 1BR/1BA" /></td>
@@ -2732,7 +3237,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       </td>
                       <td className="px-1 py-1">
                         <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
+                          placeholder={synthNote(g)} className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
                       </td>
                     </>) : (<>
                       <td className="px-2 py-1"><CellText value={g.label} onChange={v => updFn(g.id, { label: v })} placeholder="e.g. Suite A" /></td>
@@ -2779,7 +3284,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       </td>
                       <td className="px-1 py-1">
                         <input type="text" value={g.notes || ""} onChange={e => upd(g.id, { notes: e.target.value } as Partial<UnitGroup>)}
-                          placeholder="" className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
+                          placeholder={synthNote(g)} className="w-full bg-transparent text-[10px] text-muted-foreground outline-none italic truncate max-w-[120px]" />
                       </td>
                     </>)}
                     <td className="px-1 py-1">
@@ -3021,7 +3526,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 <tr className="bg-muted/30 border-b">
                   <th className="text-left px-2 py-1.5 text-xs font-medium text-muted-foreground">Source</th>
                   <th className="text-center px-2 py-1.5 text-xs font-medium text-muted-foreground w-[100px]">Basis</th>
-                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[80px]">$/Mo</th>
+                  {!isGroundUp && <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]" title="In-place monthly amount (T12 / trailing)">In-Place $/Mo</th>}
+                  <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">{isGroundUp ? "$/Mo" : "Pro Forma $/Mo"}</th>
                   <th className="text-right px-2 py-1.5 text-xs font-medium text-muted-foreground w-[90px]">Annual</th>
                   <th className="w-[24px]" />
                 </tr>
@@ -3030,12 +3536,28 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 {(d.other_income_items || []).map((item: any, i: number) => {
                   const updOI = (upd: Record<string, any>) => setData(p => ({ ...p, other_income_items: (p.other_income_items || []).map((oi: any, j: number) => j === i ? { ...oi, ...upd } : oi) }));
                   const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1;
+                  const ipMult = item.basis === "per_unit"
+                    ? (d.unit_groups || []).reduce((s: number, g: any) => s + (g.unit_count || 0), 0)
+                    : item.basis === "per_space"
+                      ? (d.parking_reserved_spaces || 0)
+                      : 1;
+                  // Effective pro-forma monthly: user-entered amount
+                  // wins; otherwise default to ip_amount. Mirrors the
+                  // calc fallback so the row's Annual column shows what
+                  // will actually flow into the DCF.
+                  const pfMonthly = (item.amount || 0) > 0 ? (item.amount || 0) : (item.ip_amount || 0);
                   return (
                     <tr key={item.id || i} className="border-b hover:bg-muted/10 group">
                       <td className="px-2 py-1.5"><input type="text" value={item.label} onChange={e => updOI({ label: e.target.value })} className="w-full bg-transparent text-sm outline-none" /></td>
                       <td className="px-2 py-1.5"><select value={item.basis} onChange={e => updOI({ basis: e.target.value })} className="w-full bg-background text-foreground text-xs outline-none rounded border border-border/40"><option value="per_unit">Per Unit ({m.totalUnits})</option><option value="per_property">Per Property</option><option value="per_space">Per Space</option></select></td>
-                      <td className="px-2 py-1.5"><CellInput value={item.amount || 0} onChange={v => updOI({ amount: v })} prefix="$" /></td>
-                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fc((item.amount || 0) * mult * 12)}</td>
+                      {!isGroundUp && <td className="px-2 py-1.5"><CellInput value={item.ip_amount || 0} onChange={v => updOI({ ip_amount: v })} prefix="$" placeholder={item.amount > 0 ? `${Math.round(item.amount).toLocaleString()}` : undefined} /></td>}
+                      <td className="px-2 py-1.5"><CellInput value={item.amount || 0} onChange={v => updOI({ amount: v })} prefix="$" placeholder={!isGroundUp && (item.ip_amount || 0) > 0 ? `${Math.round(item.ip_amount).toLocaleString()}` : undefined} /></td>
+                      <td className="px-2 py-1.5 text-right tabular-nums font-medium">
+                        {fc(pfMonthly * mult * 12)}
+                        {!isGroundUp && (item.ip_amount || 0) > 0 && (
+                          <span className="block text-[10px] text-muted-foreground/70 tabular-nums">IP {fc((item.ip_amount || 0) * ipMult * 12)}</span>
+                        )}
+                      </td>
                       <td className="px-1"><button onClick={() => setData(p => ({ ...p, other_income_items: (p.other_income_items || []).filter((_: any, j: number) => j !== i) }))} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button></td>
                     </tr>
                   );
@@ -3044,8 +3566,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               {(d.other_income_items || []).length > 0 && (
                 <tfoot>
                   <tr className="border-t bg-muted/20 font-semibold">
-                    <td colSpan={3} className="px-2 py-1.5 text-right">Total Other Income</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1; return s + (item.amount || 0) * mult * 12; }, 0))}</td>
+                    <td colSpan={2} className="px-2 py-1.5 text-right">Total Other Income</td>
+                    {!isGroundUp && (
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fc(m.inPlaceOtherIncome)}</td>
+                    )}
+                    <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{isGroundUp ? "" : "Pro forma:"}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1; const pfMonthly = (item.amount || 0) > 0 ? (item.amount || 0) : (item.ip_amount || 0); return s + pfMonthly * mult * 12; }, 0))}</td>
                     <td />
                   </tr>
                 </tfoot>
@@ -3108,20 +3634,29 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       {/* ═══ Affordability (multifamily / student housing) ═══ */}
       {isMF && (
+        <div className="mt-6">
         <AffordabilityPlanner
           dealId={params.id}
           totalUnits={m.totalUnits || 0}
           avgMarketRent={(() => {
-            // Weighted average market rent per unit/month across unit groups
-            const totalUnits = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
+            // Weighted average market rent per unit/month across unit groups.
+            // IMPORTANT: exclude is_affordable rows — after a split those
+            // carry the AMI-capped rent in market_rent_per_unit and would
+            // drag the average down, causing the planner's "revenue
+            // impact" preview to understate how much market rent is
+            // being traded away.
+            const marketRows = d.unit_groups.filter(
+              (g) => !(g as { is_affordable?: boolean }).is_affordable
+            );
+            const totalUnits = marketRows.reduce((s, g) => s + effectiveUnits(g), 0);
             if (totalUnits === 0) return 0;
             if (isSH) {
               // student housing: rent is per-bed monthly; convert to per-unit
-              const totalRentPerMonth = d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed, 0);
+              const totalRentPerMonth = marketRows.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed, 0);
               return totalRentPerMonth / totalUnits;
             }
             // multifamily / mixed-use residential
-            const totalRentPerMonth = d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * (g.market_rent_per_unit || 0), 0);
+            const totalRentPerMonth = marketRows.reduce((s, g) => s + effectiveUnits(g) * (g.market_rent_per_unit || 0), 0);
             return totalRentPerMonth / totalUnits;
           })()}
           currentTaxes={d.taxes_annual || 0}
@@ -3180,8 +3715,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             });
           }}
         />
+        </div>
       )}
+      </div>
 
+      <div className={tabCls("capital")}>
       <Section title={isGroundUp ? "Development Budget" : "Capital Expenditures"} icon={<Hammer className="h-4 w-4 text-orange-400" />}>
         <div className="mt-3 overflow-x-auto">
           {isGroundUp ? (
@@ -3221,9 +3759,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             ),
                           }));
                         };
+                        const liveQty = liveDevBudgetQty(item, d);
                         const resolvedAmt = item.is_pct
                           ? m.totalHardCosts * (item.pct_value / 100)
-                          : item.quantity * item.unit_cost;
+                          : liveQty * item.unit_cost;
                         return (
                           <tr key={item.id} className="border-b hover:bg-muted/10 group">
                             <td className="px-2 py-1.5">
@@ -3232,10 +3771,31 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             <td className="px-2 py-1.5">
                               {item.is_pct
                                 ? <CellInput value={item.pct_value} onChange={v => updBI({ pct_value: v, amount: m.totalHardCosts * v / 100 })} suffix="%" decimals={1} />
-                                : <CellInput value={item.quantity} onChange={v => updBI({ quantity: v })} />
+                                : item.auto_qty_source
+                                  ? <span className="text-xs tabular-nums text-muted-foreground block text-right pr-1" title="Auto-tracked from the massing">{fn(liveQty)}</span>
+                                  : <CellInput value={item.quantity} onChange={v => updBI({ quantity: v })} />
                               }
                             </td>
-                            <td className="px-2 py-1.5 text-xs text-muted-foreground">{item.unit_label}</td>
+                            <td className="px-2 py-1.5">
+                              <select
+                                value={findDevBudgetUnitType(item).source}
+                                onChange={(e) => {
+                                  const pick = DEV_BUDGET_UNIT_TYPES.find((t) => t.source === e.target.value)!;
+                                  if (pick.isPct) {
+                                    updBI({ is_pct: true, pct_basis: "hard_costs", pct_value: item.pct_value || 0, unit_label: pick.label, auto_qty_source: undefined });
+                                  } else if (pick.source === "manual") {
+                                    updBI({ is_pct: false, unit_label: pick.label, auto_qty_source: undefined });
+                                  } else {
+                                    updBI({ is_pct: false, unit_label: pick.label, auto_qty_source: pick.source, quantity: 0, amount: 0 });
+                                  }
+                                }}
+                                className="bg-background text-foreground text-xs outline-none rounded border border-border/40 px-1 py-0.5"
+                              >
+                                {DEV_BUDGET_UNIT_TYPES.map((t) => (
+                                  <option key={t.source} value={t.source}>{t.label}</option>
+                                ))}
+                              </select>
+                            </td>
                             <td className="px-2 py-1.5">
                               {item.is_pct ? <span className="text-muted-foreground text-xs">—</span> : <CellInput value={item.unit_cost} onChange={v => updBI({ unit_cost: v })} prefix="$" />}
                             </td>
@@ -3249,7 +3809,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     </tbody>
                     <tfoot>
                       <tr className="border-t bg-muted/20 font-semibold">
-                        <td colSpan={4} className="px-2 py-2 text-right">Total Hard Costs</td>
+                        <td colSpan={4} className="px-2 py-2 text-right">
+                          Total Hard Costs
+                          {(d.max_gsf || 0) > 0 && (
+                            <span className="ml-2 text-[11px] font-normal text-muted-foreground tabular-nums">
+                              ({fc(m.totalHardCosts / d.max_gsf)}/GSF)
+                            </span>
+                          )}
+                        </td>
                         <td className="px-2 py-2 text-right tabular-nums">{fc(m.totalHardCosts)}</td>
                         <td />
                       </tr>
@@ -3282,9 +3849,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             ),
                           }));
                         };
+                        const liveQty = liveDevBudgetQty(item, d);
                         const resolvedAmt = item.is_pct
                           ? m.totalHardCosts * (item.pct_value / 100)
-                          : (item.subcategory === "interest_carry" ? m.capitalizedInterest : item.quantity * item.unit_cost);
+                          : (item.subcategory === "interest_carry" ? m.capitalizedInterest : liveQty * item.unit_cost);
                         return (
                           <tr key={item.id} className="border-b hover:bg-muted/10 group">
                             <td className="px-2 py-1.5">
@@ -3296,10 +3864,35 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                                 ? <CellInput value={item.pct_value} onChange={v => updBI({ pct_value: v, amount: m.totalHardCosts * v / 100 })} suffix="%" decimals={1} />
                                 : item.subcategory === "interest_carry"
                                   ? <span className="text-xs text-muted-foreground">auto</span>
-                                  : <CellInput value={item.quantity || item.amount} onChange={v => updBI({ quantity: 1, unit_cost: v, amount: v })} />
+                                  : item.auto_qty_source
+                                    ? <span className="text-xs tabular-nums text-muted-foreground block text-right pr-1" title="Auto-tracked from the massing">{fn(liveQty)}</span>
+                                    : <CellInput value={item.quantity || item.amount} onChange={v => updBI({ quantity: 1, unit_cost: v, amount: v })} />
                               }
                             </td>
-                            <td className="px-2 py-1.5 text-xs text-muted-foreground">{item.unit_label}</td>
+                            <td className="px-2 py-1.5">
+                              {item.subcategory === "interest_carry" ? (
+                                <span className="text-xs text-muted-foreground">{item.unit_label}</span>
+                              ) : (
+                                <select
+                                  value={findDevBudgetUnitType(item).source}
+                                  onChange={(e) => {
+                                    const pick = DEV_BUDGET_UNIT_TYPES.find((t) => t.source === e.target.value)!;
+                                    if (pick.isPct) {
+                                      updBI({ is_pct: true, pct_basis: "hard_costs", pct_value: item.pct_value || 0, unit_label: pick.label, auto_qty_source: undefined });
+                                    } else if (pick.source === "manual") {
+                                      updBI({ is_pct: false, unit_label: pick.label, auto_qty_source: undefined });
+                                    } else {
+                                      updBI({ is_pct: false, unit_label: pick.label, auto_qty_source: pick.source, quantity: 0, amount: 0 });
+                                    }
+                                  }}
+                                  className="bg-background text-foreground text-xs outline-none rounded border border-border/40 px-1 py-0.5"
+                                >
+                                  {DEV_BUDGET_UNIT_TYPES.map((t) => (
+                                    <option key={t.source} value={t.source}>{t.label}</option>
+                                  ))}
+                                </select>
+                              )}
+                            </td>
                             <td className="px-2 py-1.5">
                               {item.is_pct || item.subcategory === "interest_carry" ? <span className="text-muted-foreground text-xs">—</span> : <CellInput value={item.unit_cost} onChange={v => updBI({ unit_cost: v })} prefix="$" />}
                             </td>
@@ -3329,9 +3922,17 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <tbody>
                         <tr><td className="py-1">Land Acquisition</td><td className="text-right tabular-nums">{fc(d.land_cost)}</td></tr>
                         <tr><td className="py-1">Total Hard Costs</td><td className="text-right tabular-nums">{fc(m.totalHardCosts)}</td></tr>
-                        <tr><td className="py-1">Total Soft Costs</td><td className="text-right tabular-nums">{fc(m.softCostsTotal)}</td></tr>
+                        <tr>
+                          <td className="py-1">Total Soft Costs</td>
+                          <td className="text-right tabular-nums">{fc(m.softCostsTotal)}</td>
+                        </tr>
+                        {m.capitalizedInterest > 0 && (
+                          <tr className="text-muted-foreground text-xs">
+                            <td className="py-0.5 pl-3">↳ incl. Capitalized Interest</td>
+                            <td className="text-right tabular-nums">{fc(m.capitalizedInterest)}</td>
+                          </tr>
+                        )}
                         {m.totalParkingCost > 0 && <tr><td className="py-1">Parking Structure</td><td className="text-right tabular-nums">{fc(m.totalParkingCost)}</td></tr>}
-                        {m.capitalizedInterest > 0 && <tr><td className="py-1">Capitalized Interest</td><td className="text-right tabular-nums">{fc(m.capitalizedInterest)}</td></tr>}
                         {m.demolitionCosts > 0 && <tr><td className="py-1">Demolition / Abatement</td><td className="text-right tabular-nums">{fc(m.demolitionCosts)}</td></tr>}
                         <tr><td className="py-1">Closing Costs</td><td className="text-right tabular-nums">{fc(m.closingCosts)}</td></tr>
                         <tr className="border-t font-semibold text-base">
@@ -3344,10 +3945,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             <td className="text-right tabular-nums">{fc(m.totalCost / m.totalUnits)}</td>
                           </tr>
                         )}
-                        {(d.max_nrsf || d.max_gsf) > 0 && (
+                        {(d.max_gsf || 0) > 0 && (
+                          <tr className="text-muted-foreground text-xs">
+                            <td className="py-0.5">Per SF (GSF)</td>
+                            <td className="text-right tabular-nums">{fc(m.totalCost / d.max_gsf)}</td>
+                          </tr>
+                        )}
+                        {(d.max_nrsf || 0) > 0 && (
                           <tr className="text-muted-foreground text-xs">
                             <td className="py-0.5">Per SF (NRSF)</td>
-                            <td className="text-right tabular-nums">{fc(m.totalCost / (d.max_nrsf || d.max_gsf))}</td>
+                            <td className="text-right tabular-nums">{fc(m.totalCost / d.max_nrsf)}</td>
                           </tr>
                         )}
                       </tbody>
@@ -3398,6 +4005,20 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     {capexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
                     AI Dev Budget
                   </Button>
+                  {d.dev_budget_items.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (confirm("Clear itemized dev budget and revert to simple Hard Cost/SF + Soft Cost % pricing?")) {
+                          setData(p => ({ ...p, dev_budget_items: [] }));
+                        }
+                      }}
+                    >
+                      Simplify to SF Pricing
+                    </Button>
+                  )}
+                  <DocCoverageChip documents={docs} section="capex" />
                 </div>
                 {!d.max_gsf && <p className="text-xs text-amber-500">Set GSF in Site &amp; Zoning to enable budget calculations</p>}
               </div>
@@ -3486,14 +4107,17 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 {capexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
                 AI Estimate
               </Button>
+              <DocCoverageChip documents={docs} section="capex" />
             </div>
           </div>
             </>
           )}
         </div>
       </Section>
+      </div>
 
       {/* ═══════════════════ PARKING CONFIGURATION ═══════════════════ */}
+      <div className={tabCls("revenue_ops")}>
       {(isGroundUp || d.parking?.entries?.length) && (
       <Section title="Parking Configuration" icon={<Car className="h-4 w-4 text-cyan-400" />}>
         <div className="mt-3">
@@ -3766,8 +4390,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           {/* Vacancy row */}
           <div className={`grid ${isGroundUp ? "grid-cols-2" : "grid-cols-3"} gap-4 mb-4`}>
             {!isGroundUp && <NumInput label="In-Place Vacancy" value={d.in_place_vacancy_rate} onChange={v => set("in_place_vacancy_rate", v)} suffix="%" decimals={1} />}
-            <NumInput label={isGroundUp ? "Stabilized Vacancy" : "Pro Forma Vacancy"} value={d.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
-            <NumInput label="Management Fee" value={d.management_fee_pct} onChange={v => set("management_fee_pct", v)} suffix="% EGI" decimals={1} />
+            <div className="relative">
+              <NumInput label={isGroundUp ? "Stabilized Vacancy" : "Pro Forma Vacancy"} value={d.vacancy_rate} onChange={v => set("vacancy_rate", v)} suffix="%" decimals={1} />
+              <span className="absolute top-0 left-[7.5rem]"><OpexNote note={d.opex_item_notes?.vacancy_rate} /></span>
+            </div>
+            <div className="relative">
+              <NumInput label="Management Fee" value={d.management_fee_pct} onChange={v => set("management_fee_pct", v)} suffix="% EGI" decimals={1} />
+              <span className="absolute top-0 left-[6.5rem]"><OpexNote note={d.opex_item_notes?.management_fee_pct} /></span>
+            </div>
           </div>
           <table className="w-full text-sm border-collapse">
             <thead>
@@ -3782,7 +4412,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <tbody>
               {/* Management row — in-place is hard $ amount, pro forma is % of EGI */}
               <tr className="border-b hover:bg-muted/20">
-                <td className="px-2 py-1.5 text-muted-foreground">Management <span className="text-xs text-muted-foreground/60">({d.management_fee_pct}% PF)</span></td>
+                <td className="px-2 py-1.5 text-muted-foreground">Management <span className="text-xs text-muted-foreground/60">({d.management_fee_pct}% PF)</span><OpexNote note={d.opex_item_notes?.management_fee_pct} /></td>
                 {!isMF && !isSH && (
                   <td className="px-2 py-1.5 text-center">
                     <input type="checkbox" checked={d.cam_management} onChange={e => set("cam_management", e.target.checked)} className="rounded h-3.5 w-3.5 accent-blue-500" />
@@ -3808,14 +4438,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               )}
               {/* Editable expense rows */}
               {([
-                { label: "Property Taxes", ipKey: "ip_taxes_annual" as keyof UWData, pfKey: "taxes_annual" as keyof UWData, camKey: "cam_taxes" as keyof UWData },
-                { label: "Insurance", ipKey: "ip_insurance_annual" as keyof UWData, pfKey: "insurance_annual" as keyof UWData, camKey: "cam_insurance" as keyof UWData },
-                { label: "Repairs & Maintenance", ipKey: "ip_repairs_annual" as keyof UWData, pfKey: "repairs_annual" as keyof UWData, camKey: "cam_repairs" as keyof UWData },
-                { label: "Utilities", ipKey: "ip_utilities_annual" as keyof UWData, pfKey: "utilities_annual" as keyof UWData, camKey: "cam_utilities" as keyof UWData },
-                { label: "General & Admin", ipKey: "ip_ga_annual" as keyof UWData, pfKey: "ga_annual" as keyof UWData, camKey: "cam_ga" as keyof UWData },
-                { label: "Marketing / Leasing", ipKey: "ip_marketing_annual" as keyof UWData, pfKey: "marketing_annual" as keyof UWData, camKey: "cam_marketing" as keyof UWData },
-                { label: "Reserves", ipKey: "ip_reserves_annual" as keyof UWData, pfKey: "reserves_annual" as keyof UWData, camKey: "cam_reserves" as keyof UWData },
-                { label: "Other", ipKey: "ip_other_annual" as keyof UWData, pfKey: "other_expenses_annual" as keyof UWData, camKey: "cam_other" as keyof UWData },
+                { label: "Property Taxes", ipKey: "ip_taxes_annual" as keyof UWData, pfKey: "taxes_annual" as keyof UWData, camKey: "cam_taxes" as keyof UWData, noteKey: "taxes_annual" },
+                { label: "Insurance", ipKey: "ip_insurance_annual" as keyof UWData, pfKey: "insurance_annual" as keyof UWData, camKey: "cam_insurance" as keyof UWData, noteKey: "insurance_annual" },
+                { label: "Repairs & Maintenance", ipKey: "ip_repairs_annual" as keyof UWData, pfKey: "repairs_annual" as keyof UWData, camKey: "cam_repairs" as keyof UWData, noteKey: "repairs_annual" },
+                { label: "Utilities", ipKey: "ip_utilities_annual" as keyof UWData, pfKey: "utilities_annual" as keyof UWData, camKey: "cam_utilities" as keyof UWData, noteKey: "utilities_annual" },
+                { label: "General & Admin", ipKey: "ip_ga_annual" as keyof UWData, pfKey: "ga_annual" as keyof UWData, camKey: "cam_ga" as keyof UWData, noteKey: "ga_annual" },
+                { label: "Marketing / Leasing", ipKey: "ip_marketing_annual" as keyof UWData, pfKey: "marketing_annual" as keyof UWData, camKey: "cam_marketing" as keyof UWData, noteKey: "marketing_annual" },
+                { label: "Reserves", ipKey: "ip_reserves_annual" as keyof UWData, pfKey: "reserves_annual" as keyof UWData, camKey: "cam_reserves" as keyof UWData, noteKey: "reserves_annual" },
+                { label: "Other", ipKey: "ip_other_annual" as keyof UWData, pfKey: "other_expenses_annual" as keyof UWData, camKey: "cam_other" as keyof UWData, noteKey: "other_expenses_annual" },
               ]).map(row => {
                 const ipVal = (d[row.ipKey] as number) || 0;
                 const pfVal = (d[row.pfKey] as number) || 0;
@@ -3824,7 +4454,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 const ipIsDefault = ipVal === 0;
                 return (
                   <tr key={row.label} className="border-b hover:bg-muted/20">
-                    <td className="px-2 py-1.5 text-muted-foreground">{row.label}</td>
+                    <td className="px-2 py-1.5 text-muted-foreground">{row.label}<OpexNote note={d.opex_item_notes?.[row.noteKey]} /></td>
                     {!isMF && !isSH && (
                       <td className="px-2 py-1.5 text-center">
                         <input type="checkbox" checked={isCam} onChange={e => set(row.camKey as keyof UWData, e.target.checked)} className="rounded h-3.5 w-3.5 accent-blue-500" />
@@ -3853,6 +4483,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                   "custom_opex",
                   (d.custom_opex || []).filter(r => r.id !== row.id)
                 );
+                const labelLower = (row.label || "").toLowerCase();
+                const rowNote = labelLower.includes("contract")
+                  ? d.opex_item_notes?.contracts_annual
+                  : labelLower === "staff"
+                    ? d.opex_item_notes?.staff_annual
+                    : undefined;
                 return (
                   <tr key={row.id} className="border-b hover:bg-muted/20 group">
                     <td className="px-2 py-1.5">
@@ -3863,6 +4499,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           placeholder="Category"
                           className="bg-transparent border-b border-transparent focus:border-muted-foreground/40 outline-none text-sm text-muted-foreground w-full"
                         />
+                        <OpexNote note={rowNote} />
                         <button
                           onClick={removeRow}
                           className="opacity-0 group-hover:opacity-100 text-xs text-muted-foreground hover:text-red-400 px-1"
@@ -3993,13 +4630,21 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               {opexEstimating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
               AI Estimate
             </Button>
+            <DocCoverageChip documents={docs} section="opex" />
           </div>
-          {/* AI OpEx Narrative (persistent) */}
+          {/* AI OpEx Narrative — per-item notes now sit inline next to
+              each row (hover the ⓘ icon). This block is collapsed by
+              default so legacy deals that have the narrative but not
+              structured notes can still surface it on demand. */}
           {d.opex_narrative && (
-            <div className="mt-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
-              <p className="text-xs font-medium text-primary mb-1">AI Estimate Basis</p>
-              <p className="text-xs text-muted-foreground leading-relaxed">{d.opex_narrative}</p>
-            </div>
+            <details className="mt-3 group">
+              <summary className="text-xs text-muted-foreground/70 hover:text-primary cursor-pointer select-none list-none inline-flex items-center gap-1">
+                <Info className="h-3 w-3" /> View AI estimate basis
+              </summary>
+              <div className="mt-2 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                <p className="text-xs text-muted-foreground leading-relaxed">{d.opex_narrative}</p>
+              </div>
+            </details>
           )}
           {/* Leasing Commissions — commercial only */}
           {!isMF && !isSH && (
@@ -4083,6 +4728,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           )}
         </div>
       </Section>
+      </div>
 
       {/* ═══════════════════ ABSORPTION / LEASE-UP ═══════════════════
           Shown for ground-up (residential absorption) OR any deal with
@@ -4093,6 +4739,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           back-of-envelope IRR estimate. Hidden in Basic, and only
           shown when the deal type requires it (ground-up or mixed-use
           with retail/office components). */}
+      <div className={tabCls("returns")}>
       {!isBasic && (isGroundUp || (d.mixed_use?.enabled && (d.mixed_use?.components || []).some(
         c => c.component_type === "retail" || c.component_type === "office"
       ))) && (
@@ -4174,14 +4821,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             ({fn(comp.sf_allocation)} SF)
                           </span>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <NumInput
-                            label="TI Allowance ($/SF)"
-                            value={comp.ti_allowance_per_sf}
-                            onChange={v => updComp({ ti_allowance_per_sf: v })}
-                            prefix="$"
-                            decimals={2}
-                          />
+                        {/* TI allowance is captured per-tenant in the
+                            Commercial Tenants table on Revenue, so it's
+                            intentionally NOT repeated here. The remaining
+                            three knobs apply to the whole component. */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                           <NumInput
                             label="Leasing Commission"
                             value={comp.leasing_commission_pct}
@@ -4212,35 +4856,76 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
       )}
+      </div>
 
-      {/* ═══════════════════ CONSTRUCTION FINANCING ═══════════════════
-          Hidden in Basic — analysts running back-of-envelope numbers
-          can use the simpler Acquisition Financing block below; the
-          construction loan modeling is for dialed-in ground-up UWs. */}
+      {/* ═══════════════════ CONSTRUCTION PERIOD ═══════════════════
+          For ground-up deals the construction loan and acquisition loan
+          are the same facility — see the Construction-Acquisition Loan
+          section below. This block captures the construction timeline
+          (term + draws) that drives capitalized interest. */}
+      <div className={tabCls("capital")}>
       {!isBasic && isGroundUp && (
-      <Section title="Construction Financing" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
+      <Section title="Construction Period" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
         <div className="mt-3">
           {(() => {
             const cl = d.construction_loan || defaultConstructionLoan();
             const setCL = (upd: Partial<ConstructionLoanConfig>) => setData(p => ({ ...p, construction_loan: { ...(p.construction_loan || defaultConstructionLoan()), ...upd } }));
-            const loanAmt = m.totalCost * (cl.ltc_pct / 100);
-            const monthlyRate = cl.rate / 100 / 12;
-            const avgInterest = loanAmt * 0.5 * monthlyRate * cl.term_months;
+            const ltc = d.acq_pp_ltv ?? d.acq_ltc ?? 0;
+            const loanAmt = m.totalCost * (ltc / 100);
+            const curve = cl.draw_curve ?? (cl.draw_schedule?.length ? "custom" : "s_curve");
+            const defaultSigma = Math.max(1, Math.round((cl.term_months || 24) / 4));
+            const sigma = cl.draw_std_dev_months ?? defaultSigma;
+            const cumPcts = buildCumulativeDrawSchedule({ ...cl, draw_curve: curve, draw_std_dev_months: sigma });
+            // Peak monthly draw %, for the UI to give a feel of the ramp.
+            let peakMonthPct = 0, peakMonth = 0;
+            for (let i = 0; i < cumPcts.length; i++) {
+              const monthly = cumPcts[i] - (i === 0 ? 0 : cumPcts[i - 1]);
+              if (monthly > peakMonthPct) { peakMonthPct = monthly; peakMonth = i + 1; }
+            }
             return (
               <>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                  <NumInput label="Loan-to-Cost (LTC)" value={cl.ltc_pct} onChange={v => setCL({ ltc_pct: v })} suffix="%" decimals={1} />
-                  <NumInput label="Interest Rate" value={cl.rate} onChange={v => setCL({ rate: v })} suffix="%" decimals={2} />
                   <NumInput label="Term (months)" value={cl.term_months} onChange={v => setCL({ term_months: v })} />
                   <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Draw Curve</label>
+                    <select
+                      value={curve}
+                      onChange={e => setCL({ draw_curve: e.target.value as "s_curve" | "linear" | "custom" })}
+                      className="w-full h-8 rounded-md border bg-background px-2 text-sm"
+                    >
+                      <option value="s_curve">S-Curve (Bell)</option>
+                      <option value="linear">Linear</option>
+                      <option value="custom">Custom Schedule</option>
+                    </select>
+                  </div>
+                  {curve === "s_curve" && (
+                    <NumInput
+                      label="Bell Width (σ, months)"
+                      value={sigma}
+                      onChange={v => setCL({ draw_std_dev_months: v })}
+                      decimals={1}
+                    />
+                  )}
+                  <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">Loan Amount</label>
-                    <p className="text-sm font-semibold py-1.5">{fc(loanAmt)}</p>
+                    <p className="text-sm font-semibold py-1.5">{d.has_financing ? fc(loanAmt) : "—"}</p>
                   </div>
                 </div>
                 <div className="border rounded-md bg-muted/10 p-3 text-sm space-y-1">
-                  <div className="flex justify-between"><span>Estimated Capitalized Interest (avg 50% draw)</span><span className="font-semibold tabular-nums">{fc(avgInterest)}</span></div>
-                  <div className="flex justify-between"><span>Computed Cap. Interest (from calc)</span><span className="font-semibold tabular-nums text-primary">{fc(m.capitalizedInterest)}</span></div>
-                  <p className="text-xs text-muted-foreground mt-1">Interest carry is auto-included in the Development Budget soft costs and total project cost.</p>
+                  <div className="flex justify-between"><span>Loan Rate (from Construction-Acquisition Loan)</span><span className="font-semibold tabular-nums">{d.has_financing ? `${(d.acq_interest_rate || 0).toFixed(2)}%` : "—"}</span></div>
+                  <div className="flex justify-between"><span>Loan-to-Cost (from Construction-Acquisition Loan)</span><span className="font-semibold tabular-nums">{d.has_financing ? `${ltc.toFixed(1)}%` : "—"}</span></div>
+                  {curve === "s_curve" && peakMonthPct > 0 && (
+                    <div className="flex justify-between"><span>Peak Draw (month {peakMonth})</span><span className="font-semibold tabular-nums">{peakMonthPct.toFixed(1)}% / mo</span></div>
+                  )}
+                  <div className="flex justify-between border-t pt-1 mt-1"><span>Computed Capitalized Interest</span><span className="font-semibold tabular-nums text-primary">{fc(m.capitalizedInterest)}</span></div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {curve === "s_curve"
+                      ? "Monthly draws follow a bell curve centered at mid-term. Lower σ = steeper ramp, higher σ = flatter / more spread out."
+                      : curve === "linear"
+                        ? "Equal monthly draws over the construction period."
+                        : "Uses the explicit draw_schedule array. Edit data to override."}
+                    {" "}Interest carry is auto-included in Soft Costs &amp; total project cost.
+                  </p>
                 </div>
               </>
             );
@@ -4249,23 +4934,26 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </Section>
       )}
 
-      <Section title="Financing" icon={<TrendingUp className="h-4 w-4 text-purple-400" />}>
+      <Section title={isGroundUp ? "Construction-Acquisition Loan" : "Financing"} icon={<TrendingUp className="h-4 w-4 text-purple-400" />}>
         <div className="mt-3 space-y-5">
           <div>
             <div className="flex items-center justify-between mb-3">
               <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold">
                 <input type="checkbox" checked={d.has_financing} onChange={e => set("has_financing", e.target.checked)} className="rounded" />
-                Acquisition Loan
+                {isGroundUp ? "Construction-Acquisition Loan" : "Acquisition Loan"}
               </label>
-              <Button variant="outline" size="sm" onClick={estimateLoan} disabled={loanSizing}>
-                {loanSizing ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Sparkles className="h-4 w-4 mr-1.5" />}
-                AI Loan Sizer
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={estimateLoan} disabled={loanSizing}>
+                  {loanSizing ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Sparkles className="h-4 w-4 mr-1.5" />}
+                  AI Loan Sizer
+                </Button>
+                <DocCoverageChip documents={docs} section="financing" />
+              </div>
             </div>
             {d.has_financing && (<>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <NumInput label="Purchase Price LTV" value={d.acq_pp_ltv} onChange={v => set("acq_pp_ltv", v)} suffix="%" decimals={1} />
-                <NumInput label="CapEx LTV" value={d.acq_capex_ltv} onChange={v => set("acq_capex_ltv", v)} suffix="%" decimals={1} />
+                <NumInput label={isGroundUp ? "Loan-to-Cost" : "Purchase Price LTV"} value={d.acq_pp_ltv} onChange={v => set("acq_pp_ltv", v)} suffix="%" decimals={1} />
+                {!isGroundUp && <NumInput label="CapEx LTV" value={d.acq_capex_ltv} onChange={v => set("acq_capex_ltv", v)} suffix="%" decimals={1} />}
                 <NumInput label="Interest Rate" value={d.acq_interest_rate} onChange={v => set("acq_interest_rate", v)} suffix="%" decimals={3} />
                 <div className="p-3 bg-primary/5 rounded-lg border border-primary/15">
                   <p className="text-xs text-muted-foreground mb-1">Blended LTC</p>
@@ -4328,8 +5016,48 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           )}
         </div>
       </Section>
+      </div>
 
+      <div className={tabCls("returns")}>
       <Section title="Exit Analysis" icon={<RefreshCw className="h-4 w-4 text-teal-600" />}>
+        {(() => {
+          // Blended exit cap = NOI-weighted harmonic mean of the
+          // per-component cap rates. Uses component sf_allocation as the
+          // NOI-share proxy (per-component NOI isn't separately tracked
+          // on the UW blob today). The harmonic form is the valuation-
+          // correct one: applying the blended cap to total NOI reproduces
+          // the sum of each component's NOI-share ÷ its own cap — i.e.
+          // the exit value you'd get by appraising each component on its
+          // own yield and summing. Non-mixed-use (or single-component)
+          // deals fall through to the analyst-entered rate below.
+          const comps = (d.mixed_use?.components || []).filter(
+            (c) => c.cap_rate > 0 && c.sf_allocation > 0,
+          );
+          if (!d.mixed_use?.enabled || comps.length < 2) return null;
+          const totalSF = comps.reduce((s, c) => s + c.sf_allocation, 0);
+          if (totalSF <= 0) return null;
+          const denom = comps.reduce((s, c) => s + c.sf_allocation / (c.cap_rate / 100), 0);
+          const blended = denom > 0 ? (totalSF / denom) : 0;
+          if (!blended || Math.abs(blended - d.exit_cap_rate) < 0.01) return null;
+          return (
+            <div className="mb-3 flex items-center gap-2 p-2 rounded-md bg-teal-500/10 border border-teal-500/30 text-xs">
+              <RefreshCw className="h-3.5 w-3.5 text-teal-400 shrink-0" />
+              <span className="text-teal-200">
+                Blended exit cap from per-component rates:{" "}
+                <span className="font-semibold tabular-nums">{blended.toFixed(2)}%</span>
+                <span className="text-muted-foreground ml-1">
+                  (weighted by NOI share, approximated by SF)
+                </span>
+              </span>
+              <button
+                onClick={() => set("exit_cap_rate", Number(blended.toFixed(2)))}
+                className="ml-auto px-2 py-0.5 rounded border border-teal-500/40 text-teal-200 hover:bg-teal-500/20 transition-colors text-[11px] font-medium shrink-0"
+              >
+                Apply
+              </button>
+            </div>
+          );
+        })()}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
           <NumInput label="Exit Cap Rate" value={d.exit_cap_rate} onChange={v => set("exit_cap_rate", v)} suffix="%" decimals={2} />
           <NumInput label="Hold Period" value={d.hold_period_years} onChange={v => set("hold_period_years", v)} suffix="yrs" />
@@ -4348,10 +5076,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         </div>
 
-        {/* Per-component cap rates (formerly on the Mixed-Use Section). The
-            primary "Exit Cap Rate" above still drives the single-property
-            valuation; per-component rates let analysts track different
-            yields by use type for their own memos / waterfalls. */}
+        {/* Per-component cap rates (formerly on the Mixed-Use Section).
+            Edit these and the blended-cap banner above surfaces the
+            weighted rate; click "Apply" there to push it into the
+            primary Exit Cap Rate that drives valuation. Leaving caps
+            different per component (without applying) is still fine —
+            analysts sometimes want the blended display but a hand-set
+            top-level rate for sensitivities. */}
         {d.mixed_use?.enabled && (d.mixed_use?.components?.length ?? 0) > 0 && (
           <div className="mt-4 border-t pt-3">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
@@ -4408,7 +5139,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <DCFRow label="Gross Potential Rent" yr0={isGroundUp ? m.proformaGPR : m.inPlaceGPR} yr1to5={m.yearlyDCF.map(y => y.gpr)} />
               <DCFRow label="Less Vacancy" yr0={isGroundUp ? -m.proformaVacancyLoss : -m.inPlaceVacancyLoss} yr1to5={m.yearlyDCF.map(y => -y.vacancyLoss)} muted />
               {m.reimbursements > 0 && <DCFRow label="CAM Reimbursements" yr0={isGroundUp ? m.reimbursements : m.ipReimbursements} yr1to5={m.yearlyDCF.map(y => y.reimbursements)} muted />}
-              {m.totalOtherIncome > 0 && <DCFRow label="Other Income" yr0={isGroundUp ? m.totalOtherIncome : 0} yr1to5={m.yearlyDCF.map(y => y.otherIncome)} muted />}
+              {(m.totalOtherIncome > 0 || m.inPlaceOtherIncome > 0) && <DCFRow label="Other Income" yr0={isGroundUp ? m.totalOtherIncome : m.inPlaceOtherIncome} yr1to5={m.yearlyDCF.map(y => y.otherIncome)} muted />}
               <DCFRow label="Effective Gross Income" yr0={isGroundUp ? m.proformaEffectiveRevenue : m.inPlaceEffectiveRevenue} yr1to5={m.yearlyDCF.map(y => y.egi + y.reimbursements + y.otherIncome)} bold />
               <tr><td colSpan={7} className="px-4"><div className="border-t" /></td></tr>
               <DCFRow label="Total Operating Expenses" yr0={isGroundUp ? -m.proformaTotalOpEx : -m.inPlaceTotalOpEx} yr1to5={m.yearlyDCF.map(y => -y.totalOpEx)} />
@@ -4448,6 +5179,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </table>
         </div>
       </div>
+      </div>
 
       {/* ── Deal Score Progression ── */}
       <div className="border rounded-xl bg-card overflow-hidden">
@@ -4467,7 +5199,16 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 });
                 const json = await res.json();
                 if (res.ok && json.data) {
-                  setDealScores(prev => ({ ...prev, uw_score: json.data.score, uw_score_reasoning: json.data.reasoning }));
+                  // Store reasoning in the same __STRUCTURED__ shape the API
+                  // persists, so the card renders bullets immediately after
+                  // scoring — no page refresh needed.
+                  const bullets = Array.isArray(json.data.bullet_points)
+                    ? json.data.bullet_points.filter((b: unknown) => typeof b === "string")
+                    : [];
+                  const reasoning = bullets.length > 0
+                    ? `__STRUCTURED__${JSON.stringify({ reasoning: json.data.reasoning || "", bullets })}`
+                    : (json.data.reasoning || "");
+                  setDealScores(prev => ({ ...prev, uw_score: json.data.score, uw_score_reasoning: reasoning }));
                   toast.success("Underwriting score updated");
                 } else { toast.error(json.error || "Scoring failed"); }
               } catch { toast.error("Scoring failed"); }
@@ -4485,6 +5226,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             ].map(({ label, score, reasoning, empty }) => {
               const accent = score ? score >= 8 ? "border-l-emerald-500" : score >= 6 ? "border-l-amber-500" : score >= 4 ? "border-l-orange-500" : "border-l-rose-500" : "border-l-muted-foreground/20";
               const numColor = score ? score >= 8 ? "text-emerald-400" : score >= 6 ? "text-amber-400" : score >= 4 ? "text-orange-400" : "text-rose-400" : "text-muted-foreground/30";
+              // The scoring API can persist reasoning either as a raw
+              // string (legacy) or as "__STRUCTURED__<json>" carrying
+              // {reasoning, bullets}. Prefer bullets when present;
+              // otherwise split long paragraphs into their natural
+              // sentence/newline fragments so the card stays compact.
+              const { bullets, summary } = extractScoreBullets(reasoning);
               return (
                 <div key={label} className={`rounded-lg border border-l-4 ${accent} bg-card p-4`}>
                   <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
@@ -4494,9 +5241,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     </span>
                     {score && <span className="text-sm text-muted-foreground">/10</span>}
                   </div>
-                  {reasoning && (
-                    <p className="text-xs text-foreground/70 mt-2 leading-relaxed">{reasoning}</p>
-                  )}
+                  {bullets.length > 0 ? (
+                    <ul className="mt-2 space-y-1">
+                      {bullets.map((b, i) => (
+                        <li key={i} className="text-xs text-foreground/80 leading-snug flex gap-1.5">
+                          <span className="text-primary/70 select-none">•</span>
+                          <span>{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : summary ? (
+                    <p className="text-xs text-foreground/70 mt-2 leading-snug">{summary}</p>
+                  ) : null}
                   {!score && <p className="text-xs text-muted-foreground mt-1">{empty}</p>}
                 </div>
               );
@@ -4557,13 +5313,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                           createScenario("Custom Scenario", "custom", "Manual what-if adjustments", {});
                         } else {
                           // Set smart defaults from business plan
-                          if (st.type === "land_residual" || st.type === "rent_target") {
-                            setWizardMetric("em");
-                            setWizardTarget(businessPlan?.target_equity_multiple_min || 2);
-                          } else {
-                            setWizardMetric("em");
-                            setWizardTarget(businessPlan?.target_equity_multiple_min || 2);
-                          }
+                          const initial = businessPlan?.target_equity_multiple_min || 2;
+                          setWizardMetric("em");
+                          setWizardTarget(initial);
+                          setWizardTargetRaw(String(initial));
                           setWizardStep(1);
                         }
                       }}
@@ -4595,7 +5348,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                             key={opt.key}
                             onClick={() => {
                               setWizardMetric(opt.key);
-                              if (bpVal) setWizardTarget(bpVal);
+                              if (bpVal) { setWizardTarget(bpVal); setWizardTargetRaw(String(bpVal)); }
                             }}
                             className={`p-3 rounded-lg border text-center transition-colors ${
                               wizardMetric === opt.key ? "border-primary bg-primary/5" : "hover:bg-muted/50"
@@ -4616,7 +5369,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       {businessPlan && activeMeta.bpKey && businessPlan[activeMeta.bpKey] != null && (
                         <button
                           className="ml-2 text-primary hover:underline"
-                          onClick={() => setWizardTarget(businessPlan[activeMeta.bpKey!]!)}
+                          onClick={() => {
+                            const v = businessPlan[activeMeta.bpKey!]!;
+                            setWizardTarget(v);
+                            setWizardTargetRaw(String(v));
+                          }}
                         >
                           Use plan min ({businessPlan[activeMeta.bpKey]}{suffix})
                         </button>
@@ -4626,9 +5383,30 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <input
                         type="text"
                         inputMode="decimal"
-                        value={wizardTarget || ""}
-                        onChange={e => setWizardTarget(parseFloat(e.target.value) || 0)}
-                        className="flex-1 px-3 py-2 text-sm outline-none bg-transparent text-blue-700"
+                        // Show the raw string while the user is typing
+                        // so values like "0.07" or "0." don't get
+                        // collapsed mid-edit. Falls back to the parsed
+                        // number when the buffer is empty (e.g. preset
+                        // click that bypassed the input).
+                        value={wizardTargetRaw !== "" ? wizardTargetRaw : (wizardTarget || "")}
+                        onChange={e => {
+                          const next = e.target.value.replace(/[^0-9.\-]/g, "");
+                          setWizardTargetRaw(next);
+                          const parsed = parseFloat(next);
+                          if (!Number.isNaN(parsed)) setWizardTarget(parsed);
+                          else if (next === "") setWizardTarget(0);
+                        }}
+                        onBlur={() => {
+                          const parsed = parseFloat(wizardTargetRaw);
+                          if (!Number.isNaN(parsed)) {
+                            setWizardTarget(parsed);
+                            setWizardTargetRaw(String(parsed));
+                          } else {
+                            setWizardTargetRaw("");
+                          }
+                        }}
+                        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                        className="flex-1 px-3 py-2 text-sm outline-none bg-transparent text-foreground tabular-nums"
                         placeholder="0"
                       />
                       <span className="px-2 text-sm text-muted-foreground bg-muted border-l">

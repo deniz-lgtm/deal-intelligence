@@ -51,50 +51,77 @@ export function buildUnderwritingSummary(
   const lines: string[] = [];
   const isSH = deal.property_type === "student_housing";
   const isMF = deal.property_type === "multifamily" || deal.property_type === "sfr" || isSH;
+  // Ground-up vs. acquisition fundamentally changes the shape of this block.
+  // Ground-up has no purchase price (land cost instead), no existing rent
+  // roll (no in-place rents, no loss-to-lease), and a dev budget line-item
+  // array at uw.dev_budget_items rather than acquisition-style capex_items.
+  const isGroundUp = !!uw.development_mode;
 
   // ── Basis ───────────────────────────────────────────────────────────────
   const purchasePrice = n(uw.purchase_price);
+  const landCost = n(uw.land_cost);
   const closingCostsPct = n(uw.closing_costs_pct);
   const closingCosts = purchasePrice * (closingCostsPct / 100);
   const units = n(deal.units);
   const sf = n(deal.square_footage) || n(uw.max_gsf);
-  if (purchasePrice > 0) {
+  if (isGroundUp && landCost > 0) {
+    const basisParts = [`Land Cost: ${fc(landCost)}`];
+    if (sf > 0) basisParts.push(`$${(landCost / sf).toFixed(0)}/GSF land`);
+    lines.push(basisParts.join(" | "));
+  } else if (purchasePrice > 0) {
     const basisParts = [`Purchase Price: ${fc(purchasePrice)}`];
     if (units > 0) basisParts.push(`$${Math.round(purchasePrice / units).toLocaleString()}/unit`);
     if (sf > 0) basisParts.push(`$${(purchasePrice / sf).toFixed(0)}/SF`);
     lines.push(basisParts.join(" | "));
   }
-  if (closingCostsPct > 0) lines.push(`Closing Costs: ${pct(closingCostsPct)} (${fc(closingCosts)})`);
+  if (!isGroundUp && closingCostsPct > 0) lines.push(`Closing Costs: ${pct(closingCostsPct)} (${fc(closingCosts)})`);
 
   // ── Unit groups / revenue ──────────────────────────────────────────────
   const unitGroups: AnyRec[] = Array.isArray(uw.unit_groups) ? uw.unit_groups : [];
   if (unitGroups.length > 0) {
     const totalUnits = unitGroups.reduce((s, g) => s + n(g.unit_count), 0);
-    lines.push(`\nREVENUE (${totalUnits} units, ${unitGroups.length} unit types):`);
+    const revenueLabel = isGroundUp
+      ? `\nPROGRAMMED REVENUE (${totalUnits} units, ${unitGroups.length} unit types, stabilized rents):`
+      : `\nREVENUE (${totalUnits} units, ${unitGroups.length} unit types):`;
+    lines.push(revenueLabel);
     for (const g of unitGroups) {
       const label = g.label || "Unit";
       const count = n(g.unit_count);
       if (isSH) {
         const beds = n(g.beds_per_unit);
-        const ipBed = n(g.current_rent_per_bed);
         const mktBed = n(g.market_rent_per_bed);
-        lines.push(`  ${label}: ${count} units, ${beds}bed/unit, in-place ${fc(ipBed)}/bed/mo, market ${fc(mktBed)}/bed/mo`);
+        if (isGroundUp) {
+          lines.push(`  ${label}: ${count} units, ${beds}bed/unit, stabilized ${fc(mktBed)}/bed/mo`);
+        } else {
+          const ipBed = n(g.current_rent_per_bed);
+          lines.push(`  ${label}: ${count} units, ${beds}bed/unit, in-place ${fc(ipBed)}/bed/mo, market ${fc(mktBed)}/bed/mo`);
+        }
       } else if (isMF) {
-        const ipRent = n(g.current_rent_per_unit);
         const mktRent = n(g.market_rent_per_unit);
         const bdba = g.bedrooms != null && g.bathrooms != null ? ` ${g.bedrooms}BD/${g.bathrooms}BA` : "";
         const sfPart = g.sf_per_unit ? `, ${n(g.sf_per_unit)} SF/unit` : "";
-        lines.push(`  ${label}:${bdba} ${count} units${sfPart}, in-place ${fc(ipRent)}/mo, market ${fc(mktRent)}/mo`);
+        if (isGroundUp) {
+          lines.push(`  ${label}:${bdba} ${count} units${sfPart}, stabilized ${fc(mktRent)}/mo`);
+        } else {
+          const ipRent = n(g.current_rent_per_unit);
+          lines.push(`  ${label}:${bdba} ${count} units${sfPart}, in-place ${fc(ipRent)}/mo, market ${fc(mktRent)}/mo`);
+        }
       } else {
         const psf = n(g.sf_per_unit);
-        const ipRent = n(g.current_rent_per_sf);
         const mktRent = n(g.market_rent_per_sf);
-        lines.push(`  ${label}: ${count} units, ${psf.toLocaleString()} SF/unit, in-place $${ipRent.toFixed(2)}/SF, market $${mktRent.toFixed(2)}/SF`);
+        if (isGroundUp) {
+          lines.push(`  ${label}: ${count} units, ${psf.toLocaleString()} SF/unit, stabilized $${mktRent.toFixed(2)}/SF`);
+        } else {
+          const ipRent = n(g.current_rent_per_sf);
+          lines.push(`  ${label}: ${count} units, ${psf.toLocaleString()} SF/unit, in-place $${ipRent.toFixed(2)}/SF, market $${mktRent.toFixed(2)}/SF`);
+        }
       }
-      if (g.will_renovate) lines.push(`    → Renovating ${count} units at ${fc(n(g.renovation_cost_per_unit))}/unit`);
+      if (!isGroundUp && g.will_renovate) lines.push(`    Renovating ${count} units at ${fc(n(g.renovation_cost_per_unit))}/unit`);
     }
 
-    // GPR in-place vs pro forma → implied loss-to-lease
+    // GPR. For acquisition deals we show in-place vs pro forma plus the
+    // implied loss-to-lease. For ground-up we only show the stabilized
+    // number since there's no existing tenant base to compare against.
     let inPlaceGPR = 0, proFormaGPR = 0;
     for (const g of unitGroups) {
       if (isSH) {
@@ -108,10 +135,14 @@ export function buildUnderwritingSummary(
         proFormaGPR += n(g.unit_count) * n(g.sf_per_unit) * n(g.market_rent_per_sf);
       }
     }
-    lines.push(`  Gross Potential Revenue: ${fc(inPlaceGPR)} in-place → ${fc(proFormaGPR)} pro forma`);
-    if (inPlaceGPR > 0 && proFormaGPR > inPlaceGPR) {
-      const ltl = ((proFormaGPR - inPlaceGPR) / proFormaGPR) * 100;
-      lines.push(`  Implied Loss-to-Lease: ${ltl.toFixed(1)}% (${fc(proFormaGPR - inPlaceGPR)}/yr uplift)`);
+    if (isGroundUp) {
+      if (proFormaGPR > 0) lines.push(`  Stabilized Gross Potential Revenue: ${fc(proFormaGPR)}/yr`);
+    } else {
+      lines.push(`  Gross Potential Revenue: ${fc(inPlaceGPR)} in-place, ${fc(proFormaGPR)} pro forma`);
+      if (inPlaceGPR > 0 && proFormaGPR > inPlaceGPR) {
+        const ltl = ((proFormaGPR - inPlaceGPR) / proFormaGPR) * 100;
+        lines.push(`  Implied Loss-to-Lease: ${ltl.toFixed(1)}% (${fc(proFormaGPR - inPlaceGPR)}/yr uplift)`);
+      }
     }
   }
 
@@ -122,7 +153,7 @@ export function buildUnderwritingSummary(
     lines.push(`\nOTHER INCOME (${otherIncome.length} sources, ${fc(total)}/yr):`);
     for (const o of otherIncome) {
       const amt = n(o.amount_annual) || n(o.amount_per_unit) * n(deal.units);
-      lines.push(`  ${o.label || "Other"}: ${fc(amt)}/yr${o.note ? ` — ${o.note}` : ""}`);
+      lines.push(`  ${o.label || "Other"}: ${fc(amt)}/yr${o.note ? ` (${o.note})` : ""}`);
     }
   }
   const commercialTenants: AnyRec[] = Array.isArray(uw.commercial_tenants) ? uw.commercial_tenants : [];
@@ -161,21 +192,55 @@ export function buildUnderwritingSummary(
   if (opexItems.length > 0) {
     const totalOpex = opexItems.reduce((s, [, v]) => s + v, 0);
     const opexPerUnit = units > 0 ? totalOpex / units : 0;
-    lines.push(`\nOPERATING EXPENSES (${fc(totalOpex)}/yr${opexPerUnit ? ` · $${Math.round(opexPerUnit).toLocaleString()}/unit/yr` : ""}):`);
+    lines.push(`\nOPERATING EXPENSES (${fc(totalOpex)}/yr${opexPerUnit ? ` | $${Math.round(opexPerUnit).toLocaleString()}/unit/yr` : ""}):`);
     for (const [label, val] of opexItems) {
       lines.push(`  ${label}: ${fc(val)}/yr`);
     }
   }
 
-  // ── CapEx ──────────────────────────────────────────────────────────────
+  // ── CapEx / Development Budget ─────────────────────────────────────────
+  // Acquisition-style deals use uw.capex_items (line items with quantity
+  // and cost_per_unit). Ground-up / development deals use
+  // uw.dev_budget_items (richer line items with category hard/soft,
+  // subcategory, and percentage-based rows that key off hard_costs or
+  // total_project). Both lived on the same UWData JSONB before this
+  // helper knew about them; now we route to the right one.
   const capexItems: AnyRec[] = Array.isArray(uw.capex_items) ? uw.capex_items : [];
+  const devBudgetItems: AnyRec[] = Array.isArray(uw.dev_budget_items) ? uw.dev_budget_items : [];
   const capexTotal = capexItems.reduce((s, c) => s + n(c.quantity) * n(c.cost_per_unit), 0);
-  if (capexItems.length > 0) {
-    lines.push(`\nCAPEX (${capexItems.length} items, ${fc(capexTotal)} total${units > 0 ? ` · $${Math.round(capexTotal / units).toLocaleString()}/unit` : ""}):`);
+  const devBudgetTotal = devBudgetItems.reduce((s, it) => s + n(it.amount), 0);
+  if (isGroundUp && devBudgetItems.length > 0) {
+    const hardItems = devBudgetItems.filter((it) => it.category === "hard");
+    const softItems = devBudgetItems.filter((it) => it.category === "soft");
+    const hardTotal = hardItems.reduce((s, it) => s + n(it.amount), 0);
+    const softTotal = softItems.reduce((s, it) => s + n(it.amount), 0);
+    lines.push(`\nDEVELOPMENT BUDGET (${devBudgetItems.length} line items, ${fc(devBudgetTotal)} total):`);
+    lines.push(`  Hard Costs: ${fc(hardTotal)}${sf > 0 ? ` ($${(hardTotal / sf).toFixed(0)}/GSF)` : ""}`);
+    for (const it of hardItems) {
+      const qty = n(it.quantity);
+      const unitCost = n(it.unit_cost);
+      const amt = n(it.amount);
+      const detail = it.is_pct
+        ? `${n(it.pct_value).toFixed(1)}% of ${it.pct_basis === "total_project" ? "total project" : "hard costs"}`
+        : `${qty.toLocaleString()} ${it.unit_label || "ea"} @ ${fc(unitCost)}`;
+      lines.push(`    ${it.label || it.subcategory || "Item"}: ${detail} = ${fc(amt)}`);
+    }
+    lines.push(`  Soft Costs: ${fc(softTotal)}${hardTotal > 0 ? ` (${((softTotal / hardTotal) * 100).toFixed(1)}% of hard)` : ""}`);
+    for (const it of softItems) {
+      const qty = n(it.quantity);
+      const unitCost = n(it.unit_cost);
+      const amt = n(it.amount);
+      const detail = it.is_pct
+        ? `${n(it.pct_value).toFixed(1)}% of ${it.pct_basis === "total_project" ? "total project" : "hard costs"}`
+        : `${qty.toLocaleString()} ${it.unit_label || "ea"} @ ${fc(unitCost)}`;
+      lines.push(`    ${it.label || it.subcategory || "Item"}: ${detail} = ${fc(amt)}`);
+    }
+  } else if (capexItems.length > 0) {
+    lines.push(`\nCAPEX (${capexItems.length} items, ${fc(capexTotal)} total${units > 0 ? `, $${Math.round(capexTotal / units).toLocaleString()}/unit` : ""}):`);
     for (const c of capexItems) {
       const qty = n(c.quantity);
       const cpu = n(c.cost_per_unit);
-      lines.push(`  ${c.label || "Item"}: ${qty} × ${fc(cpu)} = ${fc(qty * cpu)}${c.linked_unit_group_id ? " (renovation)" : ""}`);
+      lines.push(`  ${c.label || "Item"}: ${qty} x ${fc(cpu)} = ${fc(qty * cpu)}${c.linked_unit_group_id ? " (renovation)" : ""}`);
     }
   }
 
@@ -209,8 +274,14 @@ export function buildUnderwritingSummary(
   const fixedOpex = opexItems.reduce((s, [, v]) => s + v, 0);
   const totalOpexWithMgmt = mgmtFee + fixedOpex;
   const noi = egi - totalOpexWithMgmt;
-  const totalCost = purchasePrice + closingCosts + capexTotal;
-  const capRate = purchasePrice > 0 ? (noi / purchasePrice) * 100 : 0;
+  // Total capitalization: ground-up = land + dev budget (hard + soft already
+  // in devBudgetTotal). Acquisition = purchase + closing + capex.
+  const totalCost = isGroundUp
+    ? landCost + devBudgetTotal
+    : purchasePrice + closingCosts + capexTotal;
+  // Going-in cap only makes sense for acquisition deals (you're buying
+  // existing income). Ground-up deals go straight to yield-on-cost.
+  const capRate = !isGroundUp && purchasePrice > 0 ? (noi / purchasePrice) * 100 : 0;
   const yoc = totalCost > 0 ? (noi / totalCost) * 100 : 0;
   const exitValue = exitCapRate > 0 && noi > 0 ? noi / (exitCapRate / 100) : 0;
 
@@ -218,11 +289,11 @@ export function buildUnderwritingSummary(
     lines.push(`\nCOMPUTED RETURNS (stabilized, before debt):`);
     lines.push(`  Effective Gross Income: ${fc(egi)}`);
     lines.push(`  Operating Expenses (incl. mgmt fee): ${fc(totalOpexWithMgmt)}`);
-    lines.push(`  Pro Forma NOI: ${fc(noi)}${units > 0 ? ` · $${Math.round(noi / units).toLocaleString()}/unit` : ""}`);
-    lines.push(`  Going-In Cap Rate: ${pct(capRate)}`);
-    lines.push(`  Yield on Cost: ${pct(yoc)}`);
+    lines.push(`  Pro Forma NOI: ${fc(noi)}${units > 0 ? `, $${Math.round(noi / units).toLocaleString()}/unit` : ""}`);
+    if (!isGroundUp) lines.push(`  Going-In Cap Rate: ${pct(capRate)}`);
+    lines.push(`  ${isGroundUp ? "Stabilized " : ""}Yield on Cost: ${pct(yoc)}`);
     if (exitValue > 0) {
-      lines.push(`  Implied Exit Value: ${fc(exitValue)}${units > 0 ? ` · $${Math.round(exitValue / units).toLocaleString()}/unit` : ""}`);
+      lines.push(`  Implied Exit Value: ${fc(exitValue)}${units > 0 ? `, $${Math.round(exitValue / units).toLocaleString()}/unit` : ""}`);
     }
     if (uw.has_financing && totalCost > 0) {
       const acqLoan = totalCost * (n(uw.acq_ltc) / 100);
@@ -327,7 +398,7 @@ function formatAmiFromLocationIntel(rows: AnyRec[]): string {
         const parts = unitTypes
           .map(([t, k]) => (band[k] != null ? `${t}: $${Number(band[k]).toLocaleString()}/mo` : null))
           .filter(Boolean);
-        if (parts.length) lines.push(`  Max Rent @ ${label}: ${parts.join(" · ")}`);
+        if (parts.length) lines.push(`  Max Rent @ ${label}: ${parts.join(" | ")}`);
       }
     }
     return lines.join("\n");
@@ -379,7 +450,7 @@ export function buildMarketSummary(
     if (latest.report_name) latestBits.push(`"${latest.report_name}"`);
     if (latest.as_of_date) latestBits.push(new Date(latest.as_of_date).toLocaleDateString("en-US", { month: "short", year: "numeric" }));
     if (latest.msa || latest.submarket) latestBits.push([latest.submarket, latest.msa].filter(Boolean).join(" / "));
-    lines.push(`  Latest — ${latestBits.join(" | ")}`);
+    lines.push(`  Latest: ${latestBits.join(" | ")}`);
 
     const metricLabels: Array<[string, string, string]> = [
       ["vacancy_pct", "Vacancy", "%"],
@@ -429,9 +500,9 @@ export function buildMarketSummary(
         if (p.developer) bits.push(`by ${p.developer}`);
         if (p.units) bits.push(`${p.units} units`);
         else if (p.sf) bits.push(`${Number(p.sf).toLocaleString()} SF`);
-        if (p.expected_delivery) bits.push(`→ ${p.expected_delivery}`);
+        if (p.expected_delivery) bits.push(`delivery ${p.expected_delivery}`);
         if (p.status) bits.push(`(${String(p.status).replace("_", " ")})`);
-        lines.push(`      - ${bits.join(" · ")}`);
+        lines.push(`      - ${bits.join(" | ")}`);
       }
     }
 
@@ -451,7 +522,7 @@ export function buildMarketSummary(
         if (series.length >= 2) {
           const pretty = series
             .map((s) => `${s.publisher?.toUpperCase() || "?"} ${s.as_of ? new Date(s.as_of).toLocaleDateString("en-US", { month: "short", year: "2-digit" }) : "?"}: ${s.value}`)
-            .join(" → ");
+            .join(", then ");
           deltaLines.push(`    ${key.replace(/_/g, " ")}: ${pretty}`);
         }
       }
@@ -491,7 +562,7 @@ export function buildMarketSummary(
     if (avgCap) summary.push(`avg cap ${avgCap.toFixed(2)}%`);
     if (avgPPU) summary.push(`avg $${Math.round(avgPPU).toLocaleString()}/unit`);
     if (avgPSF) summary.push(`avg $${avgPSF.toFixed(0)}/SF`);
-    lines.push(`\nSALE COMPARABLES (${saleComps.length} selected${summary.length ? ` · ${summary.join(" · ")}` : ""}):`);
+    lines.push(`\nSALE COMPARABLES (${saleComps.length} selected${summary.length ? ` | ${summary.join(" | ")}` : ""}):`);
     for (const c of saleComps.slice(0, 10)) {
       const parts: string[] = [];
       if (c.name) parts.push(c.name);
@@ -518,7 +589,7 @@ export function buildMarketSummary(
     if (avgRPU) summary.push(`avg $${Math.round(avgRPU).toLocaleString()}/unit/mo`);
     if (avgRPSF) summary.push(`avg $${avgRPSF.toFixed(2)}/SF`);
     if (avgOcc) summary.push(`avg ${avgOcc.toFixed(1)}% occ`);
-    lines.push(`\nRENT COMPARABLES (${rentComps.length} selected${summary.length ? ` · ${summary.join(" · ")}` : ""}):`);
+    lines.push(`\nRENT COMPARABLES (${rentComps.length} selected${summary.length ? ` | ${summary.join(" | ")}` : ""}):`);
     for (const c of rentComps.slice(0, 10)) {
       const parts: string[] = [];
       if (c.name) parts.push(c.name);

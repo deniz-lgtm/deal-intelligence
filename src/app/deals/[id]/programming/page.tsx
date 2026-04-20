@@ -94,6 +94,11 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // Timestamp of the most recent successful programming save. Bumping
+  // this triggers the Programming→Underwriting auto-sync effect so we
+  // don't have to thread the call directly through saveAll (which has
+  // different useCallback deps).
+  const [lastSavedAt, setLastSavedAt] = useState(0);
   const [deal, setDeal] = useState<any>(null);
 
   // Data from UW JSONB
@@ -110,6 +115,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     overlays: string[];
     height_limits: Array<{ label: string; value: string }>;
   }>({ zoning_designation: "", overlays: [], height_limits: [] });
+  const [zoningOpen, setZoningOpen] = useState(false);
   const [unitGroups, setUnitGroups] = useState<any[]>([]);
   const [affordabilityConfig, setAffordabilityConfig] = useState<any>(null);
   const [taxesAnnual, setTaxesAnnual] = useState(0);
@@ -408,6 +414,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         body: JSON.stringify({ deal_id: params.id, data: merged }),
       });
       setDirty(false);
+      setLastSavedAt(Date.now());
       toast.success("Programming saved");
     } catch {
       toast.error("Failed to save");
@@ -423,15 +430,17 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     return () => clearTimeout(t);
   }, [dirty, loading, saveAll]);
 
-  // Push to Underwriting
-  const pushToUW = useCallback(async (scenario: any) => {
-    const summary = computeMassingSummary(scenario, zoningInputs);
-    try {
-      const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
-      const uwJson = await uwRes.json();
-      const current = uwJson.data?.data ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data) : {};
+  // Auto-sync to Underwriting after a successful save. Declared below
+  // once autoSyncProgrammingToUw is in scope (see effect further down
+  // the file) — see also the `lastSavedAt` state that triggers it.
 
-      const mix = scenario.unit_mix || [];
+  // Pure merge: given a scenario (one building stack) and a starting
+  // underwriting blob, return the merged blob WITHOUT any network calls
+  // or side effects. The same merge powers both the old manual push
+  // (now removed) and the new auto-sync loop.
+  const computePushedUw = useCallback((scenario: any, current: any) => {
+    const summary = computeMassingSummary(scenario, zoningInputs);
+    const mix = scenario.unit_mix || [];
       const resNRSF = summary.nrsf_by_use.residential || 0;
       const wavg = mix.length > 0 ? mix.reduce((s: number, m: any) => s + m.avg_sf * (m.allocation_pct / 100), 0) : 0;
       const totalU = wavg > 0 ? Math.floor(resNRSF / wavg) : summary.total_units;
@@ -457,20 +466,71 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         }
         return "";
       })();
+      // Preserve user-entered rent + affordability + lease fields across a
+      // re-push. Match an existing unit_group to the generated row by
+      // (building_id, bedrooms, sf_per_unit) first, then fall back to
+      // (building_id, label), then (building_id alone, single-row case).
+      // Anything the analyst typed in UW — market_rent_per_unit/sf/bed,
+      // affordability flags, lease_type, expense reimbursement — carries
+      // over so the auto-sync loop never stomps their work.
+      const existingUnitGroups = (current.unit_groups || []) as any[];
+      const findExistingMatch = (row: { bedrooms: number; sf_per_unit: number; label: string }) => {
+        const candidates = existingUnitGroups.filter((g) =>
+          buildingId ? g.site_plan_building_id === buildingId : true
+        );
+        return (
+          candidates.find((g) =>
+            (g.bedrooms ?? 0) === row.bedrooms &&
+            Math.abs((g.sf_per_unit ?? 0) - row.sf_per_unit) <= 2
+          ) ||
+          candidates.find((g) => (g.label || "").toLowerCase() === row.label.toLowerCase()) ||
+          (candidates.length === 1 ? candidates[0] : null)
+        );
+      };
       const generated = mix.length > 0
-        ? mix.map((m: any) => ({
-            id: uuidv4(),
-            label: buildingLabel ? `${buildingLabel} · ${m.type_label}` : m.type_label,
-            unit_count: Math.round(totalU * (m.allocation_pct / 100)),
-            renovation_count: 0, renovation_cost_per_unit: 0,
-            unit_change: "none", unit_change_count: 0,
-            bedrooms: m.type_label.includes("Studio") ? 0 : m.type_label.includes("3") ? 3 : m.type_label.includes("2") ? 2 : 1,
-            bathrooms: m.type_label.includes("3") ? 2 : 1, sf_per_unit: m.avg_sf,
-            current_rent_per_sf: 0, market_rent_per_sf: 0, lease_type: "NNN", expense_reimbursement_per_sf: 0,
-            current_rent_per_unit: 0, market_rent_per_unit: 0,
-            beds_per_unit: 1, current_rent_per_bed: 0, market_rent_per_bed: 0,
-            ...(buildingId ? { site_plan_building_id: buildingId } : {}),
-          }))
+        ? mix.map((m: any) => {
+            const baseLabel = buildingLabel ? `${buildingLabel} · ${m.type_label}` : m.type_label;
+            const bedrooms = m.type_label.includes("Studio") ? 0 : m.type_label.includes("3") ? 3 : m.type_label.includes("2") ? 2 : 1;
+            const sfPerUnit = m.avg_sf;
+            const match = findExistingMatch({ bedrooms, sf_per_unit: sfPerUnit, label: baseLabel });
+            return {
+              // Reuse the existing id when we have a match — keeps
+              // AffordabilityPlanner's per-group splits and any downstream
+              // references stable across syncs.
+              id: match?.id || uuidv4(),
+              label: baseLabel,
+              unit_count: Math.round(totalU * (m.allocation_pct / 100)),
+              renovation_count: match?.renovation_count ?? 0,
+              renovation_cost_per_unit: match?.renovation_cost_per_unit ?? 0,
+              unit_change: match?.unit_change ?? "none",
+              unit_change_count: match?.unit_change_count ?? 0,
+              bedrooms,
+              bathrooms: m.type_label.includes("3") ? 2 : 1,
+              sf_per_unit: sfPerUnit,
+              // Preserve user-entered rent/lease fields — these are what
+              // got wiped before every re-push.
+              current_rent_per_sf: match?.current_rent_per_sf ?? 0,
+              market_rent_per_sf: match?.market_rent_per_sf ?? 0,
+              lease_type: match?.lease_type ?? "NNN",
+              expense_reimbursement_per_sf: match?.expense_reimbursement_per_sf ?? 0,
+              current_rent_per_unit: match?.current_rent_per_unit ?? 0,
+              market_rent_per_unit: match?.market_rent_per_unit ?? 0,
+              beds_per_unit: match?.beds_per_unit ?? 1,
+              current_rent_per_bed: match?.current_rent_per_bed ?? 0,
+              market_rent_per_bed: match?.market_rent_per_bed ?? 0,
+              // Carry forward affordability flags if set (e.g. is_affordable,
+              // ami_pct, affordable_unit_count). Spread last so explicit
+              // values above win when defined, affordability extras ride along.
+              ...(match
+                ? Object.fromEntries(
+                    Object.entries(match).filter(([k]) =>
+                      ["is_affordable", "ami_pct", "affordable_unit_count", "affordability_tier", "affordable_rent_per_unit"].includes(k)
+                    )
+                  )
+                : {}),
+              ...(buildingId ? { site_plan_building_id: buildingId } : {}),
+            };
+          })
         : [];
       const newUnitGroups = (() => {
         if (buildingId) {
@@ -508,90 +568,116 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         return s + item.amount;
       }, 0);
 
+      // When the scenario belongs to a multi-building massing we push
+      // each building one-by-one — but each call overwrites the UW's
+      // max_gsf / max_nrsf, so the last building's SF would win. To
+      // keep the dev budget sized to the WHOLE massing, compute
+      // aggregate GSF/NRSF across every scenario in the same
+      // site_plan_scenario_id. Single-building massings fall straight
+      // through to this scenario's own summary.
+      const siteMassingId = scenario.site_plan_scenario_id || null;
+      const massingScenariosForPush = siteMassingId
+        ? buildingProgram.scenarios.filter(
+            (s) => s.site_plan_scenario_id === siteMassingId
+          )
+        : [scenario];
+      const aggregateMassing = massingScenariosForPush.reduce(
+        (acc, s) => {
+          const sm = computeMassingSummary(s, zoningInputs);
+          return {
+            total_gsf: acc.total_gsf + sm.total_gsf,
+            total_nrsf: acc.total_nrsf + sm.total_nrsf,
+            total_parking_spaces_est:
+              acc.total_parking_spaces_est + sm.total_parking_spaces_est,
+          };
+        },
+        { total_gsf: 0, total_nrsf: 0, total_parking_spaces_est: 0 }
+      );
+
       const merged = {
         ...current,
         development_mode: true,
-        max_gsf: summary.total_gsf, max_nrsf: summary.total_nrsf,
-        efficiency_pct: summary.total_gsf > 0 ? Math.round((summary.total_nrsf / summary.total_gsf) * 100) : 80,
+        max_gsf: aggregateMassing.total_gsf,
+        max_nrsf: aggregateMassing.total_nrsf,
+        efficiency_pct:
+          aggregateMassing.total_gsf > 0
+            ? Math.round(
+                (aggregateMassing.total_nrsf / aggregateMassing.total_gsf) * 100
+              )
+            : 80,
         unit_groups: newUnitGroups,
         mixed_use: mixedUseConfig,
         building_program: buildingProgram,
         other_income_items: otherIncomeItems,
         commercial_tenants: commercialTenants,
-        // Parking — auto-split 70% reserved / 30% unreserved with default rates
-        parking_reserved_spaces: Math.round(parkingSpaces * 0.7),
+        // Parking — auto-split 70% reserved / 30% unreserved with default
+        // rates. Uses the aggregate parking count so multi-building
+        // massings don't collapse to just the last building's stalls.
+        parking_reserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.7),
         parking_reserved_rate: current.parking_reserved_rate || 200,
-        parking_unreserved_spaces: Math.round(parkingSpaces * 0.3),
+        parking_unreserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.3),
         parking_unreserved_rate: current.parking_unreserved_rate || 100,
-        // Legacy fields for backward compat
-        rubs_per_unit_monthly: otherIncomeItems.find(i => i.label.toLowerCase().includes("rubs"))?.amount || 0,
+        // Legacy other-income scalars — zeroed because the underwriting
+        // calc now sums d.other_income_items directly (source of truth
+        // in one place). Leaving them populated would double-count
+        // items whose labels include "rubs" / "laundry".
+        rubs_per_unit_monthly: 0,
         parking_monthly: 0,
-        laundry_monthly: otherIncomeItems.find(i => i.label.toLowerCase().includes("laundry"))?.amount || 0,
+        laundry_monthly: 0,
       };
+      return merged;
+  }, [zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanMassings]);
 
-      await fetch("/api/underwriting", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deal_id: params.id, data: merged }),
-      });
-      toast.success(`Pushed to UW: ${fn(summary.total_gsf)} GSF, ${totalU} units, ${parkingSpaces} parking`);
+  // Fire AI OpEx + loan-sizing estimates in the background when the UW
+  // blob looks empty. Used by the auto-sync loop on the first successful
+  // sync so analysts don't have to manually click AI Estimate. Silent
+  // (no toasts) — the UW page shows the values when they arrive.
+  const maybeAutoRunAiEstimates = useCallback((current: any) => {
+    const hasOpex = current.taxes_annual > 0 || current.insurance_annual > 0;
+    if (hasOpex) return;
+    fetch(`/api/deals/${params.id}/opex-estimate`, { method: "POST" })
+      .then(r => r.json())
+      .then(json => {
+        if (!json.data) return;
+        const est = json.data;
+        fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
+          const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
+          const opexMerged = { ...cur,
+            vacancy_rate: est.vacancy_rate ?? cur.vacancy_rate,
+            management_fee_pct: est.management_fee_pct ?? cur.management_fee_pct,
+            taxes_annual: est.taxes_annual ?? cur.taxes_annual,
+            insurance_annual: est.insurance_annual ?? cur.insurance_annual,
+            repairs_annual: est.repairs_annual ?? cur.repairs_annual,
+            utilities_annual: est.utilities_annual ?? cur.utilities_annual,
+            ga_annual: est.ga_annual ?? cur.ga_annual,
+            marketing_annual: est.marketing_annual ?? cur.marketing_annual,
+            reserves_annual: est.reserves_annual ?? cur.reserves_annual,
+            opex_narrative: est.basis || "",
+            opex_item_notes: (est.item_notes && typeof est.item_notes === "object") ? est.item_notes : (cur.opex_item_notes || {}),
+          };
+          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: opexMerged }) });
+        });
+      }).catch(() => {});
 
-      // Auto-trigger AI OpEx estimate if opex fields are empty
-      const hasOpex = current.taxes_annual > 0 || current.insurance_annual > 0;
-      if (!hasOpex) {
-        toast.info("Running AI OpEx estimate...");
-        fetch(`/api/deals/${params.id}/opex-estimate`, { method: "POST" })
-          .then(r => r.json())
-          .then(json => {
-            if (json.data) {
-              const est = json.data;
-              // Merge opex into UW
-              fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
-                const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
-                const opexMerged = { ...cur,
-                  vacancy_rate: est.vacancy_rate ?? cur.vacancy_rate,
-                  management_fee_pct: est.management_fee_pct ?? cur.management_fee_pct,
-                  taxes_annual: est.taxes_annual ?? cur.taxes_annual,
-                  insurance_annual: est.insurance_annual ?? cur.insurance_annual,
-                  repairs_annual: est.repairs_annual ?? cur.repairs_annual,
-                  utilities_annual: est.utilities_annual ?? cur.utilities_annual,
-                  ga_annual: est.ga_annual ?? cur.ga_annual,
-                  marketing_annual: est.marketing_annual ?? cur.marketing_annual,
-                  reserves_annual: est.reserves_annual ?? cur.reserves_annual,
-                  opex_narrative: est.basis || "",
-                };
-                fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: opexMerged }) });
-                toast.success("AI OpEx estimate applied to underwriting");
-              });
-            }
-          }).catch(() => {});
-
-        // Auto-trigger AI loan sizing
-        fetch(`/api/deals/${params.id}/loan-size`, { method: "POST" })
-          .then(r => r.json())
-          .then(json => {
-            if (json.data) {
-              const est = json.data;
-              fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
-                const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
-                const loanMerged = { ...cur,
-                  has_financing: true,
-                  acq_ltc: est.acq_ltc ?? cur.acq_ltc,
-                  acq_interest_rate: est.acq_interest_rate ?? cur.acq_interest_rate,
-                  acq_amort_years: est.acq_amort_years ?? cur.acq_amort_years,
-                  acq_io_years: est.acq_io_years ?? cur.acq_io_years,
-                  loan_narrative: est.narrative || "",
-                };
-                fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: loanMerged }) });
-                toast.success("AI loan sizing applied to underwriting");
-              });
-            }
-          }).catch(() => {});
-      }
-    } catch {
-      toast.error("Failed to push to underwriting");
-    }
-  }, [params.id, zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanMassings]);
+    fetch(`/api/deals/${params.id}/loan-size`, { method: "POST" })
+      .then(r => r.json())
+      .then(json => {
+        if (!json.data) return;
+        const est = json.data;
+        fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
+          const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
+          const loanMerged = { ...cur,
+            has_financing: true,
+            acq_ltc: est.acq_ltc ?? cur.acq_ltc,
+            acq_interest_rate: est.acq_interest_rate ?? cur.acq_interest_rate,
+            acq_amort_years: est.acq_amort_years ?? cur.acq_amort_years,
+            acq_io_years: est.acq_io_years ?? cur.acq_io_years,
+            loan_narrative: est.narrative || "",
+          };
+          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: loanMerged }) });
+        });
+      }).catch(() => {});
+  }, [params.id]);
 
   // Snapshot the current programming state as a named UW Scenario.
   // Called automatically by "Push <Massing> to UW" so each massing push
@@ -691,80 +777,166 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     }
   }, [params.id, sitePlanMassings]);
 
-  const snapshotMassingToUw = useCallback(async (massingName: string) => {
+  // (The old `snapshotMassingToUw` lived here. Auto-sync now owns the
+  // snapshotting inline — see autoSyncProgrammingToUw below — so the
+  // function was removed to keep one write path.)
+
+  // Helper: pick the base-case massing (falls back to the first one
+  // when nothing is flagged, so baseline UW is never empty).
+  const resolveBaseMassing = useCallback(() => {
+    return sitePlanMassings.find((m) => m.is_base_case) || sitePlanMassings[0] || null;
+  }, [sitePlanMassings]);
+
+  // Auto-sync the entire programming state to Underwriting.
+  //
+  // Replaces the explicit "Push <Massing> to UW" button. Runs after
+  // every successful programming save, silently:
+  //   1. Live UW is rebuilt from the BASE-CASE massing's building
+  //      stacks (or the first massing when none is flagged). User-
+  //      entered rents and affordability are preserved by the
+  //      per-unit-group match in computePushedUw.
+  //   2. Every massing (including the base case) is snapshotted as a
+  //      named UW Scenario. Non-base-case snapshots start from their
+  //      previously-saved state (so user-entered rents/OpEx on that
+  //      scenario survive), then have the massing's structural fields
+  //      refreshed on top.
+  //   3. A single PUT writes the updated live UW + scenarios list.
+  const autoSyncProgrammingToUw = useCallback(async () => {
+    if (sitePlanMassings.length === 0) return;
     try {
       const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
       const uwJson = await uwRes.json();
-      const current = uwJson.data?.data
+      const fetched = uwJson.data?.data
         ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data)
         : {};
-      // Sum a quick summary across the linked stacks of this massing
-      // for the saved-scenarios list display on Underwriting.
-      const linkedScenarios = (current.building_program?.scenarios || []).filter(
-        (s: any) => s.site_plan_scenario_id === activeMassingId
+
+      const baseMassing = resolveBaseMassing();
+      if (!baseMassing) return;
+
+      // 1) Apply base-case buildings to live UW.
+      let live: any = { ...fetched };
+      const baseBuildings = buildingProgram.scenarios.filter(
+        (s) => s.site_plan_scenario_id === baseMassing.id
       );
-      const summarized = linkedScenarios.reduce(
-        (acc: any, s: any) => {
-          const gsf = (s.floors || []).reduce((x: number, f: any) => x + (f.floor_plate_sf || 0), 0);
-          const nrsf = (s.floors || []).reduce(
-            (x: number, f: any) => x + Math.round((f.floor_plate_sf || 0) * ((f.efficiency_pct || 0) / 100)),
-            0
-          );
-          const units = (s.floors || []).reduce((x: number, f: any) => x + (f.units_on_floor || 0), 0);
-          const parkingSf = (s.floors || []).reduce(
-            (x: number, f: any) => x + (f.use_type === "parking" ? f.floor_plate_sf : 0),
-            0
-          );
-          return {
-            total_gsf: (acc.total_gsf || 0) + gsf,
-            total_nrsf: (acc.total_nrsf || 0) + nrsf,
-            total_units: (acc.total_units || 0) + units,
-            total_parking_spaces_est:
-              (acc.total_parking_spaces_est || 0) +
-              Math.floor(parkingSf / (s.parking_sf_per_space || 350)),
-            buildings_count: (acc.buildings_count || 0) + 1,
-          };
-        },
-        {}
+      for (const s of baseBuildings) {
+        live = computePushedUw(s, live);
+      }
+
+      // Prune orphan unit_groups whose site_plan_building_id no longer
+      // maps to a current massing's building. Without this, a legacy
+      // "Building 1" (from an old single-building site plan) or a
+      // building that was renamed / deleted keeps showing up in the
+      // Revenue table as a phantom header. Untagged groups
+      // (site_plan_building_id === null/undefined) are legacy flat-mode
+      // rows and are always kept.
+      const liveBuildingIds = new Set<string>(
+        sitePlanMassings.flatMap((m) => m.buildings.map((b) => b.id))
       );
-      // De-dupe by name: replace an existing scenario with the same
-      // massing name so re-pushing doesn't pile up duplicates.
-      const existing = Array.isArray(current.uw_scenarios) ? current.uw_scenarios : [];
-      const nameClash = existing.findIndex((x: any) => x.name === massingName);
-      const snapshot = {
-        id:
-          (typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
-            ? (crypto as any).randomUUID()
-            : `uws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-        name: massingName,
-        created_at: new Date().toISOString(),
-        site_plan_scenario_id: activeMassingId,
-        building_program: current.building_program || null,
-        unit_groups: current.unit_groups || [],
-        other_income_items: current.other_income_items || [],
-        commercial_tenants: current.commercial_tenants || [],
-        summary: summarized,
+      live = {
+        ...live,
+        unit_groups: (live.unit_groups || []).filter((g: any) => {
+          const bid = g.site_plan_building_id;
+          return !bid || liveBuildingIds.has(bid);
+        }),
       };
-      const next = nameClash >= 0
-        ? existing.map((x: any, i: number) => (i === nameClash ? snapshot : x))
-        : [...existing, snapshot];
+
+      // 2) Build updated scenario snapshots for every massing.
+      const existingScenarios: any[] = Array.isArray(live.uw_scenarios) ? live.uw_scenarios : [];
+      const updatedScenarios: any[] = [];
+      for (const mng of sitePlanMassings) {
+        const prev = existingScenarios.find((x) => x.name === mng.name);
+        // Seed the scenario state from the prior snapshot when present
+        // — this is how per-scenario rents/OpEx/affordability survive
+        // structural edits. First-time sync seeds from live UW so the
+        // scenario starts with sensible defaults.
+        let scnState: any = prev?.state ? { ...prev.state } : { ...live };
+        delete scnState.uw_scenarios;
+        const mngBuildings = buildingProgram.scenarios.filter(
+          (s) => s.site_plan_scenario_id === mng.id
+        );
+        for (const s of mngBuildings) {
+          scnState = computePushedUw(s, scnState);
+        }
+        // Prune orphans inside this scenario too — keep only unit_groups
+        // tied to this massing's buildings (or untagged legacy rows).
+        const scnBuildingIds = new Set<string>(mng.buildings.map((b) => b.id));
+        scnState = {
+          ...scnState,
+          unit_groups: (scnState.unit_groups || []).filter((g: any) => {
+            const bid = g.site_plan_building_id;
+            return !bid || scnBuildingIds.has(bid);
+          }),
+        };
+        // Quick structural summary for the saved-scenarios card.
+        const summary = mngBuildings.reduce(
+          (acc: any, s: any) => {
+            const sm = computeMassingSummary(s, zoningInputs);
+            return {
+              total_gsf: (acc.total_gsf || 0) + sm.total_gsf,
+              total_nrsf: (acc.total_nrsf || 0) + sm.total_nrsf,
+              total_units: (acc.total_units || 0) + sm.total_units,
+              total_parking_spaces_est: (acc.total_parking_spaces_est || 0) + sm.total_parking_spaces_est,
+              buildings_count: (acc.buildings_count || 0) + 1,
+            };
+          },
+          {}
+        );
+        const { uw_scenarios: _ignore, notes: _ignore2, ...cleanState } = scnState;
+        updatedScenarios.push({
+          id:
+            prev?.id ||
+            (typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
+              ? (crypto as any).randomUUID()
+              : `uws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+          name: mng.name,
+          created_at: prev?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          site_plan_scenario_id: mng.id,
+          is_base_case: mng.id === baseMassing.id,
+          state: cleanState,
+          building_program: cleanState.building_program || null,
+          unit_groups: cleanState.unit_groups || [],
+          other_income_items: cleanState.other_income_items || [],
+          commercial_tenants: cleanState.commercial_tenants || [],
+          summary,
+        });
+      }
+
+      // 3) Prune stale scenarios whose massings no longer exist.
+      const livingMassingIds = new Set(sitePlanMassings.map((m) => m.id));
+      const survivingLegacy = existingScenarios.filter(
+        (x) => !x.site_plan_scenario_id || livingMassingIds.has(x.site_plan_scenario_id)
+      ).filter(
+        (x) => !updatedScenarios.some((u) => u.name === x.name)
+      );
+
+      const next = { ...live, uw_scenarios: [...updatedScenarios, ...survivingLegacy] };
       await fetch("/api/underwriting", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          deal_id: params.id,
-          data: { ...current, uw_scenarios: next },
-        }),
+        body: JSON.stringify({ deal_id: params.id, data: next }),
       });
-      toast.success(
-        nameClash >= 0
-          ? `Updated UW scenario "${massingName}"`
-          : `Saved as UW scenario "${massingName}"`
-      );
+      maybeAutoRunAiEstimates(fetched);
     } catch {
-      toast.error("Failed to snapshot massing as UW scenario");
+      // Silent — auto-sync runs on every save; a toast on each failure
+      // would be noisy. The explicit Save button's toast still fires.
     }
-  }, [params.id, activeMassingId]);
+  }, [params.id, sitePlanMassings, buildingProgram, zoningInputs, computePushedUw, resolveBaseMassing, maybeAutoRunAiEstimates]);
+
+  // Fire Programming→Underwriting auto-sync after every successful
+  // save. Replaces the manual "Push <Massing> to UW" button — every
+  // massing stays in sync with Underwriting automatically, and each
+  // massing is also snapshotted as a named UW Scenario so the
+  // analyst can still load alternates from the UW page.
+  // Use a ref for the callback so the effect only fires when
+  // lastSavedAt actually changes — not every time any of the callback's
+  // dependencies (buildingProgram, etc.) shift mid-edit.
+  const autoSyncRef = React.useRef(autoSyncProgrammingToUw);
+  useEffect(() => { autoSyncRef.current = autoSyncProgrammingToUw; }, [autoSyncProgrammingToUw]);
+  useEffect(() => {
+    if (lastSavedAt === 0) return;
+    autoSyncRef.current();
+  }, [lastSavedAt]);
 
   if (loading) return <div className="flex items-center justify-center py-24"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
 
@@ -846,7 +1018,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         <div>
           <h2 className="text-xl font-bold">Programming</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Define what you&apos;re building — massing, unit mix, commercial tenants, and income sources. Push to underwriting when ready.
+            Define what you&apos;re building — massing, unit mix, commercial tenants, and income sources. Every save syncs to Underwriting automatically.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -854,35 +1026,24 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           <Button variant="outline" size="sm" onClick={saveAll} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
-          {currentMassing && massingScenarios.length > 0 && (
-            <Button
-              size="sm"
-              onClick={async () => {
-                if (massingScenarios.length > 1) {
-                  toast.info(`Pushing ${currentMassing.name} (${massingScenarios.length} buildings)…`);
-                }
-                for (const s of massingScenarios) {
-                  await pushToUW(s);
-                }
-                // After the buildings are pushed, snapshot the whole
-                // massing as a named UW Scenario so it shows in the
-                // Underwriting "Saved Scenarios" panel.
-                await snapshotMassingToUw(currentMassing.name);
-              }}
-              className="bg-primary hover:bg-primary/90"
-              title={`Push the ${currentMassing.name} massing (all ${massingScenarios.length} building${massingScenarios.length === 1 ? "" : "s"}) to Underwriting and save it as a UW Scenario named "${currentMassing.name}"`}
-            >
-              <ArrowRight className="h-4 w-4 mr-2" /> Push {currentMassing.name} to UW
-            </Button>
-          )}
+          <a
+            href={`/deals/${params.id}/underwriting`}
+            className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            title="Open the Underwriting page — programming changes have already flowed through."
+          >
+            <ArrowRight className="h-4 w-4 mr-2" /> Go to Underwriting
+          </a>
         </div>
       </div>
 
       {/* Massing tabs — driven 1:1 by site_plan.scenarios. To rename,
           add or delete a Massing the analyst goes back to Site & Zoning;
           this page is read-only on the structure (it just edits the
-          floor stacks within each cell). */}
-      {hasMultipleMassings && (
+          floor stacks within each cell).
+          Shown even in the single-massing case so the analyst always
+          knows which massing they're editing — the chip acts as a
+          breadcrumb and an affordance for adding alternates later. */}
+      {sitePlanMassings.length > 0 && (
         <MassingTabsRow
           massings={sitePlanMassings}
           activeMassingId={currentMassing?.id ?? null}
@@ -949,69 +1110,96 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         </div>
       )}
 
-      {/* Read-only zoning + spotted-bonus chips. Keeps the constraints
-          driving the active massing visible without forcing the analyst
-          to flip back to Site & Zoning. Values are sourced from the
-          UW blob's zoning_info. A link-out at the end jumps back to
-          Site & Zoning if something needs changing. */}
+      {/* Collapsed by default. Zoning and bonus constraints drive the
+          massing but the analyst rarely references them while editing
+          unit mix / rents. A one-line summary stays visible so they
+          know the context exists; click to expand for full chips. */}
       {(zoningContext.zoning_designation ||
         zoningContext.overlays.length > 0 ||
         zoningContext.height_limits.length > 0 ||
         zoningInputs.far > 0 ||
         zoningInputs.lot_coverage_pct > 0 ||
         densityBonuses.length > 0) && (
-        <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">
-            Zoning
-          </span>
-          {zoningContext.zoning_designation && (
-            <ZoningChip color="blue">{zoningContext.zoning_designation}</ZoningChip>
-          )}
-          {zoningInputs.far > 0 && (
-            <ZoningChip color="blue">FAR {zoningInputs.far}</ZoningChip>
-          )}
-          {zoningInputs.lot_coverage_pct > 0 && (
-            <ZoningChip color="blue">Coverage ≤ {zoningInputs.lot_coverage_pct}%</ZoningChip>
-          )}
-          {zoningContext.height_limits
-            .filter((h) => typeof h?.value === "string" && h.value.trim() !== "")
-            .slice(0, 2)
-            .map((h, i) => (
-              <ZoningChip key={`hl-${i}`} color="blue" title={typeof h.label === "string" ? h.label : undefined}>
-                {String(h.value)}
-              </ZoningChip>
-            ))}
-          {zoningContext.overlays
-            .filter((o) => typeof o === "string" && o.trim() !== "")
-            .slice(0, 3)
-            .map((o, i) => (
-              <ZoningChip key={`ov-${i}`} color="slate">{String(o)}</ZoningChip>
-            ))}
-          {densityBonuses.length > 0 && (
-            <>
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground mx-1">
-                Bonuses
-              </span>
-              {densityBonuses.map((b, i) => (
-                <ZoningChip
-                  key={`db-${i}`}
-                  color="emerald"
-                  title={typeof b?.description === "string" ? b.description : undefined}
-                >
-                  {String(b?.source || "")}
-                  {typeof b?.additional_density === "string" && b.additional_density
-                    ? ` · ${b.additional_density}`
-                    : ""}
-                </ZoningChip>
-              ))}
-            </>
-          )}
-          <a
-            href={`/deals/${params.id}/site-zoning`}
-            className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline decoration-dotted"
+        <div className="border border-border/40 rounded-md bg-muted/5">
+          <button
+            onClick={() => setZoningOpen((o) => !o)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/15 transition-colors"
           >
-            Edit on Site &amp; Zoning →
-          </a>
+            {zoningOpen ? (
+              <ChevronDown className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+            ) : (
+              <ChevronRight className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+            )}
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Zoning constraints
+            </span>
+            {!zoningOpen && (
+              <span className="text-[11px] text-muted-foreground/80 truncate">
+                {[
+                  zoningContext.zoning_designation,
+                  zoningInputs.far > 0 ? `FAR ${zoningInputs.far}` : null,
+                  zoningInputs.lot_coverage_pct > 0 ? `Cov ≤ ${zoningInputs.lot_coverage_pct}%` : null,
+                  densityBonuses.length > 0
+                    ? `${densityBonuses.length} bonus${densityBonuses.length > 1 ? "es" : ""}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            )}
+          </button>
+          {zoningOpen && (
+            <div className="flex items-center gap-1.5 flex-wrap text-[11px] px-3 pb-2 pt-1 border-t border-border/40">
+              {zoningContext.zoning_designation && (
+                <ZoningChip color="blue">{zoningContext.zoning_designation}</ZoningChip>
+              )}
+              {zoningInputs.far > 0 && (
+                <ZoningChip color="blue">FAR {zoningInputs.far}</ZoningChip>
+              )}
+              {zoningInputs.lot_coverage_pct > 0 && (
+                <ZoningChip color="blue">Coverage ≤ {zoningInputs.lot_coverage_pct}%</ZoningChip>
+              )}
+              {zoningContext.height_limits
+                .filter((h) => typeof h?.value === "string" && h.value.trim() !== "")
+                .slice(0, 2)
+                .map((h, i) => (
+                  <ZoningChip key={`hl-${i}`} color="blue" title={typeof h.label === "string" ? h.label : undefined}>
+                    {String(h.value)}
+                  </ZoningChip>
+                ))}
+              {zoningContext.overlays
+                .filter((o) => typeof o === "string" && o.trim() !== "")
+                .slice(0, 3)
+                .map((o, i) => (
+                  <ZoningChip key={`ov-${i}`} color="slate">{String(o)}</ZoningChip>
+                ))}
+              {densityBonuses.length > 0 && (
+                <>
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground mx-1">
+                    Bonuses
+                  </span>
+                  {densityBonuses.map((b, i) => (
+                    <ZoningChip
+                      key={`db-${i}`}
+                      color="emerald"
+                      title={typeof b?.description === "string" ? b.description : undefined}
+                    >
+                      {String(b?.source || "")}
+                      {typeof b?.additional_density === "string" && b.additional_density
+                        ? ` · ${b.additional_density}`
+                        : ""}
+                    </ZoningChip>
+                  ))}
+                </>
+              )}
+              <a
+                href={`/deals/${params.id}/site-zoning`}
+                className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline decoration-dotted"
+              >
+                Edit on Site &amp; Zoning →
+              </a>
+            </div>
+          )}
         </div>
       )}
 
@@ -1108,10 +1296,14 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           return unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0) || 100;
         })()}
         avgMarketRent={(() => {
-          if (unitGroups.length === 0) return 0;
-          const totalUnits = unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
+          // Exclude post-split affordable rows so the planner's revenue
+          // impact preview reflects the actual market rent, not a rent
+          // already pulled down by AMI-capped rows.
+          const marketRows = (unitGroups as any[]).filter((g) => !g?.is_affordable);
+          if (marketRows.length === 0) return 0;
+          const totalUnits = marketRows.reduce((s: number, g: any) => s + (g.unit_count || 0), 0);
           if (totalUnits === 0) return 0;
-          const totalRent = unitGroups.reduce((s: number, g: any) => s + (g.unit_count || 0) * (g.market_rent_per_unit || 0), 0);
+          const totalRent = marketRows.reduce((s: number, g: any) => s + (g.unit_count || 0) * (g.market_rent_per_unit || 0), 0);
           return totalRent / totalUnits;
         })()}
         currentTaxes={taxesAnnual}

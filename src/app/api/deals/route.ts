@@ -5,6 +5,11 @@ import { DILIGENCE_CHECKLIST_TEMPLATE } from "@/lib/types";
 import { requireAuth, requirePermission, syncCurrentUser } from "@/lib/auth";
 import { geocodeAddress, buildCompAddress } from "@/lib/geocode";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const { userId, errorResponse } = await requireAuth();
   if (errorResponse) return errorResponse;
@@ -45,6 +50,7 @@ export async function POST(req: NextRequest) {
       notes: body.notes ?? null,
       land_acres: body.land_acres ?? null,
       investment_strategy: body.investment_strategy ?? null,
+      deal_scope: body.deal_scope ?? null,
       loi_executed: false,
       psa_executed: false,
       business_plan_id: body.business_plan_id ?? null,

@@ -3,6 +3,11 @@ import { dealRoomQueries, watermarkPdf } from "@/lib/deal-room";
 import { getPool } from "@/lib/db";
 import { readFile } from "@/lib/blob-storage";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/room/[token]/documents/[docId]
  *

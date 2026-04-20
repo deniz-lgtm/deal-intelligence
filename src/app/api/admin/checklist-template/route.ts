@@ -5,6 +5,11 @@ import { requireAdmin } from "@/lib/auth";
 import { recordAudit } from "@/lib/admin-helpers";
 import { DILIGENCE_CHECKLIST_TEMPLATE } from "@/lib/types";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 async function ensureSeeded() {
   const count = await checklistTemplateQueries.count();
   if (count > 0) return;

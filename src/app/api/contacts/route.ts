@@ -3,6 +3,11 @@ import { v4 as uuidv4 } from "uuid";
 import { contactQueries, getPool } from "@/lib/db";
 import { requirePermission } from "@/lib/auth";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 async function ensureContactsTable() {
   const pool = getPool();
   await pool.query(`

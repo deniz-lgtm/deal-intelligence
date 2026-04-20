@@ -4,6 +4,11 @@ import { dealQueries, dealNoteQueries, omAnalysisQueries, underwritingQueries } 
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 const MODEL = "claude-sonnet-4-6";
 
 function parseJsonArray(raw: string): unknown[] {
@@ -97,15 +102,19 @@ export async function POST(
       if (isGroundUp) {
         const prompt = buildGroundUpPrompt(dealInfo, summaryText, redFlagsText, recommendationsText, contextText);
         const response = await client.messages.create(
-          { model: MODEL, max_tokens: 500, messages: [{ role: "user", content: prompt }] },
+          { model: MODEL, max_tokens: 1200, messages: [{ role: "user", content: prompt }] },
           { signal: controller.signal }
         );
         const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
         const parsed = parseJsonObject(raw);
+        const items = Array.isArray(parsed?.items) ? parsed!.items : [];
         return NextResponse.json({
           hard_cost_per_sf: parsed?.hard_cost_per_sf ?? 150,
           soft_cost_pct: parsed?.soft_cost_pct ?? 25,
           basis: parsed?.basis ?? "",
+          // Itemized per-subcategory unit costs so the Dev Budget
+          // table gets real numbers, not just the aggregate $/GSF.
+          items,
           strategy: "ground_up",
         });
       }
@@ -245,11 +254,54 @@ CALIBRATION:
 - If parking and podium make up >30% of GSF, pricing trends higher — note this in basis.
 - If the analyst notes or OM call out market-specific drivers (hard-market insurance, labor tightness, agency-required prevailing wage), incorporate them.
 
+ITEMIZED OUTPUT — produce a unit_cost for every row the Dev Budget
+will render. The analyst's itemized budget uses these subcategories
+(match the names exactly so the UI can map them):
+
+  Hard:
+    - site_work          → $/Land SF  (sitework, utilities, landscape)
+    - off_sites          → $/LF of frontage (usually 0 unless offsites flagged)
+    - vertical           → $/GSF (shell & core, the biggest line)
+    - parking_structure  → $/space (structured/below-grade; 0 if surface-only)
+    - ffe_amenities      → $/NRSF (common/amenity FF&E)
+    - general_conditions → % of hard
+    - contractor_fee     → % of hard
+    - contingency        → % of hard
+  Soft:
+    - a_and_e            → % of hard (architecture + engineering)
+    - permits            → $/unit (permits + impact fees)
+    - legal              → lump sum total $
+    - dev_fee            → % of hard
+    - marketing_leaseup  → $/unit
+    - insurance          → lump sum total $
+    - accounting         → lump sum total $
+
+For EVERY row return either {unit_cost: <number>} (non-% rows) OR
+{pct_value: <number>, is_pct: true} (% rows). Zero is acceptable when
+a line truly doesn't apply — never omit a row.
+
 Return ONLY a JSON object, no explanation:
 {
   "hard_cost_per_sf": 245,
   "soft_cost_pct": 25,
-  "basis": "5-over-1 wood-frame MF in Austin TX, mid-2025 pricing. Base Type III/V ~$215/GSF + ~15% for structured podium parking (28% of GSF) + 3% escalation to mid-construction = ~$245/GSF. Soft at 25% reflects typical 24-mo entitlement/construction timeline and market-rate interest reserve."
+  "basis": "5-over-1 wood-frame MF in Austin TX, mid-2025 pricing: Type III/V ~$215/GSF + 15% for podium parking (28% of GSF) + 3% escalation. One sentence only.",
+  "items": [
+    { "subcategory": "site_work",          "unit_cost": 18 },
+    { "subcategory": "off_sites",          "unit_cost": 0 },
+    { "subcategory": "vertical",           "unit_cost": 215 },
+    { "subcategory": "parking_structure",  "unit_cost": 35000 },
+    { "subcategory": "ffe_amenities",      "unit_cost": 12 },
+    { "subcategory": "general_conditions", "is_pct": true, "pct_value": 4 },
+    { "subcategory": "contractor_fee",     "is_pct": true, "pct_value": 4 },
+    { "subcategory": "contingency",        "is_pct": true, "pct_value": 5 },
+    { "subcategory": "a_and_e",            "is_pct": true, "pct_value": 7 },
+    { "subcategory": "permits",            "unit_cost": 8500 },
+    { "subcategory": "legal",              "unit_cost": 125000 },
+    { "subcategory": "dev_fee",            "is_pct": true, "pct_value": 4 },
+    { "subcategory": "marketing_leaseup",  "unit_cost": 1500 },
+    { "subcategory": "insurance",          "unit_cost": 150000 },
+    { "subcategory": "accounting",         "unit_cost": 60000 }
+  ]
 }`;
 }
 
@@ -279,11 +331,11 @@ PRODUCT-TYPE PLAYBOOKS:
 - MIXED-USE / HOSPITALITY: keep unit + PIP scope separate; differentiate FF&E vs. Case Goods vs. soft goods.
 
 RULES:
-- Every item needs a realistic quantity and a unit of measure: "per unit", "per SF", "lump sum", "per bay", "per door".
-- Cost_per_unit is the UNIT RATE, not the line total — the line total = quantity × cost_per_unit.
-- Basis must cite the reason (age from year-built, scope tier tied to business plan, comp rent premium, OM red flag).
-- Prioritize items that are either (a) capital-critical (roof, HVAC, envelope, parking) or (b) directly tied to the rent lift / re-tenanting thesis. Avoid noise like "miscellaneous repairs" — that belongs in operating reserves.
-- Use a renovation-vintage lens: properties 15+ years past last capital event usually need envelope + MEP; 5-10 years out typically just cosmetic + targeted mechanical.
+- Every item has a realistic quantity and unit of measure: per unit / per SF / lump sum / per bay / per door.
+- cost_per_unit is the UNIT RATE, not the line total — line total = quantity × cost_per_unit.
+- basis is ONE short phrase (≤ 20 words): cite the reason in fragment form. No full sentences. Example format: "18k SF TPO, age >20yrs, ~$14/SF incl. tear-off". No paragraphs.
+- Prioritize items that are capital-critical (roof, HVAC, envelope, parking) or directly tied to the rent-lift / re-tenanting thesis. No "miscellaneous repairs".
+- 15+ years past last capital event → envelope + MEP. 5-10 years → cosmetic + targeted mechanical.
 
 Return ONLY a JSON array, no explanation:
 [
@@ -292,14 +344,14 @@ Return ONLY a JSON array, no explanation:
     "quantity": 1,
     "unit": "lump sum",
     "cost_per_unit": 45000,
-    "basis": "18,000 SF flat TPO roof, age >20 yrs per year-built, replacement at ~$14/SF incl. tear-off and insulation"
+    "basis": "18k SF TPO, age >20yrs, ~$14/SF incl. tear-off + insulation"
   },
   {
     "label": "HVAC Replacement — RTUs",
     "quantity": 4,
     "unit": "unit",
     "cost_per_unit": 8000,
-    "basis": "4 rooftop package units at end-of-life (15+ yrs); $8k per 5-ton RTU installed"
+    "basis": "4 RTUs end-of-life (15+ yrs); $8k per 5-ton unit installed"
   }
 ]`;
 }

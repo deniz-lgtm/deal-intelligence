@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Loader2, Brain, Users, Lightbulb, AlertTriangle, StickyNote, Footprints } from "lucide-react";
+import Link from "next/link";
+import { Plus, Trash2, Loader2, Brain, Users, Lightbulb, AlertTriangle, StickyNote, Footprints, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { DealNote, DealNoteCategory } from "@/lib/types";
 import { DEAL_NOTE_CATEGORIES } from "@/lib/types";
@@ -17,10 +18,15 @@ const CATEGORY_STYLES: Record<DealNoteCategory, { icon: typeof Brain; color: str
 interface DealNotesProps {
   dealId: string;
   compact?: boolean;
+  // When set, the list renders at most `preview` notes and appends a
+  // "View all N notes" link to /notes?deal=<dealId>. The add-note form
+  // still renders so analysts can drop a note inline from the overview
+  // page. Omit or set to undefined for the full listing.
+  preview?: number;
   onNotesChanged?: () => void;
 }
 
-export default function DealNotes({ dealId, compact, onNotesChanged }: DealNotesProps) {
+export default function DealNotes({ dealId, compact, preview, onNotesChanged }: DealNotesProps) {
   const [notes, setNotes] = useState<DealNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [newText, setNewText] = useState("");
@@ -130,7 +136,7 @@ export default function DealNotes({ dealId, compact, onNotesChanged }: DealNotes
         </div>
       ) : (
         <div className="space-y-2">
-          {notes.map(note => {
+          {(preview ? notes.slice(0, preview) : notes).map(note => {
             const cat = note.category as DealNoteCategory;
             const style = CATEGORY_STYLES[cat] || CATEGORY_STYLES.context;
             const cfg = DEAL_NOTE_CATEGORIES[cat] || DEAL_NOTE_CATEGORIES.context;
@@ -142,8 +148,8 @@ export default function DealNotes({ dealId, compact, onNotesChanged }: DealNotes
                   {cfg.label}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm ${compact ? "line-clamp-2" : ""}`}>{note.text}</p>
-                  {!compact && (
+                  <p className={`text-sm ${compact || preview ? "line-clamp-2" : ""}`}>{note.text}</p>
+                  {!compact && !preview && (
                     <p className="text-[10px] text-muted-foreground mt-0.5">
                       {note.source === "chat" ? "via chat" : note.source === "ai" ? "AI generated" : ""}
                       {note.source !== "manual" && " · "}
@@ -160,6 +166,15 @@ export default function DealNotes({ dealId, compact, onNotesChanged }: DealNotes
               </div>
             );
           })}
+          {preview && notes.length > preview && (
+            <Link
+              href={`/notes?deal=${dealId}`}
+              className="flex items-center justify-between gap-2 text-xs text-primary hover:underline pt-1.5 border-t border-border/30 mt-1"
+            >
+              <span>View all {notes.length} notes for this deal</span>
+              <ArrowRight className="h-3 w-3" />
+            </Link>
+          )}
         </div>
       )}
     </div>

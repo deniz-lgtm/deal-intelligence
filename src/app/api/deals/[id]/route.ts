@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries } from "@/lib/db";
+import { dealQueries, documentQueries, photoQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess, requireDealEditAccess, requirePermission } from "@/lib/auth";
 import { geocodeAddress, buildCompAddress } from "@/lib/geocode";
+import { deleteBlob } from "@/lib/blob-storage";
+
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
 
 export async function GET(
   _req: NextRequest,
@@ -78,6 +84,26 @@ export async function DELETE(
     if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
     if (deal.owner_id !== userId) {
       return NextResponse.json({ error: "Only the deal owner can delete it" }, { status: 403 });
+    }
+
+    // Collect every blob tied to the deal BEFORE the DB cascade deletes
+    // the rows that point to them. Without this step the Postgres ON
+    // DELETE CASCADE cleans up the metadata but leaves every file
+    // sitting in R2 forever — silently accumulating storage cost.
+    // Failures here are non-fatal (best-effort cleanup); the deal is
+    // still deleted so the user isn't blocked on storage hiccups.
+    try {
+      const [docs, pics] = await Promise.all([
+        documentQueries.getByDealId(params.id).catch(() => []),
+        photoQueries.getByDealId(params.id).catch(() => []),
+      ]);
+      const paths = [
+        ...docs.map((d: any) => d.file_path).filter(Boolean),
+        ...pics.map((p: any) => p.file_path).filter(Boolean),
+      ];
+      await Promise.allSettled(paths.map((p) => deleteBlob(p)));
+    } catch (err) {
+      console.warn("Blob cleanup failed for deal", params.id, err);
     }
 
     await dealQueries.delete(params.id);

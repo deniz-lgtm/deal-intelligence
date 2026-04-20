@@ -4,6 +4,11 @@ import { dealQueries, documentQueries, checklistQueries, dealNoteQueries } from 
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { analyzeZoning } from "@/lib/claude";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } }

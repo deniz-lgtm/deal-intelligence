@@ -11,6 +11,11 @@ import {
 } from "@/lib/deal-analytics-context";
 import { fetchCapitalMarketsSnapshot } from "@/lib/capital-markets";
 
+// Opt out of static analysis at `next build`. Routes that call requireAuth()
+// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
+// generation phase unless the route is explicitly marked dynamic.
+export const dynamic = "force-dynamic";
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -25,12 +30,18 @@ export async function POST(
     const sections: string[] | undefined = body.sections;
 
     const deal = await dealQueries.getById(params.id);
+    if (!deal) {
+      return NextResponse.json(
+        { error: "Deal not found — it may have been deleted" },
+        { status: 404 }
+      );
+    }
 
     const [documents, checklist, uwRow, omAnalysis, locationIntelRows, compsAll, submarketMetrics, marketReports] = await Promise.all([
-      documentQueries.getByDealId(params.id) as Promise<Document[]>,
-      checklistQueries.getByDealId(params.id) as Promise<ChecklistItem[]>,
-      underwritingQueries.getByDealId(params.id),
-      omAnalysisQueries.getByDealId(params.id),
+      documentQueries.getByDealId(params.id).catch(() => []) as Promise<Document[]>,
+      checklistQueries.getByDealId(params.id).catch(() => []) as Promise<ChecklistItem[]>,
+      underwritingQueries.getByDealId(params.id).catch(() => null),
+      omAnalysisQueries.getByDealId(params.id).catch(() => null),
       locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
       compQueries.getByDealId(params.id).catch(() => []),
       submarketMetricsQueries.getByDealId(params.id).catch(() => null),
@@ -40,29 +51,44 @@ export async function POST(
     // Parse raw UW data — it's stored as JSONB, may be string or object
     let rawUw: Record<string, unknown> | null = null;
     if (uwRow?.data) {
-      rawUw = typeof uwRow.data === "string" ? JSON.parse(uwRow.data) : uwRow.data;
+      try {
+        rawUw = typeof uwRow.data === "string" ? JSON.parse(uwRow.data) : uwRow.data;
+      } catch (err) {
+        console.warn("dd-abstract: failed to parse UW data JSONB:", err);
+      }
     }
 
     // Fetch deal notes from the new unified table
-    const allDealNotes = await dealNoteQueries.getByDealId(params.id);
+    const allDealNotes = await dealNoteQueries
+      .getByDealId(params.id)
+      .catch(() => [] as Array<{ text: string; category: string }>);
 
     // Live FRED rates — threaded through the market block so the abstract
     // references today's 10Y UST + SOFR rather than stale assumptions.
-    const capitalMarkets = await fetchCapitalMarketsSnapshot().catch(() => null);
+    const capitalMarkets = await fetchCapitalMarketsSnapshot().catch((err) => {
+      console.warn("dd-abstract: fetchCapitalMarketsSnapshot failed:", err);
+      return null;
+    });
 
     // Build a comprehensive underwriting summary + OM comparison + market
-    // context. All three use the SAME helpers as the Investment Package
-    // generator so the two documents never drift on computed metrics.
+    // context. Each helper is wrapped so a single bad field in the UW JSONB
+    // or a missing location-intel row doesn't 500 the whole abstract.
+    const safe = <T>(fn: () => T, label: string, fallback: T): T => {
+      try { return fn(); } catch (err) {
+        console.error(`dd-abstract: ${label} threw —`, err);
+        return fallback;
+      }
+    };
     const uwSummary = [
-      buildUnderwritingSummary(rawUw, deal, allDealNotes),
-      buildOmSummary(omAnalysis),
-      buildMarketSummary(
+      safe(() => buildUnderwritingSummary(rawUw, deal, allDealNotes), "buildUnderwritingSummary", ""),
+      safe(() => buildOmSummary(omAnalysis), "buildOmSummary", ""),
+      safe(() => buildMarketSummary(
         submarketMetrics as Record<string, unknown> | null,
         compsAll as Array<Record<string, unknown>>,
         locationIntelRows as Array<Record<string, unknown>>,
         marketReports as Array<Record<string, unknown>>,
         capitalMarkets
-      ),
+      ), "buildMarketSummary", ""),
     ].filter(Boolean).join("\n\n");
 
     // Build context from memory-included deal notes
@@ -96,7 +122,11 @@ export async function POST(
     return NextResponse.json({ data: abstract });
   } catch (error) {
     console.error("POST /api/deals/[id]/dd-abstract error:", error);
-    return NextResponse.json({ error: "Failed to generate DD abstract" }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: `Failed to generate DD abstract: ${message.slice(0, 300)}` },
+      { status: 500 }
+    );
   }
 }
 

@@ -7,8 +7,14 @@ import { ArrowLeft, Building2, FileText, Loader2, Sparkles, XCircle, BookOpen, S
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { DealStatus, PropertyType, BusinessPlan, InvestmentThesis } from "@/lib/types";
-import { INVESTMENT_THESIS_LABELS, INVESTMENT_THESIS_DESCRIPTIONS } from "@/lib/types";
+import type { DealStatus, PropertyType, BusinessPlan, InvestmentThesis, DealScope } from "@/lib/types";
+import {
+  INVESTMENT_THESIS_LABELS,
+  INVESTMENT_THESIS_DESCRIPTIONS,
+  DEAL_SCOPE_LABELS,
+  DEAL_SCOPE_DESCRIPTIONS,
+  suggestScopeFromStrategy,
+} from "@/lib/types";
 
 const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
   { value: "multifamily", label: "Multifamily" },
@@ -40,6 +46,16 @@ const STRATEGY_OPTIONS: { value: InvestmentThesis; label: string; desc: string }
   { value: "opportunistic", label: INVESTMENT_THESIS_LABELS.opportunistic, desc: INVESTMENT_THESIS_DESCRIPTIONS.opportunistic },
 ];
 
+const SCOPE_OPTIONS: { value: DealScope; label: string; desc: string }[] = [
+  { value: "acquisition", label: DEAL_SCOPE_LABELS.acquisition, desc: DEAL_SCOPE_DESCRIPTIONS.acquisition },
+  { value: "value_add_expansion", label: DEAL_SCOPE_LABELS.value_add_expansion, desc: DEAL_SCOPE_DESCRIPTIONS.value_add_expansion },
+  { value: "ground_up", label: DEAL_SCOPE_LABELS.ground_up, desc: DEAL_SCOPE_DESCRIPTIONS.ground_up },
+];
+
+// Only fields that actually flow into downstream features. Legacy fields that
+// were never read (entitlement_status, environmental_phase, demolition_required,
+// expected_delivery, bedrooms) have been removed — those are tracked on the
+// diligence checklist, dev schedule, or underwriting where they're actually used.
 const EMPTY_FORM = {
   name: "",
   address: "",
@@ -48,19 +64,14 @@ const EMPTY_FORM = {
   zip: "",
   property_type: "multifamily" as PropertyType,
   investment_strategy: "" as string,
+  deal_scope: "" as string,
   status: "sourcing" as DealStatus,
   asking_price: "",
   square_footage: "",
   units: "",
-  bedrooms: "",
   year_built: "",
   notes: "",
-  // Ground-up / Redevelopment fields
   land_acres: "",
-  entitlement_status: "" as string,
-  demolition_required: false,
-  environmental_phase: "" as string,
-  expected_delivery: "",
 };
 
 export default function NewDealPage() {
@@ -74,6 +85,7 @@ export default function NewDealPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [listingUrl, setListingUrl] = useState("");
   const [extractingUrl, setExtractingUrl] = useState(false);
+  const [enrichingAddress, setEnrichingAddress] = useState(false);
 
   // Business plan state
   const [plans, setPlans] = useState<BusinessPlan[]>([]);
@@ -103,7 +115,16 @@ export default function NewDealPage() {
   }, []);
 
   const set = (field: string, value: string) =>
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [field]: value };
+      // When a user picks (or an extractor sets) an investment strategy, suggest
+      // the matching scope — but only if the user hasn't already chosen one.
+      if (field === "investment_strategy" && !prev.deal_scope) {
+        const suggested = suggestScopeFromStrategy(value as InvestmentThesis | "");
+        if (suggested) next.deal_scope = suggested;
+      }
+      return next;
+    });
 
   async function handleOmFile(file: File) {
     if (!file.name.match(/\.(pdf|docx?)$/i)) {
@@ -139,6 +160,53 @@ export default function NewDealPage() {
       setExtractError(err instanceof Error ? err.message : "Extraction failed");
     } finally {
       setExtracting(false);
+    }
+  }
+
+  // Enrich from address when the user has no OM and no listing URL. Uses
+  // Claude web_search against public records / listing aggregators. Only fills
+  // blanks — never overwrites fields the user has already typed.
+  async function handleEnrichAddress() {
+    const { address, city, state, zip, property_type } = form;
+    if (!address || !city || !state) {
+      toast.error("Enter address, city, and state first");
+      return;
+    }
+    setEnrichingAddress(true);
+    setExtractError(null);
+    try {
+      const res = await fetch("/api/address-enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, city, state, zip, property_type }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Enrichment failed");
+
+      const d = json.data;
+      const filled: string[] = [];
+      setForm((prev) => {
+        const next = { ...prev };
+        // Only fill blanks — don't overwrite user-entered values.
+        if (!prev.name && d.name) { next.name = d.name; filled.push("name"); }
+        if (prev.property_type === "multifamily" && d.property_type) { next.property_type = d.property_type; filled.push("property type"); }
+        if (!prev.year_built && d.year_built) { next.year_built = String(d.year_built); filled.push("year built"); }
+        if (!prev.square_footage && d.square_footage) { next.square_footage = String(d.square_footage); filled.push("SF"); }
+        if (!prev.units && d.units) { next.units = String(d.units); filled.push("units"); }
+        if (!prev.asking_price && d.asking_price) { next.asking_price = String(d.asking_price); filled.push("asking price"); }
+        if (!prev.notes && d.description) { next.notes = `Public-records lookup:\n${d.description}${d.notes ? `\n\n${d.notes}` : ""}`; }
+        return next;
+      });
+
+      if (filled.length === 0) {
+        toast(d.notes || "No additional details found for this address");
+      } else {
+        toast.success(`Filled: ${filled.join(", ")}`);
+      }
+    } catch (err) {
+      setExtractError(err instanceof Error ? err.message : "Failed to enrich from address");
+    } finally {
+      setEnrichingAddress(false);
     }
   }
 
@@ -196,10 +264,10 @@ export default function NewDealPage() {
           asking_price: form.asking_price ? Number(form.asking_price) : null,
           square_footage: form.square_footage ? Number(form.square_footage) : null,
           units: form.units ? Number(form.units) : null,
-          bedrooms: form.bedrooms ? Number(form.bedrooms) : null,
           year_built: form.year_built ? Number(form.year_built) : null,
           land_acres: form.land_acres ? Number(form.land_acres) : null,
           investment_strategy: form.investment_strategy || null,
+          deal_scope: form.deal_scope || null,
           business_plan_id: selectedPlanId,
         }),
       });
@@ -233,8 +301,12 @@ export default function NewDealPage() {
         await fetch(`/api/deals/${dealId}/om-init`, { method: "POST", body: fd });
         router.push(`/deals/${dealId}/om-analysis`);
       } else {
-        // Auto-run AI zoning report for ground-up deals with an address
-        if (form.investment_strategy === "ground_up" && form.address) {
+        // Auto-run AI zoning report when the scope involves new construction
+        // (ground-up scope is the primary signal; legacy ground_up strategy still triggers it).
+        const wantsZoningReport =
+          form.deal_scope === "ground_up" ||
+          (!form.deal_scope && form.investment_strategy === "ground_up");
+        if (wantsZoningReport && form.address) {
           toast.success("Deal created — running AI zoning report...");
           fetch(`/api/deals/${dealId}/zoning-report`, { method: "POST" }).catch(() => {});
           router.push(`/deals/${dealId}/site-zoning`);
@@ -553,7 +625,7 @@ export default function NewDealPage() {
                   className="input-field"
                 />
               </Field>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <Field label="Property Type">
                   <select
                     value={form.property_type}
@@ -563,20 +635,6 @@ export default function NewDealPage() {
                     {PROPERTY_TYPES.map((t) => (
                       <option key={t.value} value={t.value}>
                         {t.label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Investment Strategy">
-                  <select
-                    value={form.investment_strategy}
-                    onChange={(e) => set("investment_strategy", e.target.value)}
-                    className="input-field"
-                  >
-                    <option value="">Select strategy...</option>
-                    {STRATEGY_OPTIONS.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
                       </option>
                     ))}
                   </select>
@@ -595,6 +653,61 @@ export default function NewDealPage() {
                   </select>
                 </Field>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Investment Strategy">
+                  <select
+                    value={form.investment_strategy}
+                    onChange={(e) => set("investment_strategy", e.target.value)}
+                    className="input-field"
+                  >
+                    <option value="">Select strategy...</option>
+                    {STRATEGY_OPTIONS.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Deal Scope">
+                  <select
+                    value={form.deal_scope}
+                    onChange={(e) => setForm((prev) => ({ ...prev, deal_scope: e.target.value }))}
+                    className="input-field"
+                  >
+                    <option value="">Select scope...</option>
+                    {SCOPE_OPTIONS.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              {form.deal_scope && (() => {
+                // Surface an explicit Redevelopment indicator so the user
+                // knows WHY the Redevelopment Inputs section below appears
+                // (or doesn't). Acquisitions get a matching "no redev" note.
+                const isRedev =
+                  form.deal_scope === "ground_up" || form.deal_scope === "value_add_expansion";
+                return (
+                  <div className="flex items-center gap-2 -mt-2">
+                    <span
+                      className={`text-2xs font-medium px-2 py-0.5 rounded-full border ${
+                        isRedev
+                          ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                          : "bg-muted/30 text-muted-foreground border-border/40"
+                      }`}
+                    >
+                      {isRedev ? "Redevelopment" : "No redevelopment"}
+                    </span>
+                    <p className="text-2xs text-muted-foreground">
+                      {isRedev
+                        ? DEAL_SCOPE_DESCRIPTIONS[form.deal_scope as DealScope]
+                        : "Site / development inputs are hidden — just the underwriting fundamentals."}
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           </Section>
 
@@ -636,11 +749,33 @@ export default function NewDealPage() {
                   />
                 </Field>
               </div>
+              {/* AI enrichment from address — for deals with no OM and no listing URL. */}
+              {!omFile && (
+                <div className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/10 px-3 py-2">
+                  <div className="text-2xs text-muted-foreground">
+                    No OM or listing URL? Let AI look up public records + listings for this address.
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleEnrichAddress}
+                    disabled={enrichingAddress || !form.address || !form.city || !form.state}
+                    className="h-8 shrink-0"
+                  >
+                    {enrichingAddress ? (
+                      <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Looking up...</>
+                    ) : (
+                      <><Sparkles className="h-3.5 w-3.5 mr-1.5" />Enrich from address</>
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
           </Section>
 
-          {/* Property Details */}
-          <Section title="Property Details">
+          {/* Property Snapshot — optional financial/physical details. */}
+          <Section title="Property Snapshot">
             <div className="grid grid-cols-2 gap-4">
               <Field label="Asking Price ($)">
                 <input
@@ -669,15 +804,6 @@ export default function NewDealPage() {
                   className="input-field tabular-nums"
                 />
               </Field>
-              <Field label="Total Bedrooms (student housing)">
-                <input
-                  type="number"
-                  value={form.bedrooms}
-                  onChange={(e) => set("bedrooms", e.target.value)}
-                  placeholder="72"
-                  className="input-field tabular-nums"
-                />
-              </Field>
               <Field label="Year Built">
                 <input
                   type="number"
@@ -690,9 +816,13 @@ export default function NewDealPage() {
             </div>
           </Section>
 
-          {/* Ground-Up / Redevelopment Details */}
-          {(form.investment_strategy === "ground_up" || form.investment_strategy === "opportunistic") && (
-          <Section title="Development Details">
+          {/* Redevelopment Inputs — only when the scope adds or alters
+              buildings (ground_up or value_add_expansion). Acquisitions
+              skip this block entirely so the create flow stays lean.
+              Entitlement / environmental / demolition / delivery tracking
+              lives on the diligence checklist + dev schedule. */}
+          {(form.deal_scope === "ground_up" || form.deal_scope === "value_add_expansion") && (
+          <Section title="Redevelopment Inputs">
             <div className="grid grid-cols-2 gap-4">
               <Field label="Land (Acres)">
                 <input
@@ -703,55 +833,6 @@ export default function NewDealPage() {
                   placeholder="2.5"
                   className="input-field tabular-nums"
                 />
-              </Field>
-              <Field label="Entitlement Status">
-                <select
-                  value={form.entitlement_status}
-                  onChange={(e) => set("entitlement_status", e.target.value)}
-                  className="input-field"
-                >
-                  <option value="">Select...</option>
-                  <option value="not_entitled">Not Entitled</option>
-                  <option value="pre_application">Pre-Application</option>
-                  <option value="application_filed">Application Filed</option>
-                  <option value="pending_approval">Pending Approval</option>
-                  <option value="entitled">Entitled / Approved</option>
-                </select>
-              </Field>
-              <Field label="Environmental Phase">
-                <select
-                  value={form.environmental_phase}
-                  onChange={(e) => set("environmental_phase", e.target.value)}
-                  className="input-field"
-                >
-                  <option value="">Select...</option>
-                  <option value="none">Not Started</option>
-                  <option value="phase_1_complete">Phase I ESA Complete</option>
-                  <option value="phase_2_needed">Phase II Needed</option>
-                  <option value="phase_2_complete">Phase II Complete</option>
-                  <option value="remediation_needed">Remediation Required</option>
-                  <option value="cleared">Cleared / No Issues</option>
-                </select>
-              </Field>
-              <Field label="Expected Delivery">
-                <input
-                  type="text"
-                  value={form.expected_delivery}
-                  onChange={(e) => set("expected_delivery", e.target.value)}
-                  placeholder="Q3 2028"
-                  className="input-field"
-                />
-              </Field>
-              <Field label="">
-                <label className="flex items-center gap-2 text-sm py-2">
-                  <input
-                    type="checkbox"
-                    checked={form.demolition_required}
-                    onChange={(e) => setForm(p => ({ ...p, demolition_required: e.target.checked }))}
-                    className="accent-primary"
-                  />
-                  Demolition / Abatement Required
-                </label>
               </Field>
             </div>
           </Section>

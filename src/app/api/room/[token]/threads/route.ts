@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealRoomQueries } from "@/lib/deal-room";
 
+// Opt out of static analysis at `next build`. Reads auth / headers() / DB.
+// Without this flag Next.js evaluates the handler during static-page
+// generation and throws Dynamic-server / DATABASE_URL errors.
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/room/[token]/threads — list Q&A threads for the guest.
  * POST /api/room/[token]/threads — create a new thread or reply.
