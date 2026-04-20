@@ -263,7 +263,6 @@ interface DrawingSurfaceProps {
   tool: Tool;
   draft: SitePlanPoint[];
   setDraft: React.Dispatch<React.SetStateAction<SitePlanPoint[]>>;
-  cursor: SitePlanPoint | null;
   setCursor: (p: SitePlanPoint | null) => void;
   snapRightAngleOn: boolean;
   snapVertexOn: boolean;
@@ -398,6 +397,105 @@ function DrawingSurface({
 // ── Small helper: latlng → leaflet-ready tuple ───────────────────────────────
 const toLatLng = (p: SitePlanPoint): [number, number] => [p.lat, p.lng];
 
+// ── Cursor pub/sub ───────────────────────────────────────────────────────────
+// Cursor position (a SitePlanPoint | null) moves on every mousemove. If we
+// stored it in useState on SitePlanGenerator, every mousemove would rerender
+// the entire map tree (thousands of Leaflet nodes on a built-out plan) and
+// cause the click-point jank. Instead the parent owns a ref + listener set;
+// the child components that actually need cursor subscribe via this hook
+// and are the only things that rerender ~60×/s.
+type CursorListenersRef = React.MutableRefObject<Set<(p: SitePlanPoint | null) => void>>;
+type CursorRef = React.MutableRefObject<SitePlanPoint | null>;
+
+function useCursorSubscription(listenersRef: CursorListenersRef, cursorRef: CursorRef) {
+  const [c, setC] = useState<SitePlanPoint | null>(cursorRef.current);
+  useEffect(() => {
+    const fn = (p: SitePlanPoint | null) => setC(p);
+    const set = listenersRef.current;
+    set.add(fn);
+    return () => { set.delete(fn); };
+  }, [listenersRef]);
+  return c;
+}
+
+// Ghost polyline from the last committed draft vertex to the snapped cursor
+// position, plus a dimension label on the cursor end. Renders inside the
+// MapContainer. Self-updates on cursor changes without bubbling to the parent.
+function GhostOverlay({
+  tool, draft, listenersRef, cursorRef, draftColor,
+}: {
+  tool: Tool;
+  draft: SitePlanPoint[];
+  listenersRef: CursorListenersRef;
+  cursorRef: CursorRef;
+  draftColor: string;
+}) {
+  const cursor = useCursorSubscription(listenersRef, cursorRef);
+  if (tool === "pan" || draft.length === 0 || !cursor) return null;
+  const a = draft[draft.length - 1];
+  const lenFt = segmentLengthFt(a, cursor);
+  return (
+    <>
+      <Polyline
+        positions={[a, cursor].map(toLatLng)}
+        pathOptions={{ color: draftColor, weight: 1.5, opacity: 0.6, dashArray: "2 4" }}
+      />
+      <CircleMarker
+        center={toLatLng(cursor)}
+        radius={5}
+        pathOptions={{ color: draftColor, fillColor: draftColor, fillOpacity: 0.5, weight: 2 }}
+      >
+        <Tooltip permanent direction="top" offset={[0, -8]} className="site-plan-dim-label">
+          {Math.round(lenFt)} ft
+        </Tooltip>
+      </CircleMarker>
+    </>
+  );
+}
+
+// Live SF / LF / measure-total span in the bottom-center drawing hint.
+// Same isolation trick as GhostOverlay — only this tiny span rerenders on
+// mousemove.
+function LiveMetricsLabel({
+  tool, draft, listenersRef, cursorRef,
+}: {
+  tool: Tool;
+  draft: SitePlanPoint[];
+  listenersRef: CursorListenersRef;
+  cursorRef: CursorRef;
+}) {
+  const cursor = useCursorSubscription(listenersRef, cursorRef);
+  if (tool !== "measure" && tool !== "frontage" && draft.length >= 3) {
+    const liveArea = polygonAreaSf(cursor ? [...draft, cursor] : draft);
+    return (
+      <span className="ml-2 text-emerald-300 tabular-nums">
+        {Math.round(liveArea).toLocaleString()} SF
+      </span>
+    );
+  }
+  if (tool === "frontage" && draft.length >= 2) {
+    let total = 0;
+    for (let i = 0; i < draft.length - 1; i++) total += segmentLengthFt(draft[i], draft[i + 1]);
+    if (cursor) total += segmentLengthFt(draft[draft.length - 1], cursor);
+    return (
+      <span className="ml-2 text-amber-300 tabular-nums">
+        {Math.round(total).toLocaleString()} LF
+      </span>
+    );
+  }
+  if (tool === "measure" && draft.length >= 1) {
+    let total = 0;
+    for (let i = 0; i < draft.length - 1; i++) total += segmentLengthFt(draft[i], draft[i + 1]);
+    if (cursor) total += segmentLengthFt(draft[draft.length - 1], cursor);
+    return (
+      <span className="ml-2 text-cyan-300 tabular-nums">
+        {Math.round(total).toLocaleString()} ft total
+      </span>
+    );
+  }
+  return null;
+}
+
 // ── The full component ──────────────────────────────────────────────────────
 
 export default function SitePlanGenerator({
@@ -414,7 +512,17 @@ export default function SitePlanGenerator({
   const [pipelineRadiusMi, setPipelineRadiusMi] = useState(3);
   const [pipelineData, setPipelineData] = useState<PipelineData | null>(null);
   const [draft, setDraft] = useState<SitePlanPoint[]>([]);
-  const [cursor, setCursor] = useState<SitePlanPoint | null>(null);
+  // Cursor position is tracked via a ref + listener set rather than
+  // useState to avoid re-rendering the entire map tree on every
+  // mousemove. Only the small overlay children that depend on cursor
+  // subscribe to updates. Pre-refactor this was ~thousands of leaflet
+  // nodes rebuilt per mousemove — the click-point jank the user saw.
+  const cursorRef = useRef<SitePlanPoint | null>(null);
+  const cursorListenersRef = useRef<Set<(p: SitePlanPoint | null) => void>>(new Set());
+  const setCursor = useCallback((p: SitePlanPoint | null) => {
+    cursorRef.current = p;
+    for (const fn of cursorListenersRef.current) fn(p);
+  }, []);
   const [snapshotting, setSnapshotting] = useState(false);
   const mapRef = useRef<L.Map | null>(null);
   // "Hold space to pan" override — a ref the DrawingSurface reads. We
@@ -445,9 +553,20 @@ export default function SitePlanGenerator({
   // When user picks a different tool, clear the in-progress draft (unless
   // they're resuming drawing on the same layer). Simplest rule: switching
   // tool aborts the draft.
+  //
+  // Special-case: switching to Frontage with an existing frontage already
+  // saved seeds the draft from those points so the analyst can continue
+  // editing (undo vertices, append, then Finish to overwrite). Without
+  // this, the Frontage tool only ever *creates* a new frontage and the
+  // only way to edit was to redraw from scratch.
   const switchTool = (t: Tool) => {
     setTool(t);
-    setDraft([]);
+    const scen = (value.scenarios || []).find((s) => s.id === value.active_scenario_id);
+    if (t === "frontage" && scen?.frontage_points && scen.frontage_points.length >= 2) {
+      setDraft(scen.frontage_points);
+    } else {
+      setDraft([]);
+    }
     setCursor(null);
   };
 
@@ -765,7 +884,10 @@ export default function SitePlanGenerator({
       if (tool === "pan") return;
       if (e.key === "Enter") {
         e.preventDefault();
-        if (draft.length >= 3) finish();
+        // Frontage is an open polyline and finishes on ≥2 points; all
+        // other tools close a polygon and need ≥3.
+        const minPoints = tool === "frontage" ? 2 : 3;
+        if (draft.length >= minPoints) finish();
       } else if (e.key === "Escape") {
         e.preventDefault();
         if (draft.length > 0) setDraft([]);
@@ -854,37 +976,11 @@ export default function SitePlanGenerator({
     return all;
   }, [tool, parcelPoints, buildings]);
 
-  // Live ghost polyline from last draft vertex → snapped cursor.
-  const ghostLine = useMemo<SitePlanPoint[] | null>(() => {
-    if (tool === "pan" || draft.length === 0 || !cursor) return null;
-    return [draft[draft.length - 1], cursor];
-  }, [tool, draft, cursor]);
-
-  // Live area of the in-progress polygon (if closable).
-  const liveArea = useMemo(() => {
-    if (tool === "pan" || draft.length < 3) return 0;
-    return polygonAreaSf(cursor ? [...draft, cursor] : draft);
-  }, [tool, draft, cursor]);
-
-  // Ghost segment dimension label (ft).
-  const ghostLenFt = useMemo(() => {
-    if (!ghostLine) return 0;
-    return segmentLengthFt(ghostLine[0], ghostLine[1]);
-  }, [ghostLine]);
-
-  // Running total distance for the measure tool, including the ghost
-  // segment if the cursor is on the map. Zero outside measure mode.
-  const measureTotalFt = useMemo(() => {
-    if (tool !== "measure" || draft.length === 0) return 0;
-    let total = 0;
-    for (let i = 0; i < draft.length - 1; i++) {
-      total += segmentLengthFt(draft[i], draft[i + 1]);
-    }
-    if (cursor && draft.length >= 1) {
-      total += segmentLengthFt(draft[draft.length - 1], cursor);
-    }
-    return total;
-  }, [tool, draft, cursor]);
+  // Ghost polyline / live area / measure-total all depend on cursor, which
+  // updates every mousemove. They're computed inside the GhostOverlay /
+  // LiveMetricsLabel child components (which subscribe to cursorListenersRef)
+  // so the parent component doesn't re-render ~60 times a second while
+  // the user is drawing.
 
   // Save center/zoom back to site_plan after the user pans. We debounce via
   // moveend to avoid spamming onChange.
@@ -1060,8 +1156,8 @@ export default function SitePlanGenerator({
             </button>
             <button
               onClick={finish}
-              disabled={draft.length < 3}
-              title="Finish polygon (Enter / double-click)"
+              disabled={draft.length < (tool === "frontage" ? 2 : 3)}
+              title={tool === "frontage" ? "Finish frontage (Enter / double-click)" : "Finish polygon (Enter / double-click)"}
               className="h-7 px-2 flex items-center gap-1 rounded-md text-xs text-emerald-300 hover:bg-emerald-500/15 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Check className="h-3.5 w-3.5" /> Finish
@@ -1202,6 +1298,23 @@ export default function SitePlanGenerator({
           >
             <Trash2 className="h-3 w-3" /> Buildings
           </button>
+          {/* Clear frontage — only enabled when a frontage is present.
+              Lets the analyst wipe and redraw without having to toggle
+              into the Frontage tool first. */}
+          <button
+            disabled={!activeScen?.frontage_points || activeScen.frontage_points.length === 0}
+            onClick={() =>
+              updateActiveScenario((scen) => ({
+                ...scen,
+                frontage_points: [],
+                frontage_length_ft: 0,
+              }))
+            }
+            className="h-7 px-2 flex items-center gap-1 rounded-md text-[10px] text-amber-300 hover:bg-amber-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Clear frontage"
+          >
+            <Trash2 className="h-3 w-3" /> Frontage
+          </button>
         </div>
 
         {/* Tile style picker */}
@@ -1251,21 +1364,15 @@ export default function SitePlanGenerator({
               Panning
             </span>
           )}
-          {tool !== "measure" && tool !== "frontage" && draft.length >= 3 && (
-            <span className="ml-2 text-emerald-300 tabular-nums">
-              {Math.round(liveArea).toLocaleString()} SF
-            </span>
-          )}
-          {tool === "frontage" && draft.length >= 2 && (
-            <span className="ml-2 text-amber-300 tabular-nums">
-              {Math.round(measureTotalFt).toLocaleString()} LF
-            </span>
-          )}
-          {tool === "measure" && draft.length >= 1 && (
-            <span className="ml-2 text-cyan-300 tabular-nums">
-              {Math.round(measureTotalFt).toLocaleString()} ft total
-            </span>
-          )}
+          {/* Live area / linear-foot / measure total — each subscribes
+              to cursor via cursorListenersRef so we don't re-render the
+              whole hint bar + map container on every mousemove. */}
+          <LiveMetricsLabel
+            tool={tool}
+            draft={draft}
+            listenersRef={cursorListenersRef}
+            cursorRef={cursorRef}
+          />
         </div>
       )}
 
@@ -1311,7 +1418,6 @@ export default function SitePlanGenerator({
           tool={tool}
           draft={draft}
           setDraft={setDraft}
-          cursor={cursor}
           setCursor={setCursor}
           snapRightAngleOn={value.snap_right_angle}
           snapVertexOn={value.snap_vertex}
@@ -1674,24 +1780,16 @@ export default function SitePlanGenerator({
           />
         ))}
 
-        {/* ── Ghost segment with dimension label ── */}
-        {ghostLine && (
-          <>
-            <Polyline
-              positions={ghostLine.map(toLatLng)}
-              pathOptions={{ color: DRAFT_COLOR, weight: 1.5, opacity: 0.6, dashArray: "2 4" }}
-            />
-            <CircleMarker
-              center={toLatLng(ghostLine[1])}
-              radius={5}
-              pathOptions={{ color: DRAFT_COLOR, fillColor: DRAFT_COLOR, fillOpacity: 0.5, weight: 2 }}
-            >
-              <Tooltip permanent direction="top" offset={[0, -8]} className="site-plan-dim-label">
-                {Math.round(ghostLenFt)} ft
-              </Tooltip>
-            </CircleMarker>
-          </>
-        )}
+        {/* ── Ghost segment with dimension label ──
+            Subscribes to cursor via cursorListenersRef so the rest of
+            the map tree doesn't re-render when the cursor moves. */}
+        <GhostOverlay
+          tool={tool}
+          draft={draft}
+          listenersRef={cursorListenersRef}
+          cursorRef={cursorRef}
+          draftColor={DRAFT_COLOR}
+        />
       </MapContainer>
 
       {/* Minimal CSS for the dimension tooltip to look lightweight over satellite tiles. */}
