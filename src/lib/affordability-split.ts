@@ -425,5 +425,33 @@ export function splitUnitGroupsByAffordability<T extends LooseUnitGroup>(
     }
   });
 
-  return [...marketGroups, ...affordableGroups];
+  // Interleave: group by building so the Revenue table renders one
+  // section per building with market rows first, affordable rows
+  // immediately after. Appending all affordable after all market
+  // makes the table emit duplicate building headers once the
+  // site_plan_building_id sequence switches back to an earlier
+  // building (e.g. Podium market → Townhouses → Garden → Podium
+  // affordable → phantom "Podium" header).
+  const buildingOrder: Array<string | null> = [];
+  const seenBuildings = new Set<string>();
+  const noteBuilding = (bid: string | null) => {
+    const key = String(bid);
+    if (!seenBuildings.has(key)) {
+      buildingOrder.push(bid);
+      seenBuildings.add(key);
+    }
+  };
+  for (const g of marketGroups) noteBuilding(g.site_plan_building_id || null);
+  for (const g of affordableGroups) noteBuilding(g.site_plan_building_id || null);
+
+  const result: T[] = [];
+  for (const bid of buildingOrder) {
+    for (const g of marketGroups) {
+      if ((g.site_plan_building_id || null) === bid) result.push(g);
+    }
+    for (const g of affordableGroups) {
+      if ((g.site_plan_building_id || null) === bid) result.push(g);
+    }
+  }
+  return result;
 }
