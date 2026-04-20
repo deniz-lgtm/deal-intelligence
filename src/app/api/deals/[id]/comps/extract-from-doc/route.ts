@@ -331,7 +331,9 @@ function mergeBatches(batches: ExtractedCompsBatch[]): ExtractedCompsBatch | nul
       byKey.set(key, prev ? mergeDrafts(prev, c) : c);
     }
   }
-  const merged = [...byKey.values(), ...keyless];
+  // Array.from (not spread) because the tsconfig target is ES5 and spreading
+  // a Map iterator needs downlevelIteration. Array.from polyfills safely.
+  const merged = [...Array.from(byKey.values()), ...keyless];
   return {
     summary: `${merged.length} unique comps extracted across ${batches.length} chunks`,
     comps: merged,
