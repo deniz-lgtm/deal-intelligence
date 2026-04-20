@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import path from "path";
 import { v4 as uuidv4 } from "uuid";
-import { dealQueries, marketReportsQueries } from "@/lib/db";
+import { dealQueries, documentQueries, marketReportsQueries } from "@/lib/db";
 import { extractMarketReport } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { geocodeAddress } from "@/lib/geocode";
+import { geocodeAddress, placesLookupAddress } from "@/lib/geocode";
+import { uploadBlob } from "@/lib/blob-storage";
+import { persistMarketReport } from "@/lib/market-extraction";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -66,11 +69,13 @@ export async function POST(
     let rawText = "";
     let sourceUrl: string | null = null;
     let hintedPublisher: string | null = null;
+    let uploadedFile: File | null = null;
 
     const contentType = req.headers.get("content-type") || "";
     if (contentType.includes("multipart/form-data")) {
       const form = await req.formData();
       const file = form.get("file") as File | null;
+      uploadedFile = file;
       sourceUrl = (form.get("source_url") as string | null) || null;
       hintedPublisher = (form.get("publisher") as string | null) || null;
       if (file && file.type === "application/pdf") {
@@ -123,22 +128,55 @@ export async function POST(
     const submarket = [extraction.submarket, extraction.msa].filter(Boolean).join(", ");
     const enrichedPipeline = await geocodePipeline(extraction.pipeline, submarket);
 
-    const id = uuidv4();
-    const row = await marketReportsQueries.create(params.id, id, {
-      publisher: extraction.publisher,
-      report_name: extraction.report_name,
-      asset_class: extraction.asset_class,
-      msa: extraction.msa,
-      submarket: extraction.submarket,
-      as_of_date: extraction.as_of_date,
-      source_url: sourceUrl || extraction.source_url,
-      metrics: extraction.metrics as Record<string, unknown>,
-      pipeline: enrichedPipeline,
-      top_employers: extraction.top_employers,
-      top_deliveries: extraction.top_deliveries,
-      narrative: extraction.narrative,
-      // Keep a truncated excerpt so we have provenance without blowing up the row.
-      raw_text: rawText ? rawText.slice(0, 20_000) : null,
+    // Persist the source PDF to the Documents tab (category = "market") so
+    // the analyst can re-open the report from the docs list and so downstream
+    // flows like /api/deals/:id/comps/extract-from-doc can operate on it.
+    // Paste-mode uploads have no file to save and are skipped.
+    let sourceDocumentId: string | null = null;
+    if (uploadedFile) {
+      try {
+        const docId = uuidv4();
+        const ext = path.extname(uploadedFile.name) || ".pdf";
+        const blobPath = `${params.id}/${docId}${ext}`;
+        const fileBuffer = pdfBuffer ?? Buffer.from(await uploadedFile.arrayBuffer());
+        const fileUrl = await uploadBlob(
+          blobPath,
+          fileBuffer,
+          uploadedFile.type || "application/pdf"
+        );
+        const reportLabel = [extraction.publisher, extraction.report_name]
+          .filter(Boolean)
+          .join(" — ");
+        await documentQueries.create({
+          id: docId,
+          deal_id: params.id,
+          name: uploadedFile.name.replace(ext, "").slice(0, 200),
+          original_name: uploadedFile.name,
+          category: "market",
+          file_path: fileUrl,
+          file_size: fileBuffer.length,
+          mime_type: uploadedFile.type || "application/pdf",
+          content_text: rawText ? rawText.slice(0, 200_000) : null,
+          ai_summary: reportLabel || null,
+          ai_tags: ["market-research", extraction.publisher, extraction.asset_class].filter(
+            (t): t is string => Boolean(t)
+          ),
+        });
+        sourceDocumentId = docId;
+      } catch (err) {
+        // Don't fail the whole extraction if blob/doc persistence hiccups —
+        // the analyst still gets their market_reports row back.
+        console.error("market-reports: source document save failed:", err);
+      }
+    }
+
+    const row = await persistMarketReport({
+      dealId: params.id,
+      extraction,
+      sourceDocumentId,
+      sourceUrl,
+      rawText,
+      pipelineEnriched: enrichedPipeline,
     });
 
     return NextResponse.json({ data: row });
@@ -187,6 +225,26 @@ async function geocodePipeline(
       out.push(p);
       continue;
     }
+
+    // Try Google Places first when the entry is project-name-only — Census
+    // can't resolve "The Aspen" but Places can. When Places returns a real
+    // street address, backfill `address` so the UI / map popover show it
+    // instead of just the project name.
+    if (!p.address && p.project_name) {
+      const query = [p.project_name, p.submarket, submarketFallback]
+        .filter((s) => s && String(s).trim())
+        .join(", ");
+      const hit = await placesLookupAddress(query);
+      if (hit) {
+        p.lat = hit.lat;
+        p.lng = hit.lng;
+        if (hit.address && !p.address) p.address = hit.address;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        out.push(p);
+        continue;
+      }
+    }
+
     const addressCandidates = [
       p.address ? `${p.address}, ${submarketFallback}` : null,
       p.address,

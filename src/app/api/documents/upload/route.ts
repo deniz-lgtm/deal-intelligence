@@ -2,9 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import { documentQueries, dealQueries } from "@/lib/db";
-import { classifyDocument, extractRentRollSummary, diffDocumentVersions } from "@/lib/claude";
+import {
+  classifyDocument,
+  extractMarketReport,
+  extractRentRollSummary,
+  diffDocumentVersions,
+} from "@/lib/claude";
 import { uploadBlob } from "@/lib/blob-storage";
 import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
+import { persistMarketReport } from "@/lib/market-extraction";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -150,6 +156,47 @@ export async function POST(req: NextRequest) {
             await dealQueries.update(dealId, updates);
           }
         }).catch(err => console.error("Rent roll extraction failed:", err));
+      }
+
+      // If the classifier flagged this as a market-research doc, fire a
+      // fire-and-forget market-report extraction: populates market_reports
+      // (QoQ history) + submarket_metrics (current sidebar snapshot) so the
+      // analyst doesn't have to separately drop the file into the Comps &
+      // Market panel. Same pattern as the rent-roll path above.
+      if (category === "market" && (contentText || file.type === "application/pdf")) {
+        const pdfBuf = file.type === "application/pdf" ? buffer : null;
+        (async () => {
+          try {
+            const deal = await dealQueries.getById(dealId);
+            const extraction = await extractMarketReport(
+              pdfBuf,
+              contentText || "",
+              {
+                property_type: deal?.property_type ?? null,
+                city: deal?.city ?? null,
+                state: deal?.state ?? null,
+                msa: null,
+                submarket: null,
+              }
+            );
+            if (!extraction) return;
+            await persistMarketReport({
+              dealId,
+              extraction,
+              sourceDocumentId: id,
+              sourceUrl: null,
+              rawText: contentText || null,
+              pipelineEnriched: extraction.pipeline,
+            });
+          } catch (err) {
+            console.error(
+              "Auto market-report extraction failed for",
+              file.name,
+              ":",
+              err
+            );
+          }
+        })();
       }
 
       // Auto-diff: if this is a version > 1, fire-and-forget a diff against

@@ -31,6 +31,29 @@ export interface GeocodeResult {
   matched_address: string;
 }
 
+/**
+ * Great-circle distance in statute miles between two (lat, lng) pairs.
+ * Standard haversine formula — Earth as a sphere of radius 3958.8mi, plenty
+ * accurate for comp distance in the tens-to-hundreds-of-miles range we
+ * care about.
+ */
+export function haversineMiles(
+  aLat: number,
+  aLng: number,
+  bLat: number,
+  bLng: number
+): number {
+  const R = 3958.8;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+  return R * c;
+}
+
 interface CensusGeocodeResponse {
   result?: {
     addressMatches?: Array<{
@@ -158,4 +181,164 @@ export async function enrichCompWithGeocode<
     payload.lng = result.lng;
   }
   return payload;
+}
+
+// ─── Google Places ───────────────────────────────────────────────────────────
+//
+// Census only understands complete street addresses. Broker comp books
+// frequently list properties by NAME only ("Linda Gardens Apartments, El
+// Cajon, CA") — Census returns nothing, so the comp ends up with a
+// city-only address and no coords. Google Places Text Search accepts free-
+// form queries and resolves property names → full formatted address + lat/
+// lng, which is exactly the gap we need filled for sale-comp extraction
+// and pipeline project geocoding.
+//
+// Requires GOOGLE_PLACES_API_KEY. Without it, placesLookupAddress() returns
+// null so callers degrade gracefully to their existing behavior (dev/
+// preview envs that don't have the key configured still work).
+
+export interface PlacesLookupResult {
+  address: string | null;     // street-level portion, e.g. "1234 Main St"
+  formatted_address: string;  // full "1234 Main St, City, ST 12345, USA"
+  city: string | null;
+  state: string | null;       // 2-letter US state code if resolvable
+  lat: number;
+  lng: number;
+  place_id: string;
+}
+
+interface PlacesTextSearchResponse {
+  status: string;
+  results?: Array<{
+    place_id: string;
+    formatted_address?: string;
+    geometry?: { location?: { lat: number; lng: number } };
+    address_components?: Array<{
+      long_name: string;
+      short_name: string;
+      types: string[];
+    }>;
+  }>;
+}
+
+/**
+ * Resolve a free-form query ("Linda Gardens Apartments, El Cajon, CA") to a
+ * full street address + coords via Google Places Text Search. Returns null
+ * when no API key is set, the query returns ZERO_RESULTS, or the call fails.
+ *
+ * Uses Text Search (not Find Place) because broker-style queries benefit
+ * from the fuller ranking signals, and we only need the top result.
+ */
+export async function placesLookupAddress(
+  query: string
+): Promise<PlacesLookupResult | null> {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (!apiKey) return null;
+  if (!query || query.trim().length < 3) return null;
+
+  // Normalize the cache key so trivially-different queries ("Linda Gardens
+  // Apartments,  El Cajon, CA" vs "Linda Gardens Apartments, El Cajon, CA")
+  // share a cache row.
+  const cacheKey = query.toLowerCase().replace(/\s+/g, " ").trim();
+
+  // DB cache: 90-day TTL on hits, 24h on negative results. Importing the
+  // queries module lazily avoids a circular dep between geocode.ts and db.ts.
+  try {
+    const { placesCacheQueries } = await import("./db");
+    const cached = await placesCacheQueries.get(cacheKey);
+    if (cached) {
+      const ageMs = Date.now() - new Date(cached.created_at).getTime();
+      const TTL_HIT = 90 * 24 * 60 * 60 * 1000;
+      const TTL_MISS = 24 * 60 * 60 * 1000;
+      const ttl = cached.hit ? TTL_HIT : TTL_MISS;
+      if (ageMs < ttl) {
+        return cached.hit ? (cached.result as PlacesLookupResult) : null;
+      }
+    }
+  } catch (err) {
+    console.warn("places_cache read failed (continuing uncached):", err);
+  }
+
+  const url =
+    `https://maps.googleapis.com/maps/api/place/textsearch/json` +
+    `?query=${encodeURIComponent(query)}` +
+    `&region=us` +
+    `&key=${encodeURIComponent(apiKey)}`;
+
+  try {
+    assertAllowedFetchUrl(url);
+  } catch (err) {
+    console.error("Google Places URL rejected by allowlist:", err);
+    return null;
+  }
+
+  const writeCache = async (result: PlacesLookupResult | null) => {
+    try {
+      const { placesCacheQueries } = await import("./db");
+      await placesCacheQueries.set(cacheKey, result, result != null);
+    } catch (err) {
+      console.warn("places_cache write failed:", err);
+    }
+  };
+
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) {
+      console.error(`Google Places HTTP ${res.status} for "${query}"`);
+      return null;
+    }
+    const json = (await res.json()) as PlacesTextSearchResponse;
+    if (json.status !== "OK" || !json.results || json.results.length === 0) {
+      await writeCache(null);
+      return null;
+    }
+    const top = json.results[0];
+    const loc = top.geometry?.location;
+    if (!loc || typeof loc.lat !== "number" || typeof loc.lng !== "number") {
+      await writeCache(null);
+      return null;
+    }
+
+    // Text Search doesn't return address_components by default on the free
+    // tier — parse the formatted_address instead. Format is reliably
+    // "<street>, <city>, <STATE> <zip>, USA" for US results.
+    const formatted = top.formatted_address ?? "";
+    const parts = formatted.split(",").map((s) => s.trim()).filter(Boolean);
+    let street: string | null = null;
+    let city: string | null = null;
+    let state: string | null = null;
+    if (parts.length >= 3) {
+      street = parts[0];
+      city = parts[1];
+      // "CA 92020" or "CA"
+      const stateZip = parts[2];
+      const m = stateZip.match(/^([A-Z]{2})\b/);
+      if (m) state = m[1];
+    } else if (parts.length === 2) {
+      city = parts[0];
+      const m = parts[1].match(/^([A-Z]{2})\b/);
+      if (m) state = m[1];
+    }
+
+    // If the "street" field doesn't contain a digit, Places returned a
+    // place-name-only result (e.g. "Linda Gardens Apartments") rather than
+    // a street address — surface null for address so we don't overwrite
+    // the user's original name with a duplicate.
+    const looksLikeStreet = street != null && /\d/.test(street);
+
+    const result: PlacesLookupResult = {
+      address: looksLikeStreet ? street : null,
+      formatted_address: formatted,
+      city,
+      state,
+      lat: loc.lat,
+      lng: loc.lng,
+      place_id: top.place_id,
+    };
+    await writeCache(result);
+    return result;
+  } catch (err) {
+    console.error(`Google Places error for "${query}":`, err);
+    return null;
+  }
 }

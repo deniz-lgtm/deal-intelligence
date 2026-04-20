@@ -492,6 +492,12 @@ export function diffRentRolls(
 // server-side (see src/lib/web-allowlist.ts and FEATURE_ROADMAP_BACKLOG.md).
 // The URL field is stored as a reference only.
 
+// Which source filled a given field. Lets the review UI show badges so the
+// analyst knows whether to double-check a number (e.g. a Places-resolved
+// address should be verified; a computed price_per_unit is as trustworthy
+// as its inputs).
+export type CompFieldSource = "llm" | "places" | "computed" | "assessor";
+
 export interface ExtractedCompDraft {
   comp_type: "sale" | "rent";
   name: string | null;
@@ -519,6 +525,15 @@ export interface ExtractedCompDraft {
   distance_mi: number | null;
   confidence: number; // 0-1, Claude's self-assessment
   notes: string | null;
+  // Populated by post-extraction Google Places backfill when the extractor
+  // couldn't find a street address directly. Stay null when Places is not
+  // configured or the lookup didn't resolve.
+  lat?: number | null;
+  lng?: number | null;
+  // Per-field provenance map. Optional — absent when the draft came straight
+  // from the LLM with no post-processing. Keys that aren't in the map should
+  // be treated as "llm" by consumers.
+  _provenance?: Partial<Record<string, CompFieldSource>>;
 }
 
 const COMP_EXTRACTION_PROMPT = `You are a commercial real estate analyst extracting a single comparable property from listing material an analyst has supplied (pasted text, screenshots, and/or a source URL slug). The analyst already viewed the source themselves.
@@ -722,27 +737,50 @@ Rules:
 - cap_rate, occupancy_pct, rent_per_sf are displayed values (5.5 not 0.055).
 - rent_per_unit is MONTHLY. rent_per_sf is ANNUAL.
 - sale_date must be ISO YYYY-MM-DD or null.
+- For "address": prefer the full street address ("1234 Main St") when the document shows one — check comp grid footers, property summary boxes, photo captions, and any appendix tables. Only fall back to property name + city when no street address appears anywhere. Never invent a street number.
 - confidence is your honest 0-1 estimate per-comp.
 - If the document has NO comps at all, return { "summary": "No comparable properties found in this document", "comps": [] }.
 - Respond with ONLY the JSON object. No markdown fences, no explanation.`;
 
 export async function extractCompsFromDocument(
   contentText: string,
-  opts: { documentName?: string } = {}
+  opts: { documentName?: string; pdfBuffer?: Buffer | null } = {}
 ): Promise<ExtractedCompsBatch | null> {
-  if (!contentText || contentText.trim().length < 40) return null;
+  const hasPdf = !!(opts.pdfBuffer && opts.pdfBuffer.length > 0);
+  const hasText = !!(contentText && contentText.trim().length >= 40);
+  if (!hasPdf && !hasText) return null;
 
   try {
     const header = opts.documentName
       ? `Document name: ${opts.documentName}\n\n`
       : "";
-    const userContent =
-      `${header}DOCUMENT CONTENT:\n"""\n${contentText.slice(0, 40000)}\n"""\n\n${COMPS_FROM_DOC_PROMPT}`;
+
+    // Prefer the native PDF document block when available: Claude reads the
+    // whole file including tables, page footers, and photo captions where
+    // street addresses actually live in CBRE/JLL/M&M comp books. Falling
+    // back to text truncates at 40k chars, which cuts off long appendices.
+    const textBlock = hasText
+      ? `${header}DOCUMENT CONTENT:\n"""\n${contentText.slice(0, 120000)}\n"""\n\n${COMPS_FROM_DOC_PROMPT}`
+      : `${header}${COMPS_FROM_DOC_PROMPT}`;
+
+    const msgContent: unknown[] = [];
+    if (hasPdf) {
+      msgContent.push({
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: opts.pdfBuffer!.toString("base64"),
+        },
+      });
+    }
+    msgContent.push({ type: "text", text: textBlock });
 
     const response = await getClient().messages.create({
       model: await getActiveModel(),
       max_tokens: 8000,
-      messages: [{ role: "user", content: userContent }],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      messages: [{ role: "user", content: msgContent as any }],
     });
 
     const raw =
