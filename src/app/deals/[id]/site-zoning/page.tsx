@@ -977,15 +977,15 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   return (
     <div className="space-y-5 animate-fade-up">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-xl font-bold">Site & Zoning</h2>
           <p className="text-sm text-muted-foreground">
             Site information, zoning analysis, and development parameters
             {lastReportDate && <span className="ml-2 text-xs">· AI report {new Date(lastReportDate).toLocaleDateString()}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-shrink-0">
           <ViewModeToggle mode={viewMode} onChange={setViewMode} />
           {/* Zoning Report buttons hidden in Basic mode — they're a
               communication artifact for memos, not part of the model. */}

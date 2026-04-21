@@ -1014,21 +1014,21 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-xl font-bold">Programming</h2>
           <p className="text-sm text-muted-foreground mt-1">
             Define what you&apos;re building — massing, unit mix, commercial tenants, and income sources. Every save syncs to Underwriting automatically.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-shrink-0">
           <ViewModeToggle mode={viewMode} onChange={setViewMode} />
           <Button variant="outline" size="sm" onClick={saveAll} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
           <a
             href={`/deals/${params.id}/underwriting`}
-            className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors whitespace-nowrap"
             title="Open the Underwriting page — programming changes have already flowed through."
           >
             <ArrowRight className="h-4 w-4 mr-2" /> Go to Underwriting

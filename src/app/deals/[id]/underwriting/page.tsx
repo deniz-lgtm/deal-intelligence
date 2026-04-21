@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
@@ -5344,9 +5345,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      <div className="border rounded-xl bg-card p-5">
-        <h3 className="font-semibold text-sm mb-3">Deal Notes</h3>
-        <DealNotes dealId={params.id} compact />
+      {/* Deal Notes — preview only; full listing lives at /notes?deal=<id>
+          so the UW page isn't dominated by a long note stream. Mirrors the
+          overview pattern. */}
+      <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+        <div className="px-4 py-3 border-b border-border/40 flex items-center justify-between">
+          <h3 className="font-display text-sm">Deal Notes</h3>
+          <Link
+            href={`/notes?deal=${params.id}`}
+            className="text-[11px] text-muted-foreground hover:text-primary"
+          >
+            Open notes hub →
+          </Link>
+        </div>
+        <div className="p-4">
+          <DealNotes dealId={params.id} preview={3} />
+        </div>
       </div>
 
       {/* AMI reference from Location Intel — quick lookup while underwriting */}

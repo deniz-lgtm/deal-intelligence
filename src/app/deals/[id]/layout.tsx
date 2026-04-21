@@ -190,6 +190,10 @@ export default function DealLayout({
   const { can, isAdmin } = usePermissions();
   const [deal, setDeal] = useState<Deal | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Mobile: the sidebar is hidden off-screen by default and slid in as an
+  // overlay drawer when `mobileSidebarOpen` is true. The same header
+  // toggle drives both desktop collapse and mobile open/close.
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   // Per-group collapse state keyed by group label. Overview (no label) is
   // never collapsible. Defaults: Analysis open, everything else closed so
   // the sidebar reads as a lean nav with optional disclosure.
@@ -212,12 +216,26 @@ export default function DealLayout({
   }, []);
 
   const toggleSidebar = () => {
+    // Below the `md` breakpoint (768px) we toggle the mobile drawer;
+    // otherwise we toggle desktop collapse. Falling back to desktop
+    // behavior on the server-side render is safe — this handler only
+    // runs in response to a click.
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setMobileSidebarOpen((prev) => !prev);
+      return;
+    }
     setSidebarCollapsed((prev) => {
       const next = !prev;
       localStorage.setItem("dealSidebarCollapsed", next ? "1" : "0");
       return next;
     });
   };
+
+  // Close the mobile drawer on route changes so navigation feels snappy
+  // and the backdrop doesn't linger after tapping a nav link.
+  useEffect(() => {
+    setMobileSidebarOpen(false);
+  }, [pathname]);
 
   const toggleNavGroup = (label: string) => {
     setNavGroupsCollapsed((prev) => {
@@ -313,11 +331,31 @@ export default function DealLayout({
       </header>
 
       <div className="flex-1 flex min-h-0">
-        {/* ── Sidebar nav ── */}
+        {/* Mobile drawer backdrop — visible only when the drawer is open
+            on a narrow viewport. Tapping it closes the drawer. */}
+        {mobileSidebarOpen && (
+          <button
+            type="button"
+            aria-label="Close sidebar"
+            onClick={() => setMobileSidebarOpen(false)}
+            className="md:hidden fixed inset-0 top-12 z-30 bg-black/50 backdrop-blur-sm"
+          />
+        )}
+        {/* ── Sidebar nav ──
+            Desktop (md+): sticky in-flow column; width driven by
+            sidebarCollapsed (w-14 vs w-56).
+            Mobile (<md): fixed off-screen drawer, slid in by translate
+            when mobileSidebarOpen. Width locked to w-56 on mobile so the
+            labels are always readable when it's open. */}
         <aside
           className={cn(
-            "sticky top-12 self-start h-[calc(100vh-3rem)] border-r border-border/40 bg-card/40 backdrop-blur-xl transition-all duration-200 flex-shrink-0 overflow-y-auto scrollbar-none",
-            sidebarCollapsed ? "w-14" : "w-56"
+            "border-r border-border/40 bg-card/40 backdrop-blur-xl overflow-y-auto scrollbar-none transition-transform duration-200",
+            // Mobile drawer positioning
+            "fixed left-0 top-12 bottom-0 z-40 w-56",
+            mobileSidebarOpen ? "translate-x-0" : "-translate-x-full",
+            // Desktop overrides: sticky in-flow, width from collapse state, no transform
+            "md:sticky md:top-12 md:self-start md:h-[calc(100vh-3rem)] md:flex-shrink-0 md:translate-x-0 md:transition-all",
+            sidebarCollapsed ? "md:w-14" : "md:w-56"
           )}
         >
           <nav className="py-3 px-2 flex flex-col gap-4 min-h-full">
@@ -329,10 +367,16 @@ export default function DealLayout({
               const groupCollapsed = !!(group.label && !sidebarCollapsed && navGroupsCollapsed[group.label]);
               return (
               <div key={gi} className="flex flex-col gap-0.5">
-                {group.label && !sidebarCollapsed && (
+                {/* Group label header — always rendered on mobile (drawer is
+                    w-56 and needs the labels); hidden on desktop when the
+                    sidebar is in icon-only collapsed mode. */}
+                {group.label && (
                   <button
                     onClick={() => toggleNavGroup(group.label!)}
-                    className="w-full flex items-center gap-1 px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 hover:text-muted-foreground font-medium text-left"
+                    className={cn(
+                      "w-full flex items-center gap-1 px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 hover:text-muted-foreground font-medium text-left",
+                      sidebarCollapsed && "md:hidden"
+                    )}
                   >
                     {groupCollapsed ? (
                       <ChevronRight className="h-3 w-3" />
@@ -342,8 +386,11 @@ export default function DealLayout({
                     <span>{group.label}</span>
                   </button>
                 )}
+                {/* Thin separator replaces the group label when the desktop
+                    sidebar is collapsed (icon-only). Hidden on mobile since
+                    the group label is always visible there. */}
                 {group.label && sidebarCollapsed && gi > 0 && (
-                  <div className="mx-2 mb-1 border-t border-border/30" />
+                  <div className="hidden md:block mx-2 mb-1 border-t border-border/30" />
                 )}
                 {!groupCollapsed && group.items.map((item) => {
                   const fullPath = `${basePath}${item.href}`;
@@ -364,7 +411,9 @@ export default function DealLayout({
                       <button
                         className={cn(
                           "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
-                          sidebarCollapsed && "justify-center",
+                          // Center icons only on desktop-collapsed; mobile
+                          // drawer is always w-56 so labels stay inline.
+                          sidebarCollapsed && "md:justify-center",
                           isActive
                             ? "gradient-gold text-primary-foreground shadow-sm"
                             : item.muted
@@ -373,9 +422,9 @@ export default function DealLayout({
                         )}
                       >
                         <Icon className="h-4 w-4 flex-shrink-0" />
-                        {!sidebarCollapsed && (
-                          <span className="truncate">{item.label}</span>
-                        )}
+                        <span className={cn("truncate", sidebarCollapsed && "md:hidden")}>
+                          {item.label}
+                        </span>
                       </button>
                     </Link>
                   );
@@ -390,14 +439,14 @@ export default function DealLayout({
                   <button
                     className={cn(
                       "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
-                      sidebarCollapsed && "justify-center",
+                      sidebarCollapsed && "md:justify-center",
                       pathname.startsWith("/admin")
                         ? "gradient-gold text-primary-foreground shadow-sm"
                         : "text-indigo-200/80 hover:text-indigo-100 hover:bg-indigo-500/10"
                     )}
                   >
                     <Shield className="h-4 w-4 flex-shrink-0" />
-                    {!sidebarCollapsed && <span className="truncate">Admin</span>}
+                    <span className={cn("truncate", sidebarCollapsed && "md:hidden")}>Admin</span>
                   </button>
                 </Link>
               </div>
