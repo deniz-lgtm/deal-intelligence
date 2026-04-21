@@ -370,7 +370,7 @@ export async function buildProformaPdf(
           ["Construction Loan", fc(m.acqLoan)],
           ["LTC / Rate",        `${m.acqLtc}% / ${m.acqInterestRate}%`],
           ["Structure",         m.acqIoYears > 0 ? `${m.acqIoYears}yr IO then amort` : `${m.acqAmortYears}yr amort`],
-        ] as Array<[string, string]> : [["Financing", "None"]]),
+        ] : [["Financing", "None"]]) as Array<[string, string]>,
         ["Equity",            fc(m.equity), true],
       ]
     : [
@@ -382,7 +382,7 @@ export async function buildProformaPdf(
           ["Loan Amount",    fc(m.acqLoan)],
           ["LTC / Rate",     `${m.acqLtc}% / ${m.acqInterestRate}%`],
           ["Amortization",   m.acqAmortYears > 0 ? `${m.acqAmortYears}yr` : "Interest-Only"],
-        ] as Array<[string, string]> : [["Financing", "None"]]),
+        ] : [["Financing", "None"]]) as Array<[string, string]>,
         ["Equity",           fc(m.equity), true],
       ];
 
