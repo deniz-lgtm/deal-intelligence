@@ -1368,6 +1368,20 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_site_walk_deficiencies_walk_id ON site_walk_deficiencies(site_walk_id)`,
     `CREATE INDEX IF NOT EXISTS idx_site_walk_deficiencies_deal_id ON site_walk_deficiencies(deal_id)`,
+    // Per-massing underwriting snapshots. One row per (deal, massing) so
+    // analysts can flip between massing "projects" and see a whole UW
+    // tied to that scenario. Lazy-migrated from the legacy `underwriting`
+    // table on first read; the legacy row stays as a deal-level fallback
+    // and as the source of truth for `data.site_plan.scenarios[]`.
+    `CREATE TABLE IF NOT EXISTS underwriting_per_massing (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      site_plan_scenario_id TEXT NOT NULL,
+      data JSONB NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(deal_id, site_plan_scenario_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_uw_per_massing_deal_id ON underwriting_per_massing(deal_id)`,
   ];
 
   for (const query of queries) {
@@ -2320,6 +2334,63 @@ export const underwritingQueries = {
       [id, dealId, data]
     );
     return underwritingQueries.getByDealId(dealId);
+  },
+};
+
+// ─── Per-massing underwriting queries ─────────────────────────────────────────
+
+export const underwritingPerMassingQueries = {
+  getByDealAndMassing: async (dealId: string, massingId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM underwriting_per_massing WHERE deal_id = $1 AND site_plan_scenario_id = $2",
+      [dealId, massingId]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  listByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM underwriting_per_massing WHERE deal_id = $1",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  upsert: async (dealId: string, massingId: string, id: string, data: string) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO underwriting_per_massing (id, deal_id, site_plan_scenario_id, data, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, NOW())
+       ON CONFLICT (deal_id, site_plan_scenario_id) DO UPDATE SET
+         data = EXCLUDED.data,
+         updated_at = NOW()`,
+      [id, dealId, massingId, data]
+    );
+    return underwritingPerMassingQueries.getByDealAndMassing(dealId, massingId);
+  },
+
+  // Mirror a partial patch (e.g. the updated site_plan blob) into every
+  // existing per-massing row for a deal. Used by Site & Zoning to keep
+  // the massings list in sync across snapshots without touching the
+  // massing-specific fields an analyst has tuned.
+  patchAll: async (dealId: string, patch: Record<string, unknown>) => {
+    const pool = getPool();
+    await pool.query(
+      `UPDATE underwriting_per_massing
+       SET data = data || $2::jsonb, updated_at = NOW()
+       WHERE deal_id = $1`,
+      [dealId, JSON.stringify(patch)]
+    );
+  },
+
+  deleteByMassing: async (dealId: string, massingId: string) => {
+    const pool = getPool();
+    await pool.query(
+      "DELETE FROM underwriting_per_massing WHERE deal_id = $1 AND site_plan_scenario_id = $2",
+      [dealId, massingId]
+    );
   },
 };
 

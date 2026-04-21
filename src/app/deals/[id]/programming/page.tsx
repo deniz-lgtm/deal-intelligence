@@ -381,7 +381,10 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const saveAll = useCallback(async () => {
     setSaving(true);
     try {
-      const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+      const uwGetUrl = activeMassingId
+        ? `/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(activeMassingId)}`
+        : `/api/underwriting?deal_id=${params.id}`;
+      const uwRes = await fetch(uwGetUrl);
       const uwJson = await uwRes.json();
       const current = uwJson.data?.data ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data) : {};
 
@@ -424,7 +427,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       await fetch("/api/underwriting", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deal_id: params.id, data: merged }),
+        body: JSON.stringify({ deal_id: params.id, ...(activeMassingId ? { massing_id: activeMassingId } : {}), data: merged }),
       });
       setDirty(false);
       setLastSavedAt(Date.now());
@@ -434,7 +437,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     } finally {
       setSaving(false);
     }
-  }, [params.id, buildingProgram, otherIncomeItems, commercialTenants, affordabilityConfig]);
+  }, [params.id, buildingProgram, otherIncomeItems, commercialTenants, affordabilityConfig, activeMassingId]);
 
   // Auto-save
   useEffect(() => {
@@ -933,6 +936,22 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deal_id: params.id, data: next }),
       });
+      // Fan out each massing's computed state to its per-massing row so
+      // the UW page's project selector always sees the latest programming
+      // push for whichever massing is picked. The legacy PUT above
+      // already mirrors the base-case state, so skip that one.
+      const baseId = baseMassing.id;
+      await Promise.all(updatedScenarios
+        .filter(s => s.site_plan_scenario_id && s.site_plan_scenario_id !== baseId)
+        .map(s => fetch("/api/underwriting", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deal_id: params.id,
+            massing_id: s.site_plan_scenario_id,
+            data: s.state,
+          }),
+        }).catch(() => {})));
       maybeAutoRunAiEstimates(fetched);
     } catch {
       // Silent — auto-sync runs on every save; a toast on each failure

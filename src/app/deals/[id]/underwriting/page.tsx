@@ -1595,6 +1595,23 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null); // null = baseline
   const [activeMassingScenarioId, setActiveMassingScenarioId] = useState<string | null>(null); // site_plan_scenario_id — which massing to view
 
+  // ── Per-massing UW project selector ───────────────────────────────
+  // Each site-plan scenario ("massing") has its own UWData snapshot.
+  // `projectMassings` is the canonical list (from the legacy site_plan
+  // row which stays shared across massings); `projectMassingId` is the
+  // slice currently loaded into `data`. Switching projects re-fetches
+  // that massing's row and overwrites everything on this page.
+  const [projectMassings, setProjectMassings] = useState<Array<{ id: string; name: string; is_base_case?: boolean }>>([]);
+  const [projectMassingId, setProjectMassingId] = useState<string | null>(null);
+  const [baseCaseMassingId, setBaseCaseMassingId] = useState<string | null>(null);
+  const [legacyUw, setLegacyUw] = useState<Record<string, unknown> | null>(null);
+  const [firstOpenPromptMassingId, setFirstOpenPromptMassingId] = useState<string | null>(null);
+  const [copyModalOpen, setCopyModalOpen] = useState(false);
+  type CopySections = { loan: boolean; opex: boolean; growth: boolean; cap_rates: boolean; cam_flags: boolean; hold_period: boolean };
+  const [copySections, setCopySections] = useState<CopySections>({
+    loan: true, opex: true, growth: true, cap_rates: true, cam_flags: false, hold_period: true,
+  });
+
   // Top-level tabs — the underwriting page is long; splitting it into
   // 4 buckets keeps the analyst focused on whichever piece they're
   // actively editing. Synced to ?tab= so a shared URL lands on the
@@ -1760,10 +1777,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     });
   };
 
+  const urlMassingParam = searchParams?.get("massing") || null;
   useEffect(() => {
+    const urlMassing = urlMassingParam;
+    const uwUrl = urlMassing
+      ? `/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(urlMassing)}`
+      : `/api/underwriting?deal_id=${params.id}`;
     Promise.all([
       fetch(`/api/deals/${params.id}`).then(r => r.json()),
-      fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()),
+      fetch(uwUrl).then(r => r.json()),
       fetch(`/api/deals/${params.id}/deal-score`).then(r => r.json()).catch(() => null),
     ]).then(async ([dr, ur, scoresJson]) => {
       setDeal(dr.data);
@@ -1871,9 +1893,41 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         setData(merged);
       }
       else if (dr.data?.asking_price) setData(p => ({ ...p, purchase_price: dr.data.asking_price }));
+
+      // Per-massing selector state. `ur.massings` / `ur.base_case_massing_id`
+      // / `ur.legacy` are only present when the request included a
+      // massing_id — otherwise fall back to inferring the list from the
+      // loaded data (legacy shape).
+      const rawMassings = Array.isArray(ur?.massings) && ur.massings.length > 0
+        ? ur.massings
+        : (ur.data?.data
+            ? (((typeof ur.data.data === "string" ? JSON.parse(ur.data.data) : ur.data.data) as { site_plan?: { scenarios?: Array<{ id: string; name?: string; is_base_case?: boolean }> } }).site_plan?.scenarios || [])
+            : []);
+      const cleanMassings = (rawMassings as Array<{ id: string; name?: string; is_base_case?: boolean }>).map(m => ({
+        id: String(m.id),
+        name: m.name || "",
+        is_base_case: m.is_base_case,
+      })).filter(m => m.id);
+      setProjectMassings(cleanMassings);
+      const baseId = ur?.base_case_massing_id || cleanMassings.find(m => m.is_base_case)?.id || cleanMassings[0]?.id || null;
+      setBaseCaseMassingId(baseId);
+      setLegacyUw(ur?.legacy
+        ? (typeof ur.legacy.data === "string" ? JSON.parse(ur.legacy.data) : ur.legacy.data) as Record<string, unknown>
+        : null);
+      // Decide which project is active. URL wins; otherwise base case.
+      const resolvedActive = urlMassing || baseId;
+      setProjectMassingId(resolvedActive);
+      // First-open prompt: the URL targeted a specific massing, but
+      // neither the per-massing row nor a lazy-migrated copy came back.
+      // That means it's a newly added massing with no UW yet — offer
+      // to copy from the base case instead of dropping a blank on the
+      // analyst.
+      if (urlMassing && !ur?.data?.data && baseId && baseId !== urlMassing) {
+        setFirstOpenPromptMassingId(urlMassing);
+      }
       setLoading(false);
     });
-  }, [params.id]);
+  }, [params.id, urlMassingParam]);
 
   const set = useCallback(<K extends keyof UWData>(k: K, v: UWData[K]) => {
     if (activeScenarioId) {
@@ -1907,9 +1961,83 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const save = async () => {
     setSaving(true);
     try {
-      const res = await fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data }) });
+      const body: Record<string, unknown> = { deal_id: params.id, data };
+      if (projectMassingId) body.massing_id = projectMassingId;
+      const res = await fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) toast.success("Underwriting saved"); else toast.error("Failed to save");
     } catch { toast.error("Failed to save"); } finally { setSaving(false); }
+  };
+
+  // ── Copy-from-base-case helpers ─────────────────────────────────────
+  // `COPY_SECTION_FIELDS` enumerates every UWData key that belongs to a
+  // section the analyst can tick in the copy modal. Fields NOT listed
+  // (unit_groups, commercial_tenants, other_income_items, parking_*,
+  // building_program, dev_budget_items, etc.) are treated as
+  // massing-specific and never overwritten.
+  const COPY_SECTION_FIELDS: Record<keyof CopySections, string[]> = {
+    loan: ["has_financing", "acq_ltc", "acq_interest_rate", "acq_pp_ltv", "acq_capex_ltv", "acq_amort_years", "acq_io_years", "acq_loan_narrative", "has_refi", "refi_year", "refi_ltv", "refi_rate", "refi_amort_years", "refi_loan_narrative", "loan_narrative"],
+    opex: ["taxes_annual", "insurance_annual", "repairs_annual", "utilities_annual", "other_expenses_annual", "ga_annual", "marketing_annual", "reserves_annual", "management_fee_pct", "ip_mgmt_annual", "ip_taxes_annual", "ip_insurance_annual", "ip_repairs_annual", "ip_utilities_annual", "ip_other_annual", "ip_ga_annual", "ip_marketing_annual", "ip_reserves_annual", "custom_opex", "opex_narrative", "opex_item_notes"],
+    growth: ["rent_growth_pct", "expense_growth_pct", "vacancy_rate", "in_place_vacancy_rate"],
+    cap_rates: ["exit_cap_rate"],
+    cam_flags: ["cam_taxes", "cam_insurance", "cam_repairs", "cam_utilities", "cam_ga", "cam_marketing", "cam_reserves", "cam_other", "cam_management"],
+    hold_period: ["hold_period_years"],
+  };
+
+  const fetchBaseCaseData = async (): Promise<Record<string, unknown> | null> => {
+    if (!baseCaseMassingId) return null;
+    try {
+      const res = await fetch(`/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(baseCaseMassingId)}`);
+      const json = await res.json();
+      const raw = json.data?.data;
+      if (!raw) return null;
+      return typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch { return null; }
+  };
+
+  // Full copy used by the first-open prompt. Pulls every deal-level
+  // field from the base case but leaves the massing-specific fields
+  // alone (programming / massing push will fill them).
+  const copyFromBaseFull = async () => {
+    const base = await fetchBaseCaseData();
+    if (!base) { toast.error("Couldn't load base case"); return; }
+    setData(prev => {
+      const skip = new Set<string>([
+        "site_plan", "building_program", "unit_groups", "commercial_tenants",
+        "other_income_items", "parking_reserved_spaces", "parking_unreserved_spaces",
+        "parking", "dev_budget_items", "max_gsf", "max_nrsf", "mixed_use",
+        "affordability_config", "scenarios", "uw_scenarios", "capex_items",
+      ]);
+      const out: Record<string, unknown> = { ...prev } as Record<string, unknown>;
+      for (const [k, v] of Object.entries(base)) {
+        if (skip.has(k)) continue;
+        out[k] = v;
+      }
+      return out as unknown as typeof prev;
+    });
+    toast.success("Copied assumptions from base case");
+  };
+
+  const copyFromBaseSections = async (sections: CopySections) => {
+    const base = await fetchBaseCaseData();
+    if (!base) { toast.error("Couldn't load base case"); return; }
+    setData(prev => {
+      const out: Record<string, unknown> = { ...prev } as Record<string, unknown>;
+      (Object.keys(sections) as Array<keyof CopySections>).forEach(k => {
+        if (!sections[k]) return;
+        for (const f of COPY_SECTION_FIELDS[k]) {
+          if ((base as Record<string, unknown>)[f] !== undefined) out[f] = (base as Record<string, unknown>)[f];
+        }
+      });
+      return out as unknown as typeof prev;
+    });
+    toast.success("Copied selected sections from base case");
+  };
+
+  const switchProject = (newMassingId: string) => {
+    if (!newMassingId || newMassingId === projectMassingId) return;
+    const qp = new URLSearchParams(searchParams?.toString() || "");
+    qp.set("massing", newMassingId);
+    router.replace(`${pathname}?${qp.toString()}`);
   };
 
   const estimateCapex = async () => {
@@ -2338,9 +2466,40 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     <div className={`flex gap-4 ${docViewerOpen ? "" : ""}`}>
     <div className={`space-y-5 min-w-0 ${docViewerOpen ? "flex-1" : "w-full"}`}>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div>
-          <h2 className="text-xl font-bold">Underwriting</h2>
-          <p className="text-sm text-muted-foreground">{deal?.name}</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div>
+            <h2 className="text-xl font-bold">Underwriting</h2>
+            <p className="text-sm text-muted-foreground">{deal?.name}</p>
+          </div>
+          {projectMassings.length > 1 && (
+            <div className="flex items-center gap-2 border border-border/60 rounded-lg bg-card px-3 py-1.5">
+              <Layers className="h-4 w-4 text-blue-400" />
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Project</span>
+              <select
+                value={projectMassingId || ""}
+                onChange={e => switchProject(e.target.value)}
+                className="bg-transparent text-sm text-foreground outline-none cursor-pointer pr-1"
+                title="Switch to a different massing. Each massing has its own underwriting."
+              >
+                {projectMassings.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name || "Untitled"}{m.is_base_case ? " ★" : ""}
+                  </option>
+                ))}
+              </select>
+              {projectMassingId && projectMassingId !== baseCaseMassingId && baseCaseMassingId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setCopyModalOpen(true)}
+                  title="Copy selected sections from the base-case underwriting"
+                >
+                  Copy from Base
+                </Button>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <ViewModeToggle mode={viewMode} onChange={setViewMode} />
@@ -5880,6 +6039,87 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       )}
 
       {/* ── UW Co-Pilot is now in the universal chatbot widget ── */}
+
+      {/* First-open prompt when switching to a massing that has no UW
+          snapshot yet. Appears once per fresh massing, offering a clone
+          of the base-case assumptions or a blank slate. */}
+      {firstOpenPromptMassingId && baseCaseMassingId && baseCaseMassingId !== firstOpenPromptMassingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-5">
+            <h3 className="text-base font-semibold mb-1">New massing — no underwriting yet</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Start from the base case&apos;s assumptions or start blank? Either way, massing-specific
+              fields (unit groups, parking, dev budget) stay tied to this massing&apos;s programming.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setFirstOpenPromptMassingId(null)}
+              >
+                Start Blank
+              </Button>
+              <Button
+                size="sm"
+                onClick={async () => {
+                  await copyFromBaseFull();
+                  setFirstOpenPromptMassingId(null);
+                }}
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1.5 text-amber-400" />
+                Copy from Base Case
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual "Copy from Base Case" modal — lets analysts re-sync
+          specific sections (loan, OpEx, growth, etc.) into the current
+          non-base-case massing without clobbering its tuned numbers. */}
+      {copyModalOpen && baseCaseMassingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-5">
+            <h3 className="text-base font-semibold mb-1">Copy from Base Case</h3>
+            <p className="text-sm text-muted-foreground mb-3">
+              Overwrites the selected sections on this massing with the base case&apos;s values.
+              Massing-specific fields (unit groups, parking, dev budget, commercial tenants, other income)
+              are never touched.
+            </p>
+            <div className="space-y-2 mb-4">
+              {([
+                ["loan", "Loan Terms (acquisition + refi)"],
+                ["opex", "OpEx (taxes, insurance, mgmt, etc.)"],
+                ["growth", "Vacancy &amp; Growth Assumptions"],
+                ["cap_rates", "Exit Cap Rate"],
+                ["cam_flags", "CAM Reimbursement Flags"],
+                ["hold_period", "Hold Period"],
+              ] as Array<[keyof CopySections, string]>).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={copySections[key]}
+                    onChange={e => setCopySections(s => ({ ...s, [key]: e.target.checked }))}
+                  />
+                  <span dangerouslySetInnerHTML={{ __html: label }} />
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setCopyModalOpen(false)}>Cancel</Button>
+              <Button
+                size="sm"
+                onClick={async () => {
+                  await copyFromBaseSections(copySections);
+                  setCopyModalOpen(false);
+                }}
+              >
+                Copy Selected
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
