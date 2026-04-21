@@ -3674,7 +3674,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 <span>Reserved: <span className="text-foreground font-medium tabular-nums">{fn(d.parking_reserved_spaces || 0)}</span></span>
                 <span>Unreserved: <span className="text-foreground font-medium tabular-nums">{fn(d.parking_unreserved_spaces || 0)}</span></span>
                 <span>Total: <span className="text-foreground font-medium tabular-nums">{fn((d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0))}</span></span>
-                <a href={`/deals/${params.id}/programming`} className="text-xs text-muted-foreground/70 underline hover:text-foreground ml-auto">
+                <a href={`/deals/${params.id}/programming${projectMassingId ? `?massing=${encodeURIComponent(projectMassingId)}` : ""}`} className="text-xs text-muted-foreground/70 underline hover:text-foreground ml-auto">
                   Edit on Programming →
                 </a>
               </div>

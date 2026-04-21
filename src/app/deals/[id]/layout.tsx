@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   FileText,
@@ -137,6 +137,18 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
 const ACQUISITION_MUTED_HREFS = new Set(["/programming", "/site-zoning"]);
 const MUTED_REASON_ACQUISITION = "Not typically used for acquisition deals.";
 
+// Massing-aware routes read the active project from `?massing=<id>`.
+// The sidebar preserves the param when navigating between them so an
+// analyst working on "Massing 2" doesn't bounce back to the base case
+// every time they click over to the DD Abstract or Investment Package.
+const MASSING_AWARE_HREFS = new Set([
+  "/underwriting",
+  "/programming",
+  "/site-zoning",
+  "/dd-abstract",
+  "/investment-package",
+]);
+
 function applyScopeGating(groups: NavGroup[], dealScope: DealScope | null): NavGroup[] {
   if (dealScope !== "acquisition") return groups;
   return groups.map((group) => ({
@@ -204,6 +216,8 @@ export default function DealLayout({
     Construction: true,
   });
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const activeMassingId = searchParams?.get("massing") || null;
   const { userId } = useAuth();
 
   useEffect(() => {
@@ -393,11 +407,14 @@ export default function DealLayout({
                   <div className="hidden md:block mx-2 mb-1 border-t border-border/30" />
                 )}
                 {!groupCollapsed && group.items.map((item) => {
-                  const fullPath = `${basePath}${item.href}`;
+                  const baseHref = `${basePath}${item.href}`;
+                  const fullPath = activeMassingId && MASSING_AWARE_HREFS.has(item.href)
+                    ? `${baseHref}?massing=${encodeURIComponent(activeMassingId)}`
+                    : baseHref;
                   const isActive =
                     item.href === ""
                       ? pathname === basePath
-                      : pathname.startsWith(fullPath);
+                      : pathname.startsWith(baseHref);
                   const Icon = item.icon;
 
                   const linkTitle = item.muted

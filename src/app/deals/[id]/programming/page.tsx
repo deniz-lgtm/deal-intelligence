@@ -1077,7 +1077,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
           <a
-            href={`/deals/${params.id}/underwriting`}
+            href={`/deals/${params.id}/underwriting${activeMassingId ? `?massing=${encodeURIComponent(activeMassingId)}` : ""}`}
             className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors whitespace-nowrap"
             title="Open the Underwriting page — programming changes have already flowed through."
           >
