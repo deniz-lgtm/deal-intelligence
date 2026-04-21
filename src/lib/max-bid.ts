@@ -116,6 +116,19 @@ function computeMetrics(d: UWData, mode: CalcMode) {
   };
 }
 
+/** Public export so the UI panel can render current-basis metrics. */
+export function getMetricsAt(d: UWData, mode: CalcMode) {
+  return computeMetrics(d, mode);
+}
+
+/** Public export — solve the deal at land/purchase price = 0. Used by the
+ *  UI to explain what IRR is achievable in the best case when the solver
+ *  reports "Deal fails at any price". */
+export function getMetricsAtZeroBasis(d: UWData, mode: CalcMode) {
+  const zeroD = d.development_mode ? { ...d, land_cost: 0 } : { ...d, purchase_price: 0 };
+  return computeMetrics(zeroD, mode);
+}
+
 function meetsTargets(
   metrics: ReturnType<typeof computeMetrics>,
   targets: MaxBidTargets,
