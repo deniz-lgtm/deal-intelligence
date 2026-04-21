@@ -731,23 +731,28 @@ export function calc(d: UWData, mode: "commercial" | "multifamily" | "student_ho
 
 /**
  * Newton-Raphson XIRR: given an array [initial outflow (negative), ...annual
- * inflows], returns the annual rate as a percentage, or 0 if it cannot converge.
+ * inflows], returns the annual rate as a percentage. Returns null if it cannot
+ * converge (caller decides how to display). Supports negative rates.
  */
-export function xirr(cashFlows: number[]): number {
-  if (cashFlows.length < 2) return 0;
-  let rate = 0.1;
-  for (let i = 0; i < 200; i++) {
-    let npv = 0, dNpv = 0;
-    for (let j = 0; j < cashFlows.length; j++) {
-      const denom = Math.pow(1 + rate, j);
-      npv  += cashFlows[j] / denom;
-      dNpv -= j * cashFlows[j] / (denom * (1 + rate));
+export function xirr(cashFlows: number[]): number | null {
+  if (cashFlows.length < 2) return null;
+  // Try multiple starting points to avoid local minima
+  for (const startRate of [0.1, -0.1, 0.5, -0.5]) {
+    let rate = startRate;
+    let converged = false;
+    for (let i = 0; i < 300; i++) {
+      let npv = 0, dNpv = 0;
+      for (let j = 0; j < cashFlows.length; j++) {
+        const denom = Math.pow(1 + rate, j);
+        npv  += cashFlows[j] / denom;
+        dNpv -= j * cashFlows[j] / (denom * (1 + rate));
+      }
+      if (Math.abs(dNpv) < 1e-12) break;
+      const delta = npv / dNpv;
+      rate -= delta;
+      if (Math.abs(delta) < 1e-8) { converged = true; break; }
     }
-    if (Math.abs(dNpv) < 1e-12) break;
-    const delta = npv / dNpv;
-    rate -= delta;
-    if (Math.abs(delta) < 1e-8) break;
+    if (converged && isFinite(rate) && rate > -1) return rate * 100;
   }
-  if (!isFinite(rate) || rate <= -1) return 0;
-  return rate * 100;
+  return null;
 }

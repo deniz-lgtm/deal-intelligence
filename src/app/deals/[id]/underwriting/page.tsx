@@ -2296,7 +2296,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           if (r.equity <= 0 || r.yearlyDCF.length === 0) return 0;
           return xirr([-r.equity, ...r.yearlyDCF.map((yr, i) =>
             i === r.yearlyDCF.length - 1 ? yr.cashFlow + r.exitEquity : yr.cashFlow
-          )]);
+          )]) ?? 0;
         }
       }
     };
@@ -2778,8 +2778,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 ? xirr([-m.equity, ...m.yearlyDCF.map((yr, i) =>
                     i === m.yearlyDCF.length - 1 ? yr.cashFlow + m.exitEquity : yr.cashFlow
                   )])
-                : 0;
-              return irrVal > 0
+                : null;
+              return irrVal != null
                 ? <p className="text-xs text-muted-foreground">IRR {irrVal.toFixed(2)}% · {d.hold_period_years}yr hold</p>
                 : <p className="text-xs text-muted-foreground">{d.hold_period_years}yr hold</p>;
             })()}
@@ -5855,7 +5855,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           const flows: number[] = [-eq, ...m.yearlyDCF.map((yr, i) =>
             i === m.yearlyDCF.length - 1 ? yr.cashFlow + m.exitEquity : yr.cashFlow
           )];
-          return xirr(flows);
+          return xirr(flows) ?? 0;
         };
         const rows: Array<{ label: string; values: string[]; highlight?: boolean }> = [
           { label: "Purchase Price", values: computed.map(c => fc(c.data.purchase_price)) },

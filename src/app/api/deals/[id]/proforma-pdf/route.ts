@@ -23,24 +23,21 @@ export async function POST(
       mode: "commercial" | "multifamily" | "student_housing";
     };
 
-    // Fetch deal metadata and branding in parallel
     const [deal, rawBranding] = await Promise.all([
       dealQueries.getById(params.id),
       getBrandingForDeal(params.id).catch(() => null),
     ]);
 
-    if (!deal) {
-      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
-    }
+    if (!deal) return NextResponse.json({ error: "Deal not found" }, { status: 404 });
 
     const theme = resolveBranding(rawBranding);
     const m = calc(uwData, mode);
 
-    // Build IRR cash-flow array: [-equity, yr1CF, …, yrN CF + exitEquity]
+    // IRR cash flows: [-equity, yr1, …, yrN + exitEquity]
     const irrFlows = m.yearlyDCF.map((yr, i) =>
       i === m.yearlyDCF.length - 1 ? yr.cashFlow + m.exitEquity : yr.cashFlow,
     );
-    const irr = m.equity > 0 ? xirr([-m.equity, ...irrFlows]) : 0;
+    const irr = m.equity > 0 ? xirr([-m.equity, ...irrFlows]) : null;
 
     const today = new Date();
     const asOfDate = `${String(today.getMonth() + 1).padStart(2, "0")}/${String(today.getDate()).padStart(2, "0")}/${today.getFullYear()}`;
@@ -51,21 +48,25 @@ export async function POST(
       city:          deal.city   || "",
       state:         deal.state  || "",
       propertyType:  deal.property_type || "",
-      yearBuilt:     deal.year_built ?? null,
-      units:         deal.units ?? null,
+      yearBuilt:     deal.year_built    ?? null,
+      units:         deal.units         ?? null,
       squareFootage: deal.square_footage ?? null,
       asOfDate,
     }, {
       irr,
-      em:              m.em,
-      stabilizedCoC:   m.stabilizedCoC,
-      stabilizedDSCR:  m.stabilizedDSCR,
-      yoc:             m.yoc,
+      em:             m.em,
+      stabilizedCoC:  m.stabilizedCoC,
+      stabilizedDSCR: m.stabilizedDSCR,
+      yoc:            m.yoc,
       proformaCapRate: m.proformaCapRate,
-      exitCapRate:     uwData.exit_cap_rate,
-      inPlaceCapRate:  m.inPlaceCapRate,
-      // Capitalization
-      purchasePrice:   uwData.purchase_price,
+      exitCapRate:    uwData.exit_cap_rate,
+      inPlaceCapRate: m.inPlaceCapRate,
+
+      isDevelopment:   uwData.development_mode,
+      // Acquisition: purchase_price / capex. Development: land_cost / hardCosts / softCosts
+      purchasePrice:   uwData.development_mode ? (uwData.land_cost || 0) : (uwData.purchase_price || 0),
+      hardCosts:       m.totalHardCosts,
+      softCosts:       m.softCostsTotal,
       closingCosts:    m.closingCosts,
       capexTotal:      m.capexTotal,
       totalCost:       m.totalCost,
@@ -73,15 +74,16 @@ export async function POST(
       acqLtc:          uwData.acq_ltc,
       acqInterestRate: uwData.acq_interest_rate,
       acqAmortYears:   uwData.acq_amort_years,
+      acqIoYears:      uwData.acq_io_years,
       equity:          m.equity,
       hasFinancing:    uwData.has_financing,
-      // Assumptions
+
       vacancyRate:      uwData.vacancy_rate,
       rentGrowthPct:    uwData.rent_growth_pct,
       expenseGrowthPct: uwData.expense_growth_pct,
       holdPeriodYears:  uwData.hold_period_years,
       managementFeePct: uwData.management_fee_pct,
-      // Proforma columns
+
       inPlaceGPR:          m.inPlaceGPR,
       inPlaceVacancyLoss:  m.inPlaceVacancyLoss,
       inPlaceEGI:          m.inPlaceEGI,
@@ -89,6 +91,7 @@ export async function POST(
       inPlaceNOI:          m.inPlaceNOI,
       inPlaceCashFlow:     m.inPlaceCashFlow,
       inPlaceDebtService:  m.inPlaceDCF.debtService,
+
       proformaGPR:         m.proformaGPR,
       proformaVacancyLoss: m.proformaVacancyLoss,
       proformaEGI:         m.proformaEGI,
@@ -96,6 +99,7 @@ export async function POST(
       proformaNOI:         m.proformaNOI,
       stabilizedCashFlow:  m.stabilizedCashFlow,
       yr1Debt:             m.yr1Debt,
+
       yearlyDCF: m.yearlyDCF.slice(0, 5).map(yr => ({
         year:        yr.year,
         gpr:         yr.gpr,
@@ -106,16 +110,28 @@ export async function POST(
         debtService: yr.debtService,
         cashFlow:    yr.cashFlow,
       })),
-      // Exit
-      exitValue:       m.exitValue,
-      exitEquity:      m.exitEquity,
-      totalCashFlows:  m.totalCashFlows,
+
+      exitValue:      m.exitValue,
+      exitEquity:     m.exitEquity,
+      totalCashFlows: m.totalCashFlows,
+
+      unitGroups: (uwData.unit_groups || []).map(g => ({
+        label:                 g.label,
+        unit_count:            g.unit_count,
+        sf_per_unit:           g.sf_per_unit,
+        bedrooms:              g.bedrooms,
+        current_rent_per_unit: g.current_rent_per_unit,
+        market_rent_per_unit:  g.market_rent_per_unit,
+        current_rent_per_sf:   g.current_rent_per_sf,
+        market_rent_per_sf:    g.market_rent_per_sf,
+        is_commercial:         mode === "commercial",
+      })),
     });
 
-    const safeName = (deal.name || "Proforma").replace(/[^a-z0-9\-_ ]/gi, "").trim().replace(/\s+/g, "-");
-    // Cast to Uint8Array so TS accepts it as BodyInit. The underlying
-    // buffer type varies by Node version (Uint8Array<ArrayBufferLike>
-    // in newer typings), which trips Next.js's narrower BodyInit.
+    const safeName = (deal.name || "Proforma")
+      .replace(/[^a-z0-9\-_ ]/gi, "").trim().replace(/\s+/g, "-");
+
+    // Cast needed: Uint8Array<ArrayBufferLike> in newer Node typings doesn't satisfy Next.js's BodyInit.
     return new NextResponse(pdfBytes as unknown as BodyInit, {
       status: 200,
       headers: {
