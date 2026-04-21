@@ -2394,6 +2394,56 @@ export const underwritingPerMassingQueries = {
   },
 };
 
+// ── Unified underwriting lookup ────────────────────────────────────────
+// Every server-side consumer should go through this helper. It returns
+// the legacy `underwriting` row shape ({ id, deal_id, data, updated_at })
+// regardless of whether the data lives in `underwriting_per_massing` or
+// the legacy table, so existing parsing code keeps working.
+//
+// Resolution:
+//   1. explicit `massingId` → that massing's per-massing row (falls back
+//      if not found, so an unknown id never 404s on analysts)
+//   2. base-case massing inferred from legacy.site_plan.scenarios (or
+//      the first scenario if nothing is flagged)
+//   3. legacy row (pre-migration deals, or deals with no massings yet)
+
+type UwRow = { id: string; deal_id: string; data: unknown; updated_at: string };
+
+export async function getUnderwritingForMassing(
+  dealId: string,
+  massingId?: string | null
+): Promise<UwRow | null> {
+  if (massingId) {
+    const row = (await underwritingPerMassingQueries.getByDealAndMassing(dealId, massingId)) as
+      | { id: string; deal_id: string; data: unknown; updated_at: string }
+      | null;
+    if (row) {
+      return { id: row.id, deal_id: row.deal_id, data: row.data, updated_at: row.updated_at };
+    }
+  }
+  const legacy = (await underwritingQueries.getByDealId(dealId)) as UwRow | null;
+  if (!legacy) return null;
+
+  // Try the base-case per-massing row if available — keeps background
+  // calcs (deal-score, max-bid, feasibility) aligned with whichever
+  // massing the analyst has flagged as canonical.
+  const parsed = typeof legacy.data === "string"
+    ? (() => { try { return JSON.parse(legacy.data as string); } catch { return {}; } })()
+    : (legacy.data as Record<string, unknown>);
+  const sp = (parsed?.site_plan as { scenarios?: Array<{ id?: string; is_base_case?: boolean }> } | undefined);
+  const scenarios = Array.isArray(sp?.scenarios) ? sp!.scenarios! : [];
+  const baseId = (scenarios.find(s => s.is_base_case)?.id || scenarios[0]?.id || "") as string;
+  if (baseId) {
+    const baseRow = (await underwritingPerMassingQueries.getByDealAndMassing(dealId, baseId)) as
+      | { id: string; deal_id: string; data: unknown; updated_at: string }
+      | null;
+    if (baseRow) {
+      return { id: baseRow.id, deal_id: baseRow.deal_id, data: baseRow.data, updated_at: baseRow.updated_at };
+    }
+  }
+  return legacy;
+}
+
 // ─── Comps queries ────────────────────────────────────────────────────────────
 
 const COMP_COLUMNS = [

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { dealQueries, dealNoteQueries, omAnalysisQueries, underwritingQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, omAnalysisQueries, getUnderwritingForMassing } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 
@@ -40,7 +40,7 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
  * For value-add / other: generates traditional CapEx line items
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -49,9 +49,12 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
+    const body = await req.json().catch(() => ({}));
+    const massingId = (body as { massing_id?: string }).massing_id;
+
     const deal = await dealQueries.getById(params.id);
     const analysis = await omAnalysisQueries.getByDealId(params.id);
-    const uw = await underwritingQueries.getByDealId(params.id);
+    const uw = await getUnderwritingForMassing(params.id, massingId);
 
     // Use project-level GSF from underwriting data, fall back to OM/deal SF
     const uwData = uw?.data ? (typeof uw.data === "string" ? JSON.parse(uw.data) : uw.data) : null;

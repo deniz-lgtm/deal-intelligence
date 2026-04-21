@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, underwritingQueries, businessPlanQueries, omAnalysisQueries, locationIntelligenceQueries, compQueries, submarketMetricsQueries, marketReportsQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, documentQueries, checklistQueries, getUnderwritingForMassing, businessPlanQueries, omAnalysisQueries, locationIntelligenceQueries, compQueries, submarketMetricsQueries, marketReportsQueries } from "@/lib/db";
 import { generateDDAbstract } from "@/lib/claude";
 import type { Document, ChecklistItem, Deal } from "@/lib/types";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
@@ -28,6 +28,7 @@ export async function POST(
 
     const body = await req.json().catch(() => ({}));
     const sections: string[] | undefined = body.sections;
+    const massingId: string | undefined = body.massing_id;
 
     const deal = await dealQueries.getById(params.id);
     if (!deal) {
@@ -40,7 +41,7 @@ export async function POST(
     const [documents, checklist, uwRow, omAnalysis, locationIntelRows, compsAll, submarketMetrics, marketReports] = await Promise.all([
       documentQueries.getByDealId(params.id).catch(() => []) as Promise<Document[]>,
       checklistQueries.getByDealId(params.id).catch(() => []) as Promise<ChecklistItem[]>,
-      underwritingQueries.getByDealId(params.id).catch(() => null),
+      getUnderwritingForMassing(params.id, massingId).catch(() => null),
       omAnalysisQueries.getByDealId(params.id).catch(() => null),
       locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
       compQueries.getByDealId(params.id).catch(() => []),

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, documentQueries, underwritingQueries } from "@/lib/db";
+import { dealQueries, documentQueries, getUnderwritingForMassing } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
@@ -126,7 +126,7 @@ async function tryKnowledge(prompt: string): Promise<string | null> {
 
 // ── Route handler ────────────────────────────────────────────────────────────
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -135,9 +135,12 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
+    const body = await req.json().catch(() => ({}));
+    const massingId = (body as { massing_id?: string }).massing_id;
+
     const [deal, uwRow, docs] = await Promise.all([
       dealQueries.getById(params.id),
-      underwritingQueries.getByDealId(params.id),
+      getUnderwritingForMassing(params.id, massingId),
       documentQueries.getByDealId(params.id),
     ]);
 

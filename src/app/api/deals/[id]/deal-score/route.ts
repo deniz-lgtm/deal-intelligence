@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   dealQueries,
   dealNoteQueries,
-  underwritingQueries,
+  getUnderwritingForMassing,
   omAnalysisQueries,
   checklistQueries,
   businessPlanQueries,
@@ -50,7 +50,7 @@ export async function POST(
     if (accessError) return accessError;
 
     const body = await req.json();
-    const { stage } = body as { stage: "underwriting" | "final" };
+    const { stage, massing_id } = body as { stage: "underwriting" | "final"; massing_id?: string };
 
     if (!["underwriting", "final"].includes(stage)) {
       return NextResponse.json({ error: "Invalid stage" }, { status: 400 });
@@ -60,7 +60,7 @@ export async function POST(
       await Promise.all([
         dealQueries.getById(params.id),
         omAnalysisQueries.getByDealId(params.id),
-        underwritingQueries.getByDealId(params.id),
+        getUnderwritingForMassing(params.id, massing_id),
         dealNoteQueries.getByDealId(params.id),
         dealNoteQueries.getMemoryText(params.id),
         locationIntelligenceQueries.getByDealId(params.id).catch(() => []),

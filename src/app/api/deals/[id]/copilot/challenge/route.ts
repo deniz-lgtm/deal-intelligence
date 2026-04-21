@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   dealQueries,
-  underwritingQueries,
+  getUnderwritingForMassing,
   submarketMetricsQueries,
   locationIntelligenceQueries,
 } from "@/lib/db";
@@ -35,10 +35,11 @@ export async function POST(
 
     const body = await req.json().catch(() => ({}));
     const metrics: Record<string, unknown> | null = body.metrics ?? null;
+    const massingId: string | undefined = body.massing_id;
 
     const [deal, uwRow, market, locationIntelRows] = await Promise.all([
       dealQueries.getById(params.id),
-      underwritingQueries.getByDealId(params.id),
+      getUnderwritingForMassing(params.id, massingId),
       submarketMetricsQueries.getByDealId(params.id),
       locationIntelligenceQueries.getByDealId(params.id).catch(() => []),
     ]);

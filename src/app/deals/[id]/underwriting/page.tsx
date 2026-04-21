@@ -2043,7 +2043,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const estimateCapex = async () => {
     setCapexEstimating(true);
     try {
-      const res = await fetch(`/api/deals/${params.id}/capex-estimate`, { method: "POST" });
+      const res = await fetch(`/api/deals/${params.id}/capex-estimate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(projectMassingId ? { massing_id: projectMassingId } : {}),
+      });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "Estimation failed"); return; }
       if (isGroundUp && json.hard_cost_per_sf != null) {
@@ -2124,7 +2128,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const estimateOpex = async () => {
     setOpexEstimating(true);
     try {
-      const res = await fetch(`/api/deals/${params.id}/opex-estimate`, { method: "POST" });
+      const res = await fetch(`/api/deals/${params.id}/opex-estimate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(projectMassingId ? { massing_id: projectMassingId } : {}),
+      });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "OpEx estimation failed"); return; }
       const est = json.data;
@@ -2170,7 +2178,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const estimateLoan = async () => {
     setLoanSizing(true);
     try {
-      const res = await fetch(`/api/deals/${params.id}/loan-size`, { method: "POST" });
+      const res = await fetch(`/api/deals/${params.id}/loan-size`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(projectMassingId ? { massing_id: projectMassingId } : {}),
+      });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "Loan sizing failed"); return; }
       const est = json.data;
@@ -3587,7 +3599,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     const res = await fetch(`/api/deals/${params.id}/ai-rents`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ unit_groups: d.unit_groups }),
+                      body: JSON.stringify({ unit_groups: d.unit_groups, ...(projectMassingId ? { massing_id: projectMassingId } : {}) }),
                     });
                     const json = await res.json();
                     if (!res.ok) { toast.error(json.error || "AI rent estimation failed"); return; }
@@ -5433,7 +5445,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 const res = await fetch(`/api/deals/${params.id}/deal-score`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ stage: "underwriting" }),
+                  body: JSON.stringify({ stage: "underwriting", ...(projectMassingId ? { massing_id: projectMassingId } : {}) }),
                 });
                 const json = await res.json();
                 if (res.ok && json.data) {

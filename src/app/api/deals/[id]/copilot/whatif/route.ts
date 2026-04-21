@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, underwritingQueries } from "@/lib/db";
+import { dealQueries, getUnderwritingForMassing } from "@/lib/db";
 import { analyzeWhatIf } from "@/lib/claude";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
@@ -29,6 +29,7 @@ export async function POST(
     const body = await req.json();
     const question: string = body.question ?? "";
     const metrics: Record<string, unknown> | null = body.metrics ?? null;
+    const massingId: string | undefined = body.massing_id;
 
     if (!question.trim()) {
       return NextResponse.json(
@@ -39,7 +40,7 @@ export async function POST(
 
     const [deal, uwRow] = await Promise.all([
       dealQueries.getById(params.id),
-      underwritingQueries.getByDealId(params.id),
+      getUnderwritingForMassing(params.id, massingId),
     ]);
 
     if (!uwRow?.data) {

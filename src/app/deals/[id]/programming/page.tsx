@@ -655,12 +655,19 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const maybeAutoRunAiEstimates = useCallback((current: any) => {
     const hasOpex = current.taxes_annual > 0 || current.insurance_annual > 0;
     if (hasOpex) return;
-    fetch(`/api/deals/${params.id}/opex-estimate`, { method: "POST" })
+    fetch(`/api/deals/${params.id}/opex-estimate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(activeMassingId ? { massing_id: activeMassingId } : {}),
+    })
       .then(r => r.json())
       .then(json => {
         if (!json.data) return;
         const est = json.data;
-        fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
+        const uwGetUrl = activeMassingId
+          ? `/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(activeMassingId)}`
+          : `/api/underwriting?deal_id=${params.id}`;
+        fetch(uwGetUrl).then(r => r.json()).then(uwj => {
           const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
           const opexMerged = { ...cur,
             vacancy_rate: est.vacancy_rate ?? cur.vacancy_rate,
@@ -675,16 +682,23 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
             opex_narrative: est.basis || "",
             opex_item_notes: (est.item_notes && typeof est.item_notes === "object") ? est.item_notes : (cur.opex_item_notes || {}),
           };
-          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: opexMerged }) });
+          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, ...(activeMassingId ? { massing_id: activeMassingId } : {}), data: opexMerged }) });
         });
       }).catch(() => {});
 
-    fetch(`/api/deals/${params.id}/loan-size`, { method: "POST" })
+    fetch(`/api/deals/${params.id}/loan-size`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(activeMassingId ? { massing_id: activeMassingId } : {}),
+    })
       .then(r => r.json())
       .then(json => {
         if (!json.data) return;
         const est = json.data;
-        fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
+        const uwGetUrl = activeMassingId
+          ? `/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(activeMassingId)}`
+          : `/api/underwriting?deal_id=${params.id}`;
+        fetch(uwGetUrl).then(r => r.json()).then(uwj => {
           const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
           const loanMerged = { ...cur,
             has_financing: true,
@@ -694,10 +708,10 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
             acq_io_years: est.acq_io_years ?? cur.acq_io_years,
             loan_narrative: est.narrative || "",
           };
-          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: loanMerged }) });
+          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, ...(activeMassingId ? { massing_id: activeMassingId } : {}), data: loanMerged }) });
         });
       }).catch(() => {});
-  }, [params.id]);
+  }, [params.id, activeMassingId]);
 
   // Snapshot the current programming state as a named UW Scenario.
   // Called automatically by "Push <Massing> to UW" so each massing push

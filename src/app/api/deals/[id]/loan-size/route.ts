@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { dealQueries, underwritingQueries, omAnalysisQueries, dealNoteQueries } from "@/lib/db";
+import { dealQueries, getUnderwritingForMassing, omAnalysisQueries, dealNoteQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 import { parseJsonObject } from "@/lib/parse-json";
@@ -47,7 +47,7 @@ const FALLBACK: LoanSizeResult = {
 };
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -56,11 +56,14 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
+    const body = await req.json().catch(() => ({}));
+    const massingId = (body as { massing_id?: string }).massing_id;
+
     const deal = await dealQueries.getById(params.id);
 
     const [analysis, uwRow, memoryText] = await Promise.all([
       omAnalysisQueries.getByDealId(params.id),
-      underwritingQueries.getByDealId(params.id),
+      getUnderwritingForMassing(params.id, massingId),
       dealNoteQueries.getMemoryText(params.id),
     ]);
 
