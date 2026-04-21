@@ -91,9 +91,7 @@ export interface UWData {
   refi_loan_narrative: string;
   rubs_per_unit_monthly: number; parking_monthly: number; laundry_monthly: number;
   parking_reserved_spaces: number;
-  parking_reserved_rate: number;
   parking_unreserved_spaces: number;
-  parking_unreserved_rate: number;
   rent_growth_pct: number; expense_growth_pct: number;
   exit_cap_rate: number; hold_period_years: number; notes: string;
   scenarios: Scenario[];
@@ -148,8 +146,7 @@ export const DEFAULT: UWData = {
   ip_repairs_annual: 0, ip_utilities_annual: 0, ip_other_annual: 0,
   ip_ga_annual: 0, ip_marketing_annual: 0, ip_reserves_annual: 0,
   rubs_per_unit_monthly: 0, parking_monthly: 0, laundry_monthly: 0,
-  parking_reserved_spaces: 0, parking_reserved_rate: 0,
-  parking_unreserved_spaces: 0, parking_unreserved_rate: 0,
+  parking_reserved_spaces: 0, parking_unreserved_spaces: 0,
   has_financing: true, acq_ltc: 65, acq_interest_rate: 6.5,
   acq_pp_ltv: 70, acq_capex_ltv: 100,
   acq_amort_years: 25, acq_io_years: 0,
@@ -374,20 +371,47 @@ export function calc(d: UWData, mode: "commercial" | "multifamily" | "student_ho
     ? gpr
     : d.unit_groups.reduce((s, g) => s + groupBlendedGPR(g, stabilizedYr), 0);
 
-  const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
-  const parkingEntries = d.parking?.entries || [];
-  const perSpaceParkingMonthly = (d.parking_reserved_spaces || 0) * (d.parking_reserved_rate || 0)
-    + (d.parking_unreserved_spaces || 0) * (d.parking_unreserved_rate || 0);
-  const otherIncomeParking = perSpaceParkingMonthly > 0
-    ? perSpaceParkingMonthly * 12
-    : parkingEntries.length > 0
-      ? parkingEntries.reduce((s, e) => s
-          + (e.reserved_residential_spaces * e.reserved_monthly_rate)
-          + (e.unreserved_spaces * e.unreserved_monthly_rate)
-          + (e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12
-      : (d.parking_monthly || 0) * 12;
-  const otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
-  const totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry;
+  // Other income: `other_income_items` is the canonical source (matches
+  // the UI DCF). Fall back to the legacy scalar fields only for deals
+  // that predate the itemized list, so max-bid / deal-score / feasibility
+  // don't drop income on old blobs.
+  const totalParkingSpaces = (d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0);
+  let totalOtherIncome = 0;
+  let otherIncomeRUBS = 0;
+  let otherIncomeParking = 0;
+  let otherIncomeLaundry = 0;
+  const oiItems = (d as any).other_income_items as any[] | undefined;
+  if (oiItems && oiItems.length > 0) {
+    for (const item of oiItems) {
+      const mult = item.basis === "per_unit"
+        ? totalUnits
+        : item.basis === "per_space"
+          ? totalParkingSpaces
+          : 1;
+      const monthly = (item.amount || 0) > 0 ? item.amount : (item.ip_amount || 0);
+      totalOtherIncome += monthly * mult * 12;
+    }
+  } else {
+    otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
+    const parkingEntries = d.parking?.entries || [];
+    // Legacy per-space rate fields were removed from UWData but may
+    // still exist on old persisted blobs; read them via `any` so
+    // pre-migration deals still surface their parking income.
+    const legacyRsvRate = (d as any).parking_reserved_rate || 0;
+    const legacyUnrsvRate = (d as any).parking_unreserved_rate || 0;
+    const perSpaceParkingMonthly = (d.parking_reserved_spaces || 0) * legacyRsvRate
+      + (d.parking_unreserved_spaces || 0) * legacyUnrsvRate;
+    otherIncomeParking = perSpaceParkingMonthly > 0
+      ? perSpaceParkingMonthly * 12
+      : parkingEntries.length > 0
+        ? parkingEntries.reduce((s, e) => s
+            + (e.reserved_residential_spaces * e.reserved_monthly_rate)
+            + (e.unreserved_spaces * e.unreserved_monthly_rate)
+            + (e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12
+        : (d.parking_monthly || 0) * 12;
+    otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
+    totalOtherIncome = otherIncomeRUBS + otherIncomeParking + otherIncomeLaundry;
+  }
 
   const ipVacRate = d.in_place_vacancy_rate ?? d.vacancy_rate;
   const vacancyLoss = gpr * (d.vacancy_rate / 100);
@@ -469,7 +493,7 @@ export function calc(d: UWData, mode: "commercial" | "multifamily" | "student_ho
     }
   }
 
-  const totalParkingCost = parkingEntries.reduce((s, e) => s + e.spaces * e.cost_per_space, 0);
+  const totalParkingCost = (d.parking?.entries || []).reduce((s, e) => s + e.spaces * e.cost_per_space, 0);
   const totalHardCosts = d.development_mode
     ? (hasItemizedBudget ? itemizedHardBase : d.hard_cost_per_sf * (d.max_gsf || 0))
     : 0;

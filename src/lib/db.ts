@@ -1368,6 +1368,20 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_site_walk_deficiencies_walk_id ON site_walk_deficiencies(site_walk_id)`,
     `CREATE INDEX IF NOT EXISTS idx_site_walk_deficiencies_deal_id ON site_walk_deficiencies(deal_id)`,
+    // Per-massing underwriting snapshots. One row per (deal, massing) so
+    // analysts can flip between massing "projects" and see a whole UW
+    // tied to that scenario. Lazy-migrated from the legacy `underwriting`
+    // table on first read; the legacy row stays as a deal-level fallback
+    // and as the source of truth for `data.site_plan.scenarios[]`.
+    `CREATE TABLE IF NOT EXISTS underwriting_per_massing (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      site_plan_scenario_id TEXT NOT NULL,
+      data JSONB NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(deal_id, site_plan_scenario_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_uw_per_massing_deal_id ON underwriting_per_massing(deal_id)`,
   ];
 
   for (const query of queries) {
@@ -2322,6 +2336,113 @@ export const underwritingQueries = {
     return underwritingQueries.getByDealId(dealId);
   },
 };
+
+// ─── Per-massing underwriting queries ─────────────────────────────────────────
+
+export const underwritingPerMassingQueries = {
+  getByDealAndMassing: async (dealId: string, massingId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM underwriting_per_massing WHERE deal_id = $1 AND site_plan_scenario_id = $2",
+      [dealId, massingId]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  listByDealId: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "SELECT * FROM underwriting_per_massing WHERE deal_id = $1",
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  upsert: async (dealId: string, massingId: string, id: string, data: string) => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO underwriting_per_massing (id, deal_id, site_plan_scenario_id, data, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, NOW())
+       ON CONFLICT (deal_id, site_plan_scenario_id) DO UPDATE SET
+         data = EXCLUDED.data,
+         updated_at = NOW()`,
+      [id, dealId, massingId, data]
+    );
+    return underwritingPerMassingQueries.getByDealAndMassing(dealId, massingId);
+  },
+
+  // Mirror a partial patch (e.g. the updated site_plan blob) into every
+  // existing per-massing row for a deal. Used by Site & Zoning to keep
+  // the massings list in sync across snapshots without touching the
+  // massing-specific fields an analyst has tuned.
+  patchAll: async (dealId: string, patch: Record<string, unknown>) => {
+    const pool = getPool();
+    await pool.query(
+      `UPDATE underwriting_per_massing
+       SET data = data || $2::jsonb, updated_at = NOW()
+       WHERE deal_id = $1`,
+      [dealId, JSON.stringify(patch)]
+    );
+  },
+
+  deleteByMassing: async (dealId: string, massingId: string) => {
+    const pool = getPool();
+    await pool.query(
+      "DELETE FROM underwriting_per_massing WHERE deal_id = $1 AND site_plan_scenario_id = $2",
+      [dealId, massingId]
+    );
+  },
+};
+
+// ── Unified underwriting lookup ────────────────────────────────────────
+// Every server-side consumer should go through this helper. It returns
+// the legacy `underwriting` row shape ({ id, deal_id, data, updated_at })
+// regardless of whether the data lives in `underwriting_per_massing` or
+// the legacy table, so existing parsing code keeps working.
+//
+// Resolution:
+//   1. explicit `massingId` → that massing's per-massing row (falls back
+//      if not found, so an unknown id never 404s on analysts)
+//   2. base-case massing inferred from legacy.site_plan.scenarios (or
+//      the first scenario if nothing is flagged)
+//   3. legacy row (pre-migration deals, or deals with no massings yet)
+
+type UwRow = { id: string; deal_id: string; data: unknown; updated_at: string };
+
+export async function getUnderwritingForMassing(
+  dealId: string,
+  massingId?: string | null
+): Promise<UwRow | null> {
+  if (massingId) {
+    const row = (await underwritingPerMassingQueries.getByDealAndMassing(dealId, massingId)) as
+      | { id: string; deal_id: string; data: unknown; updated_at: string }
+      | null;
+    if (row) {
+      return { id: row.id, deal_id: row.deal_id, data: row.data, updated_at: row.updated_at };
+    }
+  }
+  const legacy = (await underwritingQueries.getByDealId(dealId)) as UwRow | null;
+  if (!legacy) return null;
+
+  // Try the base-case per-massing row if available — keeps background
+  // calcs (deal-score, max-bid, feasibility) aligned with whichever
+  // massing the analyst has flagged as canonical.
+  const parsed = typeof legacy.data === "string"
+    ? (() => { try { return JSON.parse(legacy.data as string); } catch { return {}; } })()
+    : (legacy.data as Record<string, unknown>);
+  const sp = (parsed?.site_plan as { scenarios?: Array<{ id?: string; is_base_case?: boolean }> } | undefined);
+  const scenarios = Array.isArray(sp?.scenarios) ? sp!.scenarios! : [];
+  const baseId = (scenarios.find(s => s.is_base_case)?.id || scenarios[0]?.id || "") as string;
+  if (baseId) {
+    const baseRow = (await underwritingPerMassingQueries.getByDealAndMassing(dealId, baseId)) as
+      | { id: string; deal_id: string; data: unknown; updated_at: string }
+      | null;
+    if (baseRow) {
+      return { id: baseRow.id, deal_id: baseRow.deal_id, data: baseRow.data, updated_at: baseRow.updated_at };
+    }
+  }
+  return legacy;
+}
 
 // ─── Comps queries ────────────────────────────────────────────────────────────
 

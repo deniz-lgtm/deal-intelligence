@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, underwritingQueries } from "@/lib/db";
+import { dealQueries, getUnderwritingForMassing } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
@@ -43,13 +43,15 @@ export async function POST(
   // right now, including any scenario overrides). Fall back to the DB
   // rows when the client doesn't send any (legacy behaviour).
   let unitGroups: Array<{ id: string; label: string; unit_count: number; bedrooms?: number; bathrooms?: number; sf_per_unit?: number; beds_per_unit?: number }> = [];
+  let massingId: string | undefined;
   try {
     const body = await request.json().catch(() => ({}));
     if (Array.isArray(body?.unit_groups)) unitGroups = body.unit_groups;
+    if (typeof body?.massing_id === "string") massingId = body.massing_id;
   } catch { /* empty body — fall through to DB read */ }
   if (unitGroups.length === 0) {
-    const uwRow = await underwritingQueries.getByDealId(params.id);
-    const uwData = uwRow?.data || {};
+    const uwRow = await getUnderwritingForMassing(params.id, massingId);
+    const uwData = (uwRow?.data ? (typeof uwRow.data === "string" ? JSON.parse(uwRow.data) : uwRow.data) : {}) as Record<string, any>;
     unitGroups = uwData.unit_groups || [];
   }
   if (unitGroups.length === 0) {

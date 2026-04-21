@@ -121,6 +121,11 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const [unitGroups, setUnitGroups] = useState<any[]>([]);
   const [affordabilityConfig, setAffordabilityConfig] = useState<any>(null);
   const [taxesAnnual, setTaxesAnnual] = useState(0);
+  // Parking reserved/unreserved split. Initializes from UW data if
+  // the analyst has previously set counts; otherwise falls back to a
+  // 70/30 auto-split of the massing's estimated total spaces at push
+  // time. Edits here are the single UI source of truth.
+  const [parkingSplit, setParkingSplit] = useState<{ reserved: number; unreserved: number }>({ reserved: 0, unreserved: 0 });
   // Site-plan massings drive everything on this page. Each massing
   // owns a list of buildings (drawn on Site & Zoning); Programming
   // surfaces them as nested tabs (massing → building) where each
@@ -326,6 +331,12 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       if (uw.unit_groups?.length > 0) setUnitGroups(uw.unit_groups);
       if (uw.affordability_config) setAffordabilityConfig(uw.affordability_config);
       if (uw.taxes_annual) setTaxesAnnual(uw.taxes_annual);
+      if ((uw.parking_reserved_spaces || 0) > 0 || (uw.parking_unreserved_spaces || 0) > 0) {
+        setParkingSplit({
+          reserved: uw.parking_reserved_spaces || 0,
+          unreserved: uw.parking_unreserved_spaces || 0,
+        });
+      }
 
       // Build zoning inputs from UW data
       const si = uw.site_info || {};
@@ -370,7 +381,10 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const saveAll = useCallback(async () => {
     setSaving(true);
     try {
-      const uwRes = await fetch(`/api/underwriting?deal_id=${params.id}`);
+      const uwGetUrl = activeMassingId
+        ? `/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(activeMassingId)}`
+        : `/api/underwriting?deal_id=${params.id}`;
+      const uwRes = await fetch(uwGetUrl);
       const uwJson = await uwRes.json();
       const current = uwJson.data?.data ? (typeof uwJson.data.data === "string" ? JSON.parse(uwJson.data.data) : uwJson.data.data) : {};
 
@@ -413,7 +427,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       await fetch("/api/underwriting", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deal_id: params.id, data: merged }),
+        body: JSON.stringify({ deal_id: params.id, ...(activeMassingId ? { massing_id: activeMassingId } : {}), data: merged }),
       });
       setDirty(false);
       setLastSavedAt(Date.now());
@@ -423,7 +437,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     } finally {
       setSaving(false);
     }
-  }, [params.id, buildingProgram, otherIncomeItems, commercialTenants, affordabilityConfig]);
+  }, [params.id, buildingProgram, otherIncomeItems, commercialTenants, affordabilityConfig, activeMassingId]);
 
   // Auto-save
   useEffect(() => {
@@ -612,13 +626,17 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         building_program: buildingProgram,
         other_income_items: otherIncomeItems,
         commercial_tenants: commercialTenants,
-        // Parking — auto-split 70% reserved / 30% unreserved with default
-        // rates. Uses the aggregate parking count so multi-building
-        // massings don't collapse to just the last building's stalls.
-        parking_reserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.7),
-        parking_reserved_rate: current.parking_reserved_rate || 200,
-        parking_unreserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.3),
-        parking_unreserved_rate: current.parking_unreserved_rate || 100,
+        // Parking — analyst edits live on this page (Parking Allocation
+        // section). Fall back to a 70/30 auto-split of the aggregate
+        // massing estimate the first time a deal is pushed so downstream
+        // calcs have something to multiply against. Per-space $ lives on
+        // the Parking Income row in `other_income_items`.
+        parking_reserved_spaces: (parkingSplit.reserved > 0 || parkingSplit.unreserved > 0)
+          ? parkingSplit.reserved
+          : Math.round(aggregateMassing.total_parking_spaces_est * 0.7),
+        parking_unreserved_spaces: (parkingSplit.reserved > 0 || parkingSplit.unreserved > 0)
+          ? parkingSplit.unreserved
+          : Math.round(aggregateMassing.total_parking_spaces_est * 0.3),
         // Legacy other-income scalars — zeroed because the underwriting
         // calc now sums d.other_income_items directly (source of truth
         // in one place). Leaving them populated would double-count
@@ -628,7 +646,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         laundry_monthly: 0,
       };
       return merged;
-  }, [zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanMassings]);
+  }, [zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanMassings, parkingSplit]);
 
   // Fire AI OpEx + loan-sizing estimates in the background when the UW
   // blob looks empty. Used by the auto-sync loop on the first successful
@@ -637,12 +655,19 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const maybeAutoRunAiEstimates = useCallback((current: any) => {
     const hasOpex = current.taxes_annual > 0 || current.insurance_annual > 0;
     if (hasOpex) return;
-    fetch(`/api/deals/${params.id}/opex-estimate`, { method: "POST" })
+    fetch(`/api/deals/${params.id}/opex-estimate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(activeMassingId ? { massing_id: activeMassingId } : {}),
+    })
       .then(r => r.json())
       .then(json => {
         if (!json.data) return;
         const est = json.data;
-        fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
+        const uwGetUrl = activeMassingId
+          ? `/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(activeMassingId)}`
+          : `/api/underwriting?deal_id=${params.id}`;
+        fetch(uwGetUrl).then(r => r.json()).then(uwj => {
           const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
           const opexMerged = { ...cur,
             vacancy_rate: est.vacancy_rate ?? cur.vacancy_rate,
@@ -657,16 +682,23 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
             opex_narrative: est.basis || "",
             opex_item_notes: (est.item_notes && typeof est.item_notes === "object") ? est.item_notes : (cur.opex_item_notes || {}),
           };
-          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: opexMerged }) });
+          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, ...(activeMassingId ? { massing_id: activeMassingId } : {}), data: opexMerged }) });
         });
       }).catch(() => {});
 
-    fetch(`/api/deals/${params.id}/loan-size`, { method: "POST" })
+    fetch(`/api/deals/${params.id}/loan-size`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(activeMassingId ? { massing_id: activeMassingId } : {}),
+    })
       .then(r => r.json())
       .then(json => {
         if (!json.data) return;
         const est = json.data;
-        fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).then(uwj => {
+        const uwGetUrl = activeMassingId
+          ? `/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(activeMassingId)}`
+          : `/api/underwriting?deal_id=${params.id}`;
+        fetch(uwGetUrl).then(r => r.json()).then(uwj => {
           const cur = uwj.data?.data ? (typeof uwj.data.data === "string" ? JSON.parse(uwj.data.data) : uwj.data.data) : {};
           const loanMerged = { ...cur,
             has_financing: true,
@@ -676,10 +708,10 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
             acq_io_years: est.acq_io_years ?? cur.acq_io_years,
             loan_narrative: est.narrative || "",
           };
-          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data: loanMerged }) });
+          fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, ...(activeMassingId ? { massing_id: activeMassingId } : {}), data: loanMerged }) });
         });
       }).catch(() => {});
-  }, [params.id]);
+  }, [params.id, activeMassingId]);
 
   // Snapshot the current programming state as a named UW Scenario.
   // Called automatically by "Push <Massing> to UW" so each massing push
@@ -918,6 +950,22 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deal_id: params.id, data: next }),
       });
+      // Fan out each massing's computed state to its per-massing row so
+      // the UW page's project selector always sees the latest programming
+      // push for whichever massing is picked. The legacy PUT above
+      // already mirrors the base-case state, so skip that one.
+      const baseId = baseMassing.id;
+      await Promise.all(updatedScenarios
+        .filter(s => s.site_plan_scenario_id && s.site_plan_scenario_id !== baseId)
+        .map(s => fetch("/api/underwriting", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deal_id: params.id,
+            massing_id: s.site_plan_scenario_id,
+            data: s.state,
+          }),
+        }).catch(() => {})));
       maybeAutoRunAiEstimates(fetched);
     } catch {
       // Silent — auto-sync runs on every save; a toast on each failure
@@ -1323,6 +1371,60 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           />
         )}
       </Section>
+
+      {/* ═══════════════════ PARKING ALLOCATION ═══════════════════
+          Splits the massing's estimated parking stalls into reserved
+          vs unreserved. Edits here are the canonical source — the UW
+          page consumes these counts read-only. Per-space $ lives on
+          the Parking Income row in Other Income (UW page). */}
+      {(() => {
+        const totalEst = massingTotals?.total_parking_spaces_est || summary?.total_parking_spaces_est || 0;
+        const totalSplit = parkingSplit.reserved + parkingSplit.unreserved;
+        const delta = totalEst - totalSplit;
+        return (
+          <Section title="Parking Allocation" icon={<Car className="h-4 w-4 text-blue-400" />}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Total Est. Spaces (from massing)</label>
+                <div className="px-2 py-1.5 border rounded-md bg-muted/20 text-sm tabular-nums">{fn(totalEst)}</div>
+              </div>
+              <NumInput
+                label="Reserved Spaces"
+                value={parkingSplit.reserved}
+                onChange={v => { setParkingSplit(s => ({ ...s, reserved: v })); setDirty(true); }}
+              />
+              <NumInput
+                label="Unreserved Spaces"
+                value={parkingSplit.unreserved}
+                onChange={v => { setParkingSplit(s => ({ ...s, unreserved: v })); setDirty(true); }}
+              />
+            </div>
+            <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+              <span>Allocated: <span className="text-foreground font-medium tabular-nums">{fn(totalSplit)}</span></span>
+              {totalEst > 0 && delta !== 0 && (
+                <span className={delta > 0 ? "text-amber-400" : "text-rose-400"}>
+                  {delta > 0 ? `${fn(delta)} unallocated` : `${fn(-delta)} over the massing estimate`}
+                </span>
+              )}
+              {totalEst > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto h-7 text-xs"
+                  onClick={() => {
+                    const r = Math.round(totalEst * 0.7);
+                    setParkingSplit({ reserved: r, unreserved: totalEst - r });
+                    setDirty(true);
+                  }}
+                  title="Reset to 70% reserved / 30% unreserved of the massing's estimated total"
+                >
+                  Auto-split 70 / 30
+                </Button>
+              )}
+            </div>
+          </Section>
+        );
+      })()}
 
       {/* ═══════════════════ AFFORDABILITY ═══════════════════
           Hidden in Basic mode — analysts running back-of-envelope

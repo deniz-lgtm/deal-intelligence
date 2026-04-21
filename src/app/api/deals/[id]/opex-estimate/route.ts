@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { dealQueries, dealNoteQueries, omAnalysisQueries, underwritingQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, omAnalysisQueries, getUnderwritingForMassing } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 import { parseJsonObject } from "@/lib/parse-json";
@@ -63,7 +63,7 @@ const FALLBACK: OpexEstimate = {
  * generate realistic per-category opex figures.
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -72,12 +72,18 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
+    // Optional `massing_id` in the body scopes the estimate to a specific
+    // massing's unit counts — so running "AI Estimate OpEx" on Massing 2
+    // uses that massing's unit mix, not the base case's.
+    const body = await req.json().catch(() => ({}));
+    const massingId = (body as { massing_id?: string }).massing_id;
+
     const deal = await dealQueries.getById(params.id);
 
     // Gather context from multiple sources
     const [analysis, uwRow, memoryText] = await Promise.all([
       omAnalysisQueries.getByDealId(params.id),
-      underwritingQueries.getByDealId(params.id),
+      getUnderwritingForMassing(params.id, massingId),
       dealNoteQueries.getMemoryText(params.id),
     ]);
 

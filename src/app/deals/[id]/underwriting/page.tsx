@@ -170,11 +170,10 @@ interface UWData {
   refi_loan_narrative: string;
   // Other income (monthly, property-level)
   rubs_per_unit_monthly: number; parking_monthly: number; laundry_monthly: number;
-  // Per-space parking revenue
+  // Parking space counts — per-space $ is set on the Parking Income
+  // line in `other_income_items`, so there's one source of truth.
   parking_reserved_spaces: number;
-  parking_reserved_rate: number;       // $/space/month
   parking_unreserved_spaces: number;
-  parking_unreserved_rate: number;     // $/space/month
   rent_growth_pct: number; expense_growth_pct: number;
   exit_cap_rate: number; hold_period_years: number; notes: string;
   scenarios: Scenario[];
@@ -250,8 +249,7 @@ const DEFAULT: UWData = {
   ip_repairs_annual: 0, ip_utilities_annual: 0, ip_other_annual: 0,
   ip_ga_annual: 0, ip_marketing_annual: 0, ip_reserves_annual: 0,
   rubs_per_unit_monthly: 0, parking_monthly: 0, laundry_monthly: 0,
-  parking_reserved_spaces: 0, parking_reserved_rate: 0,
-  parking_unreserved_spaces: 0, parking_unreserved_rate: 0,
+  parking_reserved_spaces: 0, parking_unreserved_spaces: 0,
   has_financing: true, acq_ltc: 65, acq_interest_rate: 6.5,
   acq_pp_ltv: 70, acq_capex_ltv: 100,
   acq_amort_years: 25, acq_io_years: 0,
@@ -913,44 +911,20 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     : d.unit_groups.reduce((s, g) => s + groupBlendedGPR(g, stabilizedYr), 0)
   ) + commercialTenantGPR;
 
-  // ── Other Income (RUBS, Parking, Laundry) ──────────────────────────────────
-  const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
-  // Parking revenue: per-space pricing → parking config entries → legacy flat monthly
-  const parkingEntries = d.parking?.entries || [];
-  const perSpaceParkingMonthly = (d.parking_reserved_spaces || 0) * (d.parking_reserved_rate || 0)
-    + (d.parking_unreserved_spaces || 0) * (d.parking_unreserved_rate || 0);
-  const otherIncomeParking = perSpaceParkingMonthly > 0
-    ? perSpaceParkingMonthly * 12
-    : parkingEntries.length > 0
-      ? parkingEntries.reduce((s, e) => s
-          + (e.reserved_residential_spaces * e.reserved_monthly_rate)
-          + (e.unreserved_spaces * e.unreserved_monthly_rate)
-          + (e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12
-      : (d.parking_monthly || 0) * 12;
-  const otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
-  // Pro-forma `other_income_items` line items — anything the analyst
-  // typed in the Other Income table (Storage Fees, Pet Rent, Late Fees,
-  // etc.). Skip labels that already flow through the RUBS/laundry
-  // mirror in computePushedUw, and skip per_space items that are
-  // already covered by the per-space parking calc above — otherwise
-  // we'd double-count them.
+  // ── Other Income ───────────────────────────────────────────────────────────
+  // Sole source of truth: `other_income_items` (Parking, RUBS, Laundry,
+  // Storage, etc.). Legacy scalars (`rubs_per_unit_monthly`,
+  // `parking_monthly`, `laundry_monthly`) and the per-space parking
+  // rate fields are kept in UWData for back-compat but are not summed
+  // here — new syncs zero them out in computePushedUw.
   const totalUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
   const ipUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + (g.unit_count || 0), 0);
-  // Pro-forma sum of every Other Income line item. Intentionally
-  // mirrors inPlaceOtherIncome below (no label filters, no basis
-  // skips) so whatever shows in the IP column of the DCF flows into
-  // Year 1+. If PF $/Mo is blank on a row, fall back to the IP amount
-  // (acquisition convention — PF starts from IP unless overridden).
-  //
-  // Legacy `rubs_per_unit_monthly`, `parking_monthly`, and
-  // `laundry_monthly` are NOT added here — they're kept in UWData
-  // for back-compat with old deals but new syncs zero them out in
-  // computePushedUw, so including them would risk double-counting.
+  const totalParkingSpacesForOI = (d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0);
   const otherIncomeItemsPF = (d.other_income_items || []).reduce((s: number, item: any) => {
     const mult = item.basis === "per_unit"
       ? totalUnitsForOtherIncome
       : item.basis === "per_space"
-        ? (d.parking_reserved_spaces || 0)
+        ? totalParkingSpacesForOI
         : 1;
     const monthly = (item.amount || 0) > 0 ? item.amount : (item.ip_amount || 0);
     return s + monthly * mult * 12;
@@ -966,7 +940,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
         const mult = item.basis === "per_unit"
           ? ipUnitsForOtherIncome
           : item.basis === "per_space"
-            ? (d.parking_reserved_spaces || 0)
+            ? totalParkingSpacesForOI
             : 1;
         return s + (item.ip_amount || 0) * mult * 12;
       }, 0);
@@ -1081,7 +1055,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   }
 
   // Parking total cost from parking config
-  const totalParkingCost = parkingEntries.reduce((s, e) => s + e.spaces * e.cost_per_space, 0);
+  const totalParkingCost = (d.parking?.entries || []).reduce((s, e) => s + e.spaces * e.cost_per_space, 0);
 
   const totalHardCosts = d.development_mode
     ? (hasItemizedBudget ? itemizedHardBase : d.hard_cost_per_sf * (d.max_gsf || 0))
@@ -1355,7 +1329,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     gpr, inPlaceGPR, proformaGPR, vacancyLoss, inPlaceVacancyLoss, proformaVacancyLoss, egi, inPlaceEGI, proformaEGI,
     reimbursements, ipReimbursements, camPool, ipCamPool, effectiveRevenue, inPlaceEffectiveRevenue, proformaEffectiveRevenue,
     leasingCommissions, ipLeasingCommissions,
-    totalOtherIncome, inPlaceOtherIncome, otherIncomeRUBS, otherIncomeParking, otherIncomeLaundry,
+    totalOtherIncome, inPlaceOtherIncome,
     mgmtFee, proformaMgmtFee, inPlaceMgmtFee, totalOpEx, proformaTotalOpEx, inPlaceTotalOpEx,
     noi, inPlaceNOI, proformaNOI,
     grm, proformaGRM, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
@@ -1600,6 +1574,23 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null); // null = baseline
   const [activeMassingScenarioId, setActiveMassingScenarioId] = useState<string | null>(null); // site_plan_scenario_id — which massing to view
 
+  // ── Per-massing UW project selector ───────────────────────────────
+  // Each site-plan scenario ("massing") has its own UWData snapshot.
+  // `projectMassings` is the canonical list (from the legacy site_plan
+  // row which stays shared across massings); `projectMassingId` is the
+  // slice currently loaded into `data`. Switching projects re-fetches
+  // that massing's row and overwrites everything on this page.
+  const [projectMassings, setProjectMassings] = useState<Array<{ id: string; name: string; is_base_case?: boolean }>>([]);
+  const [projectMassingId, setProjectMassingId] = useState<string | null>(null);
+  const [baseCaseMassingId, setBaseCaseMassingId] = useState<string | null>(null);
+  const [legacyUw, setLegacyUw] = useState<Record<string, unknown> | null>(null);
+  const [firstOpenPromptMassingId, setFirstOpenPromptMassingId] = useState<string | null>(null);
+  const [copyModalOpen, setCopyModalOpen] = useState(false);
+  type CopySections = { loan: boolean; opex: boolean; growth: boolean; cap_rates: boolean; cam_flags: boolean; hold_period: boolean };
+  const [copySections, setCopySections] = useState<CopySections>({
+    loan: true, opex: true, growth: true, cap_rates: true, cam_flags: false, hold_period: true,
+  });
+
   // Top-level tabs — the underwriting page is long; splitting it into
   // 4 buckets keeps the analyst focused on whichever piece they're
   // actively editing. Synced to ?tab= so a shared URL lands on the
@@ -1766,10 +1757,15 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     });
   };
 
+  const urlMassingParam = searchParams?.get("massing") || null;
   useEffect(() => {
+    const urlMassing = urlMassingParam;
+    const uwUrl = urlMassing
+      ? `/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(urlMassing)}`
+      : `/api/underwriting?deal_id=${params.id}`;
     Promise.all([
       fetch(`/api/deals/${params.id}`).then(r => r.json()),
-      fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()),
+      fetch(uwUrl).then(r => r.json()),
       fetch(`/api/deals/${params.id}/deal-score`).then(r => r.json()).catch(() => null),
     ]).then(async ([dr, ur, scoresJson]) => {
       setDeal(dr.data);
@@ -1877,9 +1873,41 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         setData(merged);
       }
       else if (dr.data?.asking_price) setData(p => ({ ...p, purchase_price: dr.data.asking_price }));
+
+      // Per-massing selector state. `ur.massings` / `ur.base_case_massing_id`
+      // / `ur.legacy` are only present when the request included a
+      // massing_id — otherwise fall back to inferring the list from the
+      // loaded data (legacy shape).
+      const rawMassings = Array.isArray(ur?.massings) && ur.massings.length > 0
+        ? ur.massings
+        : (ur.data?.data
+            ? (((typeof ur.data.data === "string" ? JSON.parse(ur.data.data) : ur.data.data) as { site_plan?: { scenarios?: Array<{ id: string; name?: string; is_base_case?: boolean }> } }).site_plan?.scenarios || [])
+            : []);
+      const cleanMassings = (rawMassings as Array<{ id: string; name?: string; is_base_case?: boolean }>).map(m => ({
+        id: String(m.id),
+        name: m.name || "",
+        is_base_case: m.is_base_case,
+      })).filter(m => m.id);
+      setProjectMassings(cleanMassings);
+      const baseId = ur?.base_case_massing_id || cleanMassings.find(m => m.is_base_case)?.id || cleanMassings[0]?.id || null;
+      setBaseCaseMassingId(baseId);
+      setLegacyUw(ur?.legacy
+        ? (typeof ur.legacy.data === "string" ? JSON.parse(ur.legacy.data) : ur.legacy.data) as Record<string, unknown>
+        : null);
+      // Decide which project is active. URL wins; otherwise base case.
+      const resolvedActive = urlMassing || baseId;
+      setProjectMassingId(resolvedActive);
+      // First-open prompt: the URL targeted a specific massing, but
+      // neither the per-massing row nor a lazy-migrated copy came back.
+      // That means it's a newly added massing with no UW yet — offer
+      // to copy from the base case instead of dropping a blank on the
+      // analyst.
+      if (urlMassing && !ur?.data?.data && baseId && baseId !== urlMassing) {
+        setFirstOpenPromptMassingId(urlMassing);
+      }
       setLoading(false);
     });
-  }, [params.id]);
+  }, [params.id, urlMassingParam]);
 
   const set = useCallback(<K extends keyof UWData>(k: K, v: UWData[K]) => {
     if (activeScenarioId) {
@@ -1913,15 +1941,93 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const save = async () => {
     setSaving(true);
     try {
-      const res = await fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deal_id: params.id, data }) });
+      const body: Record<string, unknown> = { deal_id: params.id, data };
+      if (projectMassingId) body.massing_id = projectMassingId;
+      const res = await fetch("/api/underwriting", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) toast.success("Underwriting saved"); else toast.error("Failed to save");
     } catch { toast.error("Failed to save"); } finally { setSaving(false); }
+  };
+
+  // ── Copy-from-base-case helpers ─────────────────────────────────────
+  // `COPY_SECTION_FIELDS` enumerates every UWData key that belongs to a
+  // section the analyst can tick in the copy modal. Fields NOT listed
+  // (unit_groups, commercial_tenants, other_income_items, parking_*,
+  // building_program, dev_budget_items, etc.) are treated as
+  // massing-specific and never overwritten.
+  const COPY_SECTION_FIELDS: Record<keyof CopySections, string[]> = {
+    loan: ["has_financing", "acq_ltc", "acq_interest_rate", "acq_pp_ltv", "acq_capex_ltv", "acq_amort_years", "acq_io_years", "acq_loan_narrative", "has_refi", "refi_year", "refi_ltv", "refi_rate", "refi_amort_years", "refi_loan_narrative", "loan_narrative"],
+    opex: ["taxes_annual", "insurance_annual", "repairs_annual", "utilities_annual", "other_expenses_annual", "ga_annual", "marketing_annual", "reserves_annual", "management_fee_pct", "ip_mgmt_annual", "ip_taxes_annual", "ip_insurance_annual", "ip_repairs_annual", "ip_utilities_annual", "ip_other_annual", "ip_ga_annual", "ip_marketing_annual", "ip_reserves_annual", "custom_opex", "opex_narrative", "opex_item_notes"],
+    growth: ["rent_growth_pct", "expense_growth_pct", "vacancy_rate", "in_place_vacancy_rate"],
+    cap_rates: ["exit_cap_rate"],
+    cam_flags: ["cam_taxes", "cam_insurance", "cam_repairs", "cam_utilities", "cam_ga", "cam_marketing", "cam_reserves", "cam_other", "cam_management"],
+    hold_period: ["hold_period_years"],
+  };
+
+  const fetchBaseCaseData = async (): Promise<Record<string, unknown> | null> => {
+    if (!baseCaseMassingId) return null;
+    try {
+      const res = await fetch(`/api/underwriting?deal_id=${params.id}&massing_id=${encodeURIComponent(baseCaseMassingId)}`);
+      const json = await res.json();
+      const raw = json.data?.data;
+      if (!raw) return null;
+      return typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch { return null; }
+  };
+
+  // Full copy used by the first-open prompt. Pulls every deal-level
+  // field from the base case but leaves the massing-specific fields
+  // alone (programming / massing push will fill them).
+  const copyFromBaseFull = async () => {
+    const base = await fetchBaseCaseData();
+    if (!base) { toast.error("Couldn't load base case"); return; }
+    setData(prev => {
+      const skip = new Set<string>([
+        "site_plan", "building_program", "unit_groups", "commercial_tenants",
+        "other_income_items", "parking_reserved_spaces", "parking_unreserved_spaces",
+        "parking", "dev_budget_items", "max_gsf", "max_nrsf", "mixed_use",
+        "affordability_config", "scenarios", "uw_scenarios", "capex_items",
+      ]);
+      const out: Record<string, unknown> = { ...prev } as Record<string, unknown>;
+      for (const [k, v] of Object.entries(base)) {
+        if (skip.has(k)) continue;
+        out[k] = v;
+      }
+      return out as unknown as typeof prev;
+    });
+    toast.success("Copied assumptions from base case");
+  };
+
+  const copyFromBaseSections = async (sections: CopySections) => {
+    const base = await fetchBaseCaseData();
+    if (!base) { toast.error("Couldn't load base case"); return; }
+    setData(prev => {
+      const out: Record<string, unknown> = { ...prev } as Record<string, unknown>;
+      (Object.keys(sections) as Array<keyof CopySections>).forEach(k => {
+        if (!sections[k]) return;
+        for (const f of COPY_SECTION_FIELDS[k]) {
+          if ((base as Record<string, unknown>)[f] !== undefined) out[f] = (base as Record<string, unknown>)[f];
+        }
+      });
+      return out as unknown as typeof prev;
+    });
+    toast.success("Copied selected sections from base case");
+  };
+
+  const switchProject = (newMassingId: string) => {
+    if (!newMassingId || newMassingId === projectMassingId) return;
+    const qp = new URLSearchParams(searchParams?.toString() || "");
+    qp.set("massing", newMassingId);
+    router.replace(`${pathname}?${qp.toString()}`);
   };
 
   const estimateCapex = async () => {
     setCapexEstimating(true);
     try {
-      const res = await fetch(`/api/deals/${params.id}/capex-estimate`, { method: "POST" });
+      const res = await fetch(`/api/deals/${params.id}/capex-estimate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(projectMassingId ? { massing_id: projectMassingId } : {}),
+      });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "Estimation failed"); return; }
       if (isGroundUp && json.hard_cost_per_sf != null) {
@@ -2002,7 +2108,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const estimateOpex = async () => {
     setOpexEstimating(true);
     try {
-      const res = await fetch(`/api/deals/${params.id}/opex-estimate`, { method: "POST" });
+      const res = await fetch(`/api/deals/${params.id}/opex-estimate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(projectMassingId ? { massing_id: projectMassingId } : {}),
+      });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "OpEx estimation failed"); return; }
       const est = json.data;
@@ -2048,7 +2158,11 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const estimateLoan = async () => {
     setLoanSizing(true);
     try {
-      const res = await fetch(`/api/deals/${params.id}/loan-size`, { method: "POST" });
+      const res = await fetch(`/api/deals/${params.id}/loan-size`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(projectMassingId ? { massing_id: projectMassingId } : {}),
+      });
       const json = await res.json();
       if (!res.ok) { toast.error(json.error || "Loan sizing failed"); return; }
       const est = json.data;
@@ -2371,9 +2485,40 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     <div className={`flex gap-4 ${docViewerOpen ? "" : ""}`}>
     <div className={`space-y-5 min-w-0 ${docViewerOpen ? "flex-1" : "w-full"}`}>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div>
-          <h2 className="text-xl font-bold">Underwriting</h2>
-          <p className="text-sm text-muted-foreground">{deal?.name}</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div>
+            <h2 className="text-xl font-bold">Underwriting</h2>
+            <p className="text-sm text-muted-foreground">{deal?.name}</p>
+          </div>
+          {projectMassings.length > 1 && (
+            <div className="flex items-center gap-2 border border-border/60 rounded-lg bg-card px-3 py-1.5">
+              <Layers className="h-4 w-4 text-blue-400" />
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Project</span>
+              <select
+                value={projectMassingId || ""}
+                onChange={e => switchProject(e.target.value)}
+                className="bg-transparent text-sm text-foreground outline-none cursor-pointer pr-1"
+                title="Switch to a different massing. Each massing has its own underwriting."
+              >
+                {projectMassings.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name || "Untitled"}{m.is_base_case ? " ★" : ""}
+                  </option>
+                ))}
+              </select>
+              {projectMassingId && projectMassingId !== baseCaseMassingId && baseCaseMassingId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setCopyModalOpen(true)}
+                  title="Copy selected sections from the base-case underwriting"
+                >
+                  Copy from Base
+                </Button>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <ViewModeToggle mode={viewMode} onChange={setViewMode} />
@@ -2677,11 +2822,31 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         // matches any known site-plan massing (dead data from a deleted
         // or renamed massing). Without this filter those orphans show up
         // as phantom "Massing 1" / "Massing 2" tabs in the strip.
+        //
+        // Also filter orphan BUILDING scenarios: inside a valid massing
+        // group, scenarios whose site_plan_building_id no longer resolves
+        // to a real building on the site plan were previously rendering
+        // as phantom "Building 1" / "Building 2" tabs via the
+        // `Building ${i+1}` fallback below.
+        const hasModernSitePlan = Object.keys(sitePlanScenarioMeta).length > 0;
         const groups: Record<string, any[]> = {};
         for (const s of allScenarios) {
           const key = s.site_plan_scenario_id || "__default";
-          const isOrphan = key !== "__default" && !sitePlanScenarioMeta[key];
-          if (isOrphan) continue;
+          const isOrphanMassing = key !== "__default" && !sitePlanScenarioMeta[key];
+          if (isOrphanMassing) continue;
+          // Legacy unlinked scenarios become orphans the moment the deal
+          // has a modern site plan — otherwise they surface as phantom
+          // "__default" massing rows labeled "Building 1" via the
+          // fallback below, even after the analyst cleans up the site.
+          if (key === "__default" && hasModernSitePlan) continue;
+          if (key !== "__default" && s.site_plan_building_id) {
+            const meta = sitePlanScenarioMeta[key];
+            // Require the building to be in the massing's own list —
+            // matching on the flat sitePlanBuildingLabels map alone
+            // keeps stale labels (like the legacy "Building 1"
+            // placeholder) alive across unrelated massings.
+            if (!meta?.buildingIds?.includes(s.site_plan_building_id)) continue;
+          }
           if (!groups[key]) groups[key] = [];
           groups[key].push(s);
         }
@@ -3445,7 +3610,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     const res = await fetch(`/api/deals/${params.id}/ai-rents`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ unit_groups: d.unit_groups }),
+                      body: JSON.stringify({ unit_groups: d.unit_groups, ...(projectMassingId ? { massing_id: projectMassingId } : {}) }),
                     });
                     const json = await res.json();
                     if (!res.ok) { toast.error(json.error || "AI rent estimation failed"); return; }
@@ -3495,23 +3660,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </Button>
             )}
           </div>
-          {/* Parking Revenue (other income items managed below in dedicated section) */}
-          <div className="mt-4 border-t pt-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Parking Revenue</h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
-              <NumInput label="Reserved Spaces" value={d.parking_reserved_spaces} onChange={v => set("parking_reserved_spaces", v)} decimals={0} />
-              <NumInput label="Reserved $/Space/Mo" value={d.parking_reserved_rate} onChange={v => set("parking_reserved_rate", v)} prefix="$" decimals={0} />
-              <NumInput label="Unreserved Spaces" value={d.parking_unreserved_spaces} onChange={v => set("parking_unreserved_spaces", v)} decimals={0} />
-              <NumInput label="Unreserved $/Space/Mo" value={d.parking_unreserved_rate} onChange={v => set("parking_unreserved_rate", v)} prefix="$" decimals={0} />
+          {/* Parking space counts — read-only summary. Edited on the
+              Programming page (Parking Allocation). The per-space $ for
+              the DCF lives on the Parking Income row in Other Income. */}
+          {((d.parking_reserved_spaces || 0) > 0 || (d.parking_unreserved_spaces || 0) > 0) && (
+            <div className="mt-4 border-t pt-4">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Parking Spaces</h4>
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+                <span>Reserved: <span className="text-foreground font-medium tabular-nums">{fn(d.parking_reserved_spaces || 0)}</span></span>
+                <span>Unreserved: <span className="text-foreground font-medium tabular-nums">{fn(d.parking_unreserved_spaces || 0)}</span></span>
+                <span>Total: <span className="text-foreground font-medium tabular-nums">{fn((d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0))}</span></span>
+                <a href={`/deals/${params.id}/programming`} className="text-xs text-muted-foreground/70 underline hover:text-foreground ml-auto">
+                  Edit on Programming →
+                </a>
+              </div>
             </div>
-            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <span>Monthly: {fc((d.parking_reserved_spaces || 0) * (d.parking_reserved_rate || 0) + (d.parking_unreserved_spaces || 0) * (d.parking_unreserved_rate || 0))}</span>
-              <span>Annual: <span className="text-foreground font-medium">{fc(m.otherIncomeParking)}</span></span>
-              {(d.parking_reserved_spaces || 0) === 0 && (d.parking_unreserved_spaces || 0) === 0 && d.parking_monthly > 0 && (
-                <span className="text-amber-400">(using legacy flat ${d.parking_monthly}/mo)</span>
-              )}
-            </div>
-          </div>
+          )}
 
           {/* ── Commercial Tenants ── */}
           <div className="mt-4 border-t pt-4">
@@ -3627,11 +3791,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <tbody>
                 {(d.other_income_items || []).map((item: any, i: number) => {
                   const updOI = (upd: Record<string, any>) => setData(p => ({ ...p, other_income_items: (p.other_income_items || []).map((oi: any, j: number) => j === i ? { ...oi, ...upd } : oi) }));
-                  const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1;
+                  const totalSpaces = (d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0);
+                  const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? totalSpaces : 1;
                   const ipMult = item.basis === "per_unit"
                     ? (d.unit_groups || []).reduce((s: number, g: any) => s + (g.unit_count || 0), 0)
                     : item.basis === "per_space"
-                      ? (d.parking_reserved_spaces || 0)
+                      ? totalSpaces
                       : 1;
                   // Effective pro-forma monthly: user-entered amount
                   // wins; otherwise default to ip_amount. Mirrors the
@@ -3663,7 +3828,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <td className="px-2 py-1.5 text-right tabular-nums">{fc(m.inPlaceOtherIncome)}</td>
                     )}
                     <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{isGroundUp ? "" : "Pro forma:"}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1; const pfMonthly = (item.amount || 0) > 0 ? (item.amount || 0) : (item.ip_amount || 0); return s + pfMonthly * mult * 12; }, 0))}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? ((d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0)) : 1; const pfMonthly = (item.amount || 0) > 0 ? (item.amount || 0) : (item.ip_amount || 0); return s + pfMonthly * mult * 12; }, 0))}</td>
                     <td />
                   </tr>
                 </tfoot>
@@ -3698,14 +3863,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                         toast.info("Parking income already in the list.");
                         return p;
                       }
-                      // Mirror the massing's space count into the top-
-                      // level parking field so the per-space multiplier
-                      // picks it up when rendering the Annual column.
-                      const nextParkingSpaces = spaces;
+                      // Split the massing's estimated spaces 70/30 into
+                      // reserved/unreserved to match the programming
+                      // push convention. Per-space income multiplier
+                      // uses reserved + unreserved so the total income
+                      // still scales off all spaces.
+                      const reservedCount = Math.round(spaces * 0.7);
+                      const unreservedCount = spaces - reservedCount;
                       toast.success(`Added Parking Income · ${spaces} spaces @ $125/mo`);
                       return {
                         ...p,
-                        parking_reserved_spaces: Math.max(nextParkingSpaces, p.parking_reserved_spaces || 0),
+                        parking_reserved_spaces: Math.max(reservedCount, p.parking_reserved_spaces || 0),
+                        parking_unreserved_spaces: Math.max(unreservedCount, p.parking_unreserved_spaces || 0),
                         other_income_items: [
                           ...existing,
                           { id: uuidv4(), label: "Parking Income", amount: 125, basis: "per_space", unit_type_filter: "", notes: `From ${activeS.name} — ${spaces} est. spaces` },
@@ -5287,7 +5456,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                 const res = await fetch(`/api/deals/${params.id}/deal-score`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ stage: "underwriting" }),
+                  body: JSON.stringify({ stage: "underwriting", ...(projectMassingId ? { massing_id: projectMassingId } : {}) }),
                 });
                 const json = await res.json();
                 if (res.ok && json.data) {
@@ -5903,6 +6072,87 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       )}
 
       {/* ── UW Co-Pilot is now in the universal chatbot widget ── */}
+
+      {/* First-open prompt when switching to a massing that has no UW
+          snapshot yet. Appears once per fresh massing, offering a clone
+          of the base-case assumptions or a blank slate. */}
+      {firstOpenPromptMassingId && baseCaseMassingId && baseCaseMassingId !== firstOpenPromptMassingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-5">
+            <h3 className="text-base font-semibold mb-1">New massing — no underwriting yet</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Start from the base case&apos;s assumptions or start blank? Either way, massing-specific
+              fields (unit groups, parking, dev budget) stay tied to this massing&apos;s programming.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setFirstOpenPromptMassingId(null)}
+              >
+                Start Blank
+              </Button>
+              <Button
+                size="sm"
+                onClick={async () => {
+                  await copyFromBaseFull();
+                  setFirstOpenPromptMassingId(null);
+                }}
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1.5 text-amber-400" />
+                Copy from Base Case
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual "Copy from Base Case" modal — lets analysts re-sync
+          specific sections (loan, OpEx, growth, etc.) into the current
+          non-base-case massing without clobbering its tuned numbers. */}
+      {copyModalOpen && baseCaseMassingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-5">
+            <h3 className="text-base font-semibold mb-1">Copy from Base Case</h3>
+            <p className="text-sm text-muted-foreground mb-3">
+              Overwrites the selected sections on this massing with the base case&apos;s values.
+              Massing-specific fields (unit groups, parking, dev budget, commercial tenants, other income)
+              are never touched.
+            </p>
+            <div className="space-y-2 mb-4">
+              {([
+                ["loan", "Loan Terms (acquisition + refi)"],
+                ["opex", "OpEx (taxes, insurance, mgmt, etc.)"],
+                ["growth", "Vacancy &amp; Growth Assumptions"],
+                ["cap_rates", "Exit Cap Rate"],
+                ["cam_flags", "CAM Reimbursement Flags"],
+                ["hold_period", "Hold Period"],
+              ] as Array<[keyof CopySections, string]>).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={copySections[key]}
+                    onChange={e => setCopySections(s => ({ ...s, [key]: e.target.checked }))}
+                  />
+                  <span dangerouslySetInnerHTML={{ __html: label }} />
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" onClick={() => setCopyModalOpen(false)}>Cancel</Button>
+              <Button
+                size="sm"
+                onClick={async () => {
+                  await copyFromBaseSections(copySections);
+                  setCopyModalOpen(false);
+                }}
+              >
+                Copy Selected
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

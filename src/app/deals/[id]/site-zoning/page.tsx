@@ -249,18 +249,40 @@ function Section({ title, icon, children, defaultOpen = true, headerRight }: {
   );
 }
 
-function FieldInput({ label, value, onChange, suffix, placeholder, type = "text", className = "" }: {
+function FieldInput({ label, value, onChange, suffix, placeholder, type = "text", className = "", formatted = false }: {
   label: string; value: string | number; onChange: (v: string) => void;
-  suffix?: string; placeholder?: string; type?: string; className?: string;
+  suffix?: string; placeholder?: string; type?: string; className?: string; formatted?: boolean;
 }) {
+  // Thousand-separated, integer-only display. Keeps a raw string so
+  // mid-typing doesn't fight the user, then rounds + reformats on blur.
+  const fmt = useCallback((v: string | number) => {
+    const n = typeof v === "number" ? v : parseFloat(String(v).replace(/,/g, ""));
+    if (!Number.isFinite(n) || n === 0) return "";
+    return Math.round(n).toLocaleString("en-US");
+  }, []);
+  const [raw, setRaw] = useState<string>(formatted ? fmt(value) : String(value ?? ""));
+  useEffect(() => {
+    if (formatted) setRaw(fmt(value));
+  }, [value, formatted, fmt]);
   return (
     <div className={className}>
       <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">{label}</label>
       <div className="flex items-center border border-border/40 rounded-lg bg-muted/20 overflow-hidden">
         <input
-          type={type}
-          value={value}
-          onChange={e => onChange(e.target.value)}
+          type={formatted ? "text" : type}
+          inputMode={formatted ? "decimal" : undefined}
+          value={formatted ? raw : value}
+          onChange={e => {
+            if (formatted) setRaw(e.target.value);
+            else onChange(e.target.value);
+          }}
+          onBlur={() => {
+            if (!formatted) return;
+            const n = parseFloat(raw.replace(/,/g, "")) || 0;
+            const rounded = Math.round(n);
+            onChange(String(rounded));
+            setRaw(fmt(rounded));
+          }}
           placeholder={placeholder || "—"}
           className="flex-1 px-3 py-1.5 text-sm bg-transparent outline-none"
         />
@@ -1015,7 +1037,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       <Section title="Site Information" icon={<MapPin className="h-4 w-4 text-emerald-400" />}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <FieldInput label="Land (Acres)" value={siteInfo.land_acres || ""} onChange={v => updateSite("land_acres", parseFloat(v) || 0)} type="number" suffix="AC" />
-          <FieldInput label="Land (Square Feet)" value={siteInfo.land_sf || ""} onChange={v => updateSite("land_sf", parseFloat(v) || 0)} type="number" suffix="SF" />
+          <FieldInput label="Land (Square Feet)" value={siteInfo.land_sf || ""} onChange={v => updateSite("land_sf", parseFloat(v) || 0)} suffix="SF" formatted />
           {/* Parcel ID / APN — auto-populated from the deal address via the
               parcel-lookup endpoint. The button re-runs the lookup and
               overwrites any existing value. */}
