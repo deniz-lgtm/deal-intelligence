@@ -984,6 +984,18 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_notes_deal_id ON deal_notes(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_deal_notes_category ON deal_notes(deal_id, category)`,
+    // Per-massing underwriting snapshots. Mirrored here (also in
+    // initSchema) so old deployments running ensureColumns without a
+    // fresh initSchema still pick up the table on first boot.
+    `CREATE TABLE IF NOT EXISTS underwriting_per_massing (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      site_plan_scenario_id TEXT NOT NULL,
+      data JSONB NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(deal_id, site_plan_scenario_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_uw_per_massing_deal_id ON underwriting_per_massing(deal_id)`,
     // Multi-user: users table (synced from Clerk)
     `CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -2338,29 +2350,79 @@ export const underwritingQueries = {
 };
 
 // ─── Per-massing underwriting queries ─────────────────────────────────────────
+//
+// Every public call on this object goes through `withMissingTableFallback`
+// so a brand-new deployment whose migration hasn't landed yet (or a
+// transient boot-order race) degrades cleanly to the legacy
+// `underwriting` path instead of 500-ing the whole request. The table is
+// created by both initSchema() and ensureColumns() on boot; this is
+// just the safety net.
+
+function isMissingTable(err: unknown, tableName: string): boolean {
+  if (!err || typeof err !== "object") return false;
+  // Postgres SQLSTATE 42P01 = undefined_table
+  const code = (err as { code?: string }).code;
+  if (code === "42P01") return true;
+  const msg = (err as { message?: string }).message || "";
+  return msg.includes(tableName) && /does not exist/i.test(msg);
+}
+
+async function tryCreateUwPerMassingTable(pool: Pool): Promise<boolean> {
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS underwriting_per_massing (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      site_plan_scenario_id TEXT NOT NULL,
+      data JSONB NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(deal_id, site_plan_scenario_id)
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_uw_per_massing_deal_id ON underwriting_per_massing(deal_id)`);
+    return true;
+  } catch (err) {
+    console.warn("Could not auto-create underwriting_per_massing:", (err as Error).message?.slice(0, 200));
+    return false;
+  }
+}
 
 export const underwritingPerMassingQueries = {
   getByDealAndMassing: async (dealId: string, massingId: string) => {
     const pool = getPool();
-    const res = await pool.query(
-      "SELECT * FROM underwriting_per_massing WHERE deal_id = $1 AND site_plan_scenario_id = $2",
-      [dealId, massingId]
-    );
-    return res.rows[0] ?? null;
+    try {
+      const res = await pool.query(
+        "SELECT * FROM underwriting_per_massing WHERE deal_id = $1 AND site_plan_scenario_id = $2",
+        [dealId, massingId]
+      );
+      return res.rows[0] ?? null;
+    } catch (err) {
+      if (isMissingTable(err, "underwriting_per_massing")) {
+        await tryCreateUwPerMassingTable(pool);
+        return null;
+      }
+      throw err;
+    }
   },
 
   listByDealId: async (dealId: string) => {
     const pool = getPool();
-    const res = await pool.query(
-      "SELECT * FROM underwriting_per_massing WHERE deal_id = $1",
-      [dealId]
-    );
-    return res.rows;
+    try {
+      const res = await pool.query(
+        "SELECT * FROM underwriting_per_massing WHERE deal_id = $1",
+        [dealId]
+      );
+      return res.rows;
+    } catch (err) {
+      if (isMissingTable(err, "underwriting_per_massing")) {
+        await tryCreateUwPerMassingTable(pool);
+        return [];
+      }
+      throw err;
+    }
   },
 
   upsert: async (dealId: string, massingId: string, id: string, data: string) => {
     const pool = getPool();
-    await pool.query(
+    const run = () => pool.query(
       `INSERT INTO underwriting_per_massing (id, deal_id, site_plan_scenario_id, data, updated_at)
        VALUES ($1, $2, $3, $4::jsonb, NOW())
        ON CONFLICT (deal_id, site_plan_scenario_id) DO UPDATE SET
@@ -2368,6 +2430,16 @@ export const underwritingPerMassingQueries = {
          updated_at = NOW()`,
       [id, dealId, massingId, data]
     );
+    try {
+      await run();
+    } catch (err) {
+      if (isMissingTable(err, "underwriting_per_massing")) {
+        const created = await tryCreateUwPerMassingTable(pool);
+        if (created) { await run(); } else { return null; }
+      } else {
+        throw err;
+      }
+    }
     return underwritingPerMassingQueries.getByDealAndMassing(dealId, massingId);
   },
 
@@ -2377,12 +2449,20 @@ export const underwritingPerMassingQueries = {
   // massing-specific fields an analyst has tuned.
   patchAll: async (dealId: string, patch: Record<string, unknown>) => {
     const pool = getPool();
-    await pool.query(
-      `UPDATE underwriting_per_massing
-       SET data = data || $2::jsonb, updated_at = NOW()
-       WHERE deal_id = $1`,
-      [dealId, JSON.stringify(patch)]
-    );
+    try {
+      await pool.query(
+        `UPDATE underwriting_per_massing
+         SET data = data || $2::jsonb, updated_at = NOW()
+         WHERE deal_id = $1`,
+        [dealId, JSON.stringify(patch)]
+      );
+    } catch (err) {
+      if (isMissingTable(err, "underwriting_per_massing")) {
+        await tryCreateUwPerMassingTable(pool);
+        return;
+      }
+      throw err;
+    }
   },
 
   deleteByMassing: async (dealId: string, massingId: string) => {
