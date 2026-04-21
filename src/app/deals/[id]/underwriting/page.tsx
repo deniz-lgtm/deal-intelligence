@@ -19,9 +19,8 @@ import MaxBidPanel from "@/components/MaxBidPanel";
 import type { CalcFn } from "@/lib/max-bid";
 import type { UWData as LibUWData } from "@/lib/underwriting-calc";
 import { useSetPageContext } from "@/lib/page-context";
-import AffordabilityPlanner, { type AffordabilityConfig } from "@/components/AffordabilityPlanner";
+import { type AffordabilityConfig } from "@/components/AffordabilityPlanner";
 import AmiReference from "@/components/AmiReference";
-import { splitUnitGroupsByAffordability } from "@/lib/affordability-split";
 import type {
   DevBudgetLineItem, ParkingConfig, ParkingEntry, ParkingType,
   LeaseUpConfig, ConstructionLoanConfig, ConstructionDrawPeriod,
@@ -3893,91 +3892,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         </div>
       </Section>
 
-      {/* ═══ Affordability (multifamily / student housing) ═══ */}
-      {isMF && (
-        <div className="mt-6">
-        <AffordabilityPlanner
-          dealId={params.id}
-          totalUnits={m.totalUnits || 0}
-          avgMarketRent={(() => {
-            // Weighted average market rent per unit/month across unit groups.
-            // IMPORTANT: exclude is_affordable rows — after a split those
-            // carry the AMI-capped rent in market_rent_per_unit and would
-            // drag the average down, causing the planner's "revenue
-            // impact" preview to understate how much market rent is
-            // being traded away.
-            const marketRows = d.unit_groups.filter(
-              (g) => !(g as { is_affordable?: boolean }).is_affordable
-            );
-            const totalUnits = marketRows.reduce((s, g) => s + effectiveUnits(g), 0);
-            if (totalUnits === 0) return 0;
-            if (isSH) {
-              // student housing: rent is per-bed monthly; convert to per-unit
-              const totalRentPerMonth = marketRows.reduce((s, g) => s + effectiveUnits(g) * g.beds_per_unit * g.market_rent_per_bed, 0);
-              return totalRentPerMonth / totalUnits;
-            }
-            // multifamily / mixed-use residential
-            const totalRentPerMonth = marketRows.reduce((s, g) => s + effectiveUnits(g) * (g.market_rent_per_unit || 0), 0);
-            return totalRentPerMonth / totalUnits;
-          })()}
-          currentTaxes={d.taxes_annual || 0}
-          initialConfig={d.affordability_config}
-          buildingUnitMix={(() => {
-            // Bucket the building's unit groups into BR-type counts so the
-            // planner's match-building solver and AI optimizer know what's
-            // typical for this deal. Exclude any affordable rows (added by
-            // the programming-page split) so we're reasoning about the
-            // market-rate template, not a post-split mix that would feed
-            // back into itself.
-            const mix = { studio: 0, one_br: 0, two_br: 0, three_br: 0, four_br_plus: 0 };
-            for (const g of d.unit_groups) {
-              if ((g as { is_affordable?: boolean }).is_affordable) continue;
-              const count = effectiveUnits(g);
-              if (!count) continue;
-              const bd = g.bedrooms || 0;
-              if (bd === 0) mix.studio += count;
-              else if (bd === 1) mix.one_br += count;
-              else if (bd === 2) mix.two_br += count;
-              else if (bd === 3) mix.three_br += count;
-              else mix.four_br_plus += count;
-            }
-            return mix;
-          })()}
-          mode="mix"
-          onConfigChange={(cfg) => set("affordability_config", cfg as UWData["affordability_config"])}
-          onPushToUnitMix={() => {
-            // Run the shared split against the current unit_groups + the
-            // live affordability config, then write the result back. Market
-            // rows shrink, each (tier × BR bucket) becomes its own affordable
-            // row the analyst can then size independently (affordable units
-            // are typically smaller SF than market).
-            setData((prev) => {
-              const cfg = prev.affordability_config;
-              if (!cfg?.enabled || !cfg.tiers?.length) {
-                toast.error("Enable an affordability tier first");
-                return prev;
-              }
-              const split = splitUnitGroupsByAffordability(
-                prev.unit_groups,
-                cfg as unknown as Parameters<typeof splitUnitGroupsByAffordability>[1]
-              );
-              const affCount = (split as unknown as Array<{ is_affordable?: boolean }>).filter(
-                (g) => g.is_affordable
-              ).length;
-              const origAff = (prev.unit_groups as unknown as Array<{ is_affordable?: boolean }>).filter(
-                (g) => g.is_affordable
-              ).length;
-              toast.success(
-                origAff > 0
-                  ? `Re-split unit mix: ${affCount} affordable row${affCount === 1 ? "" : "s"}`
-                  : `Added ${affCount} affordable row${affCount === 1 ? "" : "s"} to the unit mix`
-              );
-              return { ...prev, unit_groups: split as typeof prev.unit_groups };
-            });
-          }}
-        />
-        </div>
-      )}
       </div>
 
       <div className={tabCls("capital")}>
