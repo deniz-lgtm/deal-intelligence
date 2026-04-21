@@ -43,12 +43,6 @@ export interface MetricsSnapshot {
   equity: number;
   noi: number;
   cap_rate: number;
-  // Diagnostic fields — let the analyst compare raw calc() output
-  // between the Max-Bid solver and the main Returns panel to spot
-  // any input divergence.
-  _debug_exit_equity: number;
-  _debug_exit_value: number;
-  _debug_year_cashflows: number[];
 }
 
 export interface MaxBidResult {
@@ -134,12 +128,6 @@ function computeMetrics(d: UWData, mode: CalcMode, calc: CalcFn = libCalc) {
     equity: m.equity,
     noi: m.proformaNOI,
     cap_rate: m.proformaCapRate,
-    // Raw debug fields so the modal can show the analyst exactly what
-    // calc() returned — useful for diagnosing divergence against the
-    // main page's Returns panel.
-    _debug_exit_equity: m.exitEquity,
-    _debug_exit_value: m.exitValue,
-    _debug_year_cashflows: m.yearlyDCF.map(yr => yr.cashFlow),
   };
 }
 
