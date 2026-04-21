@@ -113,7 +113,10 @@ export async function POST(
     });
 
     const safeName = (deal.name || "Proforma").replace(/[^a-z0-9\-_ ]/gi, "").trim().replace(/\s+/g, "-");
-    return new NextResponse(pdfBytes, {
+    // Cast to Uint8Array so TS accepts it as BodyInit. The underlying
+    // buffer type varies by Node version (Uint8Array<ArrayBufferLike>
+    // in newer typings), which trips Next.js's narrower BodyInit.
+    return new NextResponse(pdfBytes as unknown as BodyInit, {
       status: 200,
       headers: {
         "Content-Type":        "application/pdf",
