@@ -2176,6 +2176,31 @@ export interface DocDiffResult {
     change: string;         // one-sentence description
   }>;
   no_material_changes: boolean;
+  // Optional snapshot of the deal's feasibility metrics at the moment this
+  // version was uploaded. Populated by the recompute-feasibility helper
+  // on the upload hot path for categories whose data drives the UW
+  // (rent rolls, T-12s, appraisals). Compared against the parent
+  // version's snapshot to populate the `downstream` block.
+  snapshot?: FeasibilitySnapshot;
+  // Materialized deltas between this version's snapshot and the parent
+  // version's snapshot. Surfaced on the Documents page as "Feasibility
+  // impact since last version".
+  downstream?: FeasibilityDelta;
+}
+
+export interface FeasibilitySnapshot {
+  noi: number;
+  cap_rate_pct: number;
+  max_bid_15irr: number;    // max bid @ 15% IRR / 1.8x EM hurdles
+  hold_years: number;
+  computed_at: string;      // ISO timestamp
+}
+
+export interface FeasibilityDelta {
+  noi_delta: number;
+  noi_delta_pct: number;
+  cap_rate_delta_bps: number;
+  max_bid_delta: number;
 }
 
 const DOC_DIFF_PROMPT = `You are a CRE analyst comparing two versions of a document that's part of an active deal. Summarize what changed — focus on material changes (money, dates, parties, contingencies, unit counts, rent levels), not formatting tweaks or paragraph reordering.

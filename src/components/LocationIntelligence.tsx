@@ -261,6 +261,7 @@ const DATA_SOURCES = [
   { id: "population", label: "Population Estimates", description: "Annual county population (more current than ACS)", icon: Users, free: true },
   { id: "migration", label: "Migration Flows", description: "Inflow/outflow — where people are moving", icon: TrendingUp, free: true },
   { id: "flood", label: "FEMA Flood Zone", description: "Flood risk + auto-populates Site & Zoning", icon: MapPin, free: true },
+  { id: "gis_constraints", label: "Site Buildability (GIS)", description: "Flood + wetlands + slope → one buildability score", icon: MapPin, free: true },
   { id: "walkscore", label: "Walk Score", description: "Walk, transit, and bike scores", icon: MapPin, free: true },
   { id: "schools", label: "Schools", description: "Nearby schools with locations (mappable)", icon: GraduationCap, free: true },
   { id: "amenities", label: "Amenities (OSM)", description: "Restaurants, shopping, groceries, parks, gyms (free)", icon: MapPin, free: true },
@@ -326,6 +327,7 @@ function DataSourceWizard({
         case "population": url = `/api/deals/${dealId}/location-intelligence/fetch-population`; break;
         case "migration": url = `/api/deals/${dealId}/location-intelligence/fetch-migration`; break;
         case "flood": url = `/api/deals/${dealId}/location-intelligence/fetch-flood`; break;
+        case "gis_constraints": url = `/api/deals/${dealId}/location-intelligence/fetch-gis-constraints`; break;
         case "walkscore": url = `/api/deals/${dealId}/location-intelligence/fetch-walkscore`; break;
         case "schools": url = `/api/deals/${dealId}/location-intelligence/fetch-schools`; break;
         case "amenities": url = `/api/deals/${dealId}/location-intelligence/fetch-amenities`; break;
@@ -514,6 +516,85 @@ function DataPanels({
           </div>
         </Panel>
       )}
+
+      {/* ── Site Buildability (GIS Constraints) ───────────────────── */}
+      {ext.gis_constraints && (() => {
+        const gc = ext.gis_constraints as {
+          score: number;
+          constraints: Array<{ type: string; severity: string; summary: string }>;
+          data: {
+            flood_zone?: string | null;
+            flood_high_risk?: boolean;
+            wetlands_intersects?: boolean;
+            wetlands_type?: string | null;
+            avg_slope_pct?: number | null;
+            max_elevation_delta_ft?: number | null;
+          };
+          source_notes: string[];
+        };
+        const scoreColor =
+          gc.score >= 80 ? "text-emerald-400 bg-emerald-500/10"
+          : gc.score >= 55 ? "text-amber-300 bg-amber-500/10"
+          : "text-red-400 bg-red-500/10";
+        return (
+          <Panel title="Site Buildability" icon={<MapPin className="h-4 w-4 text-primary" />} defaultOpen={gc.constraints.length > 0}>
+            <div className="flex items-start gap-4 flex-wrap">
+              <div className={`px-4 py-2 rounded-lg text-2xl font-bold ${scoreColor} tabular-nums`}>
+                {gc.score}<span className="text-sm text-muted-foreground font-normal">/100</span>
+              </div>
+              <div className="flex-1 min-w-[220px]">
+                <div className="text-xs font-medium mb-1">
+                  {gc.constraints.length === 0
+                    ? "No material GIS constraints detected."
+                    : `${gc.constraints.length} constraint${gc.constraints.length > 1 ? "s" : ""} flagged`}
+                </div>
+                <div className="text-2xs text-muted-foreground">
+                  Sources: {gc.source_notes.join(" · ")}
+                </div>
+              </div>
+            </div>
+            {gc.constraints.length > 0 && (
+              <ul className="mt-3 space-y-1.5">
+                {gc.constraints.map((c, i) => (
+                  <li
+                    key={i}
+                    className={`flex items-start gap-2 text-xs p-2 rounded-md border ${
+                      c.severity === "high"
+                        ? "bg-red-500/5 border-red-500/30 text-red-200"
+                        : c.severity === "moderate"
+                        ? "bg-amber-500/5 border-amber-500/30 text-amber-200"
+                        : "bg-muted/10 border-border/50"
+                    }`}
+                  >
+                    <span className="text-[9px] font-bold uppercase tracking-wide mt-0.5 shrink-0">{c.type}</span>
+                    <span className="flex-1">{c.summary}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2 text-2xs">
+              {gc.data.flood_zone && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">Flood</span>
+                  <span className="font-medium">Zone {gc.data.flood_zone}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-1.5">
+                <span className="text-muted-foreground">Wetlands</span>
+                <span className="font-medium">
+                  {gc.data.wetlands_intersects === true ? "Intersects" : gc.data.wetlands_intersects === false ? "None nearby" : "Unknown"}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-muted-foreground">Avg slope</span>
+                <span className="font-medium tabular-nums">
+                  {gc.data.avg_slope_pct === null || gc.data.avg_slope_pct === undefined ? "—" : `${gc.data.avg_slope_pct.toFixed(1)}%`}
+                </span>
+              </div>
+            </div>
+          </Panel>
+        );
+      })()}
 
       {/* ── Population & Demographics ──────────────────────────────── */}
       {snapshot && (

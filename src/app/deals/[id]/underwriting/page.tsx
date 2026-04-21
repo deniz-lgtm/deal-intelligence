@@ -15,6 +15,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import DealNotes from "@/components/DealNotes";
+import MaxBidPanel from "@/components/MaxBidPanel";
 import { useSetPageContext } from "@/lib/page-context";
 import AffordabilityPlanner, { type AffordabilityConfig } from "@/components/AffordabilityPlanner";
 import AmiReference from "@/components/AmiReference";
@@ -1665,6 +1666,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [renameValue, setRenameValue] = useState<string>("");
   const [showCompareModal, setShowCompareModal] = useState(false);
   const [compareSelection, setCompareSelection] = useState<Set<string>>(new Set());
+  const [showMaxBidModal, setShowMaxBidModal] = useState(false);
   const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null });
   const [scoringUW, setScoringUW] = useState(false);
   // Rent comps editing UI lives on the Comps page now — see
@@ -2472,10 +2474,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <Plus className="h-3 w-3" />
             Scenario
           </button>
+          <button
+            onClick={() => setShowMaxBidModal(true)}
+            className={`${(data.scenarios || []).length > 0 ? "" : "ml-auto"} flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-emerald-300 hover:bg-emerald-500/10 transition-colors whitespace-nowrap border border-emerald-500/40`}
+            title="Reverse-solve the max price that clears your return hurdles"
+          >
+            <Target className="h-3 w-3" />
+            Max Bid
+          </button>
           {(data.scenarios || []).length > 0 && (
             <button
               onClick={openCompareModal}
-              className="ml-auto flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-primary/10 transition-colors whitespace-nowrap border border-primary/40"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-primary/10 transition-colors whitespace-nowrap border border-primary/40"
               title="Compare scenarios"
             >
               <GitCompare className="h-3 w-3" />
@@ -5582,6 +5592,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Max Bid Modal ── */}
+      {showMaxBidModal && (
+        <MaxBidPanel
+          data={data}
+          mode={calcMode}
+          onClose={() => setShowMaxBidModal(false)}
+          onApply={(price) => {
+            setData(prev => data.development_mode
+              ? { ...prev, land_cost: Math.round(price) }
+              : { ...prev, purchase_price: Math.round(price) }
+            );
+            toast.success(`Applied max bid: $${Math.round(price).toLocaleString()}`);
+          }}
+        />
       )}
 
       {/* ── Scenario Compare Modal ── */}

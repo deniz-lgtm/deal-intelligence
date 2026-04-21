@@ -592,17 +592,54 @@ function DocRow({
             : doc.auto_diff_result;
           if (!diff?.summary) return null;
           const hasMaterial = Array.isArray(diff.changes) && diff.changes.some((c: Record<string, unknown>) => c.severity === "material");
+          // "Downstream" delta — if the upload pipeline captured a
+          // feasibility snapshot and has a parent snapshot to diff
+          // against, we show one compact line here so the analyst
+          // can see NOI / cap rate / max-bid movement without opening
+          // the version history dialog.
+          const ds = diff.downstream as {
+            noi_delta: number;
+            noi_delta_pct: number;
+            cap_rate_delta_bps: number;
+            max_bid_delta: number;
+          } | undefined;
+          const fmtMoney = (n: number) => {
+            const abs = Math.abs(n);
+            if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+            if (abs >= 1_000) return `$${(n / 1_000).toFixed(0)}k`;
+            return `$${n}`;
+          };
+          const downstreamText = ds
+            ? [
+                ds.noi_delta !== 0 ? `NOI ${ds.noi_delta > 0 ? "+" : ""}${fmtMoney(ds.noi_delta)}` : null,
+                Math.abs(ds.cap_rate_delta_bps) >= 1
+                  ? `cap ${ds.cap_rate_delta_bps > 0 ? "+" : ""}${ds.cap_rate_delta_bps.toFixed(0)}bps`
+                  : null,
+                ds.max_bid_delta !== 0
+                  ? `max bid ${ds.max_bid_delta > 0 ? "+" : ""}${fmtMoney(ds.max_bid_delta)}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            : "";
           return (
             <button
               onClick={() => onShowVersions(doc)}
-              className={`mt-1 flex items-start gap-1.5 text-[10px] p-1.5 rounded-md border transition-colors hover:brightness-110 ${
+              className={`mt-1 flex flex-col items-start gap-0.5 text-[10px] p-1.5 rounded-md border transition-colors hover:brightness-110 w-full ${
                 hasMaterial
                   ? "bg-amber-500/5 border-amber-500/20 text-amber-200/90"
                   : "bg-blue-500/5 border-blue-500/20 text-blue-200/90"
               }`}
             >
-              <GitCompareArrows className="h-3 w-3 flex-shrink-0 mt-0.5" />
-              <span className="text-left">{diff.summary}</span>
+              <span className="flex items-start gap-1.5">
+                <GitCompareArrows className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                <span className="text-left">{diff.summary}</span>
+              </span>
+              {downstreamText && (
+                <span className="pl-[18px] tabular-nums font-medium">
+                  Feasibility impact: {downstreamText}
+                </span>
+              )}
             </button>
           );
         })()}

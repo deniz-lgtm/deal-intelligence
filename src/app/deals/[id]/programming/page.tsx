@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { COMMON_OTHER_INCOME } from "@/lib/types";
 import MassingSection from "@/components/massing/MassingSection";
+import ScenarioVariantsPanel from "@/components/massing/ScenarioVariantsPanel";
 import AffordabilityPlanner from "@/components/AffordabilityPlanner";
 import { useViewMode } from "@/lib/use-view-mode";
 import ViewModeToggle from "@/components/ViewModeToggle";
@@ -94,6 +95,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [showVariantsPanel, setShowVariantsPanel] = useState(false);
   // Timestamp of the most recent successful programming save. Bumping
   // this triggers the Programming→Underwriting auto-sync effect so we
   // don't have to thread the call directly through saveAll (which has
@@ -1267,6 +1269,19 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         })()}
         icon={<Layers className="h-4 w-4 text-blue-400" />}
       >
+        <div className="flex items-center justify-end mb-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowVariantsPanel(true)}
+            disabled={!activeScenario || (activeScenario.footprint_sf || 0) <= 0}
+            className="text-xs h-7 border-amber-500/40 bg-amber-500/5 text-amber-200 hover:bg-amber-500/15"
+            title="Generate 9 candidate massing variants (3 heights × 3 unit mixes)"
+          >
+            <Sparkles className="h-3 w-3 mr-1" />
+            Generate Variants
+          </Button>
+        </div>
         <MassingSection
           program={buildingProgram}
           onChange={p => { setBuildingProgram(p); setDirty(true); }}
@@ -1275,6 +1290,38 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           footprintReadOnly={!!currentBuilding}
           activeBuildingLabel={currentBuilding?.label ?? null}
         />
+        {showVariantsPanel && activeScenario && (
+          <ScenarioVariantsPanel
+            inputs={{
+              footprint_sf: activeScenario.footprint_sf,
+              land_sf: zoningInputs.land_sf,
+              far_cap: zoningInputs.far,
+              height_cap_ft: zoningInputs.height_limit_ft,
+              lot_coverage_pct: zoningInputs.lot_coverage_pct,
+              base_unit_mix: activeScenario.unit_mix,
+            }}
+            activeBuildingLabel={currentBuilding?.label || "this building"}
+            onClose={() => setShowVariantsPanel(false)}
+            onApply={(floors, unit_mix, variant) => {
+              setBuildingProgram((prev) => ({
+                ...prev,
+                scenarios: prev.scenarios.map((s) =>
+                  s.id === activeScenario.id
+                    ? {
+                        ...s,
+                        floors,
+                        unit_mix,
+                        ai_template_label: `Variant: ${variant.label}`,
+                      }
+                    : s
+                ),
+              }));
+              setDirty(true);
+              setShowVariantsPanel(false);
+              toast.success(`Applied variant: ${variant.label}`);
+            }}
+          />
+        )}
       </Section>
 
       {/* ═══════════════════ AFFORDABILITY ═══════════════════

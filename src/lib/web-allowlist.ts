@@ -31,6 +31,12 @@ const ALLOWED_HOSTS = [
   "fdic.gov",
   "fema.gov",
   "hazards.fema.gov",
+  // USFWS National Wetlands Inventory (free MapServer)
+  "fws.gov",
+  "fwsprimary.wim.usgs.gov",
+  // USGS Elevation Point Query Service (free, used for slope/elevation checks)
+  "epqs.nationalmap.gov",
+  "nationalmap.gov",
   "irs.gov",
   "bea.gov",
   "walkscore.com",

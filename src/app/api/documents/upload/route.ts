@@ -11,6 +11,12 @@ import {
 import { uploadBlob } from "@/lib/blob-storage";
 import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
 import { persistMarketReport } from "@/lib/market-extraction";
+import {
+  captureFeasibilitySnapshot,
+  computeFeasibilityDelta,
+  isFeasibilityCategory,
+} from "@/lib/recompute-feasibility";
+import type { FeasibilitySnapshot } from "@/lib/claude";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -202,6 +208,14 @@ export async function POST(req: NextRequest) {
       // Auto-diff: if this is a version > 1, fire-and-forget a diff against
       // the parent version. The result is stored in auto_diff_result so the
       // Documents page can show a "changes" callout immediately on next load.
+      //
+      // For feasibility-bearing categories (rent rolls, T-12s, appraisals),
+      // we also capture a snapshot of the deal's current NOI / cap rate /
+      // max-bid and diff it against the parent doc's snapshot — this
+      // produces the "Feasibility impact since last version" line the
+      // Documents page surfaces inline. Rent-roll extraction mutates
+      // deals.units/SF earlier in this loop, so snapshot after a short
+      // delay to let that catch up.
       if (parentDocumentId && contentText) {
         (async () => {
           try {
@@ -218,13 +232,59 @@ export async function POST(req: NextRequest) {
                 current_version: version,
               }
             );
-            if (diffResult) {
-              await documentQueries.update(id, {
-                auto_diff_result: JSON.stringify(diffResult),
-              });
+            if (!diffResult) return;
+
+            if (isFeasibilityCategory(category)) {
+              const currentSnap = await captureFeasibilitySnapshot(dealId);
+              if (currentSnap) {
+                diffResult.snapshot = currentSnap;
+                // If the parent doc already has a snapshot from its own
+                // upload, compute the delta. Otherwise leave downstream
+                // unset — we'll have a baseline for the next version.
+                const prevDiffRaw = prev.auto_diff_result as string | null | undefined;
+                if (prevDiffRaw) {
+                  try {
+                    const prevDiff = typeof prevDiffRaw === "string"
+                      ? JSON.parse(prevDiffRaw)
+                      : prevDiffRaw;
+                    const prevSnap = prevDiff?.snapshot as FeasibilitySnapshot | undefined;
+                    if (prevSnap) {
+                      diffResult.downstream = computeFeasibilityDelta(prevSnap, currentSnap);
+                    }
+                  } catch {
+                    // Bad JSON on the parent diff — skip silently.
+                  }
+                }
+              }
             }
+
+            await documentQueries.update(id, {
+              auto_diff_result: JSON.stringify(diffResult),
+            });
           } catch (err) {
             console.error("Auto-diff failed for", file.name, ":", err);
+          }
+        })();
+      } else if (!parentDocumentId && isFeasibilityCategory(category)) {
+        // First version of a feasibility-bearing doc — capture a
+        // snapshot so the NEXT version has something to diff against.
+        // Persist as a minimal auto_diff_result with just the snapshot;
+        // the Documents page's callout renderer skips rows where
+        // `summary` is empty, so this is invisible UI-wise.
+        (async () => {
+          try {
+            const snap = await captureFeasibilitySnapshot(dealId);
+            if (!snap) return;
+            await documentQueries.update(id, {
+              auto_diff_result: JSON.stringify({
+                summary: "",
+                changes: [],
+                no_material_changes: true,
+                snapshot: snap,
+              }),
+            });
+          } catch (err) {
+            console.error("Feasibility snapshot (baseline) failed:", err);
           }
         })();
       }
