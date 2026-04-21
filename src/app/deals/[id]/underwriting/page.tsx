@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
   Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3, Target, Pencil, GitCompare,
-  Car, Building2, Layers, Construction, ArrowDownUp, Info,
+  Car, Building2, Layers, Construction, ArrowDownUp, Info, Download,
 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -38,6 +38,7 @@ import { useViewMode } from "@/lib/use-view-mode";
 import ViewModeToggle from "@/components/ViewModeToggle";
 import { DocCoverageChip } from "@/components/ai";
 import type { Document } from "@/lib/types";
+import { xirr } from "@/lib/underwriting-calc";
 
 type LeaseType = "NNN" | "MG" | "Gross" | "Modified Gross";
 
@@ -811,30 +812,6 @@ function remainingBalance(principal: number, annualRate: number, amortYears: num
   return principal * (Math.pow(1 + r, n) - Math.pow(1 + r, p)) / (Math.pow(1 + r, n) - 1);
 }
 
-/**
- * Newton-Raphson XIRR (assumes end-of-year cash flows at integer year offsets).
- * `cashFlows[0]` is the initial equity outflow (negative), subsequent entries are
- * annual cash flows plus exit proceeds at the final year.
- * Returns the annual rate as a percentage, or 0 if it cannot converge.
- */
-function xirr(cashFlows: number[]): number {
-  if (cashFlows.length < 2) return 0;
-  let rate = 0.1;
-  for (let i = 0; i < 200; i++) {
-    let npv = 0, dNpv = 0;
-    for (let j = 0; j < cashFlows.length; j++) {
-      const denom = Math.pow(1 + rate, j);
-      npv  += cashFlows[j] / denom;
-      dNpv -= j * cashFlows[j] / (denom * (1 + rate));
-    }
-    if (Math.abs(dNpv) < 1e-12) break;
-    const delta = npv / dNpv;
-    rate -= delta;
-    if (Math.abs(delta) < 1e-8) break;
-  }
-  if (!isFinite(rate) || rate <= -1) return 0;
-  return rate * 100;
-}
 
 function effectiveUnits(g: UnitGroup): number {
   const delta = (g.unit_change_count || 0);
@@ -1667,6 +1644,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [renamingScenarioId, setRenamingScenarioId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
   const [showCompareModal, setShowCompareModal] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [compareSelection, setCompareSelection] = useState<Set<string>>(new Set());
   const [showMaxBidModal, setShowMaxBidModal] = useState(false);
   const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null });
@@ -2321,6 +2299,33 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     setShowCompareModal(true);
   };
 
+  const exportProformaPdf = async () => {
+    setExportingPdf(true);
+    try {
+      const res = await fetch(`/api/deals/${params.id}/proforma-pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uwData: effectiveData, mode: calcMode }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        toast.error(json.error || "PDF export failed");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Proforma-${deal?.name || "export"}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("PDF export failed");
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   const toggleCompareSelection = (key: string) => {
     setCompareSelection(prev => {
       const next = new Set(prev);
@@ -2374,6 +2379,10 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <ViewModeToggle mode={viewMode} onChange={setViewMode} />
           <Button variant="outline" size="sm" onClick={openDocViewer}>
             <Eye className="h-4 w-4 mr-2" />Docs
+          </Button>
+          <Button variant="outline" size="sm" onClick={exportProformaPdf} disabled={exportingPdf}>
+            {exportingPdf ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+            Export PDF
           </Button>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={openDocPicker} disabled={autofilling || saving}>
