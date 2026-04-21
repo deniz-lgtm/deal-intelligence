@@ -14,6 +14,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { ChecklistItem, DealNote, BusinessPlan } from "@/lib/types";
 import { CONCISE_STYLE } from "@/lib/ai-style";
 import { formatLocationIntelContext } from "@/lib/location-intel-context";
+import { calc as calcUnderwriting, type UWData } from "@/lib/underwriting-calc";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -257,6 +258,27 @@ function buildScorePrompt(
   // ── Underwriting metrics
   let uwBlock = "\nUNDERWRITING: Not yet completed\n";
   if (uw) {
+    // Source of truth: run the same calc() the UW page uses so the score
+    // sees refi-aware stabilized DSCR / CoC / EM, turnover-aware GPR, and
+    // IO/amort periods exactly as the analyst does. If calc() throws (e.g.
+    // older deal data missing required fields), we fall through to the
+    // local rebuild below.
+    const propertyType: string | undefined = deal?.property_type;
+    const isSH = propertyType === "student_housing";
+    const hasResMixedUse = propertyType === "mixed_use" &&
+      ((uw.mixed_use?.components) || []).some((c: any) => c?.component_type === "residential");
+    const isMF = propertyType === "multifamily" || propertyType === "sfr" || isSH || hasResMixedUse;
+    const calcMode: "commercial" | "multifamily" | "student_housing" =
+      isSH ? "student_housing" : isMF ? "multifamily" : "commercial";
+    let stabilized: ReturnType<typeof calcUnderwriting> | null = null;
+    try {
+      stabilized = calcUnderwriting(uw as UWData, calcMode);
+    } catch (err) {
+      console.warn(
+        `deal-score: calc() failed for deal ${deal?.id ?? "(unknown)"}, falling back to local rebuild: ${(err as Error).message}`
+      );
+    }
+
     const groups = uw.unit_groups || [];
     const capexItems = uw.capex_items || [];
     const capexTotal = capexItems.reduce(
@@ -317,7 +339,7 @@ function buildScorePrompt(
       (s: number, g: any) => s + (g.unit_count || 0),
       0
     );
-    const proformaGPR = groups.reduce((s: number, g: any) => {
+    let proformaGPR = groups.reduce((s: number, g: any) => {
       const units = g.unit_count || 0;
       if (g.market_rent_per_unit) {
         // Multifamily: monthly $/unit → annual
@@ -342,12 +364,12 @@ function buildScorePrompt(
       // Custom rows (Contracts, Staff, etc.) are part of the OpEx stack
       // on the UW page — include them so the score's NOI matches.
       (uw.custom_opex || []).reduce((s: number, r: any) => s + (r.pf_annual || 0), 0);
-    const proformaNOI = proformaEGI - mgmtFee - fixedOpEx;
+    let proformaNOI = proformaEGI - mgmtFee - fixedOpEx;
     // Cap rate: applied against the chosen basis (purchase price for
     // acquisitions, total cost basis for ground-up).
-    const proformaCapRate =
+    let proformaCapRate =
       costBasis > 0 ? (proformaNOI / costBasis) * 100 : 0;
-    const yoc = totalCost > 0 ? (proformaNOI / totalCost) * 100 : 0;
+    let yoc = totalCost > 0 ? (proformaNOI / totalCost) * 100 : 0;
 
     // Financing metrics — handle ground-up LTC vs. acquisition LTV split.
     let dscr = 0, cashOnCash = 0, equityMultiple = 0, loanAmount = 0, equity = 0;
@@ -400,30 +422,61 @@ function buildScorePrompt(
       }
     }
 
+    // Override locally-computed metrics with the authoritative calc()
+    // output when available. Specifically, `stabilizedDSCR` / `stabilizedCoC`
+    // use refi debt (when refi is configured) instead of the aggressive
+    // acquisition debt — this is the expected view for a value-add deal
+    // where the business plan includes a post-stabilization refi.
+    if (stabilized) {
+      proformaGPR = stabilized.proformaGPR;
+      proformaNOI = stabilized.proformaNOI;
+      proformaCapRate = stabilized.proformaCapRate;
+      yoc = stabilized.yoc;
+      totalCost = stabilized.totalCost;
+      loanAmount = stabilized.acqLoan;
+      equity = stabilized.equity;
+      dscr = stabilized.stabilizedDSCR;
+      cashOnCash = stabilized.stabilizedCoC;
+      equityMultiple = stabilized.em;
+    }
+
     const basisLabel = isGroundUp ? "Total Cost Basis (ground-up)" : "Purchase Price";
     const basisDetail = isGroundUp
       ? `Land ${fc(landCost)} + Hard ${fc(totalHardCosts)} + Soft ${fc(softCostsTotal)}${parkingCost ? ` + Parking ${fc(parkingCost)}` : ""}${closingCosts ? ` + Closing ${fc(closingCosts)}` : ""}${demolitionCosts ? ` + Demo ${fc(demolitionCosts)}` : ""}`
       : `incl. ${fc(capexTotal)} CapEx + ${fc(closingCosts)} closing`;
+
+    // In-place / Year-1 snapshot for value-add context (when available from
+    // calc()). A bad Year-1 DSCR that turns into a healthy stabilized DSCR
+    // after renovations + refi is normal for value-add — the scorer should
+    // see both to reason about the trajectory.
+    const hasRefi = !!uw.has_refi && !!uw.has_financing;
+    const inPlaceBlock = stabilized
+      ? `- In-Place NOI (Year 1, pre-ramp): ${fc(stabilized.inPlaceNOI)}
+- In-Place DSCR (Year 1, acq debt): ${stabilized.inPlaceDSCR > 0 ? stabilized.inPlaceDSCR.toFixed(2) + "x" : "N/A"}
+- In-Place CoC (Year 1): ${stabilized.inPlaceCoC !== 0 ? stabilized.inPlaceCoC.toFixed(2) + "%" : "N/A"}
+`
+      : "";
 
     uwBlock = `\nUNDERWRITING METRICS (COMPUTED FROM MODEL):
 - Deal Type: ${isGroundUp ? "Ground-Up Development" : "Acquisition"}
 - ${basisLabel}: ${fc(costBasis)}
 - Total Cost Basis: ${fc(totalCost)} (${basisDetail})
 - Total Units: ${totalUnits}
-- Proforma GPR: ${fc(proformaGPR)}
+- Proforma GPR (stabilized): ${fc(proformaGPR)}
 - Vacancy Rate: ${vacancyRate}%
 - Total OpEx: ${fc(mgmtFee + fixedOpEx)}
-- Proforma NOI: ${fc(proformaNOI)}
+- Proforma NOI (stabilized): ${fc(proformaNOI)}
 - Proforma Cap Rate: ${fp(proformaCapRate)}
 - Yield on Cost: ${fp(yoc)}
 - ${isGroundUp ? `Hard Costs: ${fc(totalHardCosts)} ($${(uw.hard_cost_per_sf || 0).toFixed(0)}/GSF on ${(uw.max_gsf || 0).toLocaleString()} GSF)` : `CapEx Budget: ${fc(capexTotal)} across ${capexItems.length} items`}
 - Hold Period: ${uw.hold_period_years || "?"} years
 - Exit Cap Rate: ${uw.exit_cap_rate || "?"}%
-${uw.has_financing ? `- DSCR: ${dscr > 0 ? dscr.toFixed(2) + "x" : "N/A"}
-- Cash-on-Cash Return: ${cashOnCash !== 0 ? cashOnCash.toFixed(2) + "%" : "N/A"}
-- Equity Multiple: ${equityMultiple > 0 ? equityMultiple.toFixed(2) + "x" : "N/A"}
+${uw.has_financing ? `- Stabilized DSCR${hasRefi ? " (post-refi)" : ""}: ${dscr > 0 ? dscr.toFixed(2) + "x" : "N/A"}
+- Stabilized Cash-on-Cash${hasRefi ? " (post-refi)" : ""}: ${cashOnCash !== 0 ? cashOnCash.toFixed(2) + "%" : "N/A"}
+- Equity Multiple (full hold): ${equityMultiple > 0 ? equityMultiple.toFixed(2) + "x" : "N/A"}
 - Loan Amount: ${fc(loanAmount)} ${isGroundUp ? `(${(uw.acq_ltc ?? uw.acq_pp_ltv ?? 65)}% LTC)` : ""}
-- Equity Required: ${fc(equity)}` : "- No financing assumed (all-cash)"}
+- Equity Required: ${fc(equity)}
+${inPlaceBlock}` : "- No financing assumed (all-cash)"}
 `;
   }
 
