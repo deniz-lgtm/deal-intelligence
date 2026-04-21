@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import DealNotes from "@/components/DealNotes";
 import MaxBidPanel from "@/components/MaxBidPanel";
+import type { CalcFn } from "@/lib/max-bid";
+import type { UWData as LibUWData } from "@/lib/underwriting-calc";
 import { useSetPageContext } from "@/lib/page-context";
 import AffordabilityPlanner, { type AffordabilityConfig } from "@/components/AffordabilityPlanner";
 import AmiReference from "@/components/AmiReference";
@@ -5597,8 +5599,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       {/* ── Max Bid Modal ── */}
       {showMaxBidModal && (
         <MaxBidPanel
-          data={data}
+          data={data as unknown as LibUWData}
           mode={calcMode}
+          // Pass the page's local calc() — it's diverged from the lib
+          // (adds commercial_tenants + itemized other_income_items), so
+          // the solver must use THIS calc for its numbers to match the
+          // page's Returns panel. Without this, ground-up deals with
+          // retail income produce a ~7% lower NOI in Max-Bid than on
+          // the page, and hurdles look unreachable when they aren't.
+          // Cast through unknown: page UWData has a local superset of
+          // fields (opex_item_notes, etc.) that lib UWData lacks. At
+          // runtime the solver only reads fields both types have.
+          calcFn={calc as unknown as CalcFn}
           onClose={() => setShowMaxBidModal(false)}
           onApply={(price) => {
             setData(prev => data.development_mode

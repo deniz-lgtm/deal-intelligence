@@ -13,7 +13,7 @@
 import React, { useMemo, useState } from "react";
 import { X, Target, TrendingUp, TrendingDown, Sparkles, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { solveMaxBid, getMetricsAt, getMetricsAtZeroBasis, type CalcMode, type MaxBidTargets } from "@/lib/max-bid";
+import { solveMaxBid, getMetricsAt, getMetricsAtZeroBasis, type CalcMode, type CalcFn, type MaxBidTargets } from "@/lib/max-bid";
 import type { UWData } from "@/lib/underwriting-calc";
 
 interface Props {
@@ -21,6 +21,11 @@ interface Props {
   mode: CalcMode;
   onClose: () => void;
   onApply: (price: number) => void;
+  // Optional — the UW page has its own local calc() divergent from
+  // the shared lib (adds commercial_tenants + itemized other_income).
+  // Passing it ensures the Max-Bid solver's numbers line up with what
+  // the page's Returns panel displays. Defaults to the lib calc.
+  calcFn?: CalcFn;
 }
 
 const fc = (n: number) =>
@@ -59,7 +64,7 @@ function NumInput({
   );
 }
 
-export default function MaxBidPanel({ data, mode, onClose, onApply }: Props) {
+export default function MaxBidPanel({ data, mode, onClose, onApply, calcFn }: Props) {
   // Default hurdles match what most acquisitions teams start from. Analyst
   // can blank any field to skip it.
   const [targetIrr, setTargetIrr] = useState<number | undefined>(15);
@@ -86,7 +91,7 @@ export default function MaxBidPanel({ data, mode, onClose, onApply }: Props) {
   // Only solve once per input change. The solver is synchronous but runs
   // calc() ~40x (bisection) + 5x (sensitivity × 40) = ~240 calc() calls.
   // For a typical deal calc() is sub-millisecond, so this is instant.
-  const result = useMemo(() => solveMaxBid(solverInput, targets, mode), [solverInput, targets, mode]);
+  const result = useMemo(() => solveMaxBid(solverInput, targets, mode, calcFn), [solverInput, targets, mode, calcFn]);
 
   // Diagnostic baselines — rendered in the footer so the analyst can
   // sanity-check the solver against the main page's displayed numbers.
@@ -94,8 +99,8 @@ export default function MaxBidPanel({ data, mode, onClose, onApply }: Props) {
   // shows the CURRENT-basis IRR at 11%, the analyst can see the shape
   // of the tradeoff at a glance: "yes, my deal's on the margin, need
   // to trim land to get to 15%."
-  const currentMetrics = useMemo(() => getMetricsAt(solverInput, mode), [solverInput, mode]);
-  const zeroMetrics = useMemo(() => getMetricsAtZeroBasis(solverInput, mode), [solverInput, mode]);
+  const currentMetrics = useMemo(() => getMetricsAt(solverInput, mode, calcFn), [solverInput, mode, calcFn]);
+  const zeroMetrics = useMemo(() => getMetricsAtZeroBasis(solverInput, mode, calcFn), [solverInput, mode, calcFn]);
 
   const currentBasis = data.development_mode ? (data.land_cost || 0) : (data.purchase_price || 0);
   const basisLabel = data.development_mode ? "Current Land Cost" : "Current Purchase Price";

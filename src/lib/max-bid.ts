@@ -9,9 +9,19 @@
 // underwriting-calc.ts — don't re-implement the proforma. We just sweep
 // `purchase_price` / `land_cost` and re-run calc() at each guess.
 
-import { calc, type UWData } from "@/lib/underwriting-calc";
+import { calc as libCalc, type UWData } from "@/lib/underwriting-calc";
 
 export type CalcMode = "commercial" | "multifamily" | "student_housing";
+
+/**
+ * The underwriting page ships its own local `calc` implementation that's
+ * diverged from the shared lib over time (adds commercial_tenants
+ * revenue, itemized other_income_items, etc.). Callers that need the
+ * solver to match what the page's Returns panel displays should pass
+ * that local calc in here. Tests and stand-alone callers get the lib's
+ * calc by default.
+ */
+export type CalcFn = (d: UWData, mode: CalcMode) => ReturnType<typeof libCalc>;
 
 export interface MaxBidTargets {
   /** Required unlevered-equity IRR, % (e.g. 15 means 15%). */
@@ -99,7 +109,7 @@ function xirr(cashFlows: number[]): number {
   return ((lo + hi) / 2) * 100;
 }
 
-function computeMetrics(d: UWData, mode: CalcMode) {
+function computeMetrics(d: UWData, mode: CalcMode, calc: CalcFn = libCalc) {
   const m = calc(d, mode);
   // Match the UW page's Compare Scenarios / Wizard IRR pattern exactly
   // — use all 5 yearlyDCF rows and fold exitEquity into the last one —
@@ -134,16 +144,16 @@ function computeMetrics(d: UWData, mode: CalcMode) {
 }
 
 /** Public export so the UI panel can render current-basis metrics. */
-export function getMetricsAt(d: UWData, mode: CalcMode) {
-  return computeMetrics(d, mode);
+export function getMetricsAt(d: UWData, mode: CalcMode, calc: CalcFn = libCalc) {
+  return computeMetrics(d, mode, calc);
 }
 
 /** Public export — solve the deal at land/purchase price = 0. Used by the
  *  UI to explain what IRR is achievable in the best case when the solver
  *  reports "Deal fails at any price". */
-export function getMetricsAtZeroBasis(d: UWData, mode: CalcMode) {
+export function getMetricsAtZeroBasis(d: UWData, mode: CalcMode, calc: CalcFn = libCalc) {
   const zeroD = d.development_mode ? { ...d, land_cost: 0 } : { ...d, purchase_price: 0 };
-  return computeMetrics(zeroD, mode);
+  return computeMetrics(zeroD, mode, calc);
 }
 
 function meetsTargets(
@@ -194,6 +204,7 @@ export function solveMaxBid(
   data: UWData,
   targets: MaxBidTargets,
   mode: CalcMode = "multifamily",
+  calc: CalcFn = libCalc,
   // Internal flag: the sensitivity sweep re-calls solveMaxBid under
   // tweaked inputs. Without suppressing the inner sweep each recursive
   // call kicks off its own ~5x recursion → stack overflow. External
@@ -207,7 +218,7 @@ export function solveMaxBid(
   const startBasis = basePrice(data);
   let upper = Math.max(startBasis * 4, 50_000_000);
   for (let i = 0; i < 3; i++) {
-    const hi = computeMetrics(setPrice(data, upper), mode);
+    const hi = computeMetrics(setPrice(data, upper), mode, calc);
     const { passes } = meetsTargets(hi, targets, data.has_financing);
     if (!passes) break;
     upper *= 2;
@@ -223,7 +234,7 @@ export function solveMaxBid(
   let anyPass = false;
   for (let i = 0; i < 40; i++) {
     const mid = (lo + hi) / 2;
-    const metrics = computeMetrics(setPrice(data, mid), mode);
+    const metrics = computeMetrics(setPrice(data, mid), mode, calc);
     const { passes, binding } = meetsTargets(metrics, targets, data.has_financing);
     if (passes) {
       lo = mid;
@@ -239,7 +250,7 @@ export function solveMaxBid(
   // fundamentally broken at any basis — return 0 and surface the
   // binding constraint from the final failure.
   if (!anyPass) {
-    const zeroMetrics = computeMetrics(setPrice(data, 0), mode);
+    const zeroMetrics = computeMetrics(setPrice(data, 0), mode, calc);
     return {
       max_bid: 0,
       metrics_at_max_bid: zeroMetrics,
@@ -249,7 +260,7 @@ export function solveMaxBid(
   }
 
   const finalPrice = lo;
-  const finalMetrics = computeMetrics(setPrice(data, finalPrice), mode);
+  const finalMetrics = computeMetrics(setPrice(data, finalPrice), mode, calc);
 
   // Sensitivity: re-solve under each twist. Each twist is a small UWData
   // mutation; bisection is cheap so we just run it 5x. Returns Δ vs the
@@ -265,7 +276,7 @@ export function solveMaxBid(
     };
   }
   const twist = (label: string, mutate: (d: UWData) => UWData) => {
-    const res = solveMaxBid(mutate(data), targets, mode, true);
+    const res = solveMaxBid(mutate(data), targets, mode, calc, true);
     return { label, max_bid: res.max_bid, delta: res.max_bid - finalPrice };
   };
 
