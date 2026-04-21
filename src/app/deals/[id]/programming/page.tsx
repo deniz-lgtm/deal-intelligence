@@ -1476,7 +1476,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           }
           return mix;
         })()}
-        mode="type"
+        mode="full"
         spottedBonuses={densityBonuses}
         availableBuildings={currentMassing?.buildings.map((b) => ({ id: b.id, label: b.label })) || []}
         onConfigChange={(cfg) => { setAffordabilityConfig(cfg); setDirty(true); }}
