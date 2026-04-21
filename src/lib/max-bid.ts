@@ -1,13 +1,16 @@
-// Max-Bid solver — reverse-underwriting.
+// Goal-seek solver — reverse-underwrite against multiple hurdle sets.
 //
-// Given a UWData input and a set of return hurdles (IRR, Equity Multiple,
-// Cash-on-Cash), find the maximum purchase price (or land cost, in
-// ground-up mode) that still clears every hurdle. All three metrics are
-// monotonically decreasing in basis, so bisection converges cleanly.
+// Supports three solve modes:
+//   1. "price"    — max purchase price (or land cost for ground-up)
+//   2. "rents"    — min rent multiplier (vs. current market rents) the
+//                   deal can sustain while clearing hurdles
+//   3. "exit_cap" — max exit cap rate the deal can sustain before
+//                   hurdles break
 //
-// Simplicity goal: reuse the existing `calc()` function from
-// underwriting-calc.ts — don't re-implement the proforma. We just sweep
-// `purchase_price` / `land_cost` and re-run calc() at each guess.
+// All three reuse the same hurdle engine (IRR / EM / CoC / DSCR) and
+// the same page-local calc() so solver numbers always match the UW
+// page's Returns panel. Bisection works for all three because each of
+// the three independent variables produces monotonic returns.
 
 import { calc as libCalc, type UWData } from "@/lib/underwriting-calc";
 
@@ -22,6 +25,9 @@ export type CalcMode = "commercial" | "multifamily" | "student_housing";
  * calc by default.
  */
 export type CalcFn = (d: UWData, mode: CalcMode) => ReturnType<typeof libCalc>;
+
+/** What we're solving for. */
+export type SolveMode = "price" | "rents" | "exit_cap";
 
 export interface MaxBidTargets {
   /** Required unlevered-equity IRR, % (e.g. 15 means 15%). */
@@ -45,17 +51,36 @@ export interface MetricsSnapshot {
   cap_rate: number;
 }
 
-export interface MaxBidResult {
-  max_bid: number;
-  metrics_at_max_bid: MetricsSnapshot;
-  /** Which hurdle was the binding constraint? */
-  binding_constraint: "irr" | "equity_multiple" | "coc" | "dscr" | "none";
+export type BindingConstraint = "irr" | "equity_multiple" | "coc" | "dscr" | "none";
+
+export interface SolveResult {
+  solve_mode: SolveMode;
+  /**
+   * The solved value in native units:
+   *   price    — dollars
+   *   rents    — multiplier (1.0 = current market rents)
+   *   exit_cap — percent (e.g. 6.25 means 6.25%)
+   */
+  solved_value: number;
+  /** Metrics produced by calc() when the solved_value is applied. */
+  metrics_at_solved: MetricsSnapshot;
+  binding_constraint: BindingConstraint;
   /** Sensitivity: re-solve with each twist applied to a clone of the input. */
   sensitivity: Array<{
     label: string;
-    max_bid: number;
-    delta: number; // dollars vs baseline max_bid
+    solved_value: number;
+    delta: number;
   }>;
+  /** True iff at least one value inside the search range cleared all hurdles. */
+  any_pass: boolean;
+}
+
+/** Back-compat alias — existing callers can keep using MaxBidResult. */
+export interface MaxBidResult {
+  max_bid: number;
+  metrics_at_max_bid: MetricsSnapshot;
+  binding_constraint: BindingConstraint;
+  sensitivity: Array<{ label: string; max_bid: number; delta: number }>;
 }
 
 // Bracketed bisection IRR. Much slower than Newton-Raphson but
@@ -64,8 +89,6 @@ export interface MaxBidResult {
 // falls into NaN territory (the old version returned 0 there, which
 // makes the max-bid solver think the deal is failing the hurdle when
 // it's actually clearing it by miles).
-//
-// Returns annual rate as percentage, clipped to [-99%, +1000%].
 function xirr(cashFlows: number[]): number {
   if (cashFlows.length < 2) return 0;
   const npv = (rate: number): number => {
@@ -75,24 +98,17 @@ function xirr(cashFlows: number[]): number {
     }
     return sum;
   };
-  // Need an initial outflow + at least one positive return for a
-  // meaningful IRR. If the deal is flat-negative there's no root in
-  // (-1, ∞); return 0 (same as the legacy behaviour).
   if (cashFlows[0] >= 0) return 0;
-  let lo = -0.99;   // -99% floor — below this the NPV blows up
-  let hi = 10;      // 1000% ceiling — any deal that returns more is "infinitely good"
+  let lo = -0.99;
+  let hi = 10;
   let npvLo = npv(lo);
   let npvHi = npv(hi);
-  // If NPV is positive at both ends of the bracket the deal's return
-  // lives above our ceiling — report the ceiling. If negative at both
-  // ends, nothing solves (edge case); return 0.
   if (npvLo > 0 && npvHi > 0) return hi * 100;
   if (npvLo < 0 && npvHi < 0) return 0;
-  // Invariant from here: sign change exists between lo and hi.
   for (let i = 0; i < 80; i++) {
     const mid = (lo + hi) / 2;
     const npvMid = npv(mid);
-    if (Math.abs(npvMid) < 1) break; // close enough — NPV is in $
+    if (Math.abs(npvMid) < 1) break;
     if ((npvMid > 0 && npvLo > 0) || (npvMid < 0 && npvLo < 0)) {
       lo = mid; npvLo = npvMid;
     } else {
@@ -103,12 +119,8 @@ function xirr(cashFlows: number[]): number {
   return ((lo + hi) / 2) * 100;
 }
 
-function computeMetrics(d: UWData, mode: CalcMode, calc: CalcFn = libCalc) {
+function computeMetrics(d: UWData, mode: CalcMode, calc: CalcFn = libCalc): MetricsSnapshot {
   const m = calc(d, mode);
-  // Match the UW page's Compare Scenarios / Wizard IRR pattern exactly
-  // — use all 5 yearlyDCF rows and fold exitEquity into the last one —
-  // so the Max-Bid answer matches what the page's own goal-seek would
-  // return. (calc() always emits 5 rows regardless of hold_period_years.)
   let irr = 0;
   if (m.equity > 0 && m.yearlyDCF.length > 0) {
     const flows: number[] = [-m.equity, ...m.yearlyDCF.map((yr, i) =>
@@ -119,9 +131,9 @@ function computeMetrics(d: UWData, mode: CalcMode, calc: CalcFn = libCalc) {
   return {
     irr,
     equity_multiple: m.em,
-    // Match the "Returns — Stabilized" panel on the UW page, which
-    // shows stabilizedCoC / stabilizedDSCR (post-refi or post-IO) —
-    // not the year-1 coc / dscr which collapse during lease-up.
+    // Match the "Returns — Stabilized" panel on the UW page, which uses
+    // stabilizedCoC / stabilizedDSCR (post-refi or post-IO) — not the
+    // year-1 coc / dscr which collapse during lease-up.
     coc: m.stabilizedCoC,
     dscr: m.stabilizedDSCR,
     total_cost: m.totalCost,
@@ -131,27 +143,20 @@ function computeMetrics(d: UWData, mode: CalcMode, calc: CalcFn = libCalc) {
   };
 }
 
-/** Public export so the UI panel can render current-basis metrics. */
 export function getMetricsAt(d: UWData, mode: CalcMode, calc: CalcFn = libCalc) {
   return computeMetrics(d, mode, calc);
 }
 
-/** Public export — solve the deal at land/purchase price = 0. Used by the
- *  UI to explain what IRR is achievable in the best case when the solver
- *  reports "Deal fails at any price". */
 export function getMetricsAtZeroBasis(d: UWData, mode: CalcMode, calc: CalcFn = libCalc) {
   const zeroD = d.development_mode ? { ...d, land_cost: 0 } : { ...d, purchase_price: 0 };
   return computeMetrics(zeroD, mode, calc);
 }
 
 function meetsTargets(
-  metrics: ReturnType<typeof computeMetrics>,
+  metrics: MetricsSnapshot,
   targets: MaxBidTargets,
   hasFinancing: boolean
-): { passes: boolean; binding: MaxBidResult["binding_constraint"] } {
-  // For bisection direction: at the max bid the binding constraint is
-  // satisfied with equality. Any twist that pushes the metric lower
-  // means the price was too high.
+): { passes: boolean; binding: BindingConstraint } {
   if (targets.target_irr_pct !== undefined && metrics.irr < targets.target_irr_pct) {
     return { passes: false, binding: "irr" };
   }
@@ -167,109 +172,29 @@ function meetsTargets(
   return { passes: true, binding: "none" };
 }
 
-function setPrice(d: UWData, price: number): UWData {
-  // In ground-up mode the "bid" is really the land cost; everything
-  // else (hard/soft costs) stays constant per the developer's program.
-  if (d.development_mode) return { ...d, land_cost: Math.max(0, price) };
-  return { ...d, purchase_price: Math.max(0, price) };
+// ── Per-mode variable setters + bisection framing ───────────────────────────
+// Each solve mode maps a scalar "trial value" into a UWData mutation.
+// The bisection semantics also differ:
+//   price:    passing region is LOW, searching for the MAX passing value
+//   rents:    passing region is HIGH, searching for the MIN passing value
+//   exit_cap: passing region is LOW, searching for the MAX passing value
+
+interface ModeConfig {
+  /** Apply the trial value to a UWData clone. */
+  setValue: (d: UWData, v: number) => UWData;
+  /** Bracket the search range. */
+  lowBound: (d: UWData) => number;
+  highBound: (d: UWData) => number;
+  /** Which side of the bracket passes first? */
+  passingSide: "low" | "high";
+  /** Convergence tolerance in the variable's native units. */
+  tolerance: number;
+  /** Sensible default used when the search never converges — what to return. */
+  fallbackValue: number;
 }
 
-function basePrice(d: UWData): number {
-  return d.development_mode ? (d.land_cost || 0) : (d.purchase_price || 0);
-}
-
-/**
- * Bisection over purchase price. Returns the max price that still clears
- * every target. Tolerance: $1,000.
- *
- * Lower bound is $0 (deal is free), upper bound is 4x the current basis
- * (or $50M if there is no basis yet). If even $0 doesn't clear the
- * targets, returns 0 with `binding_constraint` set to whichever hurdle
- * failed — that means the deal's expenses/debt structure is
- * fundamentally broken and no basis can save it.
- */
-export function solveMaxBid(
-  data: UWData,
-  targets: MaxBidTargets,
-  mode: CalcMode = "multifamily",
-  calc: CalcFn = libCalc,
-  // Internal flag: the sensitivity sweep re-calls solveMaxBid under
-  // tweaked inputs. Without suppressing the inner sweep each recursive
-  // call kicks off its own ~5x recursion → stack overflow. External
-  // callers should leave this false.
-  _skipSensitivity: boolean = false,
-): MaxBidResult {
-  // Determine search bounds. We need enough headroom to find the max:
-  // start with 4x the current basis, or a generous $50M floor when the
-  // deal hasn't been priced yet. If even that ceiling still passes the
-  // hurdles, double up to 3 times (→ $400M cap) before giving up.
-  const startBasis = basePrice(data);
-  let upper = Math.max(startBasis * 4, 50_000_000);
-  for (let i = 0; i < 3; i++) {
-    const hi = computeMetrics(setPrice(data, upper), mode, calc);
-    const { passes } = meetsTargets(hi, targets, data.has_financing);
-    if (!passes) break;
-    upper *= 2;
-  }
-
-  // Bisect between $0 and the ceiling. We do NOT short-circuit on $0 —
-  // the bisection handles it naturally. If the deal truly can't clear
-  // the hurdles at any price, the loop converges on $0 and we flag the
-  // binding constraint via lastBinding.
-  let lo = 0;
-  let hi = upper;
-  let lastBinding: MaxBidResult["binding_constraint"] = "none";
-  let anyPass = false;
-  for (let i = 0; i < 40; i++) {
-    const mid = (lo + hi) / 2;
-    const metrics = computeMetrics(setPrice(data, mid), mode, calc);
-    const { passes, binding } = meetsTargets(metrics, targets, data.has_financing);
-    if (passes) {
-      lo = mid;
-      anyPass = true;
-    } else {
-      hi = mid;
-      lastBinding = binding;
-    }
-    if (hi - lo < 1000) break;
-  }
-
-  // If nothing in [$0, ceiling] cleared the hurdles, the deal is
-  // fundamentally broken at any basis — return 0 and surface the
-  // binding constraint from the final failure.
-  if (!anyPass) {
-    const zeroMetrics = computeMetrics(setPrice(data, 0), mode, calc);
-    return {
-      max_bid: 0,
-      metrics_at_max_bid: zeroMetrics,
-      binding_constraint: lastBinding,
-      sensitivity: [],
-    };
-  }
-
-  const finalPrice = lo;
-  const finalMetrics = computeMetrics(setPrice(data, finalPrice), mode, calc);
-
-  // Sensitivity: re-solve under each twist. Each twist is a small UWData
-  // mutation; bisection is cheap so we just run it 5x. Returns Δ vs the
-  // baseline max_bid so the UI can render "+$X" / "-$X". Recursive call
-  // passes _skipSensitivity=true so we don't re-sweep forever.
-  const sensitivity: MaxBidResult["sensitivity"] = [];
-  if (_skipSensitivity) {
-    return {
-      max_bid: finalPrice,
-      metrics_at_max_bid: finalMetrics,
-      binding_constraint: lastBinding,
-      sensitivity,
-    };
-  }
-  const twist = (label: string, mutate: (d: UWData) => UWData) => {
-    const res = solveMaxBid(mutate(data), targets, mode, calc, true);
-    return { label, max_bid: res.max_bid, delta: res.max_bid - finalPrice };
-  };
-
-  // Rents ±5%: scale every unit group's rents uniformly.
-  const scaleRents = (d: UWData, k: number): UWData => ({
+function scaleRents(d: UWData, k: number): UWData {
+  return {
     ...d,
     unit_groups: d.unit_groups.map(g => ({
       ...g,
@@ -280,20 +205,185 @@ export function solveMaxBid(
       current_rent_per_bed: g.current_rent_per_bed * k,
       market_rent_per_bed: g.market_rent_per_bed * k,
     })),
-  });
+  };
+}
 
-  sensitivity.push(twist("Rents −5%", d => scaleRents(d, 0.95)));
-  sensitivity.push(twist("Rents +5%", d => scaleRents(d, 1.05)));
-  sensitivity.push(twist("Exit cap +50 bps", d => ({ ...d, exit_cap_rate: d.exit_cap_rate + 0.5 })));
-  sensitivity.push(twist("Exit cap −50 bps", d => ({ ...d, exit_cap_rate: Math.max(0.25, d.exit_cap_rate - 0.5) })));
+function modeConfigFor(mode: SolveMode): ModeConfig {
+  switch (mode) {
+    case "price":
+      return {
+        setValue: (d, v) => d.development_mode
+          ? { ...d, land_cost: Math.max(0, v) }
+          : { ...d, purchase_price: Math.max(0, v) },
+        lowBound: () => 0,
+        highBound: (d) => {
+          const current = d.development_mode ? (d.land_cost || 0) : (d.purchase_price || 0);
+          return Math.max(current * 4, 50_000_000);
+        },
+        passingSide: "low",
+        tolerance: 1000,
+        fallbackValue: 0,
+      };
+    case "rents":
+      return {
+        setValue: (d, v) => scaleRents(d, Math.max(0.01, v)),
+        lowBound: () => 0.1,   // 10% of current market — floor
+        highBound: () => 5.0,  // 500% of current market — should cover most value-add cases
+        passingSide: "high",
+        tolerance: 0.001,      // 0.1% multiplier
+        fallbackValue: 5.0,
+      };
+    case "exit_cap":
+      return {
+        setValue: (d, v) => ({ ...d, exit_cap_rate: Math.max(0.25, v) }),
+        lowBound: () => 1.0,
+        highBound: () => 20.0,
+        passingSide: "low",
+        tolerance: 0.01,       // 1 bp
+        fallbackValue: 20.0,
+      };
+  }
+}
+
+export function solve(
+  data: UWData,
+  targets: MaxBidTargets,
+  calcMode: CalcMode,
+  solveMode: SolveMode,
+  calc: CalcFn = libCalc,
+  // Internal flag: the sensitivity sweep re-calls solve() under
+  // tweaked inputs. Without suppressing the inner sweep each recursive
+  // call kicks off its own ~5x recursion → stack overflow.
+  _skipSensitivity: boolean = false,
+): SolveResult {
+  const cfg = modeConfigFor(solveMode);
+
+  // Expand the bracket if the "passing" end still passes — we want the
+  // search range to straddle the pass/fail boundary.
+  let lo = cfg.lowBound(data);
+  let hi = cfg.highBound(data);
+  for (let i = 0; i < 3; i++) {
+    const endCheck = cfg.passingSide === "low" ? hi : lo;
+    const endMetrics = computeMetrics(cfg.setValue(data, endCheck), calcMode, calc);
+    const { passes } = meetsTargets(endMetrics, targets, data.has_financing);
+    // If the supposedly-failing end still passes, the solver has no
+    // meaningful boundary inside the current bracket — widen the range.
+    if (!passes) break;
+    if (cfg.passingSide === "low") hi *= 2;
+    else lo /= 2;
+  }
+
+  // Bisect between [lo, hi]. The passing side starts as the "known good"
+  // endpoint; each iteration shrinks toward the pass/fail boundary.
+  let lastBinding: BindingConstraint = "none";
+  let anyPass = false;
+  let solvedValue = cfg.fallbackValue;
+
+  for (let i = 0; i < 50; i++) {
+    const mid = (lo + hi) / 2;
+    const metrics = computeMetrics(cfg.setValue(data, mid), calcMode, calc);
+    const { passes, binding } = meetsTargets(metrics, targets, data.has_financing);
+    if (passes) {
+      anyPass = true;
+      // Passing side wins → move the "passing" boundary toward mid.
+      // For passingSide=low we want max passing → push `lo` up.
+      // For passingSide=high we want min passing → push `hi` down.
+      if (cfg.passingSide === "low") {
+        lo = mid;
+        solvedValue = mid;
+      } else {
+        hi = mid;
+        solvedValue = mid;
+      }
+    } else {
+      // Failing side → move the "failing" boundary toward mid.
+      if (cfg.passingSide === "low") hi = mid;
+      else lo = mid;
+      lastBinding = binding;
+    }
+    if (Math.abs(hi - lo) < cfg.tolerance) break;
+  }
+
+  // No trial value cleared the hurdles — the deal is broken for this
+  // solve mode. Surface the binding constraint at the "best" endpoint.
+  if (!anyPass) {
+    const bestEnd = cfg.passingSide === "low" ? cfg.lowBound(data) : cfg.highBound(data);
+    const bestMetrics = computeMetrics(cfg.setValue(data, bestEnd), calcMode, calc);
+    return {
+      solve_mode: solveMode,
+      solved_value: bestEnd,
+      metrics_at_solved: bestMetrics,
+      binding_constraint: lastBinding,
+      sensitivity: [],
+      any_pass: false,
+    };
+  }
+
+  const finalMetrics = computeMetrics(cfg.setValue(data, solvedValue), calcMode, calc);
+
+  // Sensitivity: re-solve the same goal-seek under each tweaked input.
+  // Skip the internal recursion to avoid stack blow-up.
+  const sensitivity: SolveResult["sensitivity"] = [];
+  if (_skipSensitivity) {
+    return {
+      solve_mode: solveMode,
+      solved_value: solvedValue,
+      metrics_at_solved: finalMetrics,
+      binding_constraint: lastBinding,
+      sensitivity,
+      any_pass: true,
+    };
+  }
+
+  const twist = (label: string, mutate: (d: UWData) => UWData) => {
+    const res = solve(mutate(data), targets, calcMode, solveMode, calc, true);
+    return { label, solved_value: res.solved_value, delta: res.solved_value - solvedValue };
+  };
+
+  // Rent + exit-cap sensitivities apply for all three modes. For "rents"
+  // mode the "Rents +/-5%" twist is circular — skip it there. Likewise
+  // "Exit cap +/-50bps" is redundant under "exit_cap" solve.
+  if (solveMode !== "rents") {
+    sensitivity.push(twist("Rents −5%", d => scaleRents(d, 0.95)));
+    sensitivity.push(twist("Rents +5%", d => scaleRents(d, 1.05)));
+  }
+  if (solveMode !== "exit_cap") {
+    sensitivity.push(twist("Exit cap +50 bps", d => ({ ...d, exit_cap_rate: d.exit_cap_rate + 0.5 })));
+    sensitivity.push(twist("Exit cap −50 bps", d => ({ ...d, exit_cap_rate: Math.max(0.25, d.exit_cap_rate - 0.5) })));
+  }
   if (data.has_financing) {
     sensitivity.push(twist("Interest rate +100 bps", d => ({ ...d, acq_interest_rate: d.acq_interest_rate + 1 })));
   }
 
   return {
-    max_bid: finalPrice,
-    metrics_at_max_bid: finalMetrics,
+    solve_mode: solveMode,
+    solved_value: solvedValue,
+    metrics_at_solved: finalMetrics,
     binding_constraint: lastBinding,
     sensitivity,
+    any_pass: true,
+  };
+}
+
+/** Back-compat shim — thin wrapper that routes to the generalized solver.
+ *  Kept so any other consumer of solveMaxBid continues to work without
+ *  touching its call sites. */
+export function solveMaxBid(
+  data: UWData,
+  targets: MaxBidTargets,
+  mode: CalcMode = "multifamily",
+  calc: CalcFn = libCalc,
+  _skipSensitivity: boolean = false,
+): MaxBidResult {
+  const r = solve(data, targets, mode, "price", calc, _skipSensitivity);
+  return {
+    max_bid: r.any_pass ? r.solved_value : 0,
+    metrics_at_max_bid: r.metrics_at_solved,
+    binding_constraint: r.binding_constraint,
+    sensitivity: r.sensitivity.map(s => ({
+      label: s.label,
+      max_bid: s.solved_value,
+      delta: s.delta,
+    })),
   };
 }

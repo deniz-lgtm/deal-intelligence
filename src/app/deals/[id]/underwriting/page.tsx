@@ -128,10 +128,14 @@ const WIZARD_METRICS: WizardMetricMeta[] = [
   { key: "yoc", label: "Yield on Cost", suffix: "%", scenarios: ["land_residual", "rent_target"] },
 ];
 
+// The three goal-seek scenarios (land_residual, rent_target, exit_cap)
+// used to live in this wizard. They moved to the Max Bid / Goal Seek
+// modal, which runs the same bisection but with multi-hurdle support,
+// sensitivity analysis, and the page's live calc() — so numbers match
+// the Returns panel. Only "custom" remains as a scenario creation path
+// from this wizard; existing DB rows with the retired types still
+// render correctly because ScenarioType keeps the same enum values.
 const SCENARIO_TYPES: Array<{ type: ScenarioType; label: string; description: string; icon: string }> = [
-  { type: "land_residual", label: "Max Purchase Price", description: "Find the maximum purchase price to hit your return targets", icon: "🏷️" },
-  { type: "rent_target", label: "Required Rents", description: "Find the minimum rents needed to hit your return targets", icon: "📈" },
-  { type: "exit_cap", label: "Exit Cap Sensitivity", description: "Find what exit cap rate is needed to hit your return targets", icon: "🎯" },
   { type: "custom", label: "Custom What-If", description: "Start from baseline and manually adjust any assumptions", icon: "✏️" },
 ];
 
@@ -5578,6 +5582,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <div className="flex-1 overflow-y-auto p-4">
               {wizardStep === 0 && (
                 <div className="space-y-2">
+                  <div className="mb-2 p-3 rounded-lg border border-primary/30 bg-primary/5 text-xs text-muted-foreground flex items-start gap-2">
+                    <Target className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                    <span>
+                      Looking for <strong className="text-foreground">Max Price</strong>, <strong className="text-foreground">Required Rents</strong>, or <strong className="text-foreground">Exit Cap</strong> goal-seek? Close this and use the <span className="text-emerald-300 font-medium">Max Bid</span> button — it runs the same solve with multi-hurdle support and sensitivity.
+                    </span>
+                  </div>
                   {SCENARIO_TYPES.map(st => (
                     <button
                       key={st.type}
@@ -5790,12 +5800,35 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           // runtime the solver only reads fields both types have.
           calcFn={calc as unknown as CalcFn}
           onClose={() => setShowMaxBidModal(false)}
-          onApply={(price) => {
-            setData(prev => data.development_mode
-              ? { ...prev, land_cost: Math.round(price) }
-              : { ...prev, purchase_price: Math.round(price) }
-            );
-            toast.success(`Applied max bid: $${Math.round(price).toLocaleString()}`);
+          onApply={(result) => {
+            // Three solve modes, three distinct writes back to UWData.
+            // Apply mutations mirror the patterns used elsewhere in the
+            // page (purchase_price / land_cost direct set, scaleRents
+            // from the Scenario Wizard's rent_target path, exit_cap_rate).
+            if (result.solve_mode === "price") {
+              const price = Math.round(result.solved_value);
+              setData(prev => data.development_mode
+                ? { ...prev, land_cost: price }
+                : { ...prev, purchase_price: price }
+              );
+              toast.success(`Applied ${data.development_mode ? "land cost" : "purchase price"}: $${price.toLocaleString()}`);
+            } else if (result.solve_mode === "rents") {
+              const mult = result.solved_value;
+              setData(prev => ({
+                ...prev,
+                unit_groups: prev.unit_groups.map(g => ({
+                  ...g,
+                  market_rent_per_unit: Math.round(g.market_rent_per_unit * mult),
+                  market_rent_per_sf: Math.round(g.market_rent_per_sf * mult * 100) / 100,
+                  market_rent_per_bed: Math.round(g.market_rent_per_bed * mult),
+                })),
+              }));
+              toast.success(`Scaled market rents to ${(mult * 100).toFixed(1)}% of current`);
+            } else if (result.solve_mode === "exit_cap") {
+              const cap = Math.round(result.solved_value * 100) / 100;
+              setData(prev => ({ ...prev, exit_cap_rate: cap }));
+              toast.success(`Applied exit cap: ${cap.toFixed(2)}%`);
+            }
           }}
         />
       )}

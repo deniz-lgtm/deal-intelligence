@@ -1,30 +1,36 @@
 "use client";
 
-// MaxBidPanel — reverse-underwriting modal.
+// MaxBidPanel — three-mode goal-seek modal.
 //
-// Takes the current UWData + calc mode, lets the analyst punch in return
-// hurdles (IRR / EM / CoC / DSCR), and back-solves the maximum price
-// that still clears every hurdle. Also renders a sensitivity strip
-// showing how the answer moves when rents, exit cap, or interest rate
-// twist. Everything runs client-side — the solver reuses calc() from
-// underwriting-calc.ts so the numbers stay consistent with the main UW
-// page.
+// Presents three bid-adjacent questions the analyst typically wants to
+// answer before putting in a bid:
+//
+//   1. Price    — what's the max I can pay and still clear my hurdles?
+//   2. Rents    — how much can rents drop before the deal breaks?
+//   3. Exit cap — how much cap expansion can the deal absorb?
+//
+// All three share the same hurdle engine (IRR / EM / CoC / DSCR) and the
+// same page-local calc(), so numbers line up with the Returns panel and
+// the Scenario Wizard's legacy goal-seek modes (which this modal retires).
 
 import React, { useMemo, useState } from "react";
-import { X, Target, TrendingUp, TrendingDown, Sparkles, AlertCircle } from "lucide-react";
+import { X, Target, TrendingUp, TrendingDown, Sparkles, AlertCircle, DollarSign, Percent } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { solveMaxBid, getMetricsAt, getMetricsAtZeroBasis, type CalcMode, type CalcFn, type MaxBidTargets } from "@/lib/max-bid";
+import { solve, getMetricsAt, getMetricsAtZeroBasis, type CalcMode, type CalcFn, type SolveMode, type SolveResult, type MaxBidTargets } from "@/lib/max-bid";
 import type { UWData } from "@/lib/underwriting-calc";
 
 interface Props {
   data: UWData;
   mode: CalcMode;
   onClose: () => void;
-  onApply: (price: number) => void;
-  // Optional — the UW page has its own local calc() divergent from
-  // the shared lib (adds commercial_tenants + itemized other_income).
-  // Passing it ensures the Max-Bid solver's numbers line up with what
-  // the page's Returns panel displays. Defaults to the lib calc.
+  /**
+   * Invoked when the analyst clicks the mode-specific Apply button.
+   * `result.solve_mode` tells the caller which UWData field to touch:
+   *   price    → purchase_price / land_cost
+   *   rents    → scale unit_groups market rents by result.solved_value
+   *   exit_cap → set exit_cap_rate
+   */
+  onApply: (result: SolveResult) => void;
   calcFn?: CalcFn;
 }
 
@@ -64,7 +70,103 @@ function NumInput({
   );
 }
 
+// ── Mode-specific formatting ───────────────────────────────────────────────
+// Each solve mode has its own headline label, display formatter, and
+// "delta" formatter for the sensitivity strip. Centralized here so the
+// render logic downstream stays readable.
+
+interface ModeUI {
+  key: SolveMode;
+  label: string;
+  shortLabel: string;
+  icon: React.ComponentType<{ className?: string }>;
+  headlineLabel: (d: UWData) => string;
+  subtitle: (d: UWData) => string;
+  /** Render the solved value as a headline string. */
+  formatValue: (v: number, d: UWData) => string;
+  /** Optional cushion/expansion line shown under the headline. */
+  formatCushion: (v: number, d: UWData) => string | null;
+  /** Format a sensitivity delta (delta is in the variable's native units). */
+  formatDelta: (delta: number) => string;
+  applyLabel: (d: UWData) => string;
+  /** Compute the "current" value the analyst sees on the UW page for this mode. */
+  currentValue: (d: UWData) => number;
+  /** Delta vs. current in display format. */
+  formatVsCurrent: (solved: number, d: UWData) => { text: string; positive: boolean } | null;
+}
+
+const MODE_UIS: Record<SolveMode, ModeUI> = {
+  price: {
+    key: "price",
+    label: "Max Price",
+    shortLabel: "Price",
+    icon: DollarSign,
+    headlineLabel: (d) => d.development_mode ? "Max Land Cost" : "Max Bid",
+    subtitle: (d) => `Highest ${d.development_mode ? "land cost" : "purchase price"} that still clears your hurdles.`,
+    formatValue: (v) => fc(v),
+    formatCushion: () => null,
+    formatDelta: (delta) => `${delta >= 0 ? "+" : "−"}${fc(Math.abs(delta))}`,
+    applyLabel: (d) => d.development_mode ? "Apply as Land Cost" : "Apply as Purchase Price",
+    currentValue: (d) => d.development_mode ? (d.land_cost || 0) : (d.purchase_price || 0),
+    formatVsCurrent: (solved, d) => {
+      const cur = d.development_mode ? (d.land_cost || 0) : (d.purchase_price || 0);
+      if (cur <= 0) return null;
+      const delta = solved - cur;
+      return {
+        text: `${delta >= 0 ? "+" : "−"}${fc(Math.abs(delta))} vs. current (${fc(cur)})`,
+        positive: delta >= 0,
+      };
+    },
+  },
+  rents: {
+    key: "rents",
+    label: "Min Rent",
+    shortLabel: "Rents",
+    icon: TrendingDown,
+    headlineLabel: () => "Rent Floor",
+    subtitle: () => "Lowest rents — as a % of current market — the deal can sustain while clearing hurdles.",
+    formatValue: (v) => `${(v * 100).toFixed(1)}% of market`,
+    formatCushion: (v) => {
+      const cushion = (1 - v) * 100;
+      if (cushion > 0) return `${cushion.toFixed(1)}% rent cushion below current market`;
+      if (cushion < 0) return `Needs ${Math.abs(cushion).toFixed(1)}% rent growth above current to clear hurdles`;
+      return "At current market rents exactly";
+    },
+    formatDelta: (delta) => `${delta >= 0 ? "+" : "−"}${Math.abs(delta * 100).toFixed(1)} pct pts`,
+    applyLabel: () => "Apply scaled rents",
+    currentValue: () => 1.0, // current multiplier is definitionally 1.0x
+    formatVsCurrent: () => null,
+  },
+  exit_cap: {
+    key: "exit_cap",
+    label: "Max Exit Cap",
+    shortLabel: "Exit Cap",
+    icon: Percent,
+    headlineLabel: () => "Max Exit Cap",
+    subtitle: () => "Highest exit cap the deal can absorb before hurdles break.",
+    formatValue: (v) => `${v.toFixed(3)}%`,
+    formatCushion: (v, d) => {
+      const bps = (v - d.exit_cap_rate) * 100;
+      if (bps > 0) return `${bps.toFixed(0)} bps of cap expansion from current ${d.exit_cap_rate.toFixed(2)}%`;
+      if (bps < 0) return `Requires cap compression of ${Math.abs(bps).toFixed(0)} bps from current ${d.exit_cap_rate.toFixed(2)}%`;
+      return "At current exit cap exactly";
+    },
+    formatDelta: (delta) => `${delta >= 0 ? "+" : "−"}${Math.abs(delta * 100).toFixed(0)} bps`,
+    applyLabel: () => "Apply as Exit Cap",
+    currentValue: (d) => d.exit_cap_rate,
+    formatVsCurrent: (solved, d) => {
+      const bps = (solved - d.exit_cap_rate) * 100;
+      return {
+        text: `${bps >= 0 ? "+" : "−"}${Math.abs(bps).toFixed(0)} bps vs. current (${d.exit_cap_rate.toFixed(2)}%)`,
+        positive: bps >= 0,
+      };
+    },
+  },
+};
+
 export default function MaxBidPanel({ data, mode, onClose, onApply, calcFn }: Props) {
+  const [solveMode, setSolveMode] = useState<SolveMode>("price");
+
   // Default hurdles match what most acquisitions teams start from. Analyst
   // can blank any field to skip it.
   const [targetIrr, setTargetIrr] = useState<number | undefined>(15);
@@ -73,8 +175,6 @@ export default function MaxBidPanel({ data, mode, onClose, onApply, calcFn }: Pr
   const [targetDscr, setTargetDscr] = useState<number | undefined>(data.has_financing ? 1.25 : undefined);
   const [holdYears, setHoldYears] = useState<number>(data.hold_period_years || 5);
 
-  // Clone the data so we can override the hold period without mutating
-  // upstream state — analyst often wants to see max-bid at 3yr/5yr/7yr.
   const solverInput = useMemo<UWData>(() => ({
     ...data,
     hold_period_years: holdYears,
@@ -87,27 +187,18 @@ export default function MaxBidPanel({ data, mode, onClose, onApply, calcFn }: Pr
     target_dscr: targetDscr,
   }), [targetIrr, targetEm, targetCoc, targetDscr]);
 
-  // Only solve once per input change. The solver is synchronous but runs
-  // calc() ~40x (bisection) + 5x (sensitivity × 40) = ~240 calc() calls.
-  // For a typical deal calc() is sub-millisecond, so this is instant.
-  const result = useMemo(() => solveMaxBid(solverInput, targets, mode, calcFn), [solverInput, targets, mode, calcFn]);
+  const result = useMemo(
+    () => solve(solverInput, targets, mode, solveMode, calcFn),
+    [solverInput, targets, mode, solveMode, calcFn]
+  );
 
-  // Diagnostic baselines — rendered in the footer so the analyst can
-  // sanity-check the solver against the main page's displayed numbers.
-  // If the Max-Bid modal says "15% IRR at $5M land" but the UW page
-  // shows the CURRENT-basis IRR at 11%, the analyst can see the shape
-  // of the tradeoff at a glance: "yes, my deal's on the margin, need
-  // to trim land to get to 15%."
   const currentMetrics = useMemo(() => getMetricsAt(solverInput, mode, calcFn), [solverInput, mode, calcFn]);
   const zeroMetrics = useMemo(() => getMetricsAtZeroBasis(solverInput, mode, calcFn), [solverInput, mode, calcFn]);
 
-  const currentBasis = data.development_mode ? (data.land_cost || 0) : (data.purchase_price || 0);
-  const basisLabel = data.development_mode ? "Current Land Cost" : "Current Purchase Price";
-  const bidLabel = data.development_mode ? "Max Land Cost" : "Max Bid";
-  const delta = result.max_bid - currentBasis;
-
+  const ui = MODE_UIS[solveMode];
   const noHurdle = !targetIrr && !targetEm && !targetCoc && !targetDscr;
-  const zeroBid = result.max_bid === 0 && !noHurdle;
+  const cushion = ui.formatCushion(result.solved_value, data);
+  const vsCurrent = ui.formatVsCurrent(result.solved_value, data);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -119,15 +210,38 @@ export default function MaxBidPanel({ data, mode, onClose, onApply, calcFn }: Pr
           <div>
             <h3 className="font-semibold text-sm flex items-center gap-2">
               <Target className="h-4 w-4 text-primary" />
-              Max Bid Calculator
+              Goal Seek
             </h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Reverse-solve the {data.development_mode ? "max land cost" : "max purchase price"} that clears your return hurdles.
-            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">{ui.subtitle(data)}</p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />
           </button>
+        </div>
+
+        {/* ── Mode tabs ── */}
+        <div className="px-4 pt-3 border-b">
+          <div className="flex items-center gap-1">
+            {(Object.keys(MODE_UIS) as SolveMode[]).map(m => {
+              const modeUI = MODE_UIS[m];
+              const Icon = modeUI.icon;
+              const active = solveMode === m;
+              return (
+                <button
+                  key={m}
+                  onClick={() => setSolveMode(m)}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+                    active
+                      ? "text-primary border-primary"
+                      : "text-muted-foreground border-transparent hover:text-foreground"
+                  }`}
+                >
+                  <Icon className="h-3 w-3" />
+                  {modeUI.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="p-5 space-y-5 overflow-y-auto">
@@ -141,73 +255,65 @@ export default function MaxBidPanel({ data, mode, onClose, onApply, calcFn }: Pr
               <NumInput label="Target DSCR" value={targetDscr} onChange={setTargetDscr} suffix="x" />
               <NumInput label="Hold Years" value={holdYears} onChange={v => setHoldYears(v || 5)} suffix="yr" />
             </div>
-            <p className="text-2xs text-muted-foreground mt-2">
-              Leave any field blank to skip that hurdle. All other UW assumptions (rents, OpEx, financing, exit cap) are taken from the current underwriting.
-            </p>
           </div>
 
           {/* ── Result ── */}
           {noHurdle ? (
             <div className="p-4 rounded-lg border bg-muted/20 text-sm text-muted-foreground flex items-start gap-2">
               <AlertCircle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-              Enter at least one hurdle above to solve for the max bid.
+              Enter at least one hurdle above to solve.
             </div>
           ) : (
             <div className="rounded-lg border bg-gradient-to-br from-primary/10 to-primary/5 p-5">
               <div className="flex items-baseline justify-between gap-4 flex-wrap">
                 <div>
-                  <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">{bidLabel}</div>
-                  <div className="text-3xl font-bold tabular-nums mt-1">{zeroBid ? "— below target at any price" : fc(result.max_bid)}</div>
-                  {!zeroBid && currentBasis > 0 && (
-                    <div className={`text-xs mt-1 flex items-center gap-1 ${delta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                      {delta >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                      {delta >= 0 ? "+" : "−"}{fc(Math.abs(delta))} vs. {basisLabel.toLowerCase()} ({fc(currentBasis)})
+                  <div className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">{ui.headlineLabel(data)}</div>
+                  <div className="text-3xl font-bold tabular-nums mt-1">
+                    {result.any_pass ? ui.formatValue(result.solved_value, data) : "— below target at any value"}
+                  </div>
+                  {result.any_pass && cushion && (
+                    <div className="text-xs text-muted-foreground mt-1">{cushion}</div>
+                  )}
+                  {result.any_pass && vsCurrent && (
+                    <div className={`text-xs mt-1 flex items-center gap-1 ${vsCurrent.positive ? "text-emerald-400" : "text-red-400"}`}>
+                      {vsCurrent.positive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                      {vsCurrent.text}
                     </div>
                   )}
                 </div>
-                {!zeroBid && (
+                {result.any_pass && (
                   <div className="text-right text-xs space-y-0.5">
-                    <div className="text-muted-foreground">At that {data.development_mode ? "land cost" : "price"}:</div>
-                    <div className="tabular-nums">IRR <span className="text-blue-300 font-medium">{result.metrics_at_max_bid.irr.toFixed(2)}%</span></div>
-                    <div className="tabular-nums">EM <span className="text-blue-300 font-medium">{result.metrics_at_max_bid.equity_multiple.toFixed(2)}x</span></div>
-                    <div className="tabular-nums">CoC <span className="text-blue-300 font-medium">{result.metrics_at_max_bid.coc.toFixed(2)}%</span></div>
+                    <div className="text-muted-foreground">At that value:</div>
+                    <div className="tabular-nums">IRR <span className="text-blue-300 font-medium">{result.metrics_at_solved.irr.toFixed(2)}%</span></div>
+                    <div className="tabular-nums">EM <span className="text-blue-300 font-medium">{result.metrics_at_solved.equity_multiple.toFixed(2)}x</span></div>
+                    <div className="tabular-nums">CoC <span className="text-blue-300 font-medium">{result.metrics_at_solved.coc.toFixed(2)}%</span></div>
                     {data.has_financing && (
-                      <div className="tabular-nums">DSCR <span className="text-blue-300 font-medium">{result.metrics_at_max_bid.dscr.toFixed(2)}x</span></div>
+                      <div className="tabular-nums">DSCR <span className="text-blue-300 font-medium">{result.metrics_at_solved.dscr.toFixed(2)}x</span></div>
                     )}
-                    <div className="tabular-nums">Cap rate <span className="text-blue-300 font-medium">{result.metrics_at_max_bid.cap_rate.toFixed(2)}%</span></div>
+                    <div className="tabular-nums">Cap rate <span className="text-blue-300 font-medium">{result.metrics_at_solved.cap_rate.toFixed(2)}%</span></div>
                   </div>
                 )}
               </div>
-              {zeroBid && (
+              {!result.any_pass && (
                 <div className="mt-3 text-xs text-amber-300 flex items-start gap-2">
                   <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                   <span>
-                    Even at zero {data.development_mode ? "land cost" : "basis"}, the best achievable{" "}
-                    <strong className="font-semibold">{result.binding_constraint.replace("_", " ")}</strong> is{" "}
-                    <span className="tabular-nums font-semibold text-blue-300">
-                      {result.binding_constraint === "irr" ? `${zeroMetrics.irr.toFixed(2)}%`
-                        : result.binding_constraint === "equity_multiple" ? `${zeroMetrics.equity_multiple.toFixed(2)}x`
-                        : result.binding_constraint === "coc" ? `${zeroMetrics.coc.toFixed(2)}%`
-                        : result.binding_constraint === "dscr" ? `${zeroMetrics.dscr.toFixed(2)}x`
-                        : "—"}
-                    </span>
-                    {" "}— below your target. Loosen the hurdle, or revisit rents / OpEx / debt structure.
+                    No {solveMode === "price" ? (data.development_mode ? "land cost" : "price")
+                      : solveMode === "rents" ? "rent level"
+                      : "exit cap"}
+                    {" "}in the search range clears the{" "}
+                    <strong className="font-semibold">{result.binding_constraint.replace("_", " ")}</strong> hurdle. Loosen the hurdle, or revisit rents / OpEx / debt structure.
                   </span>
                 </div>
               )}
             </div>
           )}
 
-          {/* ── Diagnostic: current-basis and zero-basis metrics ─────
-              Side-by-side table so the analyst can cross-check against
-              what the main UW page shows. If Max-Bid's "current basis
-              IRR" disagrees with the page's returns table, the inputs
-              in the two paths don't match — usually a scenario/override
-              layering issue — and the analyst can see it at a glance. */}
+          {/* ── Diagnostic: current vs zero-basis metrics ─── */}
           {!noHurdle && (
             <div className="border rounded-lg bg-muted/10 overflow-hidden">
               <div className="px-4 py-2 border-b bg-muted/20 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Where the deal stands — diagnostic
+                Where the deal stands
               </div>
               <div className="grid grid-cols-3 text-xs">
                 <div className="px-4 py-2 bg-muted/5">
@@ -215,15 +321,15 @@ export default function MaxBidPanel({ data, mode, onClose, onApply, calcFn }: Pr
                   <div className="space-y-1">
                     <div>IRR</div>
                     <div>Equity multiple</div>
-                    <div>Cash-on-cash (Yr 1)</div>
-                    {data.has_financing && <div>DSCR</div>}
+                    <div>Cash-on-cash (stab.)</div>
+                    {data.has_financing && <div>DSCR (stab.)</div>}
                     <div>NOI</div>
                     <div>Cap rate</div>
                   </div>
                 </div>
                 <div className="px-4 py-2 border-l">
                   <div className="text-2xs text-muted-foreground mb-1">
-                    At current {data.development_mode ? "land" : "basis"} <span className="tabular-nums">({fc(currentBasis)})</span>
+                    At current {data.development_mode ? "land" : "basis"}
                   </div>
                   <div className="space-y-1 tabular-nums">
                     <div className={currentMetrics.irr >= (targetIrr ?? 0) ? "text-emerald-300" : "text-muted-foreground"}>
@@ -272,11 +378,11 @@ export default function MaxBidPanel({ data, mode, onClose, onApply, calcFn }: Pr
           )}
 
           {/* ── Sensitivity ── */}
-          {!noHurdle && !zeroBid && result.sensitivity.length > 0 && (
+          {!noHurdle && result.any_pass && result.sensitivity.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
                 <Sparkles className="h-3 w-3 text-primary" />
-                Sensitivity — max bid moves if…
+                Sensitivity — answer moves if…
               </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {result.sensitivity.map((s, i) => {
@@ -285,24 +391,21 @@ export default function MaxBidPanel({ data, mode, onClose, onApply, calcFn }: Pr
                     <div key={i} className="flex items-center justify-between border rounded-md px-3 py-2 bg-muted/10 text-xs">
                       <span className="text-muted-foreground">{s.label}</span>
                       <span className={`font-medium tabular-nums ${up ? "text-emerald-400" : s.delta < 0 ? "text-red-400" : "text-muted-foreground"}`}>
-                        {up ? "+" : s.delta < 0 ? "−" : ""}{fc(Math.abs(s.delta))}
+                        {ui.formatDelta(s.delta)}
                       </span>
                     </div>
                   );
                 })}
               </div>
-              <p className="text-2xs text-muted-foreground mt-2">
-                Deltas vs. the baseline max bid above. Solve is re-run against the current UW with each twist applied.
-              </p>
             </div>
           )}
         </div>
 
         <div className="flex items-center justify-end gap-2 p-4 border-t bg-muted/10">
           <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
-          {!noHurdle && !zeroBid && result.max_bid > 0 && (
-            <Button size="sm" onClick={() => { onApply(result.max_bid); onClose(); }}>
-              Apply as {data.development_mode ? "Land Cost" : "Purchase Price"}
+          {!noHurdle && result.any_pass && (
+            <Button size="sm" onClick={() => { onApply(result); onClose(); }}>
+              {ui.applyLabel(data)}
             </Button>
           )}
         </div>
