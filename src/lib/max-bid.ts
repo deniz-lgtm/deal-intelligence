@@ -46,42 +46,61 @@ export interface MaxBidResult {
   }>;
 }
 
-// Newton-Raphson XIRR. Same convergence path as the underwriting page's
-// inline xirr() — duplicated here so the solver can live outside the
-// big page component. Returns annual rate as percentage, 0 if it fails.
+// Bracketed bisection IRR. Much slower than Newton-Raphson but
+// converges on pathological inputs — at very low basis the underlying
+// deal can return 500%+ IRR, which overshoots a Newton iteration and
+// falls into NaN territory (the old version returned 0 there, which
+// makes the max-bid solver think the deal is failing the hurdle when
+// it's actually clearing it by miles).
+//
+// Returns annual rate as percentage, clipped to [-99%, +1000%].
 function xirr(cashFlows: number[]): number {
   if (cashFlows.length < 2) return 0;
-  let rate = 0.1;
-  for (let i = 0; i < 200; i++) {
-    let npv = 0, dNpv = 0;
+  const npv = (rate: number): number => {
+    let sum = 0;
     for (let j = 0; j < cashFlows.length; j++) {
-      const denom = Math.pow(1 + rate, j);
-      npv += cashFlows[j] / denom;
-      dNpv -= (j * cashFlows[j]) / (denom * (1 + rate));
+      sum += cashFlows[j] / Math.pow(1 + rate, j);
     }
-    if (Math.abs(dNpv) < 1e-12) break;
-    const delta = npv / dNpv;
-    rate -= delta;
-    if (Math.abs(delta) < 1e-8) break;
+    return sum;
+  };
+  // Need an initial outflow + at least one positive return for a
+  // meaningful IRR. If the deal is flat-negative there's no root in
+  // (-1, ∞); return 0 (same as the legacy behaviour).
+  if (cashFlows[0] >= 0) return 0;
+  let lo = -0.99;   // -99% floor — below this the NPV blows up
+  let hi = 10;      // 1000% ceiling — any deal that returns more is "infinitely good"
+  let npvLo = npv(lo);
+  let npvHi = npv(hi);
+  // If NPV is positive at both ends of the bracket the deal's return
+  // lives above our ceiling — report the ceiling. If negative at both
+  // ends, nothing solves (edge case); return 0.
+  if (npvLo > 0 && npvHi > 0) return hi * 100;
+  if (npvLo < 0 && npvHi < 0) return 0;
+  // Invariant from here: sign change exists between lo and hi.
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    const npvMid = npv(mid);
+    if (Math.abs(npvMid) < 1) break; // close enough — NPV is in $
+    if ((npvMid > 0 && npvLo > 0) || (npvMid < 0 && npvLo < 0)) {
+      lo = mid; npvLo = npvMid;
+    } else {
+      hi = mid; npvHi = npvMid;
+    }
+    if (hi - lo < 1e-6) break;
   }
-  if (!isFinite(rate) || rate <= -1) return 0;
-  return rate * 100;
+  return ((lo + hi) / 2) * 100;
 }
 
 function computeMetrics(d: UWData, mode: CalcMode) {
   const m = calc(d, mode);
-  // Build the levered-equity cash-flow series the same way the Compare
-  // Scenarios modal does: initial equity outflow, then per-year cashflow,
-  // with the exit proceeds folded into the final year.
+  // Match the UW page's Compare Scenarios / Wizard IRR pattern exactly
+  // — use all 5 yearlyDCF rows and fold exitEquity into the last one —
+  // so the Max-Bid answer matches what the page's own goal-seek would
+  // return. (calc() always emits 5 rows regardless of hold_period_years.)
   let irr = 0;
   if (m.equity > 0 && m.yearlyDCF.length > 0) {
-    // Only the first `hold_period_years` entries matter for IRR. The DCF
-    // table is always 5 rows; if the hold is shorter, slice. If longer
-    // (rare), fall back to using the 5-year table as-is.
-    const hold = Math.min(d.hold_period_years || 5, m.yearlyDCF.length);
-    const years = m.yearlyDCF.slice(0, hold);
-    const flows: number[] = [-m.equity, ...years.map((yr, i) =>
-      i === years.length - 1 ? yr.cashFlow + m.exitEquity : yr.cashFlow
+    const flows: number[] = [-m.equity, ...m.yearlyDCF.map((yr, i) =>
+      i === m.yearlyDCF.length - 1 ? yr.cashFlow + m.exitEquity : yr.cashFlow
     )];
     irr = xirr(flows);
   }
@@ -144,29 +163,19 @@ function basePrice(d: UWData): number {
 export function solveMaxBid(
   data: UWData,
   targets: MaxBidTargets,
-  mode: CalcMode = "multifamily"
+  mode: CalcMode = "multifamily",
+  // Internal flag: the sensitivity sweep re-calls solveMaxBid under
+  // tweaked inputs. Without suppressing the inner sweep each recursive
+  // call kicks off its own ~5x recursion → stack overflow. External
+  // callers should leave this false.
+  _skipSensitivity: boolean = false,
 ): MaxBidResult {
   // Determine search bounds. We need enough headroom to find the max:
   // start with 4x the current basis, or a generous $50M floor when the
-  // deal hasn't been priced yet.
+  // deal hasn't been priced yet. If even that ceiling still passes the
+  // hurdles, double up to 3 times (→ $400M cap) before giving up.
   const startBasis = basePrice(data);
-  const upper0 = Math.max(startBasis * 4, 50_000_000);
-
-  // Before searching, verify $0 passes. If not, return 0.
-  const zeroMetrics = computeMetrics(setPrice(data, 0), mode);
-  const { passes: zeroPasses, binding: zeroBinding } = meetsTargets(zeroMetrics, targets, data.has_financing);
-  if (!zeroPasses) {
-    return {
-      max_bid: 0,
-      metrics_at_max_bid: zeroMetrics,
-      binding_constraint: zeroBinding,
-      sensitivity: [],
-    };
-  }
-
-  // Check upper bound. If even the high bound passes the targets, return
-  // it — the search space wasn't wide enough. Double and retry once.
-  let upper = upper0;
+  let upper = Math.max(startBasis * 4, 50_000_000);
   for (let i = 0; i < 3; i++) {
     const hi = computeMetrics(setPrice(data, upper), mode);
     const { passes } = meetsTargets(hi, targets, data.has_financing);
@@ -174,15 +183,21 @@ export function solveMaxBid(
     upper *= 2;
   }
 
+  // Bisect between $0 and the ceiling. We do NOT short-circuit on $0 —
+  // the bisection handles it naturally. If the deal truly can't clear
+  // the hurdles at any price, the loop converges on $0 and we flag the
+  // binding constraint via lastBinding.
   let lo = 0;
   let hi = upper;
   let lastBinding: MaxBidResult["binding_constraint"] = "none";
+  let anyPass = false;
   for (let i = 0; i < 40; i++) {
     const mid = (lo + hi) / 2;
     const metrics = computeMetrics(setPrice(data, mid), mode);
     const { passes, binding } = meetsTargets(metrics, targets, data.has_financing);
     if (passes) {
       lo = mid;
+      anyPass = true;
     } else {
       hi = mid;
       lastBinding = binding;
@@ -190,17 +205,39 @@ export function solveMaxBid(
     if (hi - lo < 1000) break;
   }
 
+  // If nothing in [$0, ceiling] cleared the hurdles, the deal is
+  // fundamentally broken at any basis — return 0 and surface the
+  // binding constraint from the final failure.
+  if (!anyPass) {
+    const zeroMetrics = computeMetrics(setPrice(data, 0), mode);
+    return {
+      max_bid: 0,
+      metrics_at_max_bid: zeroMetrics,
+      binding_constraint: lastBinding,
+      sensitivity: [],
+    };
+  }
+
   const finalPrice = lo;
   const finalMetrics = computeMetrics(setPrice(data, finalPrice), mode);
 
   // Sensitivity: re-solve under each twist. Each twist is a small UWData
-  // mutation; bisection is cheap so we just run it 3x. Returns Δ vs the
-  // baseline max_bid so the UI can render "+$X" / "-$X".
+  // mutation; bisection is cheap so we just run it 5x. Returns Δ vs the
+  // baseline max_bid so the UI can render "+$X" / "-$X". Recursive call
+  // passes _skipSensitivity=true so we don't re-sweep forever.
+  const sensitivity: MaxBidResult["sensitivity"] = [];
+  if (_skipSensitivity) {
+    return {
+      max_bid: finalPrice,
+      metrics_at_max_bid: finalMetrics,
+      binding_constraint: lastBinding,
+      sensitivity,
+    };
+  }
   const twist = (label: string, mutate: (d: UWData) => UWData) => {
-    const res = solveMaxBid(mutate(data), targets, mode);
+    const res = solveMaxBid(mutate(data), targets, mode, true);
     return { label, max_bid: res.max_bid, delta: res.max_bid - finalPrice };
   };
-  const sensitivity: MaxBidResult["sensitivity"] = [];
 
   // Rents ±5%: scale every unit group's rents uniformly.
   const scaleRents = (d: UWData, k: number): UWData => ({
