@@ -249,7 +249,17 @@ export default function DealOverviewPage({
   const checklistTotal = checklist.length;
   const checklistComplete = checklist.filter((i) => i.status === "complete").length;
   const checklistIssues = checklist.filter((i) => i.status === "issue").length;
+  const checklistNA = checklist.filter((i) => i.status === "na").length;
   const progressPct = checklistTotal > 0 ? Math.round((checklistComplete / checklistTotal) * 100) : 0;
+
+  const checklistByCategory = checklist.reduce<Record<string, { total: number; complete: number; issues: number; na: number }>>((acc, item) => {
+    if (!acc[item.category]) acc[item.category] = { total: 0, complete: 0, issues: 0, na: 0 };
+    acc[item.category].total++;
+    if (item.status === "complete") acc[item.category].complete++;
+    if (item.status === "issue") acc[item.category].issues++;
+    if (item.status === "na") acc[item.category].na++;
+    return acc;
+  }, {});
 
   const docsByCategory = documents.reduce<Record<string, number>>((acc, d) => {
     acc[d.category] = (acc[d.category] || 0) + 1;
@@ -879,22 +889,73 @@ export default function DealOverviewPage({
 
         {/* RIGHT COLUMN: Diligence + Docs + Quick Access + Business Plan */}
         <div className="md:col-span-2 space-y-4">
-          {/* Diligence Progress — compact */}
-          <Link href={`/deals/${params.id}/checklist`} className="block">
-            <div className="border border-border/60 rounded-xl p-4 bg-card shadow-card hover:bg-muted/20 transition-colors">
-              <div className="flex items-center justify-between mb-2">
+          {/* Diligence Progress — per-category breakdown */}
+          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+              <div className="flex items-center gap-2.5">
                 <h3 className="font-display text-sm">Diligence</h3>
-                <span className="text-xs font-bold tabular-nums text-primary">{progressPct}%</span>
+                <span className="text-2xs font-bold tabular-nums px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  {progressPct}%
+                </span>
               </div>
-              <Progress value={progressPct} className="h-1.5 mb-2" />
-              <div className="flex items-center gap-3 text-2xs text-muted-foreground">
-                <span className="text-emerald-400 font-medium">✓ {checklistComplete}</span>
-                <span>○ {checklistTotal - checklistComplete - checklistIssues}</span>
-                {checklistIssues > 0 && <span className="text-red-400 font-medium">⚠ {checklistIssues}</span>}
-                <span className="ml-auto text-muted-foreground/40">{checklistTotal} items</span>
+              <Link href={`/deals/${params.id}/checklist`}>
+                <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
+                  Checklist <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
+            <div className="px-4 pt-3 pb-1">
+              <Progress value={progressPct} className="h-1.5" />
+              <div className="flex gap-3 mt-1.5 mb-3 text-2xs text-muted-foreground">
+                <span className="text-emerald-400 font-medium">{checklistComplete} complete</span>
+                <span>{checklistTotal - checklistComplete - checklistIssues - checklistNA} pending</span>
+                {checklistIssues > 0 && <span className="text-red-400 font-medium">{checklistIssues} issues</span>}
+                {checklistNA > 0 && <span>{checklistNA} n/a</span>}
               </div>
             </div>
-          </Link>
+            {Object.keys(checklistByCategory).length > 0 ? (
+              <div className="px-4 pb-4 space-y-2">
+                {Object.entries(checklistByCategory)
+                  .sort(([, a], [, b]) => {
+                    const aPct = a.total > 0 ? a.complete / a.total : 0;
+                    const bPct = b.total > 0 ? b.complete / b.total : 0;
+                    return aPct - bPct;
+                  })
+                  .map(([cat, stats]) => {
+                    const catPct = stats.total > 0 ? Math.round((stats.complete / stats.total) * 100) : 0;
+                    return (
+                      <div key={cat}>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="text-xs font-medium truncate">{titleCase(cat)}</span>
+                          <span className="text-2xs text-muted-foreground tabular-nums ml-2 shrink-0">
+                            {stats.complete}/{stats.total}
+                            {stats.issues > 0 && (
+                              <span className="text-red-400 ml-1">({stats.issues}⚠)</span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-muted/50 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              stats.issues > 0
+                                ? "bg-gradient-to-r from-red-500/80 to-red-400/60"
+                                : catPct === 100
+                                ? "bg-gradient-to-r from-emerald-500 to-emerald-400"
+                                : "gradient-gold"
+                            }`}
+                            style={{ width: `${catPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : (
+              <div className="px-4 pb-4 text-center">
+                <p className="text-2xs text-muted-foreground">No checklist items yet</p>
+              </div>
+            )}
+          </div>
 
           {/* Documents Summary — compact */}
           <Link href={`/deals/${params.id}/documents`} className="block">
