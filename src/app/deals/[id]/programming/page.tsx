@@ -612,13 +612,12 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         building_program: buildingProgram,
         other_income_items: otherIncomeItems,
         commercial_tenants: commercialTenants,
-        // Parking — auto-split 70% reserved / 30% unreserved with default
-        // rates. Uses the aggregate parking count so multi-building
-        // massings don't collapse to just the last building's stalls.
+        // Parking — auto-split 70% reserved / 30% unreserved. Uses the
+        // aggregate parking count so multi-building massings don't
+        // collapse to just the last building's stalls. Per-space $
+        // lives on the Parking Income row in `other_income_items`.
         parking_reserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.7),
-        parking_reserved_rate: current.parking_reserved_rate || 200,
         parking_unreserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.3),
-        parking_unreserved_rate: current.parking_unreserved_rate || 100,
         // Legacy other-income scalars — zeroed because the underwriting
         // calc now sums d.other_income_items directly (source of truth
         // in one place). Leaving them populated would double-count

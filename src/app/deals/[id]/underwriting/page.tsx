@@ -167,11 +167,10 @@ interface UWData {
   refi_loan_narrative: string;
   // Other income (monthly, property-level)
   rubs_per_unit_monthly: number; parking_monthly: number; laundry_monthly: number;
-  // Per-space parking revenue
+  // Parking space counts — per-space $ is set on the Parking Income
+  // line in `other_income_items`, so there's one source of truth.
   parking_reserved_spaces: number;
-  parking_reserved_rate: number;       // $/space/month
   parking_unreserved_spaces: number;
-  parking_unreserved_rate: number;     // $/space/month
   rent_growth_pct: number; expense_growth_pct: number;
   exit_cap_rate: number; hold_period_years: number; notes: string;
   scenarios: Scenario[];
@@ -247,8 +246,7 @@ const DEFAULT: UWData = {
   ip_repairs_annual: 0, ip_utilities_annual: 0, ip_other_annual: 0,
   ip_ga_annual: 0, ip_marketing_annual: 0, ip_reserves_annual: 0,
   rubs_per_unit_monthly: 0, parking_monthly: 0, laundry_monthly: 0,
-  parking_reserved_spaces: 0, parking_reserved_rate: 0,
-  parking_unreserved_spaces: 0, parking_unreserved_rate: 0,
+  parking_reserved_spaces: 0, parking_unreserved_spaces: 0,
   has_financing: true, acq_ltc: 65, acq_interest_rate: 6.5,
   acq_pp_ltv: 70, acq_capex_ltv: 100,
   acq_amort_years: 25, acq_io_years: 0,
@@ -934,44 +932,20 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     : d.unit_groups.reduce((s, g) => s + groupBlendedGPR(g, stabilizedYr), 0)
   ) + commercialTenantGPR;
 
-  // ── Other Income (RUBS, Parking, Laundry) ──────────────────────────────────
-  const otherIncomeRUBS = (d.rubs_per_unit_monthly || 0) * totalUnits * 12;
-  // Parking revenue: per-space pricing → parking config entries → legacy flat monthly
-  const parkingEntries = d.parking?.entries || [];
-  const perSpaceParkingMonthly = (d.parking_reserved_spaces || 0) * (d.parking_reserved_rate || 0)
-    + (d.parking_unreserved_spaces || 0) * (d.parking_unreserved_rate || 0);
-  const otherIncomeParking = perSpaceParkingMonthly > 0
-    ? perSpaceParkingMonthly * 12
-    : parkingEntries.length > 0
-      ? parkingEntries.reduce((s, e) => s
-          + (e.reserved_residential_spaces * e.reserved_monthly_rate)
-          + (e.unreserved_spaces * e.unreserved_monthly_rate)
-          + (e.retail_shared_spaces * e.retail_shared_monthly_rate), 0) * 12
-      : (d.parking_monthly || 0) * 12;
-  const otherIncomeLaundry = (d.laundry_monthly || 0) * 12;
-  // Pro-forma `other_income_items` line items — anything the analyst
-  // typed in the Other Income table (Storage Fees, Pet Rent, Late Fees,
-  // etc.). Skip labels that already flow through the RUBS/laundry
-  // mirror in computePushedUw, and skip per_space items that are
-  // already covered by the per-space parking calc above — otherwise
-  // we'd double-count them.
+  // ── Other Income ───────────────────────────────────────────────────────────
+  // Sole source of truth: `other_income_items` (Parking, RUBS, Laundry,
+  // Storage, etc.). Legacy scalars (`rubs_per_unit_monthly`,
+  // `parking_monthly`, `laundry_monthly`) and the per-space parking
+  // rate fields are kept in UWData for back-compat but are not summed
+  // here — new syncs zero them out in computePushedUw.
   const totalUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + effectiveUnits(g), 0);
   const ipUnitsForOtherIncome = d.unit_groups.reduce((s, g) => s + (g.unit_count || 0), 0);
-  // Pro-forma sum of every Other Income line item. Intentionally
-  // mirrors inPlaceOtherIncome below (no label filters, no basis
-  // skips) so whatever shows in the IP column of the DCF flows into
-  // Year 1+. If PF $/Mo is blank on a row, fall back to the IP amount
-  // (acquisition convention — PF starts from IP unless overridden).
-  //
-  // Legacy `rubs_per_unit_monthly`, `parking_monthly`, and
-  // `laundry_monthly` are NOT added here — they're kept in UWData
-  // for back-compat with old deals but new syncs zero them out in
-  // computePushedUw, so including them would risk double-counting.
+  const totalParkingSpacesForOI = (d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0);
   const otherIncomeItemsPF = (d.other_income_items || []).reduce((s: number, item: any) => {
     const mult = item.basis === "per_unit"
       ? totalUnitsForOtherIncome
       : item.basis === "per_space"
-        ? (d.parking_reserved_spaces || 0)
+        ? totalParkingSpacesForOI
         : 1;
     const monthly = (item.amount || 0) > 0 ? item.amount : (item.ip_amount || 0);
     return s + monthly * mult * 12;
@@ -987,7 +961,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
         const mult = item.basis === "per_unit"
           ? ipUnitsForOtherIncome
           : item.basis === "per_space"
-            ? (d.parking_reserved_spaces || 0)
+            ? totalParkingSpacesForOI
             : 1;
         return s + (item.ip_amount || 0) * mult * 12;
       }, 0);
@@ -1102,7 +1076,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   }
 
   // Parking total cost from parking config
-  const totalParkingCost = parkingEntries.reduce((s, e) => s + e.spaces * e.cost_per_space, 0);
+  const totalParkingCost = (d.parking?.entries || []).reduce((s, e) => s + e.spaces * e.cost_per_space, 0);
 
   const totalHardCosts = d.development_mode
     ? (hasItemizedBudget ? itemizedHardBase : d.hard_cost_per_sf * (d.max_gsf || 0))
@@ -1376,7 +1350,7 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     gpr, inPlaceGPR, proformaGPR, vacancyLoss, inPlaceVacancyLoss, proformaVacancyLoss, egi, inPlaceEGI, proformaEGI,
     reimbursements, ipReimbursements, camPool, ipCamPool, effectiveRevenue, inPlaceEffectiveRevenue, proformaEffectiveRevenue,
     leasingCommissions, ipLeasingCommissions,
-    totalOtherIncome, inPlaceOtherIncome, otherIncomeRUBS, otherIncomeParking, otherIncomeLaundry,
+    totalOtherIncome, inPlaceOtherIncome,
     mgmtFee, proformaMgmtFee, inPlaceMgmtFee, totalOpEx, proformaTotalOpEx, inPlaceTotalOpEx,
     noi, inPlaceNOI, proformaNOI,
     grm, proformaGRM, inPlaceGRM, inPlaceCashFlow, inPlaceCoC, inPlaceDSCR,
@@ -3484,21 +3458,19 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </Button>
             )}
           </div>
-          {/* Parking Revenue (other income items managed below in dedicated section) */}
+          {/* Parking space counts. Rates live in Other Income as a
+              per-space line item — keeping counts here lets analysts split
+              reserved vs unreserved for programming/exit assumptions while
+              parking revenue flows through a single source of truth. */}
           <div className="mt-4 border-t pt-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Parking Revenue</h4>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Parking Spaces</h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
               <NumInput label="Reserved Spaces" value={d.parking_reserved_spaces} onChange={v => set("parking_reserved_spaces", v)} decimals={0} />
-              <NumInput label="Reserved $/Space/Mo" value={d.parking_reserved_rate} onChange={v => set("parking_reserved_rate", v)} prefix="$" decimals={0} />
               <NumInput label="Unreserved Spaces" value={d.parking_unreserved_spaces} onChange={v => set("parking_unreserved_spaces", v)} decimals={0} />
-              <NumInput label="Unreserved $/Space/Mo" value={d.parking_unreserved_rate} onChange={v => set("parking_unreserved_rate", v)} prefix="$" decimals={0} />
             </div>
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <span>Monthly: {fc((d.parking_reserved_spaces || 0) * (d.parking_reserved_rate || 0) + (d.parking_unreserved_spaces || 0) * (d.parking_unreserved_rate || 0))}</span>
-              <span>Annual: <span className="text-foreground font-medium">{fc(m.otherIncomeParking)}</span></span>
-              {(d.parking_reserved_spaces || 0) === 0 && (d.parking_unreserved_spaces || 0) === 0 && d.parking_monthly > 0 && (
-                <span className="text-amber-400">(using legacy flat ${d.parking_monthly}/mo)</span>
-              )}
+              <span>Total Spaces: <span className="text-foreground font-medium">{fn((d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0))}</span></span>
+              <span className="text-muted-foreground/70">Parking income &amp; $/space/mo set below in Other Income</span>
             </div>
           </div>
 
@@ -3616,11 +3588,12 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               <tbody>
                 {(d.other_income_items || []).map((item: any, i: number) => {
                   const updOI = (upd: Record<string, any>) => setData(p => ({ ...p, other_income_items: (p.other_income_items || []).map((oi: any, j: number) => j === i ? { ...oi, ...upd } : oi) }));
-                  const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1;
+                  const totalSpaces = (d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0);
+                  const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? totalSpaces : 1;
                   const ipMult = item.basis === "per_unit"
                     ? (d.unit_groups || []).reduce((s: number, g: any) => s + (g.unit_count || 0), 0)
                     : item.basis === "per_space"
-                      ? (d.parking_reserved_spaces || 0)
+                      ? totalSpaces
                       : 1;
                   // Effective pro-forma monthly: user-entered amount
                   // wins; otherwise default to ip_amount. Mirrors the
@@ -3652,7 +3625,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                       <td className="px-2 py-1.5 text-right tabular-nums">{fc(m.inPlaceOtherIncome)}</td>
                     )}
                     <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{isGroundUp ? "" : "Pro forma:"}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? (d.parking_reserved_spaces || 0) : 1; const pfMonthly = (item.amount || 0) > 0 ? (item.amount || 0) : (item.ip_amount || 0); return s + pfMonthly * mult * 12; }, 0))}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fc((d.other_income_items || []).reduce((s: number, item: any) => { const mult = item.basis === "per_unit" ? m.totalUnits : item.basis === "per_space" ? ((d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0)) : 1; const pfMonthly = (item.amount || 0) > 0 ? (item.amount || 0) : (item.ip_amount || 0); return s + pfMonthly * mult * 12; }, 0))}</td>
                     <td />
                   </tr>
                 </tfoot>
@@ -3687,14 +3660,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                         toast.info("Parking income already in the list.");
                         return p;
                       }
-                      // Mirror the massing's space count into the top-
-                      // level parking field so the per-space multiplier
-                      // picks it up when rendering the Annual column.
-                      const nextParkingSpaces = spaces;
+                      // Split the massing's estimated spaces 70/30 into
+                      // reserved/unreserved to match the programming
+                      // push convention. Per-space income multiplier
+                      // uses reserved + unreserved so the total income
+                      // still scales off all spaces.
+                      const reservedCount = Math.round(spaces * 0.7);
+                      const unreservedCount = spaces - reservedCount;
                       toast.success(`Added Parking Income · ${spaces} spaces @ $125/mo`);
                       return {
                         ...p,
-                        parking_reserved_spaces: Math.max(nextParkingSpaces, p.parking_reserved_spaces || 0),
+                        parking_reserved_spaces: Math.max(reservedCount, p.parking_reserved_spaces || 0),
+                        parking_unreserved_spaces: Math.max(unreservedCount, p.parking_unreserved_spaces || 0),
                         other_income_items: [
                           ...existing,
                           { id: uuidv4(), label: "Parking Income", amount: 125, basis: "per_space", unit_type_filter: "", notes: `From ${activeS.name} — ${spaces} est. spaces` },
