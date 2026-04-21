@@ -2640,11 +2640,31 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
         // matches any known site-plan massing (dead data from a deleted
         // or renamed massing). Without this filter those orphans show up
         // as phantom "Massing 1" / "Massing 2" tabs in the strip.
+        //
+        // Also filter orphan BUILDING scenarios: inside a valid massing
+        // group, scenarios whose site_plan_building_id no longer resolves
+        // to a real building on the site plan were previously rendering
+        // as phantom "Building 1" / "Building 2" tabs via the
+        // `Building ${i+1}` fallback below.
+        const hasModernSitePlan = Object.keys(sitePlanScenarioMeta).length > 0;
         const groups: Record<string, any[]> = {};
         for (const s of allScenarios) {
           const key = s.site_plan_scenario_id || "__default";
-          const isOrphan = key !== "__default" && !sitePlanScenarioMeta[key];
-          if (isOrphan) continue;
+          const isOrphanMassing = key !== "__default" && !sitePlanScenarioMeta[key];
+          if (isOrphanMassing) continue;
+          // Legacy unlinked scenarios become orphans the moment the deal
+          // has a modern site plan — otherwise they surface as phantom
+          // "__default" massing rows labeled "Building 1" via the
+          // fallback below, even after the analyst cleans up the site.
+          if (key === "__default" && hasModernSitePlan) continue;
+          if (key !== "__default" && s.site_plan_building_id) {
+            const meta = sitePlanScenarioMeta[key];
+            // Require the building to be in the massing's own list —
+            // matching on the flat sitePlanBuildingLabels map alone
+            // keeps stale labels (like the legacy "Building 1"
+            // placeholder) alive across unrelated massings.
+            if (!meta?.buildingIds?.includes(s.site_plan_building_id)) continue;
+          }
           if (!groups[key]) groups[key] = [];
           groups[key].push(s);
         }
@@ -3458,21 +3478,22 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               </Button>
             )}
           </div>
-          {/* Parking space counts. Rates live in Other Income as a
-              per-space line item — keeping counts here lets analysts split
-              reserved vs unreserved for programming/exit assumptions while
-              parking revenue flows through a single source of truth. */}
-          <div className="mt-4 border-t pt-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Parking Spaces</h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
-              <NumInput label="Reserved Spaces" value={d.parking_reserved_spaces} onChange={v => set("parking_reserved_spaces", v)} decimals={0} />
-              <NumInput label="Unreserved Spaces" value={d.parking_unreserved_spaces} onChange={v => set("parking_unreserved_spaces", v)} decimals={0} />
+          {/* Parking space counts — read-only summary. Edited on the
+              Programming page (Parking Allocation). The per-space $ for
+              the DCF lives on the Parking Income row in Other Income. */}
+          {((d.parking_reserved_spaces || 0) > 0 || (d.parking_unreserved_spaces || 0) > 0) && (
+            <div className="mt-4 border-t pt-4">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Parking Spaces</h4>
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+                <span>Reserved: <span className="text-foreground font-medium tabular-nums">{fn(d.parking_reserved_spaces || 0)}</span></span>
+                <span>Unreserved: <span className="text-foreground font-medium tabular-nums">{fn(d.parking_unreserved_spaces || 0)}</span></span>
+                <span>Total: <span className="text-foreground font-medium tabular-nums">{fn((d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0))}</span></span>
+                <a href={`/deals/${params.id}/programming`} className="text-xs text-muted-foreground/70 underline hover:text-foreground ml-auto">
+                  Edit on Programming →
+                </a>
+              </div>
             </div>
-            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <span>Total Spaces: <span className="text-foreground font-medium">{fn((d.parking_reserved_spaces || 0) + (d.parking_unreserved_spaces || 0))}</span></span>
-              <span className="text-muted-foreground/70">Parking income &amp; $/space/mo set below in Other Income</span>
-            </div>
-          </div>
+          )}
 
           {/* ── Commercial Tenants ── */}
           <div className="mt-4 border-t pt-4">

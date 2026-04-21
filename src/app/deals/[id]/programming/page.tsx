@@ -121,6 +121,11 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const [unitGroups, setUnitGroups] = useState<any[]>([]);
   const [affordabilityConfig, setAffordabilityConfig] = useState<any>(null);
   const [taxesAnnual, setTaxesAnnual] = useState(0);
+  // Parking reserved/unreserved split. Initializes from UW data if
+  // the analyst has previously set counts; otherwise falls back to a
+  // 70/30 auto-split of the massing's estimated total spaces at push
+  // time. Edits here are the single UI source of truth.
+  const [parkingSplit, setParkingSplit] = useState<{ reserved: number; unreserved: number }>({ reserved: 0, unreserved: 0 });
   // Site-plan massings drive everything on this page. Each massing
   // owns a list of buildings (drawn on Site & Zoning); Programming
   // surfaces them as nested tabs (massing → building) where each
@@ -326,6 +331,12 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       if (uw.unit_groups?.length > 0) setUnitGroups(uw.unit_groups);
       if (uw.affordability_config) setAffordabilityConfig(uw.affordability_config);
       if (uw.taxes_annual) setTaxesAnnual(uw.taxes_annual);
+      if ((uw.parking_reserved_spaces || 0) > 0 || (uw.parking_unreserved_spaces || 0) > 0) {
+        setParkingSplit({
+          reserved: uw.parking_reserved_spaces || 0,
+          unreserved: uw.parking_unreserved_spaces || 0,
+        });
+      }
 
       // Build zoning inputs from UW data
       const si = uw.site_info || {};
@@ -612,12 +623,17 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         building_program: buildingProgram,
         other_income_items: otherIncomeItems,
         commercial_tenants: commercialTenants,
-        // Parking — auto-split 70% reserved / 30% unreserved. Uses the
-        // aggregate parking count so multi-building massings don't
-        // collapse to just the last building's stalls. Per-space $
-        // lives on the Parking Income row in `other_income_items`.
-        parking_reserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.7),
-        parking_unreserved_spaces: Math.round(aggregateMassing.total_parking_spaces_est * 0.3),
+        // Parking — analyst edits live on this page (Parking Allocation
+        // section). Fall back to a 70/30 auto-split of the aggregate
+        // massing estimate the first time a deal is pushed so downstream
+        // calcs have something to multiply against. Per-space $ lives on
+        // the Parking Income row in `other_income_items`.
+        parking_reserved_spaces: (parkingSplit.reserved > 0 || parkingSplit.unreserved > 0)
+          ? parkingSplit.reserved
+          : Math.round(aggregateMassing.total_parking_spaces_est * 0.7),
+        parking_unreserved_spaces: (parkingSplit.reserved > 0 || parkingSplit.unreserved > 0)
+          ? parkingSplit.unreserved
+          : Math.round(aggregateMassing.total_parking_spaces_est * 0.3),
         // Legacy other-income scalars — zeroed because the underwriting
         // calc now sums d.other_income_items directly (source of truth
         // in one place). Leaving them populated would double-count
@@ -627,7 +643,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         laundry_monthly: 0,
       };
       return merged;
-  }, [zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanMassings]);
+  }, [zoningInputs, buildingProgram, otherIncomeItems, commercialTenants, sitePlanMassings, parkingSplit]);
 
   // Fire AI OpEx + loan-sizing estimates in the background when the UW
   // blob looks empty. Used by the auto-sync loop on the first successful
@@ -1322,6 +1338,60 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           />
         )}
       </Section>
+
+      {/* ═══════════════════ PARKING ALLOCATION ═══════════════════
+          Splits the massing's estimated parking stalls into reserved
+          vs unreserved. Edits here are the canonical source — the UW
+          page consumes these counts read-only. Per-space $ lives on
+          the Parking Income row in Other Income (UW page). */}
+      {(() => {
+        const totalEst = massingTotals?.total_parking_spaces_est || summary?.total_parking_spaces_est || 0;
+        const totalSplit = parkingSplit.reserved + parkingSplit.unreserved;
+        const delta = totalEst - totalSplit;
+        return (
+          <Section title="Parking Allocation" icon={<Car className="h-4 w-4 text-blue-400" />}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Total Est. Spaces (from massing)</label>
+                <div className="px-2 py-1.5 border rounded-md bg-muted/20 text-sm tabular-nums">{fn(totalEst)}</div>
+              </div>
+              <NumInput
+                label="Reserved Spaces"
+                value={parkingSplit.reserved}
+                onChange={v => { setParkingSplit(s => ({ ...s, reserved: v })); setDirty(true); }}
+              />
+              <NumInput
+                label="Unreserved Spaces"
+                value={parkingSplit.unreserved}
+                onChange={v => { setParkingSplit(s => ({ ...s, unreserved: v })); setDirty(true); }}
+              />
+            </div>
+            <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+              <span>Allocated: <span className="text-foreground font-medium tabular-nums">{fn(totalSplit)}</span></span>
+              {totalEst > 0 && delta !== 0 && (
+                <span className={delta > 0 ? "text-amber-400" : "text-rose-400"}>
+                  {delta > 0 ? `${fn(delta)} unallocated` : `${fn(-delta)} over the massing estimate`}
+                </span>
+              )}
+              {totalEst > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto h-7 text-xs"
+                  onClick={() => {
+                    const r = Math.round(totalEst * 0.7);
+                    setParkingSplit({ reserved: r, unreserved: totalEst - r });
+                    setDirty(true);
+                  }}
+                  title="Reset to 70% reserved / 30% unreserved of the massing's estimated total"
+                >
+                  Auto-split 70 / 30
+                </Button>
+              )}
+            </div>
+          </Section>
+        );
+      })()}
 
       {/* ═══════════════════ AFFORDABILITY ═══════════════════
           Hidden in Basic mode — analysts running back-of-envelope
