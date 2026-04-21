@@ -24,18 +24,26 @@ export interface MaxBidTargets {
   target_dscr?: number;
 }
 
+export interface MetricsSnapshot {
+  irr: number;
+  equity_multiple: number;
+  coc: number;
+  dscr: number;
+  total_cost: number;
+  equity: number;
+  noi: number;
+  cap_rate: number;
+  // Diagnostic fields — let the analyst compare raw calc() output
+  // between the Max-Bid solver and the main Returns panel to spot
+  // any input divergence.
+  _debug_exit_equity: number;
+  _debug_exit_value: number;
+  _debug_year_cashflows: number[];
+}
+
 export interface MaxBidResult {
   max_bid: number;
-  metrics_at_max_bid: {
-    irr: number;
-    equity_multiple: number;
-    coc: number;
-    dscr: number;
-    total_cost: number;
-    equity: number;
-    noi: number;
-    cap_rate: number;
-  };
+  metrics_at_max_bid: MetricsSnapshot;
   /** Which hurdle was the binding constraint? */
   binding_constraint: "irr" | "equity_multiple" | "coc" | "dscr" | "none";
   /** Sensitivity: re-solve with each twist applied to a clone of the input. */
@@ -107,12 +115,21 @@ function computeMetrics(d: UWData, mode: CalcMode) {
   return {
     irr,
     equity_multiple: m.em,
-    coc: m.coc,
-    dscr: m.dscr,
+    // Match the "Returns — Stabilized" panel on the UW page, which
+    // shows stabilizedCoC / stabilizedDSCR (post-refi or post-IO) —
+    // not the year-1 coc / dscr which collapse during lease-up.
+    coc: m.stabilizedCoC,
+    dscr: m.stabilizedDSCR,
     total_cost: m.totalCost,
     equity: m.equity,
     noi: m.proformaNOI,
     cap_rate: m.proformaCapRate,
+    // Raw debug fields so the modal can show the analyst exactly what
+    // calc() returned — useful for diagnosing divergence against the
+    // main page's Returns panel.
+    _debug_exit_equity: m.exitEquity,
+    _debug_exit_value: m.exitValue,
+    _debug_year_cashflows: m.yearlyDCF.map(yr => yr.cashFlow),
   };
 }
 

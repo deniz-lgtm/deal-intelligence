@@ -67,6 +67,7 @@ export default function MaxBidPanel({ data, mode, onClose, onApply }: Props) {
   const [targetCoc, setTargetCoc] = useState<number | undefined>(undefined);
   const [targetDscr, setTargetDscr] = useState<number | undefined>(data.has_financing ? 1.25 : undefined);
   const [holdYears, setHoldYears] = useState<number>(data.hold_period_years || 5);
+  const [showDebug, setShowDebug] = useState(false);
 
   // Clone the data so we can override the hold period without mutating
   // upstream state — analyst often wants to see max-bid at 3yr/5yr/7yr.
@@ -263,9 +264,36 @@ export default function MaxBidPanel({ data, mode, onClose, onApply }: Props) {
                   </div>
                 </div>
               </div>
-              <div className="px-4 py-2 bg-muted/5 text-2xs text-muted-foreground border-t">
-                If the &quot;current&quot; column doesn&apos;t match what you see on the Returns panel, the UW record likely has a scenario override active — close the modal, clear the scenario, and try again.
+              <div className="px-4 py-2 bg-muted/5 text-2xs text-muted-foreground border-t flex items-center justify-between gap-2">
+                <span>
+                  If the &quot;current&quot; column doesn&apos;t match the Returns panel, the UW record likely has a scenario override — close, clear it, and retry.
+                </span>
+                <button
+                  onClick={() => setShowDebug(v => !v)}
+                  className="text-blue-300 hover:underline whitespace-nowrap"
+                >
+                  {showDebug ? "Hide" : "Show"} raw calc values
+                </button>
               </div>
+              {showDebug && (
+                <div className="px-4 py-3 border-t bg-black/20 text-2xs font-mono space-y-1 overflow-x-auto">
+                  <div>data.hold_period_years = <span className="text-blue-300">{data.hold_period_years}</span>, modal holdYears = <span className="text-blue-300">{holdYears}</span></div>
+                  <div>data.development_mode = <span className="text-blue-300">{String(data.development_mode)}</span>, data.has_financing = <span className="text-blue-300">{String(data.has_financing)}</span></div>
+                  <div>calcMode = <span className="text-blue-300">{mode}</span></div>
+                  <div className="pt-2 text-muted-foreground">── At current basis ──</div>
+                  <div>equity = <span className="text-blue-300">{fc(currentMetrics.equity)}</span>, total_cost = <span className="text-blue-300">{fc(currentMetrics.total_cost)}</span></div>
+                  <div>proformaNOI = <span className="text-blue-300">{fc(currentMetrics.noi)}</span>, exitValue = <span className="text-blue-300">{fc(currentMetrics._debug_exit_value)}</span>, exitEquity = <span className="text-blue-300">{fc(currentMetrics._debug_exit_equity)}</span></div>
+                  <div>year cashflows: {currentMetrics._debug_year_cashflows.map((cf, i) => (
+                    <span key={i} className="text-blue-300 mr-2">yr{i+1}={fc(cf)}</span>
+                  ))}</div>
+                  <div className="pt-2 text-muted-foreground">── At zero basis ──</div>
+                  <div>equity = <span className="text-blue-300">{fc(zeroMetrics.equity)}</span>, total_cost = <span className="text-blue-300">{fc(zeroMetrics.total_cost)}</span></div>
+                  <div>proformaNOI = <span className="text-blue-300">{fc(zeroMetrics.noi)}</span>, exitValue = <span className="text-blue-300">{fc(zeroMetrics._debug_exit_value)}</span>, exitEquity = <span className="text-blue-300">{fc(zeroMetrics._debug_exit_equity)}</span></div>
+                  <div>year cashflows: {zeroMetrics._debug_year_cashflows.map((cf, i) => (
+                    <span key={i} className="text-blue-300 mr-2">yr{i+1}={fc(cf)}</span>
+                  ))}</div>
+                </div>
+              )}
             </div>
           )}
 
