@@ -267,8 +267,8 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-xl font-bold">Investment Package</h2>
           <p className="text-sm text-muted-foreground">
             Build an investment memo section by section — add notes, AI expands them
@@ -276,7 +276,7 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
             {meta.format && <span className="ml-1 text-xs bg-muted px-2 py-0.5 rounded">{FORMATS.find(f => f.id === meta.format)?.label || meta.format}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-shrink-0 min-w-0">
           {hasContent && (<>
             <Button variant="outline" size="sm" onClick={() => exportPackage("pptx")} disabled={exporting}>
               {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
@@ -289,7 +289,7 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
           <Button size="sm" onClick={save} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
             <Button onClick={() => { setShowWizard(true); setWizardStep(0); }} disabled={generatingAll}>
               {generatingAll ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><Sparkles className="h-4 w-4 mr-2" />Generate Package</>}
             </Button>
