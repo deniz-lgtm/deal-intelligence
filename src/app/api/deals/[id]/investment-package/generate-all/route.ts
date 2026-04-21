@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, dealNoteQueries, underwritingQueries, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries, compQueries, submarketMetricsQueries, locationIntelligenceQueries, marketReportsQueries } from "@/lib/db";
+import { dealQueries, dealNoteQueries, getUnderwritingForMassing, documentQueries, checklistQueries, omAnalysisQueries, businessPlanQueries, devPhaseQueries, preDevCostQueries, compQueries, submarketMetricsQueries, locationIntelligenceQueries, marketReportsQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { summarizeAffordability } from "@/lib/affordability-summary";
@@ -83,11 +83,12 @@ export async function POST(
 
     const body: GenerateRequest = await req.json();
     const { audience, format, sections, existingNotes = {} } = body;
+    const massingId: string | undefined = (body as { massing_id?: string }).massing_id;
 
     // Fetch ALL deal data in parallel
     const [deal, uwRow, omAnalysis, docs, checklist, photosRes, devPhases, preDevCosts, compsAll, submarketMetrics, locationIntelRows, marketReports] = await Promise.all([
       dealQueries.getById(params.id),
-      underwritingQueries.getByDealId(params.id),
+      getUnderwritingForMassing(params.id, massingId),
       omAnalysisQueries.getByDealId(params.id),
       documentQueries.getByDealId(params.id),
       checklistQueries.getByDealId(params.id),

@@ -2409,6 +2409,21 @@ export const underwritingPerMassingQueries = {
 
 type UwRow = { id: string; deal_id: string; data: unknown; updated_at: string };
 
+// A row "has underwriting content" when unit_groups or commercial_tenants
+// have at least one row. Without this check, background routes that fall
+// back to an empty base-case snapshot produce DATA GAP reports even when
+// the analyst has filled out a non-base-case massing.
+function rowHasContent(row: UwRow | null): boolean {
+  if (!row) return false;
+  const parsed = typeof row.data === "string"
+    ? (() => { try { return JSON.parse(row.data as string); } catch { return null; } })()
+    : (row.data as Record<string, unknown> | null);
+  if (!parsed) return false;
+  const ug = Array.isArray((parsed as { unit_groups?: unknown[] }).unit_groups) ? (parsed as { unit_groups: unknown[] }).unit_groups : [];
+  const ct = Array.isArray((parsed as { commercial_tenants?: unknown[] }).commercial_tenants) ? (parsed as { commercial_tenants: unknown[] }).commercial_tenants : [];
+  return ug.length > 0 || ct.length > 0;
+}
+
 export async function getUnderwritingForMassing(
   dealId: string,
   massingId?: string | null
@@ -2417,19 +2432,18 @@ export async function getUnderwritingForMassing(
     const row = (await underwritingPerMassingQueries.getByDealAndMassing(dealId, massingId)) as
       | { id: string; deal_id: string; data: unknown; updated_at: string }
       | null;
-    if (row) {
+    if (row && rowHasContent({ id: row.id, deal_id: row.deal_id, data: row.data, updated_at: row.updated_at })) {
       return { id: row.id, deal_id: row.deal_id, data: row.data, updated_at: row.updated_at };
     }
   }
   const legacy = (await underwritingQueries.getByDealId(dealId)) as UwRow | null;
-  if (!legacy) return null;
 
   // Try the base-case per-massing row if available — keeps background
   // calcs (deal-score, max-bid, feasibility) aligned with whichever
   // massing the analyst has flagged as canonical.
-  const parsed = typeof legacy.data === "string"
+  const parsed = legacy?.data && typeof legacy.data === "string"
     ? (() => { try { return JSON.parse(legacy.data as string); } catch { return {}; } })()
-    : (legacy.data as Record<string, unknown>);
+    : ((legacy?.data as Record<string, unknown>) || {});
   const sp = (parsed?.site_plan as { scenarios?: Array<{ id?: string; is_base_case?: boolean }> } | undefined);
   const scenarios = Array.isArray(sp?.scenarios) ? sp!.scenarios! : [];
   const baseId = (scenarios.find(s => s.is_base_case)?.id || scenarios[0]?.id || "") as string;
@@ -2437,10 +2451,22 @@ export async function getUnderwritingForMassing(
     const baseRow = (await underwritingPerMassingQueries.getByDealAndMassing(dealId, baseId)) as
       | { id: string; deal_id: string; data: unknown; updated_at: string }
       | null;
-    if (baseRow) {
+    if (baseRow && rowHasContent({ id: baseRow.id, deal_id: baseRow.deal_id, data: baseRow.data, updated_at: baseRow.updated_at })) {
       return { id: baseRow.id, deal_id: baseRow.deal_id, data: baseRow.data, updated_at: baseRow.updated_at };
     }
   }
+
+  // Last-resort fallback: if the targeted + base-case rows are empty or
+  // missing, pick whichever per-massing row actually has unit_groups /
+  // commercial_tenants. Protects against the "analyst worked on a
+  // non-base-case massing" case — without this, DD abstracts / reports
+  // come out with DATA GAPs even though the model is populated.
+  const allRows = (await underwritingPerMassingQueries.listByDealId(dealId)) as UwRow[];
+  const populated = allRows
+    .filter(rowHasContent)
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  if (populated.length > 0) return populated[0];
+
   return legacy;
 }
 

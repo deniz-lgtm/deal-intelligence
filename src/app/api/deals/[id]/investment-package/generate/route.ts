@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, underwritingQueries, documentQueries } from "@/lib/db";
+import { dealQueries, getUnderwritingForMassing, documentQueries } from "@/lib/db";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
@@ -25,12 +25,14 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
-    const { sectionTitle, sectionDescription, notes, refinementPrompt, previousContent, audience } = await req.json();
+    const reqBody = await req.json();
+    const { sectionTitle, sectionDescription, notes, refinementPrompt, previousContent, audience } = reqBody;
+    const massingId: string | undefined = reqBody.massing_id;
 
     // Fetch deal context for richer output
     const [deal, uwRow, docs] = await Promise.all([
       dealQueries.getById(params.id),
-      underwritingQueries.getByDealId(params.id),
+      getUnderwritingForMassing(params.id, massingId),
       documentQueries.getByDealId(params.id),
     ]);
 

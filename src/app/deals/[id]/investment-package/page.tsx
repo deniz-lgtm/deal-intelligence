@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, FileText, Download, Sparkles,
@@ -75,6 +76,11 @@ const FORMATS = [
 ];
 
 export default function InvestmentPackagePage({ params }: { params: { id: string } }) {
+  const searchParams = useSearchParams();
+  // Thread `?massing=<id>` through to the generators so the report is
+  // scoped to the massing the analyst last viewed. Absent → the API's
+  // auto-detect (base case → most-populated fallback) picks one.
+  const massingId = searchParams?.get("massing") || null;
   const [sections, setSections] = useState<PackageSection[]>(
     ALL_SECTIONS.map(s => ({ ...s, notes: [], expanded: false }))
   );
@@ -176,7 +182,7 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       const res = await fetch(`/api/deals/${params.id}/investment-package/generate-all`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ audience: wizAudience, format: wizFormat, sections: wizSections, existingNotes }),
+        body: JSON.stringify({ audience: wizAudience, format: wizFormat, sections: wizSections, existingNotes, ...(massingId ? { massing_id: massingId } : {}) }),
       });
       const json = await res.json();
       if (res.ok && Array.isArray(json.data)) {
@@ -206,6 +212,7 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
           sectionId, sectionTitle: section.title, sectionDescription: section.description,
           notes: section.notes.filter(n => n.text.trim()).map(n => n.text),
           audience: meta.audience,
+          ...(massingId ? { massing_id: massingId } : {}),
         }),
       });
       const json = await res.json();
@@ -226,6 +233,7 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
           sectionTitle: section.title, sectionDescription: section.description,
           refinementPrompt: refinement, previousContent: section.generatedContent,
           audience: meta.audience,
+          ...(massingId ? { massing_id: massingId } : {}),
         }),
       });
       const json = await res.json();

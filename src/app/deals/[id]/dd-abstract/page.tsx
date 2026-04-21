@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { Loader2, FileText, RefreshCw, AlertCircle, Download, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -22,6 +23,12 @@ const ALL_SECTIONS = [
 ];
 
 export default function DDAbstractPage({ params }: { params: { id: string } }) {
+  const searchParams = useSearchParams();
+  // Pick up whichever massing the analyst last viewed on the UW page. If
+  // the URL carries `?massing=<id>` we thread it through to the generator
+  // so the abstract reflects THAT massing's underwriting. Falls through
+  // to the API's auto-detect (base case → most-populated) when absent.
+  const massingId = searchParams?.get("massing") || null;
   const [abstract, setAbstract] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -81,7 +88,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
       const res = await fetch(`/api/deals/${params.id}/dd-abstract`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections: selectedSections }),
+        body: JSON.stringify({ sections: selectedSections, ...(massingId ? { massing_id: massingId } : {}) }),
       });
       const json = await res.json();
       if (!res.ok) {
