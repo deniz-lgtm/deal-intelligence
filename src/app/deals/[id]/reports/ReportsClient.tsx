@@ -14,7 +14,9 @@ import {
   Eye,
   FileText,
   FolderArchive,
+  Plus,
   RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils";
@@ -116,22 +118,34 @@ export default function ReportsClient({ dealId, dealName, artifacts }: Props) {
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-10">
-      <header className="space-y-1.5">
-        <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
-          <FolderArchive className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
-          <span className="truncate">{dealName}</span>
+      <header className="flex items-start justify-between gap-4 flex-wrap sm:flex-nowrap">
+        <div className="space-y-1.5 min-w-0">
+          <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+            <FolderArchive className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+            <span className="truncate">{dealName}</span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
+            Reports &amp; Packages
+          </h1>
+          <p className="text-sm text-muted-foreground max-w-prose">
+            Every generated artifact for this deal. When inputs change,
+            artifacts are flagged stale until regenerated.
+          </p>
         </div>
-        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
-          Reports &amp; Packages
-        </h1>
-        <p className="text-sm text-muted-foreground max-w-prose">
-          Every generated artifact for this deal. When inputs change, artifacts
-          are flagged stale until regenerated.
-        </p>
+        {/* Header CTA — one tap from library to authoring. Shown whenever
+            there's content; the empty state has its own prominent CTA. */}
+        {artifacts.length > 0 && (
+          <Button asChild size="sm" className="shrink-0">
+            <Link href={`/deals/${dealId}/investment-package`}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              New Package
+            </Link>
+          </Button>
+        )}
       </header>
 
       {artifacts.length === 0 ? (
-        <EmptyState />
+        <EmptyState dealId={dealId} />
       ) : (
         CATEGORY_ORDER.map((cat) => {
           const items = grouped.get(cat) ?? [];
@@ -364,16 +378,30 @@ function StatusChip({ stale, tooltip }: { stale: boolean; tooltip: string }) {
   );
 }
 
-function EmptyState() {
+function EmptyState({ dealId }: { dealId: string }) {
   return (
-    <div className="border-2 border-dashed rounded-lg p-8 sm:p-12 text-center space-y-2">
-      <FolderArchive className="h-8 w-8 text-muted-foreground mx-auto" />
-      <div className="font-medium">No generated artifacts yet</div>
-      <div className="text-sm text-muted-foreground max-w-md mx-auto">
-        Generate an IC Package, investment memo, proforma, DD abstract,
-        zoning report, or LOI from its authoring page and it will appear
-        here. Older exports from before the library launch are also
-        surfaced.
+    <div className="border-2 border-dashed rounded-lg p-8 sm:p-12 text-center space-y-4">
+      <div className="space-y-2">
+        <FolderArchive className="h-10 w-10 text-muted-foreground mx-auto" />
+        <div className="font-medium text-base">No generated artifacts yet</div>
+        <div className="text-sm text-muted-foreground max-w-md mx-auto">
+          Generate an IC Package, investment memo, proforma, DD abstract,
+          zoning report, or LOI — the PDF lands here with version history
+          and auto-detected staleness when deal inputs change.
+        </div>
+      </div>
+      <div className="flex items-center justify-center gap-2 flex-wrap">
+        <Button asChild size="sm">
+          <Link href={`/deals/${dealId}/investment-package`}>
+            <Sparkles className="h-4 w-4 mr-1.5" />
+            Generate Package
+          </Link>
+        </Button>
+        <Button asChild size="sm" variant="outline">
+          <Link href={`/deals/${dealId}/underwriting`}>
+            Generate Proforma
+          </Link>
+        </Button>
       </div>
     </div>
   );

@@ -79,10 +79,13 @@ const AUDIENCES = [
 ];
 
 const FORMATS = [
-  { id: "pitch_deck", label: "Pitch Deck", desc: "8-12 slides, bullet-heavy, visual", icon: "📊" },
-  { id: "investment_memo", label: "Investment Memo", desc: "10-15 sections, narrative-heavy", icon: "📄" },
-  { id: "one_pager", label: "One-Pager / Teaser", desc: "1-2 pages, exec summary + key metrics", icon: "📋" },
-  { id: "ic_package", label: "IC Package", desc: "Editorial committee briefing with inline prose editor", icon: "🏛️" },
+  { id: "pitch_deck", label: "Pitch Deck", desc: "8–12 slides, bullet-heavy, visual", icon: "📊", featured: false },
+  { id: "investment_memo", label: "Investment Memo", desc: "10–15 sections, narrative-heavy", icon: "📄", featured: false },
+  { id: "one_pager", label: "One-Pager / Teaser", desc: "1–2 pages, exec summary + key metrics", icon: "📋", featured: false },
+  // IC Package is the editorial HTML format — differs structurally from
+  // the section-based outputs. Flagged `featured` so the wizard gives it
+  // a richer card treatment.
+  { id: "ic_package", label: "IC Package", desc: "Editorial committee briefing · inline prose editor · design-system HTML → PDF", icon: "🏛️", featured: true },
 ];
 
 export default function InvestmentPackagePage({ params }: { params: { id: string } }) {
@@ -345,16 +348,37 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
               {wizardStep === 1 && (
                 <div className="space-y-2">
                   <h3 className="font-semibold text-sm mb-3">What format?</h3>
-                  {FORMATS.map(f => (
-                    <label key={f.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${wizFormat === f.id ? "border-primary bg-primary/5" : "hover:bg-muted/30"}`}
-                      onClick={() => { setWizFormat(f.id); setWizSections(FORMAT_SECTIONS[f.id] || []); }}>
-                      <input type="radio" name="format" checked={wizFormat === f.id} onChange={() => {}} className="mt-0.5" />
-                      <div>
-                        <p className="text-sm font-medium">{f.icon} {f.label}</p>
-                        <p className="text-xs text-muted-foreground">{f.desc}</p>
-                      </div>
-                    </label>
-                  ))}
+                  {FORMATS.map(f => {
+                    const selected = wizFormat === f.id;
+                    // Featured card (IC Package) gets a subtle amber accent
+                    // border and a NEW tag. Keeps the four cards visually
+                    // ranked so the premium output reads differently.
+                    const baseClasses = "flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors";
+                    const stateClasses = selected
+                      ? f.featured
+                        ? "border-amber-500/70 bg-amber-500/5 ring-1 ring-amber-500/30"
+                        : "border-primary bg-primary/5"
+                      : f.featured
+                        ? "border-amber-500/40 hover:bg-amber-500/5"
+                        : "hover:bg-muted/30";
+                    return (
+                      <label key={f.id} className={`${baseClasses} ${stateClasses}`}
+                        onClick={() => { setWizFormat(f.id); setWizSections(FORMAT_SECTIONS[f.id] || []); }}>
+                        <input type="radio" name="format" checked={selected} onChange={() => {}} className="mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium flex items-center gap-2">
+                            <span>{f.icon} {f.label}</span>
+                            {f.featured && (
+                              <span className="text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 border border-amber-500/30">
+                                New
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{f.desc}</p>
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
               )}
 
