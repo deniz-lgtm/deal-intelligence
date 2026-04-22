@@ -1,6 +1,10 @@
 # ---- deps stage ----
 FROM node:20-alpine AS deps
 WORKDIR /app
+# Skip puppeteer's bundled Chromium download — we use puppeteer-core
+# with the system chromium installed in the runner stage.
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_SKIP_DOWNLOAD=true
 COPY package*.json .npmrc ./
 RUN npm ci
 
@@ -21,6 +25,22 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+
+# System Chromium for puppeteer-core. Alpine ships a native build that
+# matches musl libc; we use puppeteer-core (no bundled Chrome) and point
+# it at /usr/bin/chromium via PUPPETEER_EXECUTABLE_PATH so the image
+# stays slim and we don't carry the unused Debian-glibc Chrome that
+# full `puppeteer` would otherwise download.
+RUN apk add --no-cache \
+      chromium \
+      nss \
+      freetype \
+      harfbuzz \
+      ca-certificates \
+      ttf-freefont \
+      font-noto-emoji
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next

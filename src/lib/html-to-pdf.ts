@@ -1,14 +1,13 @@
 /**
- * Shared HTML → PDF helper. Puppeteer is dynamically imported so the
- * dependency stays optional; when it isn't available the helper throws
- * a structured error the caller can catch to fall back to window.print()
- * or a different renderer.
+ * Shared HTML → PDF helper. Uses puppeteer-core + system Chromium
+ * (Alpine package) in production; the executable path is supplied via
+ * PUPPETEER_EXECUTABLE_PATH (see Dockerfile). In local dev where
+ * puppeteer-core isn't installed we throw a structured error so the
+ * caller can fall back to window.print().
  *
  * Use cases:
- *   - IC Package (via /api/deals/[id]/ic-package/pdf)
- *   - DD Abstract export (HTML shell → PDF)
- *   - Investment Package export (HTML → PDF, replaces PPTX + DOCX)
- *   - Zoning Report export (HTML → PDF, replaces DOCX)
+ *   - IC Package (via the ic_package generator)
+ *   - DD Abstract, Investment Package, Zoning Report, LOI generators
  *
  * Keeping the invocation in one place means the Chromium flags, page
  * format, and margin defaults are consistent across every generator.
@@ -16,8 +15,11 @@
 
 export class PuppeteerMissingError extends Error {
   readonly code = "puppeteer_not_installed";
-  constructor() {
-    super("Server-side PDF export requires puppeteer. Install it or fall back to window.print().");
+  constructor(message?: string) {
+    super(
+      message ??
+        "Server-side PDF export requires puppeteer-core + system Chromium. Install puppeteer-core and ensure PUPPETEER_EXECUTABLE_PATH points at a chromium binary."
+    );
   }
 }
 
@@ -43,13 +45,13 @@ export async function htmlToPdf(
   const margin = opts.margin ?? "0.5in";
   const waitUntil = opts.waitUntil ?? "load";
 
-  // Dynamic import so the build doesn't fail if puppeteer isn't in
-  // node_modules (it's heavy — ~100MB with Chromium). The `Function`
-  // trick bypasses webpack's static dependency analysis.
+  // Dynamic import so local-dev builds don't fail when puppeteer-core
+  // isn't installed. The `Function` trick bypasses webpack's static
+  // dependency analysis so Next.js doesn't try to bundle it.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let puppeteerLib: any;
   try {
-    const moduleName = "puppeteer";
+    const moduleName = "puppeteer-core";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mod = await (Function("m", "return import(m)") as (m: string) => Promise<any>)(moduleName);
     puppeteerLib = mod.default ?? mod;
@@ -57,8 +59,20 @@ export async function htmlToPdf(
     throw new PuppeteerMissingError();
   }
 
+  // puppeteer-core has no bundled Chrome; the caller (Dockerfile) must
+  // install one and point PUPPETEER_EXECUTABLE_PATH at it. Common
+  // values: /usr/bin/chromium-browser (Alpine), /usr/bin/google-chrome
+  // (Debian).
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (!executablePath) {
+    throw new PuppeteerMissingError(
+      "PUPPETEER_EXECUTABLE_PATH is not set. Install Chromium and point this env var at the binary."
+    );
+  }
+
   const browser = await puppeteerLib.launch({
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    executablePath,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
   });
   try {
     const page = await browser.newPage();
