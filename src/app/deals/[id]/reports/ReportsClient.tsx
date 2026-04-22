@@ -234,6 +234,13 @@ function ArtifactRowView({
             <span className="text-muted-foreground">v{artifact.version}</span>
             <StatusChip stale={stale} tooltip={tooltip} />
           </div>
+          {/* Stale reason inline — tooltips aren't reachable on touch. Only
+              rendered for stale rows so current rows stay visually quiet. */}
+          {stale && artifact.stale_reasons.length > 0 && (
+            <div className="text-xs text-amber-800 dark:text-amber-300">
+              {artifact.stale_reasons.join(", ")} changed since generation
+            </div>
+          )}
           {artifact.ai_summary && (
             <div className="text-xs text-muted-foreground truncate sm:whitespace-normal">
               {artifact.ai_summary}

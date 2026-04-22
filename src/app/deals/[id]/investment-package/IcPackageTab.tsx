@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Save, Sparkles } from "lucide-react";
+import { Loader2, Pencil, Save, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import GenerateToLibraryButton from "@/components/GenerateToLibraryButton";
@@ -162,40 +162,50 @@ export default function IcPackageTab({ dealId, dealContext }: Props) {
             </>
           )}
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          {/* Secondary actions — icon-only on mobile to keep the toolbar
+              on one line; label shows from sm: up. */}
           <Button
             variant="outline"
             size="sm"
             onClick={() => setEditMode(!editMode)}
+            title={editMode ? "Exit edit mode" : "Edit prose"}
+            aria-label={editMode ? "Exit edit mode" : "Edit prose"}
           >
-            {editMode ? "Exit Edit" : "Edit"}
+            <Pencil className="h-4 w-4 sm:mr-1.5" />
+            <span className="hidden sm:inline">{editMode ? "Exit Edit" : "Edit"}</span>
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={generateAll}
             disabled={generating}
+            title="Regenerate all prose with Claude"
+            aria-label="Regenerate all prose"
           >
             {generating ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              <Loader2 className="h-4 w-4 sm:mr-1.5 animate-spin" />
             ) : (
-              <Sparkles className="h-4 w-4 mr-2" />
+              <Sparkles className="h-4 w-4 sm:mr-1.5" />
             )}
-            Regenerate All
+            <span className="hidden sm:inline">Regenerate</span>
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={saveDraft}
             disabled={saving || inDemoMode || !dirty}
+            title="Save prose as a new draft version"
+            aria-label="Save draft"
           >
             {saving ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              <Loader2 className="h-4 w-4 sm:mr-1.5 animate-spin" />
             ) : (
-              <Save className="h-4 w-4 mr-2" />
+              <Save className="h-4 w-4 sm:mr-1.5" />
             )}
-            Save Draft
+            <span className="hidden sm:inline">Save</span>
           </Button>
+          {/* Primary action — always full label, visually weighted. */}
           <GenerateToLibraryButton
             dealId={dealId}
             kind="ic_package"
