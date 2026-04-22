@@ -1,8 +1,13 @@
 /**
  * GET /api/deals/[id]/artifacts/[artifactId]/download
- * Streams the artifact's blob with the correct Content-Disposition.
- * For blobs stored at external URLs (S3), returns a 302 redirect so the
- * client fetches the signed URL directly.
+ *
+ * Redirects to the existing /api/documents/[id]/view route, which
+ * streams bytes through the server using the R2 signed-request SDK.
+ *
+ * Why not redirect straight to file_path? In production R2 rejects
+ * unsigned access to the raw bucket URL with "InvalidArgumentAuthorization"
+ * unless R2_PUBLIC_URL is configured to a public-bucket custom domain.
+ * Streaming through the server makes the route environment-agnostic.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -12,7 +17,7 @@ import { artifactQueries } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string; artifactId: string } }
 ) {
   const { userId, errorResponse } = await requireAuth();
@@ -29,13 +34,8 @@ export async function GET(
     return NextResponse.json({ error: "Artifact has no downloadable blob" }, { status: 404 });
   }
 
-  // `file_path` is either an absolute URL (S3) or a path beneath
-  // UPLOAD_DIR (local dev). For remote URLs we redirect — the browser
-  // downloads directly. Local dev streaming is handled by the existing
-  // /api/documents/[id]/download route that clients already use elsewhere;
-  // point there instead of duplicating streaming logic.
-  if (/^https?:\/\//.test(row.file_path)) {
-    return NextResponse.redirect(row.file_path, 302);
-  }
-  return NextResponse.redirect(new URL(`/api/documents/${row.id}/download`, _req.url), 302);
+  // Always stream through the documents view route — handles both R2
+  // (signed via SDK) and local dev (filesystem read) without leaking
+  // raw bucket URLs to the client.
+  return NextResponse.redirect(new URL(`/api/documents/${row.id}/view`, req.url), 302);
 }
