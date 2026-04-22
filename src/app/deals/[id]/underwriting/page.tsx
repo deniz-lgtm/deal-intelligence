@@ -1121,6 +1121,70 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
   const pricePerBed = mode === "student_housing" && totalBeds > 0 ? basisForPerUnit / totalBeds : 0;
   const pricePerUnit = totalUnits > 0 ? basisForPerUnit / totalUnits : 0;
 
+  // ── Mixed-Use Allocation ────────────────────────────────────────────────────
+  // When a deal has commercial tenants alongside residential units, the
+  // blended "$/unit" lies — it puts all of the purchase price on the
+  // residential denominator even though retail contributes its own NOI
+  // (and thus value). We split proforma NOI into residential vs
+  // commercial components, allocate the purchase price by each side's
+  // NOI share, and surface residential-only $/unit + commercial-only
+  // $/SF alongside the blended figure.
+  //
+  // Method: stabilized/proforma NOI (what the buyer is underwriting),
+  // not in-place. OpEx split prefers analyst-tuned
+  // `mixed_use.components[].opex_allocation_pct`; otherwise falls back
+  // to SF-weighted so newly-created deals get a sensible default.
+  const commercialTenantsArr = (d.commercial_tenants || []) as Array<{ sf?: number; rent_per_sf?: number; lease_type?: string; cam_reimbursement_pct?: number }>;
+  const commercialSF = commercialTenantsArr.reduce((s, t) => s + (t.sf || 0), 0);
+  const residentialSF = d.unit_groups.reduce((s, g) => s + effectiveUnits(g) * (g.sf_per_unit || 0), 0);
+  const totalBuildingSF = commercialSF + residentialSF;
+
+  const commercialGPR = mode === "commercial" ? 0 : commercialTenantGPR;
+  const commercialVacancyLoss = commercialGPR * (d.vacancy_rate / 100);
+  const commercialEGI = commercialGPR - commercialVacancyLoss;
+
+  // Commercial reimbursements: each tenant pays pro-rata share of the
+  // CAM pool based on their share of total building SF, weighted by the
+  // tenant's cam_reimbursement_pct (Gross = 0%, NNN/MG default 100%).
+  let commercialReimbursements = 0;
+  if (commercialSF > 0 && totalBuildingSF > 0 && camPool > 0) {
+    for (const t of commercialTenantsArr) {
+      const tenantSF = t.sf || 0;
+      const defaultPct = t.lease_type === "Gross" ? 0 : 100;
+      const camPct = (t.cam_reimbursement_pct ?? defaultPct) / 100;
+      const shareOfBuilding = tenantSF / totalBuildingSF;
+      commercialReimbursements += camPool * shareOfBuilding * camPct;
+    }
+  }
+
+  // OpEx allocation share (commercial side).
+  const mixedUseComps = (d.mixed_use?.components || []) as Array<{ component_type: string; opex_allocation_pct: number }>;
+  const nonResAllocatedPct = mixedUseComps
+    .filter((c) => c.component_type !== "residential")
+    .reduce((s, c) => s + (c.opex_allocation_pct || 0), 0);
+  const commercialOpexSharePct = d.mixed_use?.enabled && nonResAllocatedPct > 0
+    ? nonResAllocatedPct / 100
+    : totalBuildingSF > 0 ? commercialSF / totalBuildingSF : 0;
+  const commercialOpEx = proformaTotalOpEx * commercialOpexSharePct;
+  const commercialLC = commercialEGI * lcBlendedPct;
+
+  const commercialNOI = commercialEGI + commercialReimbursements - commercialOpEx - commercialLC;
+  const residentialNOI = proformaNOI - commercialNOI;
+
+  // Allocation only makes sense when both components produce positive
+  // NOI. When a component is stabilizing at a loss (vacant retail, pre-
+  // lease-up commercial), skip the split and keep the blended figure.
+  const hasCommercial = commercialSF > 0 && commercialGPR > 0;
+  const canAllocateByNoi = hasCommercial && proformaNOI > 0 && commercialNOI > 0 && residentialNOI > 0;
+  const resNoiPct = canAllocateByNoi ? residentialNOI / proformaNOI : 1;
+  const commNoiPct = canAllocateByNoi ? 1 - resNoiPct : 0;
+  const resValue = basisForPerUnit * resNoiPct;
+  const commValue = basisForPerUnit * commNoiPct;
+  const resPricePerUnit = canAllocateByNoi && totalUnits > 0 ? resValue / totalUnits : 0;
+  const commPricePerSF = canAllocateByNoi && commercialSF > 0 ? commValue / commercialSF : 0;
+  const resImpliedCapRate = canAllocateByNoi && resValue > 0 ? (residentialNOI / resValue) * 100 : 0;
+  const commImpliedCapRate = canAllocateByNoi && commValue > 0 ? (commercialNOI / commValue) * 100 : 0;
+
   // ── Acquisition Financing ───────────────────────────────────────────────────
   let acqLoan = 0, acqDebt = 0, acqDebtIO = 0, blendedLtc = 0;
   if (d.has_financing && totalCost > 0) {
@@ -1341,6 +1405,14 @@ function calc(d: UWData, mode: "commercial" | "multifamily" | "student_housing")
     capexTotal, capexPerSF, capexPerUnit, capexPerBed, closingCosts, totalCost, totalHardCosts, softCostsTotal, totalParkingCost, capitalizedInterest, demolitionCosts, lostIncome,
     inPlaceCapRate, marketCapRate, yoc,
     pricePerSF, pricePerBed, pricePerUnit,
+    // Mixed-use allocation — values set only when canAllocateByNoi is true,
+    // otherwise consumers should fall back to the blended pricePerUnit /
+    // pricePerSF figures above.
+    canAllocateByNoi, residentialNOI, commercialNOI,
+    commercialSF, residentialSF,
+    resValue, commValue, resNoiPct, commNoiPct,
+    resPricePerUnit, commPricePerSF,
+    resImpliedCapRate, commImpliedCapRate,
     acqLoan, acqDebt, acqDebtIO, yr1Debt, equity, cashFlow, coc, dscr, blendedLtc,
     stabilizedCashFlow, stabilizedCoC, stabilizedDSCR,
     refiProceeds, refiDebt, exitValue, exitEquity, totalCashFlows, em,
@@ -2753,13 +2825,28 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
               );
             })()}
           </div>
-          {/* Price / Unit|SF|Bed: purchase → sale */}
+          {/* Price / Unit|SF|Bed: purchase → sale. On mixed-use deals
+              the purchase figure reflects the residential slice of the
+              purchase price (allocated by NOI share) rather than the
+              blended figure — the blended $/unit is misleading when
+              commercial contributes its own income. Tooltip on the
+              label shows the blended value for reference. */}
           <div className="bg-card p-3">
-            <p className="text-xs text-muted-foreground mb-2">{isSH ? "Price / Bed" : isMF ? "Price / Unit" : "Price / SF"}</p>
+            <p className="text-xs text-muted-foreground mb-2" title={m.canAllocateByNoi ? `Residential-only basis (NOI-weighted). Blended: ${isMF ? fc(m.pricePerUnit) : fc(m.pricePerSF)}` : undefined}>
+              {isSH ? "Price / Bed" : isMF ? "Price / Unit" : "Price / SF"}
+              {m.canAllocateByNoi && <span className="ml-1 text-[9px] text-amber-400 uppercase tracking-wide">Res.</span>}
+            </p>
             <div className="flex items-baseline justify-between gap-2">
               <div>
                 <p className="text-[10px] text-muted-foreground/70 uppercase">Purchase</p>
-                <p className="text-sm font-semibold tabular-nums">{isSH ? (m.pricePerBed > 0 ? fc(m.pricePerBed) : "—") : isMF ? (m.pricePerUnit > 0 ? fc(m.pricePerUnit) : "—") : m.pricePerSF > 0 ? fc(m.pricePerSF) : "—"}</p>
+                <p className="text-sm font-semibold tabular-nums">{(() => {
+                  if (isSH) return m.pricePerBed > 0 ? fc(m.pricePerBed) : "—";
+                  if (isMF) {
+                    const val = m.canAllocateByNoi ? m.resPricePerUnit : m.pricePerUnit;
+                    return val > 0 ? fc(val) : "—";
+                  }
+                  return m.pricePerSF > 0 ? fc(m.pricePerSF) : "—";
+                })()}</p>
               </div>
               <span className="text-muted-foreground/40 text-xs">→</span>
               <div className="text-right">
@@ -2803,6 +2890,74 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           </div>
         </div>
       </div>
+
+      {/* ── Mixed-Use Allocation ──
+          On mixed-use deals, the purchase price gets split into
+          residential vs commercial based on each component's share of
+          stabilized/proforma NOI. This gives a cleaner $/unit for the
+          residential portion and $/SF for the commercial portion
+          instead of dividing the whole price by the residential unit
+          count. Only renders when the split is meaningful (both
+          components have positive NOI). */}
+      {m.canAllocateByNoi && (
+        <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+          <div className="px-5 py-3 border-b bg-muted/20 flex items-center gap-2">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Mixed-Use Allocation</span>
+            <span className="text-[10px] text-muted-foreground/70">NOI-weighted · proforma</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/10 text-xs text-muted-foreground">
+                  <th className="text-left px-4 py-2 font-medium">Component</th>
+                  <th className="text-right px-3 py-2 font-medium">Proforma NOI</th>
+                  <th className="text-right px-3 py-2 font-medium">NOI %</th>
+                  <th className="text-right px-3 py-2 font-medium">Allocated Value</th>
+                  <th className="text-right px-3 py-2 font-medium">Basis</th>
+                  <th className="text-right px-4 py-2 font-medium">Implied Cap</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b hover:bg-muted/5">
+                  <td className="px-4 py-2.5 font-medium">
+                    Residential
+                    <span className="ml-2 text-[10px] text-muted-foreground">{fn(m.totalUnits)} units · {fn(m.residentialSF)} SF</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{fc(m.residentialNOI)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{(m.resNoiPct * 100).toFixed(1)}%</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{fc(m.resValue)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{m.totalUnits > 0 ? `${fc(m.resPricePerUnit)} / unit` : "—"}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">{m.resImpliedCapRate > 0 ? `${m.resImpliedCapRate.toFixed(2)}%` : "—"}</td>
+                </tr>
+                <tr className="border-b hover:bg-muted/5">
+                  <td className="px-4 py-2.5 font-medium">
+                    Commercial
+                    <span className="ml-2 text-[10px] text-muted-foreground">{fn(m.commercialSF)} SF</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{fc(m.commercialNOI)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{(m.commNoiPct * 100).toFixed(1)}%</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{fc(m.commValue)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{m.commercialSF > 0 ? `${fc(m.commPricePerSF)} / SF` : "—"}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">{m.commImpliedCapRate > 0 ? `${m.commImpliedCapRate.toFixed(2)}%` : "—"}</td>
+                </tr>
+                <tr className="bg-muted/10 font-semibold text-sm">
+                  <td className="px-4 py-2.5">Total</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{fc(m.proformaNOI)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">100.0%</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{fc(m.resValue + m.commValue)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground font-normal">Blended: {fc(m.pricePerUnit)} / unit</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">{m.proformaCapRate > 0 ? `${m.proformaCapRate.toFixed(2)}%` : "—"}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="px-5 py-2 text-[10px] text-muted-foreground/70 border-t bg-muted/5">
+            OpEx split: {d.mixed_use?.enabled && (d.mixed_use?.components || []).some(c => c.component_type !== "residential" && c.opex_allocation_pct > 0)
+              ? "from Mixed-Use components (analyst-tuned)"
+              : `${((m.commercialSF / Math.max(m.commercialSF + m.residentialSF, 1)) * 100).toFixed(0)}% to commercial (SF-weighted fallback)`}
+          </p>
+        </div>
+      )}
 
       {/* ── Massing Panel — two-level tabbed header:
           Level 1: Site plan scenarios (massings) — lets the analyst flip
