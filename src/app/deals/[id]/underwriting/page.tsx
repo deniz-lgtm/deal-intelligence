@@ -4240,7 +4240,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                     </tbody>
                     <tfoot>
                       <tr className="border-t bg-muted/20 font-semibold">
-                        <td colSpan={4} className="px-2 py-2 text-right">Total Soft Costs</td>
+                        <td colSpan={4} className="px-2 py-2 text-right">
+                          Total Soft Costs
+                          {m.totalHardCosts > 0 && (
+                            <span className="ml-2 text-xs font-normal text-muted-foreground">
+                              ({((m.softCostsTotal / m.totalHardCosts) * 100).toFixed(1)}% of hard)
+                            </span>
+                          )}
+                        </td>
                         <td className="px-2 py-2 text-right tabular-nums">{fc(m.softCostsTotal)}</td>
                         <td />
                       </tr>
@@ -4257,7 +4264,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
                         <tr><td className="py-1">Land Acquisition</td><td className="text-right tabular-nums">{fc(d.land_cost)}</td></tr>
                         <tr><td className="py-1">Total Hard Costs</td><td className="text-right tabular-nums">{fc(m.totalHardCosts)}</td></tr>
                         <tr>
-                          <td className="py-1">Total Soft Costs</td>
+                          <td className="py-1">
+                            Total Soft Costs
+                            {m.totalHardCosts > 0 && (
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                ({((m.softCostsTotal / m.totalHardCosts) * 100).toFixed(1)}% of hard)
+                              </span>
+                            )}
+                          </td>
                           <td className="text-right tabular-nums">{fc(m.softCostsTotal)}</td>
                         </tr>
                         {m.capitalizedInterest > 0 && (
