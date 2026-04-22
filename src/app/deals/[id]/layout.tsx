@@ -35,6 +35,7 @@ import {
   FileWarning,
   Layers,
   Globe,
+  FolderArchive,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -104,6 +105,12 @@ const BASE_NAV_GROUPS: NavGroup[] = [
       { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
       { href: "/investment-package", label: "Inv. Package", icon: Presentation },
       { href: "/ic-package", label: "IC Package", icon: FileText },
+      // Reports & Packages — central library for every generated artifact.
+      // Gated by NEXT_PUBLIC_REPORTS_LIBRARY during the rollout so power
+      // users see it first. Phase 5 removes the flag.
+      ...(process.env.NEXT_PUBLIC_REPORTS_LIBRARY === "1"
+        ? [{ href: "/reports", label: "Reports & Packages", icon: FolderArchive }]
+        : []),
       { href: "/room", label: "Deal Room", icon: Share2 },
     ],
   },
