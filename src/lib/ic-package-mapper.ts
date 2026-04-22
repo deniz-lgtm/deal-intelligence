@@ -19,7 +19,7 @@ import type {
   SectionHeadProps,
   Scenario,
   CapitalSource,
-} from "@/app/deals/[id]/ic-package/types";
+} from "@/components/ic-package/types";
 
 // ─── Formatters ─────────────────────────────────────────────────────────────
 

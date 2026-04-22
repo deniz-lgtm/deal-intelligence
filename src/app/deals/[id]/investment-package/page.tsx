@@ -12,8 +12,12 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Document } from "@/lib/types";
+import type { Document, Deal } from "@/lib/types";
 import { DocCoverageChip } from "@/components/ai";
+import GenerateToLibraryButton from "@/components/GenerateToLibraryButton";
+import IcPackageTab from "./IcPackageTab";
+import { dealToContext } from "@/lib/ic-package-deal-adapter";
+import type { DealContext } from "@/components/ic-package/types";
 
 // ─── Section Definitions ─────────────────────────────────────────────────────
 const ALL_SECTIONS = [
@@ -44,6 +48,11 @@ const FORMAT_SECTIONS: Record<string, string[]> = {
   pitch_deck: ["cover", "exec_summary", "property_overview", "financial_summary", "unit_mix", "value_add", "capital_structure", "returns_analysis", "development_schedule", "predev_budget", "exit_strategy", "photos"],
   investment_memo: ALL_SECTIONS.map(s => s.id),
   one_pager: ["exec_summary", "financial_summary", "photos"],
+  // IC Package uses its own editorial renderer rather than the sections
+  // list — this array is ignored at render time but populated so the
+  // wizard's "select sections" step doesn't blow up if the user lands
+  // on it by mistake.
+  ic_package: ["exec_summary", "financial_summary", "returns_analysis", "risk_factors"],
 };
 
 interface NoteLine { id: string; text: string; }
@@ -70,9 +79,10 @@ const AUDIENCES = [
 ];
 
 const FORMATS = [
-  { id: "pitch_deck", label: "Investment Package (PowerPoint)", desc: "8-12 slides, bullet-heavy, visual", icon: "📊" },
-  { id: "investment_memo", label: "Investment Memo (Word/PDF)", desc: "10-15 sections, narrative-heavy", icon: "📄" },
+  { id: "pitch_deck", label: "Pitch Deck", desc: "8-12 slides, bullet-heavy, visual", icon: "📊" },
+  { id: "investment_memo", label: "Investment Memo", desc: "10-15 sections, narrative-heavy", icon: "📄" },
   { id: "one_pager", label: "One-Pager / Teaser", desc: "1-2 pages, exec summary + key metrics", icon: "📋" },
+  { id: "ic_package", label: "IC Package", desc: "Editorial committee briefing with inline prose editor", icon: "🏛️" },
 ];
 
 export default function InvestmentPackagePage({ params }: { params: { id: string } }) {
@@ -86,11 +96,14 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
   );
   const [meta, setMeta] = useState<PackageMeta>({ audience: "lp_investor", format: "pitch_deck" });
   const [saving, setSaving] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [generatingAll, setGeneratingAll] = useState(false);
   const [dealName, setDealName] = useState("Deal");
   const [uwUpdatedAt, setUwUpdatedAt] = useState<string | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
+  // IC Package format needs a fully-structured DealContext; we build it
+  // client-side once the deal + UW rows load. Null while loading / when
+  // the deal is missing.
+  const [dealContext, setDealContext] = useState<DealContext | null>(null);
 
   // Deal score state
   const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null; final_score: number | null; final_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null, final_score: null, final_score_reasoning: null });
@@ -116,6 +129,15 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       if (dealJson.data?.name) setDealName(dealJson.data.name);
       if (uwJson?.data?.updated_at) setUwUpdatedAt(uwJson.data.updated_at);
       if (scoresJson?.data) setDealScores(scoresJson.data);
+      // Build the IC Package context from whatever deal + UW data loaded.
+      // dealToContext is pure and handles nulls gracefully.
+      if (dealJson.data) {
+        try {
+          setDealContext(dealToContext(dealJson.data as Deal, uwJson?.data ?? null));
+        } catch {
+          setDealContext(null);
+        }
+      }
       if (pkgJson?.data?.sections) {
         const saved = pkgJson.data.sections as PackageSection[];
         const merged = ALL_SECTIONS.map(ds => {
@@ -242,29 +264,6 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
     } catch { toast.error("Refinement failed"); updateSection(sectionId, { generating: false }); }
   };
 
-  const exportPackage = async () => {
-    setExporting(true);
-    try {
-      const res = await fetch(`/api/deals/${params.id}/investment-package/export`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections, dealName, ...(massingId ? { massing_id: massingId } : {}) }),
-      });
-      if (!res.ok) throw new Error("Export failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      toast.success("PDF downloaded");
-    } catch { toast.error("Export failed"); }
-    finally { setExporting(false); }
-  };
-
   const hasContent = sections.some(s => s.generatedContent);
   const isStale = (section: PackageSection) => uwUpdatedAt && section.generated_at && new Date(uwUpdatedAt) > new Date(section.generated_at);
 
@@ -281,12 +280,22 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-shrink-0 min-w-0">
-          {hasContent && (<>
-            <Button variant="outline" size="sm" onClick={() => exportPackage()} disabled={exporting}>
-              {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-              Export PDF
-            </Button>
-          </>)}
+          {/* Per-page PDF/DOC/PPT exports are gone — every format now
+              flows through Reports & Packages. For section-based formats
+              this button is shown only once the user has authored
+              content; the IC Package format renders its own button inside
+              the IcPackageTab. */}
+          {hasContent && meta.format !== "ic_package" && (
+            <GenerateToLibraryButton
+              dealId={params.id}
+              kind={meta.format as "pitch_deck" | "investment_memo" | "one_pager"}
+              getPayload={() => ({ sections, dealName })}
+              massingId={massingId}
+              size="sm"
+              variant="outline"
+              label="Generate → Library"
+            />
+          )}
           <Button size="sm" onClick={save} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}Save
           </Button>
@@ -461,8 +470,17 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
         </div>
       </div>
 
-      {/* ─── Sections ───────────────────────────────────────────────────── */}
-      <div className="space-y-3">
+      {/* ─── IC Package Tab ─────────────────────────────────────────────── */}
+      {/* Format-specific authoring: IC Package swaps the section editor
+          for the editorial HTML renderer + prose editor. The wizard, deal
+          score, and documents above stay visible so the user can still
+          access them. */}
+      {meta.format === "ic_package" && (
+        <IcPackageTab dealId={params.id} dealContext={dealContext} />
+      )}
+
+      {/* ─── Sections (section-based formats only) ─────────────────────── */}
+      <div className={`space-y-3 ${meta.format === "ic_package" ? "hidden" : ""}`}>
         {sections.map((section, idx) => (
           <div key={section.id} className="border rounded-xl bg-card overflow-hidden">
             {/* Section header */}

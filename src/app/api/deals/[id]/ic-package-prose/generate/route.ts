@@ -1,7 +1,14 @@
+/**
+ * POST /api/deals/[id]/ic-package-prose/generate
+ * Calls Claude to produce a full-document IC Package prose draft for
+ * the given DealContext. Doesn't persist — the wizard is free to edit
+ * the response before saving it via PUT /ic-package-prose.
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { generateProse } from "@/lib/ic-package-prose";
-import type { DealContext } from "@/app/deals/[id]/ic-package/types";
+import type { DealContext } from "@/components/ic-package/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -22,12 +29,11 @@ export async function POST(
     if (!context || !context.dealName) {
       return NextResponse.json({ error: "Missing deal context" }, { status: 400 });
     }
-
     const prose = await generateProse(context);
     return NextResponse.json({ prose });
-  } catch (error) {
-    console.error("POST /api/deals/[id]/ic-package/generate error:", error);
-    const message = error instanceof Error ? error.message : "Generation failed";
+  } catch (err) {
+    console.error("POST /api/deals/[id]/ic-package-prose/generate error:", err);
+    const message = err instanceof Error ? err.message : "Generation failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

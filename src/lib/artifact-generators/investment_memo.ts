@@ -1,5 +1,13 @@
-import { notImplementedGenerator } from "./_stub";
+import { generateSectionsPdf } from "./_shared/sections-pdf";
+import type { ArtifactGenerator } from "./types";
 
-// Phase 3: migrates the investment-package export route's investment_memo
-// format logic into this generator.
-export default notImplementedGenerator("investment_memo");
+const investmentMemoGenerator: ArtifactGenerator = async (opts) =>
+  generateSectionsPdf(opts, {
+    kind: "investment_memo",
+    artifactTitle: "Investment Memo",
+    eyebrow: "IC MEMO",
+    subtitle: "Investment Committee Materials",
+    summaryPrefix: "Investment Memo",
+  });
+
+export default investmentMemoGenerator;
