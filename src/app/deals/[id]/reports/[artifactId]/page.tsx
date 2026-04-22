@@ -115,8 +115,11 @@ export default async function ArtifactViewerPage({ params }: PageProps) {
       )}
 
       {isPdf && artifact.file_path && (
+        // Stream through the documents view route rather than embedding
+        // the raw R2 URL — R2 returns InvalidArgumentAuthorization for
+        // unsigned access to the raw bucket endpoint.
         <iframe
-          src={artifact.file_path}
+          src={`/api/documents/${artifact.id}/view`}
           className="w-full h-[75vh] border rounded-md"
           title={artifact.name}
         />
