@@ -184,15 +184,14 @@ export interface ReportShellOptions {
 
 export function renderReportHtml(opts: ReportShellOptions): string {
   const t = opts.theme;
-  const primary = "#" + t.primaryColor;
-  const secondary = "#" + t.secondaryColor;
-  const accent = "#" + t.accentColor;
-  const ink = "#1E293B";
-  const muted = "#64748B";
-  const paper = "#FFFFFF";
-  const rowAlt = "#F8FAFC";
-  const headerFont = t.headerFont || "Georgia, 'Times New Roman', serif";
-  const bodyFont = t.bodyFont || "'Inter', system-ui, sans-serif";
+  // Editorial design system — Fraunces + JetBrains Mono, brick/ochre/
+  // forest/wine palette. Every report (DD Abstract, Investment Memo,
+  // Pitch Deck, One-Pager, Zoning Report, LOI) uses this shell so the
+  // full generator suite reads like one product line. Brand theme
+  // colors from the deal's business plan are intentionally ignored —
+  // the IC Package spec fixed the palette at six semantic colors;
+  // brand differentiation happens in copy + confidentiality marks,
+  // not color.
   const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
   const contacts = [t.website, t.email, t.phone].filter(Boolean).join("  ·  ");
 
@@ -201,205 +200,254 @@ export function renderReportHtml(opts: ReportShellOptions): string {
 <head>
 <meta charset="utf-8" />
 <title>${esc(opts.title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --primary: ${primary};
-    --secondary: ${secondary};
-    --accent: ${accent};
-    --ink: ${ink};
-    --muted: ${muted};
-    --paper: ${paper};
-    --row-alt: ${rowAlt};
-    --header-font: ${headerFont};
-    --body-font: ${bodyFont};
+    /* Editorial palette — fixed per the IC Package spec. */
+    --ink: #0a0d12;
+    --paper: #f4efe6;
+    --paper-2: #ebe4d4;
+    --paper-3: #e0d8c6;
+    --accent: #a8301a;        /* brick · primary */
+    --accent-2: #b8862e;      /* ochre · secondary */
+    --accent-3: #1f4638;      /* forest · positive */
+    --accent-4: #6b2a48;      /* wine · alert */
+    --muted: #3a362e;
+    --subtle: rgba(10, 13, 18, 0.22);
+    --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
   }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0;
-    font-family: var(--body-font);
+    font-family: var(--font-display);
     color: var(--ink);
     background: var(--paper);
     font-size: 11pt;
-    line-height: 1.5;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background-image:
+      radial-gradient(circle at 15% 5%, rgba(168,48,26,.045) 0%, transparent 35%),
+      radial-gradient(circle at 85% 95%, rgba(31,70,56,.04) 0%, transparent 40%);
   }
   h1, h2, h3, h4, h5, h6 {
-    font-family: var(--header-font);
-    color: var(--secondary);
-    margin: 1.2em 0 0.4em;
-    line-height: 1.2;
-  }
-  h1 { font-size: 24pt; color: var(--secondary); }
-  h2 { font-size: 16pt; border-bottom: 1px solid #E5E7EB; padding-bottom: 0.15em; }
-  h3 { font-size: 13pt; color: var(--primary); }
-  h4 { font-size: 11.5pt; color: var(--primary); }
-  p { margin: 0.5em 0; }
-  ul, ol { margin: 0.5em 0 0.5em 1.2em; padding: 0; }
-  li { margin: 0.15em 0; }
-  blockquote {
-    margin: 0.75em 0;
-    padding: 0.5em 0.9em;
-    border-left: 3px solid var(--accent);
-    background: var(--row-alt);
+    font-family: var(--font-display);
     color: var(--ink);
+    margin: 1.4em 0 0.5em;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+  h1 { font-size: 32pt; font-weight: 800; letter-spacing: -0.02em; }
+  h2 { font-size: 18pt; font-weight: 600; border-bottom: 1px solid var(--ink); padding-bottom: 0.25em; }
+  h3 { font-size: 14pt; font-weight: 600; }
+  h4 { font-size: 12pt; font-weight: 600; }
+  h1 em, h2 em, h3 em, h4 em { font-style: italic; color: var(--accent); font-weight: 400; }
+  p { margin: 0.6em 0; color: #1a1d22; }
+  p em { font-style: italic; color: var(--accent); font-weight: 500; }
+  p strong { font-weight: 600; color: var(--ink); }
+  ul, ol { margin: 0.6em 0 0.6em 1.4em; padding: 0; }
+  li { margin: 0.25em 0; }
+  blockquote {
+    margin: 1em 0;
+    padding: 0.8em 1em;
+    border-left: 4px solid var(--accent);
+    background: var(--paper-2);
     font-style: italic;
   }
   code {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    background: #F1F5F9;
+    font-family: var(--font-mono);
+    background: var(--paper-3);
     padding: 0.1em 0.35em;
     border-radius: 3px;
     font-size: 0.92em;
   }
   pre {
-    background: #F1F5F9;
+    background: var(--paper-3);
     padding: 0.75em 1em;
     border-radius: 4px;
     overflow-x: auto;
     font-size: 0.92em;
+    font-family: var(--font-mono);
   }
   pre code { background: none; padding: 0; }
   hr {
     border: 0;
-    border-top: 1px solid #E5E7EB;
-    margin: 1.2em 0;
+    border-top: 1px solid var(--subtle);
+    margin: 1.5em 0;
   }
-  a { color: var(--accent); text-decoration: none; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
 
+  /* Editorial masthead — kicker + headline + meta row matching the IC
+     Package template. Any brand/footer confidentiality text flows
+     through the kicker. */
   .cover {
-    position: relative;
-    padding: 48pt 40pt 40pt;
-    border-top: 6px solid var(--primary);
-    margin-bottom: 32pt;
+    padding: 20pt 40pt 32pt;
+    border-top: 4px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+    margin: 0 40pt 40pt;
   }
-  .cover .eyebrow {
-    font-family: var(--header-font);
-    font-size: 9pt;
-    color: var(--accent);
-    letter-spacing: 0.18em;
-    margin-bottom: 8pt;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-  .cover .subtitle {
-    font-family: var(--header-font);
-    color: var(--muted);
-    font-size: 11pt;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    margin-bottom: 10pt;
-  }
-  .cover h1 {
-    margin: 0 0 0.3em;
-    font-size: 32pt;
-    letter-spacing: -0.01em;
-  }
-  .cover .accent-rule {
-    width: 48pt;
-    height: 3pt;
-    background: var(--accent);
-    margin: 12pt 0;
-  }
-  .cover .date {
-    color: var(--muted);
-    font-size: 10pt;
-    letter-spacing: 0.05em;
-  }
-  .cover .chips {
-    margin-top: 12pt;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8pt;
-    font-size: 9pt;
-    color: var(--muted);
-  }
-  .cover .chips .chip {
-    padding: 3pt 9pt;
-    border: 1px solid #E5E7EB;
-    border-radius: 9999px;
-  }
-  .cover .confidential {
-    font-family: var(--header-font);
-    color: #C2410C;
-    font-size: 8pt;
-    letter-spacing: 0.18em;
+  .cover .eyebrow, .cover .subtitle, .cover .confidential {
+    font-family: var(--font-mono);
     font-weight: 700;
     text-transform: uppercase;
-    margin-bottom: 28pt;
+    letter-spacing: 0.22em;
+    font-size: 9pt;
+    color: var(--muted);
+  }
+  .cover .confidential { color: var(--muted); margin-bottom: 14pt; }
+  .cover .eyebrow { color: var(--muted); margin-bottom: 14pt; }
+  .cover .subtitle { color: var(--muted); margin-top: 12pt; }
+  .cover h1 {
+    margin: 0;
+    font-size: 44pt;
+    line-height: 0.92;
+  }
+  .cover .accent-rule { display: none; }
+  .cover .date {
+    font-family: var(--font-mono);
+    color: var(--muted);
+    font-size: 10pt;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    margin-top: 14pt;
+  }
+  .cover .chips {
+    margin-top: 14pt;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6pt;
+    font-family: var(--font-mono);
+    font-size: 9pt;
+    color: var(--muted);
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .cover .chips .chip {
+    padding: 3pt 8pt;
+    border: 1px solid var(--ink);
+    background: var(--paper-2);
   }
 
   .body { padding: 0 40pt 40pt; }
   .body > :first-child { margin-top: 0; }
 
-  table.report-table {
+  /* Tables inherit the hairline + paper aesthetic from the IC Package. */
+  table.report-table, .kv-table {
     width: 100%;
     border-collapse: collapse;
-    margin: 0.75em 0;
-    font-size: 10pt;
+    margin: 1em 0;
+    font-size: 10.5pt;
+    background: var(--paper-2);
+    border: 1px solid var(--ink);
   }
   table.report-table th {
-    background: var(--secondary);
-    color: #fff;
-    font-family: var(--header-font);
-    font-weight: 600;
+    background: var(--paper-3);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-weight: 700;
     text-align: left;
-    padding: 6pt 8pt;
+    padding: 8pt 10pt;
     font-size: 9pt;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    border-bottom: 2px solid var(--ink);
   }
-  table.report-table td {
-    padding: 5pt 8pt;
-    border-bottom: 1px solid #E5E7EB;
+  table.report-table td, .kv-table td {
+    padding: 7pt 10pt;
+    border-bottom: 1px solid var(--subtle);
     vertical-align: top;
+    font-family: var(--font-display);
   }
-  table.report-table tr:nth-child(even) td { background: var(--row-alt); }
-
-  .kv-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 0.5em 0;
-    font-size: 10pt;
-  }
-  .kv-table td { padding: 5pt 8pt; border-bottom: 1px solid #E5E7EB; }
+  table.report-table tr:last-child td, .kv-table tr:last-child td { border-bottom: none; }
   .kv-table td.key {
-    width: 32%;
-    font-family: var(--header-font);
-    font-weight: 600;
-    color: var(--secondary);
-    background: var(--row-alt);
+    width: 34%;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 9.5pt;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--paper-3);
   }
 
+  /* Section header — numbered + italic emphasis, mirrors the IC
+     Package .section-head. Use .section with an optional .section-
+     number + h2 inside to get the treatment. */
   .section {
-    margin-top: 24pt;
+    margin-top: 36pt;
     page-break-inside: avoid;
   }
   .section-number {
-    font-family: var(--header-font);
+    font-family: var(--font-mono);
     color: var(--accent);
     font-size: 10pt;
-    letter-spacing: 0.12em;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 4pt;
+  }
+  .section h2 { margin-top: 0.2em; }
+
+  /* Callouts — cream box with brick left border, matching the IC
+     Package .ic-callout. Any generator can drop in a
+     div.callout block with a div.callout-label plus body content. */
+  .callout {
+    background: var(--paper-2);
+    border-left: 4px solid var(--accent);
+    padding: 14pt 18pt;
+    margin: 16pt 0;
+    page-break-inside: avoid;
+  }
+  .callout .callout-label {
+    font-family: var(--font-mono);
+    font-size: 9pt;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 6pt;
   }
 
   .report-footer {
-    margin-top: 32pt;
-    padding: 14pt 40pt 40pt;
-    border-top: 1px solid #E5E7EB;
+    margin-top: 40pt;
+    padding: 16pt 40pt 40pt;
+    border-top: 4px solid var(--ink);
     color: var(--muted);
-    font-size: 8pt;
-    letter-spacing: 0.03em;
+    font-family: var(--font-mono);
+    font-size: 9pt;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 24pt;
+    flex-wrap: wrap;
   }
   .report-footer .disclaimer {
+    flex-basis: 100%;
     margin-top: 8pt;
+    font-family: var(--font-display);
     font-style: italic;
-    color: #9CA3AF;
+    font-size: 8.5pt;
+    letter-spacing: 0;
+    text-transform: none;
+    color: #8a8578;
   }
+  .report-footer strong { color: var(--ink); font-weight: 700; }
 
   @page {
     size: letter;
     margin: 0.5in;
   }
   @media print {
-    h2, h3, .section { break-inside: avoid; }
+    body { background: var(--paper) !important; }
+    h2, h3, .section, .callout { break-inside: avoid; }
     a { color: var(--accent); }
   }
 </style>
@@ -408,9 +456,8 @@ export function renderReportHtml(opts: ReportShellOptions): string {
   <div class="cover">
     ${t.footerText ? `<div class="confidential">${esc(t.footerText)}</div>` : ""}
     ${opts.eyebrow ? `<div class="eyebrow">${esc(opts.eyebrow)}</div>` : ""}
-    ${opts.subtitle ? `<div class="subtitle">${esc(opts.subtitle)}</div>` : ""}
     <h1>${esc(opts.headline)}</h1>
-    <div class="accent-rule"></div>
+    ${opts.subtitle ? `<div class="subtitle">${esc(opts.subtitle)}</div>` : ""}
     <div class="date">${esc(today)}</div>
     ${opts.chips && opts.chips.length > 0
       ? `<div class="chips">${opts.chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("")}</div>`
@@ -422,7 +469,7 @@ export function renderReportHtml(opts: ReportShellOptions): string {
   </div>
 
   <div class="report-footer">
-    ${t.companyName ? `<div><strong>${esc(t.companyName)}</strong>${t.tagline ? ` — ${esc(t.tagline)}` : ""}</div>` : ""}
+    <div>${t.companyName ? `<strong>${esc(t.companyName)}</strong>${t.tagline ? ` · ${esc(t.tagline)}` : ""}` : ""}</div>
     ${contacts ? `<div>${esc(contacts)}</div>` : ""}
     ${t.disclaimerText ? `<div class="disclaimer">${esc(t.disclaimerText)}</div>` : ""}
   </div>

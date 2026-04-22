@@ -38,27 +38,58 @@ const AUDIENCE_TONES: Record<string, string> = {
     "VOICE: Direct, engineer-style. Flag blockers first. State the bid, walk price, and re-trade triggers. If the deal is a pass, say so and list the three dispositive reasons.",
 };
 
+// Each format has its own tuned instruction block. The editorial
+// report shell (src/lib/report-html-shell.ts) renders everything in
+// Fraunces + JetBrains Mono, brick/ochre/forest palette — so the
+// prompts focus on *voice + structure*, not visual formatting. Common
+// rules across every format:
+//   - Use <em>…</em> wrappers around the single most important phrase
+//     in a paragraph (the shell italicizes them in brick). Sparingly.
+//   - Em-dashes are encouraged for asides — adds texture.
+//   - Never use corporate jargon: "leverage," "synergies," "value-add
+//     opportunity" without specifics, "robust," "best-in-class,"
+//     "differentiated platform."
+//   - Cite sources inline: (T-12), (CoStar Q3 '24), (broker OM),
+//     (internal UW). Tag UNVERIFIED when the source is absent.
+const COMMON_VOICE =
+  "VOICE BASELINE (applies to every format):\n" +
+  "- Declarative sentences. Vary length deliberately.\n" +
+  "- Italicize the single most important phrase per paragraph with <em>…</em> — sparingly.\n" +
+  "- Em-dashes for asides — like this — to add texture.\n" +
+  "- Replace corporate jargon (\"leverage,\" \"synergies,\" \"robust,\" \"best-in-class\") with concrete, numeric claims.\n" +
+  "- Numbers are characters in the story, not decoration. Every claim carries a number, a source citation, or both.\n" +
+  "- Acknowledge tradeoffs and counter-arguments. Never oversell. Confidence comes from honest framing.\n" +
+  "- Cite sources inline: (T-12), (CoStar Q3 '24), (broker OM), (internal UW). Tag UNVERIFIED when absent.";
+
 const FORMAT_INSTRUCTIONS: Record<string, string> = {
   pitch_deck:
-    "FORMAT: Board-ready slide.\n" +
-    "- 3-6 bullets per section. Each bullet ≤ 15 words.\n" +
-    "- Bullet 1 is the headline metric. Bullets 2+ are supporting evidence.\n" +
+    COMMON_VOICE +
+    "\n\n" +
+    "FORMAT: Pitch deck section — board-ready, visually scannable.\n" +
+    "- 3–6 bullets per section. Each bullet ≤ 15 words.\n" +
+    "- Bullet 1 is the headline metric wrapped in <strong>…</strong>. Bullets 2+ are supporting evidence.\n" +
     "- Prefer numbers to adjectives. No run-on sentences. No filler.\n" +
-    "- Markdown: `-` for bullets. `**bold**` only for the key metric inside a bullet. No `##` headers.",
+    "- Markdown: `-` for bullets. `**bold**` only for the lead metric in bullet 1. No `##` headers.\n" +
+    "- If the deal has a weakness the slide would skip, address it in one bullet with the mitigant in the same line.",
   investment_memo:
-    "FORMAT: Institutional investment memo.\n" +
-    "- Each section: 1 bold takeaway sentence (≤ 20 words) + 4-8 bullets (≤ 20 words each).\n" +
-    "- TABLES FIRST when the section context provides a markdown table (unit mix, sources & uses, comps). Paste the table verbatim; do NOT re-render its values in prose. Write analytical bullets AFTER the table.\n" +
-    "- Every non-table bullet carries a specific number, source citation, or action. If it doesn't, delete it.\n" +
-    "- NO multi-sentence paragraphs of prose. NO section recaps. NO transitional language between bullets.\n" +
-    "- Cite sources inline in parentheses: (T-12), (CoStar Q3 '24), (broker OM), (internal UW). If the source is missing, tag the bullet UNVERIFIED.\n" +
-    "- For returns/exit/risk sections, show base / downside / upside on one inline line each, not three paragraphs.",
+    COMMON_VOICE +
+    "\n\n" +
+    "FORMAT: Institutional investment memo — IC-ready, analytical, dense.\n" +
+    "- Each section leads with a bold takeaway sentence ≤ 20 words, then 4–8 bullets ≤ 20 words each.\n" +
+    "- TABLES FIRST when the section context supplies a markdown table (unit mix, sources & uses, comps). Paste verbatim; do NOT re-render its numbers in prose. Analytical bullets go AFTER the table.\n" +
+    "- Every non-table bullet carries a specific number, a source citation, or an action. If it doesn't — delete it.\n" +
+    "- NO multi-sentence paragraphs. NO section recaps. NO transitional language.\n" +
+    "- Separate UNDERWRITTEN / VERIFIED / ASSUMED when a claim's provenance matters.\n" +
+    "- For returns / exit / risk sections, show base / downside / upside on one inline line each, not three paragraphs.\n" +
+    "- Take a position. Do not hedge. If the deal is a pass at this price, say so.",
   one_pager:
-    "FORMAT: Single-page teaser.\n" +
-    "- ≤ 350 words across ALL sections combined. Be ruthless.\n" +
-    "- Each section: 1 headline sentence + up to 2 bullets. The bullets carry 3-4 numbers.\n" +
-    "- Thesis, basis ($/unit or $/SF), going-in yield, stabilized yield, levered IRR, equity multiple, hold, equity check.\n" +
-    "- No narrative. No adjectives. Numbers and thesis only.",
+    COMMON_VOICE +
+    "\n\n" +
+    "FORMAT: One-pager / LP teaser — ≤ 350 words across ALL sections combined. Be ruthless.\n" +
+    "- Each section: 1 headline sentence + up to 2 bullets. Bullets carry 3–4 numbers total.\n" +
+    "- Cover the thesis in one breath, then basis ($/unit or $/SF), going-in yield, stabilized yield, levered IRR, equity multiple, hold, equity check.\n" +
+    "- No narrative paragraphs. No adjectives. Numbers and the thesis.\n" +
+    "- If you find yourself explaining anything, cut it. The reader either already knows or will ask.",
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
