@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import {
   Save,
   Loader2,
-  Printer,
   CheckCircle,
   AlertTriangle,
   FileSignature,
@@ -16,6 +15,7 @@ import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import type { LOIData, Deal, Contact, StakeholderType, Document } from "@/lib/types";
 import { DocCoverageChip } from "@/components/ai";
+import GenerateToLibraryButton from "@/components/GenerateToLibraryButton";
 
 const DEFAULT_LOI: LOIData = {
   buyer_entity: "",
@@ -195,45 +195,6 @@ export default function LOIPage({ params }: { params: { id: string } }) {
     }
   };
 
-  const printLOI = async () => {
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
-
-    // Fetch branding from deal's business plan
-    let branding = null;
-    try {
-      if (deal?.business_plan_id) {
-        const res = await fetch(`/api/business-plans/${deal.business_plan_id}`);
-        const json = await res.json();
-        const plan = json.data;
-        if (plan) {
-          branding = {
-            company_name: plan.branding_company_name,
-            tagline: plan.branding_tagline,
-            logo_url: plan.branding_logo_url,
-            logo_width: plan.branding_logo_width,
-            primary_color: plan.branding_primary_color,
-            secondary_color: plan.branding_secondary_color,
-            accent_color: plan.branding_accent_color,
-            header_font: plan.branding_header_font,
-            body_font: plan.branding_body_font,
-            footer_text: plan.branding_footer_text,
-            website: plan.branding_website,
-            email: plan.branding_email,
-            phone: plan.branding_phone,
-            address: plan.branding_address,
-            disclaimer_text: plan.branding_disclaimer_text,
-          };
-        }
-      }
-    } catch { /* use defaults */ }
-
-    const address = deal ? [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ") : "";
-    const loiHtml = generateLOIHtml(data, address, branding);
-    printWindow.document.write(loiHtml);
-    printWindow.document.close();
-    printWindow.print();
-  };
 
   if (loading) {
     return (
@@ -263,10 +224,12 @@ export default function LOIPage({ params }: { params: { id: string } }) {
             </Button>
             <DocCoverageChip documents={documents} section="loi" />
           </div>
-          <Button variant="outline" onClick={printLOI}>
-            <Printer className="h-4 w-4 mr-2" />
-            Export / Print
-          </Button>
+          <GenerateToLibraryButton
+            dealId={params.id}
+            kind="loi"
+            getPayload={() => ({ data })}
+            variant="outline"
+          />
           <Button onClick={() => save(false)} disabled={saving}>
             {saving && !markingExecuted ? (
               <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -517,9 +480,13 @@ export default function LOIPage({ params }: { params: { id: string } }) {
                 <FileSignature className="h-4 w-4 text-muted-foreground" />
                 <h3 className="font-semibold text-sm">LOI Preview</h3>
               </div>
-              <Button variant="outline" size="sm" onClick={printLOI}>
-                <Printer className="h-3 w-3 mr-1" /> Export / Print
-              </Button>
+              <GenerateToLibraryButton
+                dealId={params.id}
+                kind="loi"
+                getPayload={() => ({ data })}
+                size="sm"
+                variant="outline"
+              />
             </div>
             <div className="bg-white text-black rounded-lg p-6 text-sm leading-relaxed shadow-inner border font-serif max-h-[calc(100vh-10rem)] overflow-y-auto" style={{ fontFamily: "Georgia, serif" }}>
               <LOIPreview data={data} address={address} dealName={deal?.name || ""} />
@@ -529,9 +496,12 @@ export default function LOIPage({ params }: { params: { id: string } }) {
       </div>
 
       <div className="flex justify-end gap-3">
-        <Button variant="outline" onClick={printLOI}>
-          <Printer className="h-4 w-4 mr-2" /> Export / Print
-        </Button>
+        <GenerateToLibraryButton
+          dealId={params.id}
+          kind="loi"
+          getPayload={() => ({ data })}
+          variant="outline"
+        />
         <Button onClick={() => save(false)} disabled={saving}>
           {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
           Save LOI
@@ -640,153 +610,3 @@ function LOIPreview({ data, address, dealName }: { data: LOIData; address: strin
   );
 }
 
-interface BrandingData {
-  company_name?: string;
-  tagline?: string;
-  logo_url?: string | null;
-  logo_width?: number | null;
-  primary_color?: string;
-  secondary_color?: string;
-  accent_color?: string;
-  header_font?: string;
-  body_font?: string;
-  footer_text?: string;
-  website?: string;
-  email?: string;
-  phone?: string;
-  address?: string;
-  disclaimer_text?: string;
-}
-
-function generateLOIHtml(data: LOIData, address: string, branding?: BrandingData | null): string {
-  const b = branding ?? {};
-  const primaryColor = b.primary_color || "#000000";
-  const secondaryColor = b.secondary_color || "#333333";
-  const accentColor = b.accent_color || "#666666";
-  const headerFont = b.header_font || "Georgia";
-  const bodyFont = b.body_font || "Georgia";
-  const footerText = b.footer_text || "CONFIDENTIAL";
-  const companyName = b.company_name || "";
-
-  const fmt = (n: number | null) => (n ? `$${n.toLocaleString()}` : "_____________");
-  const fmtDays = (n: number | null) => (n ? `${n}` : "___");
-  const dateStr = data.loi_date
-    ? new Date(data.loi_date + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
-    : "_______________";
-
-  const logoHtml = b.logo_url
-    ? `<img src="${b.logo_url}" alt="${companyName}" style="max-height: 80px; width: ${b.logo_width || 160}px; object-fit: contain;" />`
-    : `<div style="width: 90px; height: 90px; border: 2px dashed #bbb; display: flex; align-items: center; justify-content: center; font-size: 9pt; color: #999;">LOGO</div>`;
-
-  const entityName = companyName || "[ENTITY NAME]";
-  const entityAddress = b.address || "[ENTITY ADDRESS LINE 1]<br/>[CITY, STATE ZIP]";
-  const contactBits = [b.phone || "[PHONE]", b.email || "[EMAIL]"].join("  |  ");
-
-  const headerHtml = `<div class="branded-header">
-    <div style="display: flex; align-items: center; gap: 16px;">
-      ${logoHtml}
-      <div style="font-family: ${headerFont}, sans-serif; line-height: 1.4;">
-        <div style="font-weight: 700; font-size: 14pt; color: ${secondaryColor};">${entityName}</div>
-        <div style="font-size: 10pt; color: ${accentColor};">${entityAddress}</div>
-        <div style="font-size: 10pt; color: ${accentColor};">${contactBits}</div>
-      </div>
-    </div>
-  </div>`;
-
-  const disclaimerHtml = b.disclaimer_text
-    ? `<p class="disclaimer">${b.disclaimer_text}</p>`
-    : "";
-
-  const paymentTerms = data.as_is ? "All cash to Seller" : "[PAYMENT TERMS]";
-  const financingLine = data.has_financing_contingency
-    ? `${fmtDays(data.financing_contingency_days)} day financing contingency${data.lender_name ? ` (anticipated lender: ${data.lender_name})` : ""}`
-    : "None — Buyer obtaining loan without contingency";
-  const propertyRef = address || "[PROPERTY ADDRESS], [CITY, STATE]";
-
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8"/>
-<title>Letter of Intent${companyName ? ` — ${companyName}` : ""}</title>
-<style>
-  body { font-family: ${bodyFont}, Georgia, serif; font-size: 11pt; line-height: 1.55; color: #000; max-width: 780px; margin: 40px auto; padding: 0 40px; }
-  p { margin: 8px 0; }
-  ol { margin: 8px 0; padding-left: 24px; }
-  ol li { margin: 4px 0; }
-  .branded-header { padding-bottom: 16px; margin-bottom: 20px; border-bottom: 3px solid ${primaryColor}; }
-  .section-title { font-weight: 700; margin-top: 18px; margin-bottom: 4px; color: ${secondaryColor}; }
-  .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 24px; }
-  .sig-line { border-bottom: 1px solid black; margin-top: 32px; margin-bottom: 4px; }
-  .sig-label { font-size: 9pt; color: #333; }
-  .nonbinding { font-size: 9pt; color: #555; border-top: 1px solid #ddd; padding-top: 12px; margin-top: 20px; line-height: 1.5; }
-  .footer { font-size: 9pt; color: ${accentColor}; border-top: 1px solid ${primaryColor}40; padding-top: 10px; margin-top: 20px; display: flex; justify-content: space-between; }
-  .disclaimer { font-size: 8pt; color: #999; margin-top: 12px; line-height: 1.4; }
-  @media print { body { margin: 0; padding: 20px; } }
-</style>
-</head>
-<body>
-${headerHtml}
-
-<p><strong>Date:</strong> ${dateStr}</p>
-
-<p><strong>TO:</strong> ${data.seller_name || "[SELLER / SELLER'S REP NAME]"}<br/>
-[Company / Brokerage Name]<br/>
-${data.seller_address || "[Address]"}<br/>
-[Email]</p>
-
-<p><strong>Re:</strong> Letter of Intent for the purchase of <strong>${propertyRef}</strong> (the &ldquo;Property&rdquo;)</p>
-
-<p>For your consideration, please find the following Letter of Intent for the above-referenced Property at the terms outlined below.</p>
-
-<p>This letter sets forth the general terms and conditions for the proposed acquisition of the Property, but shall remain non-binding:</p>
-
-<p class="section-title">Proposed Terms</p>
-<ol>
-  <li><strong>Purchase Price:</strong> ${fmt(data.purchase_price)}</li>
-  <li><strong>Terms:</strong> ${paymentTerms}</li>
-  <li><strong>Earnest Money:</strong> ${fmt(data.earnest_money)}${data.earnest_money_hard_days ? ` (non-refundable after ${data.earnest_money_hard_days} days)` : " due upon execution of PSA"}</li>
-  <li><strong>Form of PSA:</strong> [PSA TERMS]</li>
-  <li><strong>Inspection Contingency:</strong> ${fmtDays(data.due_diligence_days)} days</li>
-  <li><strong>Financing Contingency:</strong> ${financingLine}</li>
-  <li><strong>Title &amp; Escrow:</strong> [TITLE/ESCROW TERMS]</li>
-  <li><strong>Buyer&rsquo;s Broker:</strong> ${data.broker_name || "[BROKER NAME / ENTITY]"}${data.broker_commission ? ` — ${data.broker_commission}` : ""}</li>
-  <li><strong>Closing Timeline:</strong> ${data.closing_days ? `${data.closing_days} days from removal of inspection contingencies` : "[CLOSING TERMS]"}</li>
-</ol>
-
-<p class="section-title">Additional Terms (Optional)</p>
-<ol start="10">
-  <li><strong>Seller Representations:</strong> [REPS &amp; WARRANTIES TERMS]</li>
-  <li><strong>Assignment:</strong> [ASSIGNMENT RIGHTS]</li>
-  <li><strong>Seller&rsquo;s Deliverables:</strong> [DUE DILIGENCE ITEMS]</li>
-  <li><strong>Conditions Precedent:</strong> [CONDITIONS]</li>
-  ${data.additional_terms ? `<li>${data.additional_terms.replace(/\n/g, "<br/>")}</li>` : `<li>[ADDITIONAL TERM LABEL]: [ADDITIONAL TERM DETAIL]</li>`}
-</ol>
-
-<p>This sets out the key parameters. Please respond by <strong>[RESPONSE DEADLINE DATE]</strong>.</p>
-
-<p class="nonbinding">Please understand that this is not a binding commitment. This letter is not an offer, solicitation of an offer, or an acceptance, and creates no contractual, good faith, or other obligations. Such obligations can be created only by a formal Purchase and Sale Agreement, executed by all parties thereto. The undersigned reserves the right to discontinue discussion at any time, for any reason or for no reason, prior to the mutual execution of a formal Purchase and Sale Agreement. Seller will not have any obligations to Buyer, and Buyer will not acquire any rights or causes of action against Seller, unless Seller and Buyer both execute and deliver the Purchase and Sale Agreement.</p>
-
-<p class="section-title">Signatures</p>
-<div class="sig-grid">
-  <div>
-    <strong>BUYER:</strong>
-    <div class="sig-line"></div><p class="sig-label">Signature</p>
-    <div class="sig-line"></div><p class="sig-label">Printed Name / Title</p>
-    <div class="sig-line"></div><p class="sig-label">Date</p>
-  </div>
-  <div>
-    <strong>SELLER (ACCEPTANCE):</strong>
-    <div class="sig-line"></div><p class="sig-label">Signature</p>
-    <div class="sig-line"></div><p class="sig-label">Printed Name / Title</p>
-    <div class="sig-line"></div><p class="sig-label">Date</p>
-  </div>
-</div>
-
-<div class="footer">
-  <span>${footerText}</span>
-  <span>${companyName}</span>
-</div>
-${disclaimerHtml}
-</body>
-</html>`;
-}
