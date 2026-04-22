@@ -16,9 +16,9 @@
 import React, { useMemo, useState } from "react";
 import {
   AlertTriangle, Check, Ruler, Home, Trees, Info,
-  Pencil, Trash2,
+  Pencil, Trash2, Loader2, RefreshCw,
 } from "lucide-react";
-import type { SitePlan, SitePlanBuilding, SitePlanScenario } from "@/lib/types";
+import type { SitePlan, SitePlanBuilding, SitePlanScenario, SitePlanPoint } from "@/lib/types";
 import type { SitePlanSetbacks } from "./SitePlanGenerator";
 import { polygonAreaSf, insetPolygon } from "./site-plan-utils";
 
@@ -32,13 +32,16 @@ interface Props {
   // Land SF from the site-info section — lets us flag when the drawn parcel
   // disagrees with the typed land acreage.
   expectedLandSf?: number | null;
+  // Deal ID — required for the auto-fill parcel lookup. When omitted the
+  // auto-fill button is hidden.
+  dealId?: string;
 }
 
 const fn = (n: number) => (n || n === 0 ? Math.round(n).toLocaleString("en-US") : "—");
 const fn2 = (n: number) => (n || n === 0 ? n.toLocaleString("en-US", { maximumFractionDigits: 2 }) : "—");
 
 export default function SitePlanMetrics({
-  value, onChange, setbacks, zoningLotCoveragePct, expectedLandSf,
+  value, onChange, setbacks, zoningLotCoveragePct, expectedLandSf, dealId,
 }: Props) {
   // The metrics sidebar always reflects the currently active scenario.
   // Scenario switches happen via the top-level scenario tab bar rendered
@@ -109,6 +112,42 @@ export default function SitePlanMetrics({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
 
+  // Auto-fill parcel state
+  const [parcelFillLoading, setParcelFillLoading] = useState(false);
+  const [parcelFillResult, setParcelFillResult] = useState<{ points: SitePlanPoint[]; areaSf: number } | null>(null);
+
+  const autoFillParcel = async () => {
+    if (!dealId || !activeScen) return;
+    setParcelFillLoading(true);
+    setParcelFillResult(null);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/parcel-polygon`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.data?.points?.length) {
+        setParcelFillResult(null);
+        alert("Parcel boundary not found in OpenStreetMap — draw it manually on the map.");
+        return;
+      }
+      const pts: SitePlanPoint[] = json.data.points;
+      const areaSf = Math.round(polygonAreaSf(pts));
+      setParcelFillResult({ points: pts, areaSf });
+    } catch {
+      alert("Parcel lookup failed — check your connection and try again.");
+    } finally {
+      setParcelFillLoading(false);
+    }
+  };
+
+  const applyParcelFill = () => {
+    if (!parcelFillResult || !activeScen) return;
+    updateActiveScen((scen) => ({
+      ...scen,
+      parcel_points: parcelFillResult.points,
+      parcel_area_sf: parcelFillResult.areaSf,
+    }));
+    setParcelFillResult(null);
+  };
+
   // Mutation helpers — every write funnels through updateActiveScen so
   // only the active scenario's copy of the buildings list changes. Other
   // scenarios are untouched.
@@ -155,6 +194,46 @@ export default function SitePlanMetrics({
           secondary={hasBuildings ? "Total footprint" : "Draw building on map"}
         />
       </div>
+      {/* Auto-fill parcel from OSM */}
+      {dealId && (
+        <div>
+          {parcelFillResult ? (
+            <div className="border border-emerald-500/30 rounded-md bg-emerald-500/5 px-3 py-2">
+              <p className="text-xs text-emerald-200 mb-2">
+                Parcel found (~{fn(parcelFillResult.areaSf)} SF). Use it?
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={applyParcelFill}
+                  className="px-3 py-1 text-xs rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+                >
+                  Yes, apply
+                </button>
+                <button
+                  onClick={() => setParcelFillResult(null)}
+                  className="px-3 py-1 text-xs rounded border border-border/40 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={autoFillParcel}
+              disabled={parcelFillLoading}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-dashed border-border/50 text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
+              title="Look up parcel boundary from OpenStreetMap"
+            >
+              {parcelFillLoading ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3" />
+              )}
+              {hasParcel ? "Refresh parcel from OSM" : "Auto-fill parcel from OSM"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Buildings list — one row per drawn building, with select / rename / delete. */}
       {hasBuildings && (

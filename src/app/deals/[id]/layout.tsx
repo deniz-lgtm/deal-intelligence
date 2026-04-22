@@ -79,9 +79,8 @@ const BASE_NAV_GROUPS: NavGroup[] = [
   {
     label: "Analysis",
     items: [
-      { href: "/om-analysis", label: "OM Analysis", icon: FileSearch },
-      { href: "/site-zoning", label: "Site & Zoning", icon: MapPin },
-      { href: "/programming", label: "Programming", icon: Layers },
+      { href: "/site-zoning", label: "Zoning", icon: MapPin },
+      { href: "/programming", label: "Site Plan & Program", icon: Layers },
       { href: "/underwriting", label: "Underwriting", icon: Calculator },
       { href: "/comps", label: "Comps", icon: BarChart3 },
       { href: "/location", label: "Location Intel", icon: Globe },
@@ -91,6 +90,7 @@ const BASE_NAV_GROUPS: NavGroup[] = [
     label: "Files",
     items: [
       { href: "/documents", label: "Documents", icon: FileText },
+      { href: "/om-analysis", label: "OM Analysis", icon: FileSearch },
       { href: "/photos", label: "Photos", icon: Camera },
     ],
   },
@@ -101,8 +101,12 @@ const BASE_NAV_GROUPS: NavGroup[] = [
       { href: "/project", label: "Project", icon: ClipboardList },
       { href: "/site-walk", label: "Site Walk", icon: Footprints },
       { href: "/loi", label: "LOI", icon: FileSignature },
-      { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
+      // Investment Package is now the single authoring surface for every
+      // format — pitch deck, investment memo, one-pager, and IC Package.
+      // Exports land in Reports & Packages instead of one-shot downloads.
       { href: "/investment-package", label: "Inv. Package", icon: Presentation },
+      { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
+      { href: "/reports", label: "Reports", icon: FolderArchive },
       { href: "/room", label: "Deal Room", icon: Share2 },
     ],
   },
@@ -130,12 +134,24 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
   ],
 };
 
-// Acquisition deals don't add new SF, so Programming (unit mix / massing) and
-// Site & Zoning (density bonuses / site plan drawing) are rarely needed. We
-// keep the nav items clickable but de-emphasize them so users aren't funneled
-// into ground-up workflows for a straight buy-and-operate deal.
-const ACQUISITION_MUTED_HREFS = new Set(["/programming", "/site-zoning"]);
+// Acquisition deals don't add new SF, so Programming / Site Plan is rarely
+// needed. Zoning is useful for all deals, so it is no longer muted.
+const ACQUISITION_MUTED_HREFS = new Set(["/programming"]);
 const MUTED_REASON_ACQUISITION = "Not typically used for acquisition deals.";
+
+// Massing-aware routes read the active project from `?massing=<id>`.
+// The sidebar preserves the param when navigating between them so an
+// analyst working on "Massing 2" doesn't bounce back to the base case
+// every time they click over to the DD Abstract or Investment Package.
+// Site & Zoning no longer has massing tabs (the map moved to Programming).
+const MASSING_AWARE_HREFS = new Set([
+  "/underwriting",
+  "/programming",
+  "/dd-abstract",
+  "/investment-package",
+  "/reports",
+]);
+
 
 function applyScopeGating(groups: NavGroup[], dealScope: DealScope | null): NavGroup[] {
   if (dealScope !== "acquisition") return groups;
