@@ -1,32 +1,40 @@
 import "./styles/ic-tokens.css";
 import IcPackageClient from "./IcPackageClient";
 import { dealToContext } from "@/lib/ic-package-deal-adapter";
-import { dealQueries, underwritingQueries } from "@/lib/db";
+import { dealQueries, underwritingQueries, icPackageQueries } from "@/lib/db";
+import type { ProseSections } from "./types";
 
 interface PageProps {
   params: { id: string };
 }
 
 /**
- * IC Package route. Server component — loads the deal record (and any
- * underwriting snapshot) and hands structured context to the interactive
+ * IC Package route. Server component — loads the deal record, the latest
+ * underwriting snapshot, and any previously saved IC package for the
+ * deal, then hands structured context + saved prose to the interactive
  * client view.
  *
- * If the deal is missing enough data to render a real package, we pass
- * `dealContext = null` and the client falls back to the Crestmont demo
- * fixture so the design system is still viewable.
+ * If the deal is missing, we pass `dealContext = null` and the client
+ * falls back to the Crestmont demo fixture so the design system is still
+ * viewable.
  */
 export default async function IcPackagePage({ params }: PageProps) {
-  const deal = await dealQueries.getById(params.id).catch(() => null);
-  const uwRow = await underwritingQueries.getByDealId(params.id).catch(() => null);
+  const [deal, uwRow, savedRow] = await Promise.all([
+    dealQueries.getById(params.id).catch(() => null),
+    underwritingQueries.getByDealId(params.id).catch(() => null),
+    icPackageQueries.getLatest(params.id).catch(() => null),
+  ]);
 
   const dealContext = deal ? dealToContext(deal, uwRow) : null;
+  const savedProse = (savedRow?.prose as ProseSections | null) ?? null;
+  const savedVersion = savedRow?.version ?? null;
 
   return (
     <IcPackageClient
       dealId={params.id}
       dealContext={dealContext}
-      savedProse={null}
+      savedProse={savedProse}
+      savedVersion={savedVersion}
     />
   );
 }

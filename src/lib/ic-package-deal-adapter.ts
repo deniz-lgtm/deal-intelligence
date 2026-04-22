@@ -7,11 +7,61 @@
  * and the prose generator is told to handle the gap gracefully.
  */
 
-import type { Deal } from "./types";
+import type { Deal, PropertyType } from "./types";
+import type { UWData } from "./underwriting-calc";
+import { calc, xirr } from "./underwriting-calc";
 import type { DealContext, CapitalSource } from "@/app/deals/[id]/ic-package/types";
 
 interface UwRowLike {
   data?: unknown;
+}
+
+/**
+ * Map a deal's property_type to the calc-mode expected by the UW engine.
+ * Office/retail/industrial/mixed-use feed the commercial path; MF/SFR the
+ * multifamily path; student_housing its own path. Anything else (land,
+ * hospitality) falls through to commercial as a safe default.
+ */
+function calcMode(pt: PropertyType): "commercial" | "multifamily" | "student_housing" {
+  if (pt === "multifamily" || pt === "sfr") return "multifamily";
+  if (pt === "student_housing") return "student_housing";
+  return "commercial";
+}
+
+/**
+ * Pull headline deal metrics out of a UW blob by running the real calc
+ * engine. Any error — malformed blob, missing unit groups, divide-by-
+ * zero — returns all-nulls so the prose generator can handle the gap
+ * honestly rather than printing garbage numbers.
+ */
+function deriveHeadlineMetrics(
+  uw: Record<string, unknown> | null,
+  mode: "commercial" | "multifamily" | "student_housing"
+): {
+  goingInCap: number | null;
+  stabilizedYOC: number | null;
+  leveredIRR: number | null;
+  equityMultiple: number | null;
+} {
+  if (!uw) return { goingInCap: null, stabilizedYOC: null, leveredIRR: null, equityMultiple: null };
+  try {
+    const r = calc(uw as unknown as UWData, mode);
+    const flows = [-r.equity, ...r.yearlyDCF.map((yr: { cashFlow: number }) => yr.cashFlow)];
+    // Add the exit equity back to the final year's flow to close out the
+    // series before handing it to xirr.
+    if (flows.length > 1) {
+      flows[flows.length - 1] = flows[flows.length - 1] + r.exitEquity;
+    }
+    const irr = xirr(flows);
+    return {
+      goingInCap: Number.isFinite(r.inPlaceCapRate) ? r.inPlaceCapRate : null,
+      stabilizedYOC: Number.isFinite(r.yoc) ? r.yoc : null,
+      leveredIRR: irr,
+      equityMultiple: Number.isFinite(r.em) && r.em > 0 ? r.em : null,
+    };
+  } catch {
+    return { goingInCap: null, stabilizedYOC: null, leveredIRR: null, equityMultiple: null };
+  }
 }
 
 function parseUw(row: UwRowLike | null): Record<string, unknown> | null {
@@ -97,8 +147,8 @@ export function dealToContext(
   const pricePerUnit =
     purchasePrice && unitCount ? Math.round(purchasePrice / unitCount) : null;
 
-  const exitCap = num(uw?.exit_cap_rate);
   const hold = num(uw?.hold_period_years);
+  const headline = deriveHeadlineMetrics(uw, calcMode(deal.property_type));
 
   const location = [deal.city, deal.state].filter(Boolean).join(", ");
 
@@ -107,13 +157,10 @@ export function dealToContext(
     propertyType: deal.property_type,
     location,
     purchasePrice,
-    // TODO: compute from calc(); headline metrics fall through as null
-    // until we wire a server-side calc step. Prose generator is told to
-    // be honest about any missing numbers.
-    goingInCap: null,
-    stabilizedYOC: null,
-    leveredIRR: null,
-    equityMultiple: null,
+    goingInCap: headline.goingInCap,
+    stabilizedYOC: headline.stabilizedYOC,
+    leveredIRR: headline.leveredIRR,
+    equityMultiple: headline.equityMultiple,
     holdPeriod: hold,
     pricePerUnit,
     unitCount,

@@ -753,6 +753,22 @@ export async function ensureColumns(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_change_orders_deal_id ON deal_change_orders(deal_id)`,
+    // IC Package versions — each row is an editable draft/final of the
+    // deal's investment-committee briefing. `prose` holds the LLM-
+    // generated sections merged with any human edits.
+    `CREATE TABLE IF NOT EXISTS ic_packages (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      version INTEGER NOT NULL DEFAULT 1,
+      prose JSONB NOT NULL,
+      context JSONB,
+      is_latest BOOLEAN NOT NULL DEFAULT true,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_ic_packages_deal_id ON ic_packages(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_ic_packages_latest ON ic_packages(deal_id, is_latest) WHERE is_latest = true`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -2346,6 +2362,89 @@ export const underwritingQueries = {
       [id, dealId, data]
     );
     return underwritingQueries.getByDealId(dealId);
+  },
+};
+
+// ─── IC Package queries ──────────────────────────────────────────────────────
+//
+// Each IC package is a point-in-time draft or final briefing. We preserve
+// older versions so analysts can diff / restore. `is_latest` marks the
+// single active version per deal; `saveLatest` atomically flips it.
+
+export interface IcPackageRow {
+  id: string;
+  deal_id: string;
+  version: number;
+  prose: unknown;        // JSONB → ProseSections
+  context: unknown;      // JSONB → DealContext snapshot at save time
+  is_latest: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const icPackageQueries = {
+  /** Current active draft/final for a deal, or null if none yet. */
+  getLatest: async (dealId: string): Promise<IcPackageRow | null> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM ic_packages
+       WHERE deal_id = $1 AND is_latest = true
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [dealId]
+    );
+    return (res.rows[0] as IcPackageRow | undefined) ?? null;
+  },
+
+  /** Every saved version (most recent first) — for a future version history UI. */
+  list: async (dealId: string): Promise<IcPackageRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM ic_packages WHERE deal_id = $1 ORDER BY version DESC`,
+      [dealId]
+    );
+    return res.rows as IcPackageRow[];
+  },
+
+  /**
+   * Save a new version and atomically mark it as latest. The previous
+   * latest stays in the table (readable via list()) for history.
+   */
+  saveLatest: async (
+    dealId: string,
+    prose: unknown,
+    context: unknown,
+    createdBy: string | null
+  ): Promise<IcPackageRow> => {
+    const pool = getPool();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: prev } = await client.query(
+        `SELECT MAX(version) AS v FROM ic_packages WHERE deal_id = $1`,
+        [dealId]
+      );
+      const nextVersion = ((prev[0]?.v as number | null) ?? 0) + 1;
+      await client.query(
+        `UPDATE ic_packages SET is_latest = false, updated_at = NOW() WHERE deal_id = $1 AND is_latest = true`,
+        [dealId]
+      );
+      const id = `icpkg-${dealId}-${nextVersion}`;
+      const { rows } = await client.query(
+        `INSERT INTO ic_packages (id, deal_id, version, prose, context, is_latest, created_by, created_at, updated_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, true, $6, NOW(), NOW())
+         RETURNING *`,
+        [id, dealId, nextVersion, JSON.stringify(prose), JSON.stringify(context), createdBy]
+      );
+      await client.query("COMMIT");
+      return rows[0] as IcPackageRow;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   },
 };
 
