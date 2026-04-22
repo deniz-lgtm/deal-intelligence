@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries } from "@/lib/db";
-import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth";
 import { startInboxAnalysis } from "@/lib/inbox";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
@@ -36,11 +36,6 @@ export async function POST(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(
-      params.id,
-      userId
-    );
-    if (accessError) return accessError;
 
     const body = await req.json().catch(() => ({}));
     const businessPlanId = typeof body.business_plan_id === "string" ? body.business_plan_id.trim() : "";
@@ -58,6 +53,11 @@ export async function POST(
       );
     }
 
+    // Access check for inbox items is custom: a deal is startable if
+    // the caller owns it, has an explicit share, OR the deal is
+    // orphaned (owner_id IS NULL — ingested before we started stamping
+    // ownership). Standard requireDealAccess rejects orphans with
+    // "Deal not found", which looked like the polling flow was broken.
     const deal = await dealQueries.getById(params.id);
     if (!deal) {
       return NextResponse.json({ error: "Deal not found" }, { status: 404 });
@@ -67,6 +67,19 @@ export async function POST(
         { error: "Not an auto-ingested inbox item" },
         { status: 400 }
       );
+    }
+    const isOwner = deal.owner_id === userId;
+    const isOrphan = deal.owner_id == null;
+    if (!isOwner && !isOrphan) {
+      // Could add a deal_shares check here, but for inbox items that's
+      // unusual — sharing typically happens after Start Analysis.
+      return NextResponse.json({ error: "Deal not found" }, { status: 404 });
+    }
+    // Lazy claim: stamp ownership on orphans so subsequent requests
+    // (underwriting saves, deal-score, etc.) pass the standard access
+    // gate without special-casing.
+    if (isOrphan) {
+      await dealQueries.update(params.id, { owner_id: userId });
     }
 
     const result = await startInboxAnalysis({

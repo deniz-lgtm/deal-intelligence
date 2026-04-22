@@ -16,7 +16,7 @@ export async function GET() {
   await syncCurrentUser(userId);
 
   try {
-    const rows = await dealQueries.getPendingInboxItems(50);
+    const rows = await dealQueries.getPendingInboxItems(50, userId);
     return NextResponse.json({ data: rows });
   } catch (error) {
     console.error("GET /api/inbox/items error:", error);

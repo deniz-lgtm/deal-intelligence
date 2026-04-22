@@ -12,13 +12,13 @@ export const dynamic = "force-dynamic";
  * the AppShell badge.
  */
 export async function GET() {
-  const { errorResponse } = await requireAuth();
+  const { userId, errorResponse } = await requireAuth();
   if (errorResponse) return errorResponse;
 
   try {
     const [account, pending] = await Promise.all([
       dropboxQueries.get(),
-      dealQueries.countPendingInbox(),
+      dealQueries.countPendingInbox(userId),
     ]);
 
     return NextResponse.json({

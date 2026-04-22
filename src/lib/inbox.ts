@@ -196,7 +196,7 @@ export async function pollDropboxInbox(
     }
 
     try {
-      const ingested = await ingestSingleFile(entry, accessToken, defaultPlan);
+      const ingested = await ingestSingleFile(entry, accessToken, defaultPlan, userId);
       if (ingested) {
         result.ingested++;
         result.new_items.push(ingested);
@@ -265,7 +265,8 @@ function buildDealContext(plan: BusinessPlanRow | null): string | undefined {
 async function ingestSingleFile(
   entry: DropboxEntry,
   accessToken: string,
-  defaultPlan: BusinessPlanRow | null
+  defaultPlan: BusinessPlanRow | null,
+  ownerUserId?: string
 ): Promise<IngestedItem | null> {
   // Download
   const { buffer, metadata } = await downloadFile(
@@ -349,10 +350,15 @@ async function ingestSingleFile(
 
   await dealQueries.create(dealPayload);
 
-  // Flag it as auto-ingested (dealQueries.create doesn't set these columns)
+  // Flag it as auto-ingested and stamp ownership. Without owner_id the
+  // access gate on /api/inbox/items/[id]/start (requireDealAccess)
+  // rejects the deal with "Deal not found" even though the inbox list
+  // still surfaces it — producing a confusing UX where polling appears
+  // to work but Start Analysis doesn't.
   await dealQueries.update(dealId, {
     auto_ingested: true,
     ingested_from_path: entry.path_display,
+    ...(ownerUserId ? { owner_id: ownerUserId } : {}),
   });
 
   // Create the linked document record. The OM stays categorized as

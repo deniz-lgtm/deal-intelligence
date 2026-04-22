@@ -1622,22 +1622,39 @@ export const dealQueries = {
    * Returns auto-ingested deals that haven't been marked reviewed yet,
    * newest first. Used by the /inbox page.
    *
+   * Scoped to the current user — they see their own auto-ingested deals
+   * (owner) plus any inbox deals shared with them. Without this filter
+   * the list returned rows a user couldn't actually open (Start Analysis
+   * would 404 because `/start` runs `requireDealAccess`), producing a
+   * "Deal not found" error that looked like a bug in the polling flow.
+   *
    * The LEFT JOIN on `om_analyses` surfaces the latest analysis state
    * (when one exists) so the inbox UI can decide whether to render the
    * "pick business plan + property type + investment strategy + Start
    * Analysis" card or the "Review" card for a deal whose analysis is
    * already processing or complete.
    */
-  getPendingInboxItems: async (limit = 50) => {
+  getPendingInboxItems: async (limit = 50, userId?: string) => {
     const pool = getPool();
+    const params: unknown[] = [limit];
+    let accessClause = "";
+    if (userId) {
+      params.push(userId);
+      // Owner | explicit share | orphan (owner_id IS NULL). Orphans
+      // cover deals polled before we started stamping owner_id — we
+      // claim them for the calling user on Start Analysis so the
+      // backfill is lazy and self-healing.
+      accessClause = "AND (d.owner_id = $2 OR ds.deal_id IS NOT NULL OR d.owner_id IS NULL)";
+    }
     const res = await pool.query(
-      `SELECT d.*,
+      `SELECT DISTINCT d.*,
               u.data                AS underwriting_data,
               oa.id                 AS analysis_id,
               oa.status             AS analysis_status,
               oa.deal_score         AS analysis_deal_score
        FROM deals d
        LEFT JOIN underwriting u ON u.deal_id = d.id
+       LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $2
        LEFT JOIN LATERAL (
          SELECT id, status, deal_score
          FROM om_analyses
@@ -1647,16 +1664,29 @@ export const dealQueries = {
        ) oa ON TRUE
        WHERE d.auto_ingested = true
          AND d.inbox_reviewed_at IS NULL
+         ${accessClause}
        ORDER BY d.created_at DESC
        LIMIT $1`,
-      [limit]
+      params
     );
     return res.rows;
   },
 
-  /** Count of unreviewed inbox items (for the left-rail badge). */
-  countPendingInbox: async (): Promise<number> => {
+  /** Count of unreviewed inbox items visible to the user (for the left-rail badge). */
+  countPendingInbox: async (userId?: string): Promise<number> => {
     const pool = getPool();
+    if (userId) {
+      const res = await pool.query(
+        `SELECT COUNT(DISTINCT d.id)::int AS c
+         FROM deals d
+         LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
+         WHERE d.auto_ingested = true
+           AND d.inbox_reviewed_at IS NULL
+           AND (d.owner_id = $1 OR ds.deal_id IS NOT NULL OR d.owner_id IS NULL)`,
+        [userId]
+      );
+      return Number(res.rows[0]?.c ?? 0);
+    }
     const res = await pool.query(
       "SELECT COUNT(*)::int AS c FROM deals WHERE auto_ingested = true AND inbox_reviewed_at IS NULL"
     );
