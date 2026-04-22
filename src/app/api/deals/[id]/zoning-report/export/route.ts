@@ -1,28 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  Document, Packer, Paragraph, TextRun, HeadingLevel,
-  Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType,
-  ShadingType,
-} from "docx";
 import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { getBrandingForDeal, documentQueries } from "@/lib/db";
-import { uploadBlob } from "@/lib/blob-storage";
+import { resolveBranding } from "@/lib/export-markdown";
+import { htmlToPdf, PuppeteerMissingError } from "@/lib/html-to-pdf";
 import {
-  resolveBranding,
-  inlineToDocxRuns,
-  markdownToDocx,
-  shadeHex,
-} from "@/lib/export-markdown";
+  markdownToHtml,
+  renderReportHtml,
+  renderKvTable,
+  inlineMarkdownToHtml,
+} from "@/lib/report-html-shell";
+import { uploadBlob } from "@/lib/blob-storage";
 
-// Opt out of static analysis at `next build`. Routes that call requireAuth()
-// hit Clerk's auth() which reads headers(), which fails Next.js's static-page
-// generation phase unless the route is explicitly marked dynamic.
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRec = Record<string, any>;
 
+function esc(s: string): string {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * POST /api/deals/:id/zoning-report/export
+ * Body: { dealName, siteInfo, zoningInfo, devParams, narrative }
+ * Returns: application/pdf
+ *
+ * Replaces the previous DOCX export with an HTML → PDF pipeline shared
+ * with DD Abstract, Investment Package, and IC Package. Structured data
+ * (site info, zoning, setbacks, heights, density bonuses, legislation)
+ * renders as branded KV tables; the AI narrative flows through the
+ * shared markdown→HTML converter.
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -43,69 +58,10 @@ export async function POST(
     };
 
     let branding: Record<string, unknown> | null = null;
-    try { branding = await getBrandingForDeal(params.id); } catch { /* use defaults */ }
-
-    // Business-plan branding — colors, fonts, confidentiality, disclaimer
-    // all come from here. One source of truth across every export route.
+    try { branding = await getBrandingForDeal(params.id); } catch { /* defaults */ }
     const theme = resolveBranding(branding);
-    const hFont = theme.headerFont;
-    const bFont = theme.bodyFont;
 
-    const children: Array<Paragraph | Table> = [];
-
-    // ── Branded cover ───────────────────────────────────────────────────
-    if (theme.companyName) {
-      children.push(new Paragraph({
-        children: [new TextRun({ text: theme.companyName, size: 32, bold: true, color: theme.secondaryColor, font: hFont })],
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 40 },
-      }));
-      if (theme.tagline) {
-        children.push(new Paragraph({
-          children: [new TextRun({ text: theme.tagline, size: 18, color: theme.accentColor, font: bFont })],
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 40 },
-        }));
-      }
-      const contacts = [theme.website, theme.email, theme.phone].filter(Boolean);
-      if (contacts.length > 0) {
-        children.push(new Paragraph({
-          children: [new TextRun({ text: contacts.join("  ·  "), size: 16, color: "999999", font: bFont })],
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 80 },
-        }));
-      }
-      children.push(new Paragraph({
-        border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: theme.primaryColor } },
-        spacing: { after: 200 },
-      }));
-    }
-
-    children.push(new Paragraph({
-      children: [new TextRun({ text: "STRICTLY CONFIDENTIAL", size: 18, bold: true, color: "C2410C", font: hFont })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 80 },
-    }));
-    children.push(new Paragraph({
-      children: [new TextRun({ text: "Zoning & Site Report", size: 36, bold: true, color: theme.secondaryColor, font: hFont })],
-      heading: HeadingLevel.TITLE,
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 80 },
-    }));
-    children.push(new Paragraph({
-      children: [new TextRun({ text: dealName, size: 26, bold: true, color: theme.primaryColor, font: hFont })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 200 },
-    }));
-    children.push(new Paragraph({
-      children: [new TextRun({ text: `Prepared: ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`, size: 20, color: "666666", font: bFont })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 320 },
-    }));
-
-    // ── Site Information ────────────────────────────────────────────────
-    children.push(sectionHeading("Site Information", theme));
-
+    // ── Site Information ─────────────────────────────────────────
     const siteRows: Array<[string, string]> = [
       ["Land Area", `${siteInfo?.land_acres || 0} AC / ${Math.round(siteInfo?.land_sf || 0).toLocaleString()} SF`],
       ["Parcel ID", siteInfo?.parcel_id || "—"],
@@ -116,14 +72,8 @@ export async function POST(
       ["Environmental", siteInfo?.environmental_notes || "—"],
       ["Soil Conditions", siteInfo?.soil_conditions || "—"],
     ];
-    const siteRowsFiltered = siteRows.filter(([, v]) => v !== "—");
-    if (siteRowsFiltered.length > 0) {
-      children.push(kvTable(siteRowsFiltered, theme));
-    }
 
-    // ── Zoning Information ──────────────────────────────────────────────
-    children.push(sectionHeading("Zoning Information", theme));
-
+    // ── Zoning Information ───────────────────────────────────────
     const zoningRows: Array<[string, string]> = [
       ["Zoning Designation", zoningInfo?.zoning_designation || "—"],
       ["FAR", zoningInfo?.far != null ? String(zoningInfo.far) : "—"],
@@ -133,146 +83,110 @@ export async function POST(
       ["Parking Requirements", zoningInfo?.parking_requirements || "—"],
       ["Open Space", zoningInfo?.open_space_requirements || "—"],
     ];
-    children.push(kvTable(zoningRows, theme));
 
-    // Setbacks
-    if (zoningInfo?.setbacks?.length > 0) {
-      children.push(subHeading("Setbacks", theme));
-      const rows: Array<[string, string]> = zoningInfo.setbacks
-        .filter((s: AnyRec) => s.feet != null)
-        .map((s: AnyRec) => [s.label as string, `${s.feet} ft`]);
-      if (rows.length > 0) children.push(kvTable(rows, theme));
-    }
+    const setbackRows: Array<[string, string]> = Array.isArray(zoningInfo?.setbacks)
+      ? zoningInfo.setbacks
+          .filter((s: AnyRec) => s?.feet != null)
+          .map((s: AnyRec) => [String(s.label ?? ""), `${s.feet} ft`])
+      : [];
 
-    // Height Limits
-    if (zoningInfo?.height_limits?.length > 0) {
-      children.push(subHeading("Height Limits", theme));
-      zoningInfo.height_limits.forEach((h: AnyRec) => {
-        let rendered: string = h.value || "";
-        const hasStructured =
-          (typeof h.feet === "number" && h.feet !== null) ||
-          (typeof h.stories === "number" && h.stories !== null);
-        if (hasStructured) {
-          const parts: string[] = [];
-          if (h.stories != null) parts.push(`${h.stories} stories`);
-          if (h.feet != null) parts.push(`${h.feet} ft`);
-          rendered = parts.join(` ${h.connector || "and"} `);
-        }
-        children.push(new Paragraph({
-          children: [
-            new TextRun({ text: `${h.label || ""}: `, bold: true, size: 20, color: theme.secondaryColor, font: bFont }),
-            ...inlineToDocxRuns(rendered, { size: 20, color: "1E293B", font: bFont }),
-          ],
-          spacing: { after: 60 },
-        }));
-      });
-    }
+    const heightLimitsHtml = Array.isArray(zoningInfo?.height_limits) && zoningInfo.height_limits.length > 0
+      ? `<h3>Height Limits</h3><ul>${(zoningInfo.height_limits as AnyRec[])
+          .map((h) => {
+            let rendered: string = h.value || "";
+            const hasStructured = (typeof h.feet === "number" && h.feet !== null)
+              || (typeof h.stories === "number" && h.stories !== null);
+            if (hasStructured) {
+              const parts: string[] = [];
+              if (h.stories != null) parts.push(`${h.stories} stories`);
+              if (h.feet != null) parts.push(`${h.feet} ft`);
+              rendered = parts.join(` ${h.connector || "and"} `);
+            }
+            return `<li><strong>${esc(h.label || "")}:</strong> ${inlineMarkdownToHtml(rendered)}</li>`;
+          })
+          .join("")}</ul>`
+      : "";
 
-    // Density Bonuses
     const activeBonuses = (zoningInfo?.density_bonuses || []).filter((b: AnyRec) => b?.enabled !== false);
-    if (activeBonuses.length > 0) {
-      children.push(subHeading("Density Bonuses & Incentives", theme));
-      activeBonuses.forEach((b: AnyRec) => {
-        children.push(new Paragraph({
-          children: [
-            new TextRun({ text: `${b.source}: `, bold: true, size: 20, color: theme.secondaryColor, font: bFont }),
-            ...inlineToDocxRuns(`${b.description} (${b.additional_density})`, { size: 20, color: "1E293B", font: bFont }),
-          ],
-          spacing: { after: 60 },
-        }));
-      });
-    }
+    const bonusesHtml = activeBonuses.length > 0
+      ? `<h3>Density Bonuses &amp; Incentives</h3><ul>${activeBonuses
+          .map((b: AnyRec) =>
+            `<li><strong>${esc(b.source || "")}:</strong> ${inlineMarkdownToHtml(`${b.description || ""} (${b.additional_density || ""})`)}</li>`
+          )
+          .join("")}</ul>`
+      : "";
 
-    // Future Legislation
-    if (zoningInfo?.future_legislation?.length > 0) {
-      children.push(subHeading("Future Legislation & Plan Changes", theme));
-      zoningInfo.future_legislation.forEach((f: AnyRec) => {
-        const header = f.effective_date ? `${f.source} (${f.effective_date}): ` : `${f.source}: `;
-        const body = [f.description, f.impact].filter(Boolean).join(" — ");
-        children.push(new Paragraph({
-          children: [
-            new TextRun({ text: header, bold: true, size: 20, color: theme.secondaryColor, font: bFont }),
-            ...inlineToDocxRuns(body, { size: 20, color: "1E293B", font: bFont }),
-          ],
-          spacing: { after: 60 },
-        }));
-      });
-    }
+    const legislationHtml = Array.isArray(zoningInfo?.future_legislation) && zoningInfo.future_legislation.length > 0
+      ? `<h3>Future Legislation &amp; Plan Changes</h3><ul>${(zoningInfo.future_legislation as AnyRec[])
+          .map((f) => {
+            const header = f.effective_date ? `${f.source} (${f.effective_date})` : `${f.source || ""}`;
+            const desc = [f.description, f.impact].filter(Boolean).join(" — ");
+            return `<li><strong>${esc(header)}:</strong> ${inlineMarkdownToHtml(desc)}</li>`;
+          })
+          .join("")}</ul>`
+      : "";
 
-    if (zoningInfo?.source_url) {
-      children.push(new Paragraph({
-        children: [
-          new TextRun({ text: "Source: ", bold: true, size: 18, color: theme.secondaryColor, font: bFont }),
-          new TextRun({ text: zoningInfo.source_url, size: 18, color: "1F6FEB", font: bFont }),
-        ],
-        spacing: { before: 120, after: 120 },
-      }));
-    }
+    const sourceHtml = zoningInfo?.source_url
+      ? `<p><strong>Source:</strong> <a href="${esc(zoningInfo.source_url)}">${esc(zoningInfo.source_url)}</a></p>`
+      : "";
 
-    // ── Development Parameters ──────────────────────────────────────────
-    if (devParams?.max_gsf > 0) {
-      children.push(sectionHeading("Development Parameters", theme));
-      const devRows: Array<[string, string]> = [
-        ["Max GSF", Math.round(devParams.max_gsf).toLocaleString() + " SF"],
-        ["Efficiency", `${devParams.efficiency_pct}%`],
-        ["Max NRSF", Math.round(devParams.max_nrsf).toLocaleString() + " SF"],
-      ];
-      children.push(kvTable(devRows, theme));
-    }
+    // ── Development Parameters ───────────────────────────────────
+    const devRows: Array<[string, string]> = devParams?.max_gsf > 0
+      ? [
+          ["Max GSF", `${Math.round(devParams.max_gsf).toLocaleString()} SF`],
+          ["Efficiency", `${devParams.efficiency_pct}%`],
+          ["Max NRSF", `${Math.round(devParams.max_nrsf).toLocaleString()} SF`],
+        ]
+      : [];
 
-    // ── AI Narrative ────────────────────────────────────────────────────
-    if (narrative) {
-      children.push(sectionHeading("AI Zoning Analysis", theme));
-      // Route the AI-generated markdown through the shared renderer —
-      // bold / italic / code, H1/H2/H3, numbered lists, bullets,
-      // markdown tables, and blockquotes all render correctly and
-      // consistently with the DD Abstract and Investment Package.
-      const narrativeBody = markdownToDocx(narrative, theme, { bodySize: 20, bodyColor: "1E293B" });
-      for (const c of narrativeBody) children.push(c);
-    }
+    const bodyHtml = `
+      <div class="section">
+        <h2>Site Information</h2>
+        ${renderKvTable(siteRows)}
+      </div>
+      <div class="section">
+        <h2>Zoning Information</h2>
+        ${renderKvTable(zoningRows)}
+        ${setbackRows.length > 0 ? `<h3>Setbacks</h3>${renderKvTable(setbackRows)}` : ""}
+        ${heightLimitsHtml}
+        ${bonusesHtml}
+        ${legislationHtml}
+        ${sourceHtml}
+      </div>
+      ${devRows.length > 0
+        ? `<div class="section"><h2>Development Parameters</h2>${renderKvTable(devRows)}</div>`
+        : ""}
+      ${narrative
+        ? `<div class="section"><h2>AI Zoning Analysis</h2>${markdownToHtml(narrative)}</div>`
+        : ""}
+    `;
 
-    // ── Branded footer ──────────────────────────────────────────────────
-    children.push(new Paragraph({
-      border: { top: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.55) } },
-      spacing: { before: 400 },
-    }));
-    if (theme.footerText || theme.companyName) {
-      children.push(new Paragraph({
-        children: [
-          new TextRun({ text: theme.footerText, size: 16, color: "999999", font: bFont }),
-          ...(theme.companyName ? [new TextRun({ text: `  —  ${theme.companyName}`, size: 16, color: "999999", font: bFont })] : []),
-        ],
-        spacing: { after: 60 },
-      }));
-    }
-    if (theme.disclaimerText) {
-      children.push(new Paragraph({
-        children: [new TextRun({ text: theme.disclaimerText, size: 14, color: "AAAAAA", font: bFont, italics: true })],
-        spacing: { after: 60 },
-      }));
-    }
-
-    // Minimum viable Document config — no numbering registration and no
-    // custom paragraphStyles. Both have been triggers for Packer.toBuffer()
-    // crashes on certain docx@9.x patch versions.
-    const doc = new Document({
-      styles: {
-        default: { document: { run: { font: bFont, size: 20 } } },
-      },
-      sections: [{ children }],
+    const html = renderReportHtml({
+      title: `Zoning Report — ${dealName}`,
+      headline: dealName,
+      subtitle: "Zoning & Site Report",
+      eyebrow: "SITE DUE DILIGENCE",
+      bodyHtml,
+      theme,
     });
 
-    const buffer = await Packer.toBuffer(doc);
-    const uint8 = new Uint8Array(buffer);
-    const filename = `Zoning-Report-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx`;
+    let pdf: Buffer;
+    try {
+      pdf = await htmlToPdf(html, { format: "Letter", margin: "0.5in" });
+    } catch (err) {
+      if (err instanceof PuppeteerMissingError) {
+        return NextResponse.json({ error: err.code, message: err.message }, { status: 501 });
+      }
+      throw err;
+    }
 
-    // Save to the documents library so analysts can pull up past exports
-    // without re-running. Non-fatal: keep the download flowing.
+    const filename = `Zoning-Report-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.pdf`;
+
     try {
       const docId = uuidv4();
       const dateStamp = new Date().toISOString().slice(0, 10);
       const blobPath = `deals/${params.id}/reports/${dateStamp}-${docId}-${filename}`;
-      const url = await uploadBlob(blobPath, buffer, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      const url = await uploadBlob(blobPath, pdf, "application/pdf");
       await documentQueries.create({
         id: docId,
         deal_id: params.id,
@@ -280,94 +194,30 @@ export async function POST(
         original_name: filename,
         category: "zoning_report",
         file_path: url,
-        file_size: buffer.length,
-        mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        file_size: pdf.length,
+        mime_type: "application/pdf",
         content_text: null,
         ai_summary: `Zoning & Site Report · ${new Date().toLocaleDateString()}`,
-        ai_tags: ["zoning-report", "ai-generated"],
+        ai_tags: ["zoning-report", "ai-generated", "pdf"],
       });
     } catch (saveErr) {
-      console.warn("Failed to save zoning report to documents:", (saveErr as Error).message?.slice(0, 200));
+      console.warn("Failed to save zoning report PDF to documents:", (saveErr as Error).message?.slice(0, 200));
     }
 
-    return new NextResponse(uint8 as unknown as BodyInit, {
+    return new NextResponse(pdf as unknown as BodyInit, {
       status: 200,
       headers: {
-        "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="${filename}"`,
-        "Content-Length": uint8.length.toString(),
+        "Content-Length": pdf.length.toString(),
       },
     });
   } catch (error) {
-    console.error("Zoning export error:", error);
+    console.error("Zoning Report PDF export error:", error);
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
       { error: `Export failed: ${message.slice(0, 300)}` },
       { status: 500 }
     );
   }
-}
-
-// ─── Section helpers ────────────────────────────────────────────────────────
-
-function sectionHeading(
-  text: string,
-  theme: ReturnType<typeof resolveBranding>
-): Paragraph {
-  return new Paragraph({
-    children: [new TextRun({ text, bold: true, size: 26, color: theme.primaryColor, font: theme.headerFont })],
-    heading: HeadingLevel.HEADING_2,
-    spacing: { before: 300, after: 150 },
-    border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: shadeHex(theme.primaryColor, 0.75) } },
-  });
-}
-
-function subHeading(
-  text: string,
-  theme: ReturnType<typeof resolveBranding>
-): Paragraph {
-  return new Paragraph({
-    children: [new TextRun({ text, bold: true, size: 22, color: theme.accentColor, font: theme.headerFont })],
-    spacing: { before: 200, after: 100 },
-  });
-}
-
-// Two-column key/value table. Value cells route through inlineToDocxRuns so
-// any markdown emphasis inside a value (e.g. "**yes**, per §12-3") renders
-// as real bold instead of literal asterisks leaking through.
-function kvTable(
-  rows: Array<[string, string]>,
-  theme: ReturnType<typeof resolveBranding>
-): Table {
-  const thinBorder = { style: BorderStyle.SINGLE, size: 1, color: "E5E7EB" };
-  const cellBorders = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
-  const bFont = theme.bodyFont;
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: rows.map(([label, value], idx) =>
-      new TableRow({
-        children: [
-          new TableCell({
-            children: [new Paragraph({
-              children: [new TextRun({ text: label, bold: true, size: 20, color: theme.secondaryColor, font: bFont })],
-              spacing: { before: 40, after: 40 },
-            })],
-            width: { size: 30, type: WidthType.PERCENTAGE },
-            borders: cellBorders,
-            shading: idx % 2 === 0
-              ? { type: ShadingType.SOLID, color: "F8FAFC" }
-              : undefined,
-          }),
-          new TableCell({
-            children: [new Paragraph({
-              children: inlineToDocxRuns(value, { size: 20, color: "1E293B", font: bFont }),
-              spacing: { before: 40, after: 40 },
-            })],
-            width: { size: 70, type: WidthType.PERCENTAGE },
-            borders: cellBorders,
-          }),
-        ],
-      })
-    ),
-  });
 }

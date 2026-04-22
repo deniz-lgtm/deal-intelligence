@@ -242,29 +242,25 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
     } catch { toast.error("Refinement failed"); updateSection(sectionId, { generating: false }); }
   };
 
-  const exportPackage = async (format: string) => {
+  const exportPackage = async () => {
     setExporting(true);
     try {
-      const endpoint = format === "pptx"
-        ? `/api/deals/${params.id}/investment-package/export`
-        : `/api/deals/${params.id}/investment-package/export`;
-      const res = await fetch(endpoint, {
+      const res = await fetch(`/api/deals/${params.id}/investment-package/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections, dealName, format, ...(massingId ? { massing_id: massingId } : {}) }),
+        body: JSON.stringify({ sections, dealName, ...(massingId ? { massing_id: massingId } : {}) }),
       });
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
-      const ext = format === "docx" ? "docx" : "pptx";
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.${ext}`;
+      a.download = `Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      toast.success(`${ext.toUpperCase()} downloaded`);
+      toast.success("PDF downloaded");
     } catch { toast.error("Export failed"); }
     finally { setExporting(false); }
   };
@@ -286,12 +282,9 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-shrink-0 min-w-0">
           {hasContent && (<>
-            <Button variant="outline" size="sm" onClick={() => exportPackage("pptx")} disabled={exporting}>
+            <Button variant="outline" size="sm" onClick={() => exportPackage()} disabled={exporting}>
               {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-              .pptx
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => exportPackage("docx")} disabled={exporting}>
-              <Download className="h-4 w-4 mr-2" />.docx
+              Export PDF
             </Button>
           </>)}
           <Button size="sm" onClick={save} disabled={saving}>

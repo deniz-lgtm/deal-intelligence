@@ -240,6 +240,7 @@ export type DocumentCategory =
   | "investment_package"
   | "proforma"
   | "zoning_report"
+  | "ic_package"
   | "other";
 
 // Categories produced by our own generators vs. analyst uploads. Used on
@@ -249,6 +250,7 @@ export const AI_REPORT_CATEGORIES: DocumentCategory[] = [
   "investment_package",
   "proforma",
   "zoning_report",
+  "ic_package",
 ];
 
 export const DOCUMENT_CATEGORIES: Record<
@@ -339,6 +341,11 @@ export const DOCUMENT_CATEGORIES: Record<
     label: "Zoning Report",
     icon: "🗺️",
     description: "Exported site + zoning reports",
+  },
+  ic_package: {
+    label: "IC Package",
+    icon: "📑",
+    description: "Investment committee package exports",
   },
   other: {
     label: "Other",

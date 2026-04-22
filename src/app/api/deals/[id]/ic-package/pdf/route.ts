@@ -1,18 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
+import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { htmlToPdf, PuppeteerMissingError } from "@/lib/html-to-pdf";
+import { documentQueries } from "@/lib/db";
+import { uploadBlob } from "@/lib/blob-storage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
  * POST /api/deals/[id]/ic-package/pdf
- * Body: { html: string }  — full rendered HTML of the IC package page
- * Returns: application/pdf buffer (filename: <dealCode>.pdf)
+ * Body: { html: string, filename?: string } — full rendered HTML of the IC package page
+ * Returns: application/pdf buffer
  *
- * Dynamically imports puppeteer so the dependency stays optional on
- * Railway. If puppeteer isn't installed (or Chrome can't launch), we
- * return a structured 501 so the client falls back to window.print()
- * — which produces an equally-good PDF via @media print styles.
+ * Delegates to the shared htmlToPdf() helper so puppeteer is invoked
+ * the same way here as for DD Abstract, Investment Package, Zoning
+ * Report, and any future HTML-rendered generator. If puppeteer isn't
+ * installed we return a structured 501 and the client falls back to
+ * window.print().
  */
 export async function POST(
   req: NextRequest,
@@ -32,50 +37,52 @@ export async function POST(
       return NextResponse.json({ error: "Missing html" }, { status: 400 });
     }
 
-    // Typed loosely (`any`) so TypeScript doesn't require puppeteer to be
-    // installed for the app to build. When present at runtime we use it;
-    // when absent, we return a structured 501 and the client falls back
-    // to window.print().
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let puppeteerLib: any;
+    let pdf: Buffer;
     try {
-      const moduleName = "puppeteer";
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      puppeteerLib = (await (Function("m", "return import(m)") as (m: string) => Promise<any>)(moduleName)).default
-        ?? (await (Function("m", "return import(m)") as (m: string) => Promise<any>)(moduleName));
-    } catch {
-      return NextResponse.json(
-        {
-          error: "puppeteer_not_installed",
-          message:
-            "Server-side PDF export requires puppeteer. Install it (`npm install puppeteer`) or rely on the client's browser print flow.",
-        },
-        { status: 501 }
-      );
+      pdf = await htmlToPdf(html, { format: "Letter", margin: "0.5in", waitUntil: "networkidle0" });
+    } catch (err) {
+      if (err instanceof PuppeteerMissingError) {
+        return NextResponse.json(
+          { error: err.code, message: err.message },
+          { status: 501 }
+        );
+      }
+      throw err;
     }
 
-    const browser = await puppeteerLib.launch({
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    // Persist to the documents library so past IC packages stay
+    // browsable alongside every other generated report. Non-fatal
+    // on failure — the download still fires.
+    try {
+      const docId = uuidv4();
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const safeFilename = filename.replace(/"/g, "").replace(/[^a-zA-Z0-9._-]/g, "_");
+      const blobPath = `deals/${params.id}/reports/${dateStamp}-${docId}-${safeFilename}`;
+      const url = await uploadBlob(blobPath, pdf, "application/pdf");
+      await documentQueries.create({
+        id: docId,
+        deal_id: params.id,
+        name: safeFilename.replace(/\.pdf$/i, "").replace(/[-_]+/g, " ").trim(),
+        original_name: safeFilename,
+        category: "ic_package",
+        file_path: url,
+        file_size: pdf.length,
+        mime_type: "application/pdf",
+        content_text: null,
+        ai_summary: `IC Package · ${new Date().toLocaleDateString()}`,
+        ai_tags: ["ic-package", "ai-generated", "pdf"],
+      });
+    } catch (saveErr) {
+      console.warn("Failed to save IC package PDF to documents:", (saveErr as Error).message?.slice(0, 200));
+    }
+
+    return new NextResponse(pdf as unknown as BodyInit, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`,
+      },
     });
-    try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: "networkidle0" });
-      const pdf = await page.pdf({
-        format: "Letter",
-        printBackground: true,
-        margin: { top: "0.5in", bottom: "0.5in", left: "0.5in", right: "0.5in" },
-      });
-
-      return new NextResponse(pdf as unknown as BodyInit, {
-        status: 200,
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`,
-        },
-      });
-    } finally {
-      await browser.close();
-    }
   } catch (err) {
     console.error("POST /api/deals/[id]/ic-package/pdf error:", err);
     const message = err instanceof Error ? err.message : "PDF export failed";

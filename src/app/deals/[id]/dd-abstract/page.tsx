@@ -176,7 +176,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
       const res = await fetch(`/api/deals/${params.id}/dd-abstract/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ markdown: abstract, dealName }),
+        body: JSON.stringify({ markdown: abstract, dealName, ...(massingId ? { massing_id: massingId } : {}) }),
       });
 
       if (!res.ok) {
@@ -188,7 +188,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `DD-Abstract-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx`;
+      a.download = `DD-Abstract-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -309,7 +309,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
               {savedDocId && <span className="text-[10px] text-emerald-600">Saved to documents</span>}
               <Button variant="ghost" size="sm" onClick={exportWord} disabled={exporting} className="h-7 text-xs">
                 {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" />}
-                .docx
+                Export PDF
               </Button>
             </div>
           </div>

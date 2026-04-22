@@ -853,12 +853,12 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Zoning-Report-${(deal?.name || "Deal").replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx`;
+      a.download = `Zoning-Report-${(deal?.name || "Deal").replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      toast.success("Word document downloaded");
+      toast.success("PDF downloaded");
     } catch {
       toast.error("Export failed");
     } finally {
@@ -1963,7 +1963,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
                 const blob = await res.blob();
                 const formData = new FormData();
                 formData.append("deal_id", params.id);
-                formData.append("files", new File([blob], `Zoning-Report-${(deal?.name || "Deal").replace(/[^a-zA-Z0-9]/g, "_")}.docx`, { type: blob.type }));
+                formData.append("files", new File([blob], `Zoning-Report-${(deal?.name || "Deal").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`, { type: blob.type }));
                 const uploadRes = await fetch("/api/documents/upload", { method: "POST", body: formData });
                 if (uploadRes.ok) toast.success("Zoning report saved to deal documents");
                 else throw new Error();
