@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Buffer } from "node:buffer";
+import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { dealQueries, getBrandingForDeal } from "@/lib/db";
+import { dealQueries, getBrandingForDeal, documentQueries } from "@/lib/db";
+import { uploadBlob } from "@/lib/blob-storage";
 import { resolveBranding } from "@/lib/export-markdown";
 import { calc, xirr } from "@/lib/underwriting-calc";
 import { buildProformaPdf } from "@/lib/proforma-pdf";
@@ -18,9 +21,10 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
-    const { uwData, mode } = (await req.json()) as {
+    const { uwData, mode, massing_id } = (await req.json()) as {
       uwData: UWData;
       mode: "commercial" | "multifamily" | "student_housing";
+      massing_id?: string;
     };
 
     const [deal, rawBranding] = await Promise.all([
@@ -130,13 +134,40 @@ export async function POST(
 
     const safeName = (deal.name || "Proforma")
       .replace(/[^a-z0-9\-_ ]/gi, "").trim().replace(/\s+/g, "-");
+    const filename = `Proforma-${safeName}.pdf`;
+
+    // Save to the documents library so the analyst can pull up this
+    // proforma later. Non-fatal: keep the download flowing even if the
+    // library write fails.
+    try {
+      const docId = uuidv4();
+      const buffer = Buffer.from(pdfBytes);
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const blobPath = `deals/${params.id}/reports/${dateStamp}-${docId}-${filename}`;
+      const url = await uploadBlob(blobPath, buffer, "application/pdf");
+      await documentQueries.create({
+        id: docId,
+        deal_id: params.id,
+        name: `Proforma — ${deal.name || "Deal"}`,
+        original_name: filename,
+        category: "proforma",
+        file_path: url,
+        file_size: buffer.length,
+        mime_type: "application/pdf",
+        content_text: null,
+        ai_summary: `Proforma PDF · ${asOfDate}`,
+        ai_tags: ["proforma", "ai-generated", ...(massing_id ? [`massing:${massing_id}`] : [])],
+      });
+    } catch (saveErr) {
+      console.warn("Failed to save proforma to documents:", (saveErr as Error).message?.slice(0, 200));
+    }
 
     // Cast needed: Uint8Array<ArrayBufferLike> in newer Node typings doesn't satisfy Next.js's BodyInit.
     return new NextResponse(pdfBytes as unknown as BodyInit, {
       status: 200,
       headers: {
         "Content-Type":        "application/pdf",
-        "Content-Disposition": `attachment; filename="Proforma-${safeName}.pdf"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
         "Content-Length":      String(pdfBytes.length),
       },
     });

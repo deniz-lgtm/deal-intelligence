@@ -4,8 +4,10 @@ import {
   Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType,
   ShadingType,
 } from "docx";
+import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { getBrandingForDeal } from "@/lib/db";
+import { getBrandingForDeal, documentQueries } from "@/lib/db";
+import { uploadBlob } from "@/lib/blob-storage";
 import {
   resolveBranding,
   inlineToDocxRuns,
@@ -264,7 +266,31 @@ export async function POST(
     const uint8 = new Uint8Array(buffer);
     const filename = `Zoning-Report-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx`;
 
-    return new NextResponse(uint8, {
+    // Save to the documents library so analysts can pull up past exports
+    // without re-running. Non-fatal: keep the download flowing.
+    try {
+      const docId = uuidv4();
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const blobPath = `deals/${params.id}/reports/${dateStamp}-${docId}-${filename}`;
+      const url = await uploadBlob(blobPath, buffer, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      await documentQueries.create({
+        id: docId,
+        deal_id: params.id,
+        name: `Zoning Report — ${dealName}`,
+        original_name: filename,
+        category: "zoning_report",
+        file_path: url,
+        file_size: buffer.length,
+        mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        content_text: null,
+        ai_summary: `Zoning & Site Report · ${new Date().toLocaleDateString()}`,
+        ai_tags: ["zoning-report", "ai-generated"],
+      });
+    } catch (saveErr) {
+      console.warn("Failed to save zoning report to documents:", (saveErr as Error).message?.slice(0, 200));
+    }
+
+    return new NextResponse(uint8 as unknown as BodyInit, {
       status: 200,
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

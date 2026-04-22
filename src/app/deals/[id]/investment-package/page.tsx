@@ -251,7 +251,7 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections, dealName, format }),
+        body: JSON.stringify({ sections, dealName, format, ...(massingId ? { massing_id: massingId } : {}) }),
       });
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();

@@ -233,7 +233,23 @@ export type DocumentCategory =
   | "insurance"
   | "leases"
   | "permits"
+  // AI-generated reports / exports. Each generator (DD Abstract, Investment
+  // Package, Proforma PDF, Zoning Report) saves its output into documents
+  // under one of these categories so analysts can browse past runs.
+  | "dd_abstract"
+  | "investment_package"
+  | "proforma"
+  | "zoning_report"
   | "other";
+
+// Categories produced by our own generators vs. analyst uploads. Used on
+// the Documents page to surface a quick "AI Reports" filter chip.
+export const AI_REPORT_CATEGORIES: DocumentCategory[] = [
+  "dd_abstract",
+  "investment_package",
+  "proforma",
+  "zoning_report",
+];
 
 export const DOCUMENT_CATEGORIES: Record<
   DocumentCategory,
@@ -303,6 +319,26 @@ export const DOCUMENT_CATEGORIES: Record<
     label: "Permits",
     icon: "🔑",
     description: "Building permits, certificates of occupancy",
+  },
+  dd_abstract: {
+    label: "DD Abstract",
+    icon: "🤖",
+    description: "AI-generated due diligence abstracts",
+  },
+  investment_package: {
+    label: "Investment Package",
+    icon: "📊",
+    description: "Investment committee decks and memos",
+  },
+  proforma: {
+    label: "Proforma",
+    icon: "💹",
+    description: "Exported proforma PDFs",
+  },
+  zoning_report: {
+    label: "Zoning Report",
+    icon: "🗺️",
+    description: "Exported site + zoning reports",
   },
   other: {
     label: "Other",

@@ -1,14 +1,54 @@
 import { NextRequest, NextResponse } from "next/server";
 import PptxGenJS from "pptxgenjs";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, Table } from "docx";
+import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { getBrandingForDeal } from "@/lib/db";
+import { getBrandingForDeal, documentQueries } from "@/lib/db";
+import { uploadBlob } from "@/lib/blob-storage";
 import {
   resolveBranding,
   markdownToPptxBlocks,
   markdownToDocx,
   shadeHex,
 } from "@/lib/export-markdown";
+
+// Shared helper — upload a generated export to blob storage and insert a
+// document row so it shows up in /deals/[id]/documents. Failures are
+// non-fatal: we still return the download to the analyst even if the
+// library save didn't land.
+async function saveExportToDocuments(opts: {
+  dealId: string;
+  buffer: Buffer;
+  filename: string;
+  mimeType: string;
+  name: string;
+  category: "investment_package" | "proforma" | "zoning_report";
+  aiSummary: string;
+  aiTags: string[];
+  massingId?: string | null;
+}): Promise<void> {
+  try {
+    const docId = uuidv4();
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const blobPath = `deals/${opts.dealId}/reports/${dateStamp}-${docId}-${opts.filename}`;
+    const url = await uploadBlob(blobPath, opts.buffer, opts.mimeType);
+    await documentQueries.create({
+      id: docId,
+      deal_id: opts.dealId,
+      name: opts.name,
+      original_name: opts.filename,
+      category: opts.category,
+      file_path: url,
+      file_size: opts.buffer.length,
+      mime_type: opts.mimeType,
+      content_text: null,
+      ai_summary: opts.aiSummary,
+      ai_tags: [...opts.aiTags, "ai-generated", ...(opts.massingId ? [`massing:${opts.massingId}`] : [])],
+    });
+  } catch (err) {
+    console.warn("Failed to save export to documents library:", (err as Error).message?.slice(0, 200));
+  }
+}
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -32,10 +72,11 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
-    const { sections, dealName, format = "pptx" } = await req.json() as {
+    const { sections, dealName, format = "pptx", massing_id } = await req.json() as {
       sections: ExportSection[];
       dealName: string;
       format?: string;
+      massing_id?: string;
     };
 
     // Fetch branding from deal's business plan
@@ -58,7 +99,7 @@ export async function POST(
     const phone = theme.phone;
 
     if (format === "docx") {
-      return generateDocx(sections, dealName, branding);
+      return generateDocx(sections, dealName, branding, { dealId: params.id, massingId: massing_id });
     }
 
     const pptx = new PptxGenJS();
@@ -323,11 +364,24 @@ export async function POST(
 
     const buffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
     const uint8 = new Uint8Array(buffer);
+    const filename = `Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.pptx`;
 
-    return new NextResponse(uint8, {
+    await saveExportToDocuments({
+      dealId: params.id,
+      buffer,
+      filename,
+      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      name: `Investment Package — ${dealName}`,
+      category: "investment_package",
+      aiSummary: `Investment Package PPTX · ${new Date().toLocaleDateString()} · ${renderableSections.length} sections`,
+      aiTags: ["investment-package", "pptx"],
+      massingId: massing_id,
+    });
+
+    return new NextResponse(uint8 as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "Content-Disposition": `attachment; filename="Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.pptx"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
   } catch (error) {
@@ -342,7 +396,12 @@ export async function POST(
 
 // ─── Word Export ──────────────────────────────────────────────────────────────
 
-async function generateDocx(sections: ExportSection[], dealName: string, branding?: Record<string, unknown> | null) {
+async function generateDocx(
+  sections: ExportSection[],
+  dealName: string,
+  branding?: Record<string, unknown> | null,
+  saveCtx?: { dealId: string; massingId?: string | null },
+) {
   // Section children can be either Paragraphs or Tables — the shared
   // markdown renderer emits both for properly-formatted markdown tables.
   const children: Array<Paragraph | Table> = [];
@@ -509,11 +568,26 @@ async function generateDocx(sections: ExportSection[], dealName: string, brandin
 
   const buffer = await Packer.toBuffer(doc);
   const uint8 = new Uint8Array(buffer);
+  const filename = `Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx`;
 
-  return new NextResponse(uint8, {
+  if (saveCtx?.dealId) {
+    await saveExportToDocuments({
+      dealId: saveCtx.dealId,
+      buffer,
+      filename,
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      name: `Investment Package — ${dealName}`,
+      category: "investment_package",
+      aiSummary: `Investment Package DOCX · ${new Date().toLocaleDateString()} · ${renderable.length} sections`,
+      aiTags: ["investment-package", "docx"],
+      massingId: saveCtx.massingId,
+    });
+  }
+
+  return new NextResponse(uint8 as unknown as BodyInit, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "Content-Disposition": `attachment; filename="Investment-Package-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx"`,
+      "Content-Disposition": `attachment; filename="${filename}"`,
     },
   });
 }

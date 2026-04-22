@@ -2422,7 +2422,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       const res = await fetch(`/api/deals/${params.id}/proforma-pdf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uwData: effectiveData, mode: calcMode }),
+        body: JSON.stringify({ uwData: effectiveData, mode: calcMode, ...(projectMassingId ? { massing_id: projectMassingId } : {}) }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
