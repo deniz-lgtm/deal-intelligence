@@ -358,32 +358,40 @@ export async function buildProformaPdf(
   const colRx  = ML + halfW + colGap;
   const rowH   = 12;
 
-  // Build cap rows based on deal type
-  const capRows: Array<[string, string, boolean?]> = m.isDevelopment
+  // Build cap rows based on deal type.
+  //
+  // TS won't keep tuple shape for multi-type inline literals — a row
+  // like `["Total Cost", fc(m.totalCost), true]` widens to
+  // `(string | boolean)[]`, which then doesn't satisfy the declared
+  // `[string, string, boolean?]` tuple target and blows up at build
+  // time. We cast each inline 3-element row with `as CapRow` so the
+  // tuple shape sticks, and the ternary spread with `as CapRow[]`.
+  type CapRow = [string, string, boolean?];
+  const capRows: CapRow[] = m.isDevelopment
     ? [
-        ["Land Cost",         fc(m.purchasePrice)],
-        ["Hard Costs",        fc(m.hardCosts)],
-        ["Soft Costs",        fc(m.softCosts)],
-        ["Closing / Other",   fc(m.closingCosts)],
-        ["Total Cost",        fc(m.totalCost), true],
+        ["Land Cost",         fc(m.purchasePrice)] as CapRow,
+        ["Hard Costs",        fc(m.hardCosts)] as CapRow,
+        ["Soft Costs",        fc(m.softCosts)] as CapRow,
+        ["Closing / Other",   fc(m.closingCosts)] as CapRow,
+        ["Total Cost",        fc(m.totalCost), true] as CapRow,
         ...(m.hasFinancing ? [
           ["Construction Loan", fc(m.acqLoan)],
           ["LTC / Rate",        `${m.acqLtc}% / ${m.acqInterestRate}%`],
           ["Structure",         m.acqIoYears > 0 ? `${m.acqIoYears}yr IO then amort` : `${m.acqAmortYears}yr amort`],
-        ] : [["Financing", "None"]]) as Array<[string, string]>,
-        ["Equity",            fc(m.equity), true],
+        ] : [["Financing", "None"]]) as CapRow[],
+        ["Equity",            fc(m.equity), true] as CapRow,
       ]
     : [
-        ["Purchase Price",   fc(m.purchasePrice)],
-        ["Closing Costs",    fc(m.closingCosts)],
-        ["CapEx / Reno",     fc(m.capexTotal)],
-        ["Total Cost",       fc(m.totalCost), true],
+        ["Purchase Price",   fc(m.purchasePrice)] as CapRow,
+        ["Closing Costs",    fc(m.closingCosts)] as CapRow,
+        ["CapEx / Reno",     fc(m.capexTotal)] as CapRow,
+        ["Total Cost",       fc(m.totalCost), true] as CapRow,
         ...(m.hasFinancing ? [
           ["Loan Amount",    fc(m.acqLoan)],
           ["LTC / Rate",     `${m.acqLtc}% / ${m.acqInterestRate}%`],
           ["Amortization",   m.acqAmortYears > 0 ? `${m.acqAmortYears}yr` : "Interest-Only"],
-        ] : [["Financing", "None"]]) as Array<[string, string]>,
-        ["Equity",           fc(m.equity), true],
+        ] : [["Financing", "None"]]) as CapRow[],
+        ["Equity",           fc(m.equity), true] as CapRow,
       ];
 
   const assRows: Array<[string, string]> = [
