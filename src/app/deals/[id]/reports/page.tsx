@@ -23,12 +23,6 @@ export default async function ReportsPage({ params }: PageProps) {
   const { userId, errorResponse } = await requireAuth();
   if (errorResponse) redirect("/sign-in");
 
-  // Gate behind env flag — absent means this route is an early-access
-  // preview. Removing the flag happens in Phase 5.
-  if (process.env.NEXT_PUBLIC_REPORTS_LIBRARY !== "1") {
-    redirect(`/deals/${params.id}`);
-  }
-
   const [deal, uw, rows] = await Promise.all([
     dealQueries.getById(params.id).catch(() => null),
     underwritingQueries.getByDealId(params.id).catch(() => null),

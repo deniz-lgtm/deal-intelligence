@@ -22,10 +22,6 @@ export default async function ArtifactViewerPage({ params }: PageProps) {
   const { userId, errorResponse } = await requireAuth();
   if (errorResponse) redirect("/sign-in");
 
-  if (process.env.NEXT_PUBLIC_REPORTS_LIBRARY !== "1") {
-    redirect(`/deals/${params.id}`);
-  }
-
   const [artifact, deal, uw, chain] = await Promise.all([
     artifactQueries.getById(params.artifactId),
     dealQueries.getById(params.id).catch(() => null),
