@@ -1116,7 +1116,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             placeholder="Existing structures, parking, etc."
           />
           {/* Site notes — Advanced only. The field is included in the
-              Zoning Report Word export but rarely needed in Basic mode. */}
+              Zoning Report PDF export but rarely needed in Basic mode. */}
           {!isBasic && (
             <TextArea
               label="Site Conditions & Environmental Notes (shown in Zoning Report export)"
@@ -1911,8 +1911,8 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           <p className="text-[11px] text-muted-foreground mb-3">
             Auto-generated narrative for investment memos. Not an input to
             the model — the structured fields above drive all downstream
-            calcs. Use the export buttons to drop into Word or save to the
-            deal&apos;s Documents.
+            calcs. Use <strong>Generate → Library</strong> to produce a
+            branded PDF that lands in Reports &amp; Packages.
           </p>
           <div className="prose prose-sm prose-invert max-w-none
             prose-headings:text-foreground prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
