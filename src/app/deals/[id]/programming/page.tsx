@@ -555,7 +555,12 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           );
           // Generated empty (no mix) → keep existing rows for this building.
           if (generated.length === 0) return current.unit_groups || [];
-          return [...others, ...generated];
+          // Preserve affordable rows for this building — the affordability
+          // split wrote them and the massing re-sync must not discard them.
+          const existingAffordable = (current.unit_groups || []).filter(
+            (g: any) => g.site_plan_building_id === buildingId && g.is_affordable
+          );
+          return [...others, ...generated, ...existingAffordable];
         }
         return generated.length > 0 ? generated : current.unit_groups || [];
       })();
@@ -874,6 +879,15 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         }),
       };
 
+      // Re-apply affordability split after the massing-driven rebuild so
+      // affordable rows are always consistent with the current config.
+      if (affordabilityConfig?.enabled && (affordabilityConfig.tiers || []).length > 0) {
+        live = {
+          ...live,
+          unit_groups: splitUnitGroupsByAffordability(live.unit_groups || [], affordabilityConfig),
+        };
+      }
+
       // 2) Build updated scenario snapshots for every massing.
       const existingScenarios: any[] = Array.isArray(live.uw_scenarios) ? live.uw_scenarios : [];
       const updatedScenarios: any[] = [];
@@ -971,7 +985,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
       // Silent — auto-sync runs on every save; a toast on each failure
       // would be noisy. The explicit Save button's toast still fires.
     }
-  }, [params.id, sitePlanMassings, buildingProgram, zoningInputs, computePushedUw, resolveBaseMassing, maybeAutoRunAiEstimates]);
+  }, [params.id, sitePlanMassings, buildingProgram, zoningInputs, computePushedUw, resolveBaseMassing, maybeAutoRunAiEstimates, affordabilityConfig]);
 
   // Fire Programming→Underwriting auto-sync after every successful
   // save. Replaces the manual "Push <Massing> to UW" button — every
