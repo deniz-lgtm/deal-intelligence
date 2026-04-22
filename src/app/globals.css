@@ -212,3 +212,38 @@
 /* ─── Scrollbar hide ─────────────────────────────────────────────────────── */
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ─── Form control contrast ─────────────────────────────────────────────────
+ * Native <select> elements inherit the page's foreground color, but <option>
+ * elements in the browser's native dropdown popup ignore most parent styling
+ * and default to OS colors (white bg / black text on macOS & Windows). On
+ * our dark theme that produces a jarring bright popup — and worse, when an
+ * individual <select> sets `bg-muted/20` without a matching text color, the
+ * selected value can render as near-black on near-black depending on the
+ * browser's defaults.
+ *
+ * These rules force every <select> and every <option> to use the theme's
+ * card surface and foreground, so the popup + trigger both match the app's
+ * palette without each call site needing inline `bg-background text-foreground`
+ * on every <option>. */
+@layer base {
+  select {
+    color: hsl(var(--foreground));
+  }
+  select option,
+  select optgroup {
+    background-color: hsl(var(--card));
+    color: hsl(var(--foreground));
+  }
+  select option:disabled {
+    color: hsl(var(--muted-foreground));
+  }
+  /* Placeholder text (empty-value options) reads as muted so the
+     contrast difference between "no selection" and a real choice is
+     obvious in the trigger. */
+  select:invalid,
+  select option[value=""] {
+    color: hsl(var(--muted-foreground));
+  }
+}
+
