@@ -59,7 +59,7 @@ export default async function ArtifactViewerPage({ params }: PageProps) {
   const isPdf = artifact.mime_type === "application/pdf";
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-4 sm:space-y-6">
       <div className="flex items-center gap-2 text-sm">
         <Button variant="ghost" size="sm" asChild>
           <Link href={`/deals/${params.id}/reports`}>
@@ -69,34 +69,36 @@ export default async function ArtifactViewerPage({ params }: PageProps) {
         </Button>
       </div>
 
-      <header className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{artifact.name}</h1>
-          <div className="text-sm text-muted-foreground flex gap-3 flex-wrap">
-            <span>{meta?.label ?? artifact.category}</span>
-            <span>·</span>
-            <span>v{artifact.version}</span>
-            <span>·</span>
-            <span>Generated {formatDate(artifact.uploaded_at)}</span>
-            {artifact.file_size && (
-              <>
-                <span>·</span>
-                <span>{formatBytes(artifact.file_size)}</span>
-              </>
-            )}
-          </div>
-          <div className="text-sm">
-            {computedStatus === "stale" ? (
-              <span className="text-amber-800">
-                Stale — inputs changed since generation: {reasons.join(", ") || "deal state"}
-              </span>
-            ) : (
-              <span className="text-emerald-800">Up to date</span>
-            )}
-          </div>
+      <header className="space-y-3">
+        <h1 className="text-xl sm:text-2xl font-semibold tracking-tight break-words">
+          {artifact.name}
+        </h1>
+        <div className="text-xs sm:text-sm text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>{meta?.label ?? artifact.category}</span>
+          <span aria-hidden className="text-muted-foreground/50">·</span>
+          <span>v{artifact.version}</span>
+          <span aria-hidden className="text-muted-foreground/50">·</span>
+          <span>Generated {formatDate(artifact.uploaded_at)}</span>
+          {artifact.file_size && (
+            <>
+              <span aria-hidden className="text-muted-foreground/50">·</span>
+              <span>{formatBytes(artifact.file_size)}</span>
+            </>
+          )}
+        </div>
+        <div className="text-xs sm:text-sm">
+          {computedStatus === "stale" ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 px-2 py-0.5">
+              Stale — {reasons.join(", ") || "deal state"} changed
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-200 px-2 py-0.5">
+              Up to date
+            </span>
+          )}
         </div>
         {artifact.file_path && (
-          <Button asChild>
+          <Button asChild className="w-full sm:w-auto">
             <a
               href={`/api/deals/${params.id}/artifacts/${artifact.id}/download`}
               download={artifact.original_name}
@@ -109,7 +111,7 @@ export default async function ArtifactViewerPage({ params }: PageProps) {
       </header>
 
       {artifact.ai_summary && (
-        <div className="rounded-md border bg-muted/30 p-4 text-sm">
+        <div className="rounded-md border bg-muted/30 p-3 sm:p-4 text-xs sm:text-sm">
           {artifact.ai_summary}
         </div>
       )}
@@ -117,16 +119,19 @@ export default async function ArtifactViewerPage({ params }: PageProps) {
       {isPdf && artifact.file_path && (
         // Stream through the documents view route rather than embedding
         // the raw R2 URL — R2 returns InvalidArgumentAuthorization for
-        // unsigned access to the raw bucket endpoint.
+        // unsigned access to the raw bucket endpoint. On mobile, some
+        // browsers don't render inline PDFs in iframes; we keep the
+        // iframe as a best-effort preview and surface the download
+        // button above as the reliable path.
         <iframe
           src={`/api/documents/${artifact.id}/view`}
-          className="w-full h-[75vh] border rounded-md"
+          className="w-full h-[60vh] sm:h-[75vh] border rounded-md bg-white"
           title={artifact.name}
         />
       )}
 
       {!isPdf && artifact.file_path && (
-        <div className="rounded-md border p-6 text-center text-sm text-muted-foreground">
+        <div className="rounded-md border p-4 sm:p-6 text-center text-sm text-muted-foreground">
           Inline preview isn&apos;t supported for {artifact.mime_type ?? "this format"}.
           Use Download to open the file.
         </div>
@@ -134,10 +139,10 @@ export default async function ArtifactViewerPage({ params }: PageProps) {
 
       {chain.length > 1 && (
         <section className="space-y-3 pt-4 border-t">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          <h2 className="text-xs sm:text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Version history
           </h2>
-          <ul className="text-sm space-y-1">
+          <ul className="text-xs sm:text-sm divide-y border rounded-md">
             {(chain as Record<string, unknown>[])
               .slice()
               .reverse()
@@ -150,17 +155,27 @@ export default async function ArtifactViewerPage({ params }: PageProps) {
                 };
                 const isThis = r.id === artifact.id;
                 return (
-                  <li key={r.id} className="flex items-center gap-3">
-                    <span className="text-muted-foreground w-12">v{r.version}</span>
-                    <span className="text-muted-foreground w-40">
+                  <li
+                    key={r.id}
+                    className="flex items-center gap-3 px-3 py-2 hover:bg-muted/30"
+                  >
+                    <span className="text-muted-foreground w-8 shrink-0 font-medium">
+                      v{r.version}
+                    </span>
+                    <span className="text-muted-foreground w-24 sm:w-32 shrink-0 text-xs">
                       {formatDate(r.uploaded_at)}
                     </span>
                     {isThis ? (
-                      <span className="font-medium">{r.name} (current)</span>
+                      <span className="font-medium truncate">
+                        {r.name}
+                        <span className="ml-1.5 text-muted-foreground font-normal">
+                          (current)
+                        </span>
+                      </span>
                     ) : (
                       <Link
                         href={`/deals/${params.id}/reports/${r.id}`}
-                        className="underline decoration-dotted underline-offset-2"
+                        className="underline decoration-dotted underline-offset-2 truncate"
                       >
                         {r.name}
                       </Link>
