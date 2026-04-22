@@ -222,6 +222,18 @@ interface Props {
    * across everything.
    */
   availableBuildings?: Array<{ id: string; label: string }>;
+  /**
+   * Average SF per bedroom type derived from market-rate unit groups.
+   * Used by the AI optimizer to compute rent/SF at the AMI cap and
+   * find the mix that maximises $/SF efficiency rather than just $/unit.
+   */
+  avgSfPerBr?: {
+    studio: number;
+    one_br: number;
+    two_br: number;
+    three_br: number;
+    four_br_plus: number;
+  };
 }
 
 function hydrateTiers(
@@ -469,6 +481,7 @@ export default function AffordabilityPlanner({
   spottedBonuses,
   onPushToUnitMix,
   availableBuildings,
+  avgSfPerBr,
 }: Props) {
   const showTypeControls = mode === "type" || mode === "full";
   const showMixControls = mode === "mix" || mode === "full";
@@ -1003,6 +1016,7 @@ export default function AffordabilityPlanner({
             bedroom_target: tier.bedroom_target,
             ami_pct: tier.ami_pct,
             building_unit_mix: buildingUnitMix ?? null,
+            avg_sf_per_br: avgSfPerBr ?? null,
             max_rents: {
               studio: tier.max_rent_studio,
               one_br: tier.max_rent_1br,
@@ -1010,6 +1024,13 @@ export default function AffordabilityPlanner({
               three_br: tier.max_rent_3br,
               four_br_plus: tier.max_rent_4br_plus,
             },
+            avg_market_rent: avgMarketRent,
+            current_taxes: currentTaxes,
+            tax_exemption_enabled: config.tax_exemption_enabled,
+            tax_exemption_pct: config.tax_exemption_pct,
+            tax_exemption_years: config.tax_exemption_years,
+            total_units: config.total_units,
+            affordable_units: config.tiers.reduce((s, t) => s + t.units_count, 0),
           }),
         }
       );
@@ -1359,7 +1380,7 @@ export default function AffordabilityPlanner({
                   Affordability Tiers
                 </div>
                 <div className="flex-1" />
-                {mode === "mix" && onPushToUnitMix && (
+                {(mode === "mix" || mode === "full") && onPushToUnitMix && (
                   <Button
                     size="sm"
                     variant="outline"

@@ -38,6 +38,13 @@ interface OptimizeBody {
     three_br: number;
     four_br_plus: number;
   } | null;
+  avg_sf_per_br?: {
+    studio: number;
+    one_br: number;
+    two_br: number;
+    three_br: number;
+    four_br_plus: number;
+  } | null;
   max_rents?: {
     studio?: number;
     one_br?: number;
@@ -45,6 +52,13 @@ interface OptimizeBody {
     three_br?: number;
     four_br_plus?: number;
   };
+  avg_market_rent?: number;
+  current_taxes?: number;
+  tax_exemption_enabled?: boolean;
+  tax_exemption_pct?: number;
+  tax_exemption_years?: number;
+  total_units?: number;
+  affordable_units?: number;
 }
 
 interface OptimizedMix {
@@ -95,6 +109,7 @@ export async function POST(
     const bedroomTarget = Math.max(0, Math.round(body.bedroom_target ?? 0));
     const rents = body.max_rents ?? {};
     const mix = body.building_unit_mix ?? null;
+    const sf = body.avg_sf_per_br ?? null;
 
     if (mode === "bedroom_equivalent" && bedroomTarget <= 0) {
       return NextResponse.json(
@@ -123,34 +138,72 @@ export async function POST(
       .join(" · ");
 
     const buildingMixLine = mix
-      ? `Building unit mix: studio=${mix.studio}, 1BR=${mix.one_br}, 2BR=${mix.two_br}, 3BR=${mix.three_br}, 4BR+=${mix.four_br_plus}`
+      ? `Building unit mix (market-rate): studio=${mix.studio}, 1BR=${mix.one_br}, 2BR=${mix.two_br}, 3BR=${mix.three_br}, 4BR+=${mix.four_br_plus}`
       : "Building unit mix: not provided";
+
+    // Compute rent/SF at AMI cap for each BR type when SF is available.
+    // This is the primary optimization metric — we want the highest $/SF
+    // affordable mix, not just the highest $/unit, because SF is the
+    // scarce resource in a fixed building envelope.
+    const rentPerSfLines: string[] = [];
+    const brTypes = [
+      { label: "Studio", rent: rents.studio ?? 0, sfv: sf?.studio ?? 0 },
+      { label: "1BR",    rent: rents.one_br ?? 0, sfv: sf?.one_br ?? 0 },
+      { label: "2BR",    rent: rents.two_br ?? 0, sfv: sf?.two_br ?? 0 },
+      { label: "3BR",    rent: rents.three_br ?? 0, sfv: sf?.three_br ?? 0 },
+      { label: "4BR+",   rent: rents.four_br_plus ?? 0, sfv: sf?.four_br_plus ?? 0 },
+    ];
+    for (const t of brTypes) {
+      if (t.sfv > 0 && t.rent > 0) {
+        rentPerSfLines.push(
+          `  ${t.label}: $${t.rent}/mo, ${t.sfv} SF avg → $${(t.rent / t.sfv).toFixed(2)}/SF/mo at AMI cap`
+        );
+      } else if (t.rent > 0) {
+        rentPerSfLines.push(`  ${t.label}: $${t.rent}/mo (SF unknown)`);
+      }
+    }
+
+    // Annual tax savings from the property-tax exemption, pro-rated to this
+    // tier. If the exemption is enabled, adding MORE affordable units of a
+    // given BR type also increases the tax benefit — factor that in.
+    const taxSavingsLine = (() => {
+      const enabled = body.tax_exemption_enabled ?? false;
+      const exemptPct = body.tax_exemption_pct ?? 0;
+      const taxes = body.current_taxes ?? 0;
+      const totalU = body.total_units ?? 0;
+      const affU = body.affordable_units ?? 0;
+      if (!enabled || exemptPct <= 0 || taxes <= 0 || totalU <= 0) return null;
+      const annualSavings = Math.round(taxes * (affU / totalU) * (exemptPct / 100));
+      return `Property tax exemption: ${exemptPct}% reduction on ${Math.round((affU / totalU) * 100)}% affordable share → ~$${annualSavings.toLocaleString()}/yr savings. Mixing in unit types that use less SF (e.g., studios) lets more affordable UNITS fit, amplifying this benefit.`;
+    })();
+
+    const avgMarketRentLine = body.avg_market_rent && body.avg_market_rent > 0
+      ? `Average market rent: $${Math.round(body.avg_market_rent)}/unit/mo — affordable units trade against this.`
+      : null;
 
     const modeInstructions =
       mode === "flexible"
-        ? `Mode: FLEXIBLE. You must allocate exactly ${unitsCount} affordable units across the BR types. The mix can be anything — biased toward the type that maximizes revenue at the given max rents, but balanced with what's actually marketable in this submarket (e.g. don't recommend 100% 3BR if the building is mostly studios — leasing risk is real).`
+        ? `Mode: FLEXIBLE. Allocate exactly ${unitsCount} affordable units across BR types. Primary objective: maximise rent/SF (dollars per square foot per month at the AMI cap). Secondary: avoid a mix that's operationally unrealistic for this submarket (e.g. all 3BR in a studio-heavy urban asset).`
         : mode === "match_building"
-        ? `Mode: MATCH BUILDING. You must allocate exactly ${unitsCount} affordable units in proportions as close as possible to the building's own BR mix. The affordable tier should not materially skew the building's unit mix.`
-        : `Mode: BEDROOM EQUIVALENT. Target is exactly ${bedroomTarget} total BEDROOMS across the allocated units (studio=0, 1BR=1, 2BR=2, 3BR=3, 4BR+=4). The unit count is free — you can trade unit count for bedroom count. Maximize revenue subject to hitting the bedroom target exactly (or as close as the math permits; if exact isn't possible, prefer slightly over).`;
+        ? `Mode: MATCH BUILDING. Allocate exactly ${unitsCount} affordable units in proportions as close as possible to the building's own BR mix. The affordable tier should not materially skew the building's unit mix.`
+        : `Mode: BEDROOM EQUIVALENT. Target is exactly ${bedroomTarget} total BEDROOMS (studio=0, 1BR=1, 2BR=2, 3BR=3, 4BR+=4). Unit count is free — trade units for bedrooms. Maximise rent/SF at the AMI cap subject to hitting the bedroom target (prefer slightly over if exact isn't achievable).`;
 
-    const prompt = `You are a multifamily underwriter picking the affordable-unit BR mix for a tier at ${
+    const prompt = `You are a multifamily underwriter optimising the affordable-unit BR mix for a tier at ${
       body.ami_pct ?? 60
-    }% AMI.
+    }% AMI. Your primary goal is to maximise rent per square foot ($/SF/mo) within the AMI rent caps — not just $/unit — while keeping the mix marketable and operationally realistic.
 
 ${dealContext}
 ${buildingMixLine}
 
-Max allowed monthly rents at this AMI tier (per unit, per month):
-  Studio: ${rents.studio ?? 0}
-  1BR:    ${rents.one_br ?? 0}
-  2BR:    ${rents.two_br ?? 0}
-  3BR:    ${rents.three_br ?? 0}
-  4BR+:   ${rents.four_br_plus ?? 0}
+AMI max rents and rent/SF at AMI cap:
+${rentPerSfLines.length > 0 ? rentPerSfLines.join("\n") : "  (SF data unavailable — optimise on $/unit instead)"}
+
+${avgMarketRentLine ?? ""}
+${taxSavingsLine ? `\n${taxSavingsLine}` : ""}
 
 ${modeInstructions}
 
-Produce a BR allocation that maximizes total annual rental revenue from this
-tier while staying realistic for the submarket. Return ONLY this JSON:
+Return ONLY this JSON:
 
 {
   "studio": <int>,
@@ -158,7 +211,7 @@ tier while staying realistic for the submarket. Return ONLY this JSON:
   "two_br": <int>,
   "three_br": <int>,
   "four_br_plus": <int>,
-  "rationale": "<one sentence explaining the tradeoff you made>"
+  "rationale": "<one sentence: which BR type has the best $/SF at this AMI level and why you chose this mix>"
 }
 
 Rules:

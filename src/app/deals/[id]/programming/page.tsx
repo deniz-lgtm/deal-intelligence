@@ -1479,7 +1479,36 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         mode="full"
         spottedBonuses={densityBonuses}
         availableBuildings={currentMassing?.buildings.map((b) => ({ id: b.id, label: b.label })) || []}
+        avgSfPerBr={(() => {
+          // Weighted-average SF per bedroom type from market-rate unit groups.
+          // Used by the AI optimizer to compute rent/SF at the AMI cap.
+          const sf: Record<string, { total: number; count: number }> = {
+            studio: { total: 0, count: 0 },
+            one_br: { total: 0, count: 0 },
+            two_br: { total: 0, count: 0 },
+            three_br: { total: 0, count: 0 },
+            four_br_plus: { total: 0, count: 0 },
+          };
+          for (const g of unitGroups as any[]) {
+            if (g?.is_affordable) continue;
+            const count = Number(g.unit_count) || 0;
+            const sfpu = Number(g.sf_per_unit) || 0;
+            if (!count || !sfpu) continue;
+            const bd = Number(g.bedrooms) || 0;
+            const key = bd === 0 ? "studio" : bd === 1 ? "one_br" : bd === 2 ? "two_br" : bd === 3 ? "three_br" : "four_br_plus";
+            sf[key].total += count * sfpu;
+            sf[key].count += count;
+          }
+          return {
+            studio: sf.studio.count > 0 ? Math.round(sf.studio.total / sf.studio.count) : 0,
+            one_br: sf.one_br.count > 0 ? Math.round(sf.one_br.total / sf.one_br.count) : 0,
+            two_br: sf.two_br.count > 0 ? Math.round(sf.two_br.total / sf.two_br.count) : 0,
+            three_br: sf.three_br.count > 0 ? Math.round(sf.three_br.total / sf.three_br.count) : 0,
+            four_br_plus: sf.four_br_plus.count > 0 ? Math.round(sf.four_br_plus.total / sf.four_br_plus.count) : 0,
+          };
+        })()}
         onConfigChange={(cfg) => { setAffordabilityConfig(cfg); setDirty(true); }}
+        onPushToUnitMix={saveAll}
       />
       )}
 
