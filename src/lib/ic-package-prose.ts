@@ -15,7 +15,7 @@ import type {
   RiskFactor,
   CalloutProps,
   Scenario,
-} from "@/app/deals/[id]/ic-package/types";
+} from "@/components/ic-package/types";
 import { getActiveModel, getPrompt } from "./claude";
 
 const DEFAULT_SYSTEM_PROMPT = `You are writing investment committee package prose for a real estate developer's institutional-grade IC package. Your job is to take structured deal data and produce prose that reads like a senior developer wrote it for thoughtful capital partners over coffee — confident, clear, conversational, and precise.

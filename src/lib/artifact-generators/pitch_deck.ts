@@ -1,5 +1,13 @@
-import { notImplementedGenerator } from "./_stub";
+import { generateSectionsPdf } from "./_shared/sections-pdf";
+import type { ArtifactGenerator } from "./types";
 
-// Phase 3: migrates the investment-package export route's pitch_deck
-// format logic into this generator.
-export default notImplementedGenerator("pitch_deck");
+const pitchDeckGenerator: ArtifactGenerator = async (opts) =>
+  generateSectionsPdf(opts, {
+    kind: "pitch_deck",
+    artifactTitle: "Pitch Deck",
+    eyebrow: "PITCH DECK",
+    subtitle: "Investor Presentation",
+    summaryPrefix: "Pitch Deck",
+  });
+
+export default pitchDeckGenerator;

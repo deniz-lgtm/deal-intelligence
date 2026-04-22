@@ -10,7 +10,7 @@
 import type { Deal, PropertyType } from "./types";
 import type { UWData } from "./underwriting-calc";
 import { calc, xirr } from "./underwriting-calc";
-import type { DealContext, CapitalSource } from "@/app/deals/[id]/ic-package/types";
+import type { DealContext, CapitalSource } from "@/components/ic-package/types";
 
 interface UwRowLike {
   data?: unknown;

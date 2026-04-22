@@ -1,11 +1,24 @@
+/**
+ * Editable-source endpoint for the IC Package prose.
+ *
+ * The rendered PDF is an artifact managed by /api/deals/[id]/artifacts.
+ * This endpoint owns the editable prose that seeds each render — the
+ * ic_packages table stays the source of truth so drafts persist
+ * between sessions, and the artifact generator saves a new prose
+ * version atomically with each PDF.
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, requireDealAccess, requireDealEditAccess } from "@/lib/auth";
 import { icPackageQueries } from "@/lib/db";
-import type { DealContext, ProseSections } from "@/app/deals/[id]/ic-package/types";
+import type {
+  DealContext,
+  ProseSections,
+} from "@/components/ic-package/types";
 
 export const dynamic = "force-dynamic";
 
-/** GET /api/deals/[id]/ic-package — returns the latest saved IC package (if any). */
+/** GET — latest saved prose + context for the deal, or null. */
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
@@ -25,15 +38,12 @@ export async function GET(
       updatedAt: row?.updated_at ?? null,
     });
   } catch (err) {
-    console.error("GET /api/deals/[id]/ic-package error:", err);
-    return NextResponse.json({ error: "Failed to load IC package" }, { status: 500 });
+    console.error("GET /api/deals/[id]/ic-package-prose error:", err);
+    return NextResponse.json({ error: "Failed to load prose" }, { status: 500 });
   }
 }
 
-/**
- * PUT /api/deals/[id]/ic-package — save a new version of the IC package.
- * Body: { prose: ProseSections, context: DealContext }
- */
+/** PUT — save a new prose version. Body: { prose, context }. */
 export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -59,7 +69,7 @@ export async function PUT(
       updatedAt: row.updated_at,
     });
   } catch (err) {
-    console.error("PUT /api/deals/[id]/ic-package error:", err);
-    return NextResponse.json({ error: "Failed to save IC package" }, { status: 500 });
+    console.error("PUT /api/deals/[id]/ic-package-prose error:", err);
+    return NextResponse.json({ error: "Failed to save prose" }, { status: 500 });
   }
 }

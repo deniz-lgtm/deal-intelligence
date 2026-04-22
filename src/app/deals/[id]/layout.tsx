@@ -103,8 +103,10 @@ const BASE_NAV_GROUPS: NavGroup[] = [
       { href: "/site-walk", label: "Site Walk", icon: Footprints },
       { href: "/loi", label: "LOI", icon: FileSignature },
       { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
+      // Investment Package is now the single authoring surface for every
+      // format — pitch deck, investment memo, one-pager, and IC Package.
+      // Exports land in Reports & Packages instead of one-shot downloads.
       { href: "/investment-package", label: "Inv. Package", icon: Presentation },
-      { href: "/ic-package", label: "IC Package", icon: FileText },
       // Reports & Packages — central library for every generated artifact.
       // Gated by NEXT_PUBLIC_REPORTS_LIBRARY during the rollout so power
       // users see it first. Phase 5 removes the flag.
@@ -155,6 +157,7 @@ const MASSING_AWARE_HREFS = new Set([
   "/site-zoning",
   "/dd-abstract",
   "/investment-package",
+  "/reports",
 ]);
 
 function applyScopeGating(groups: NavGroup[], dealScope: DealScope | null): NavGroup[] {

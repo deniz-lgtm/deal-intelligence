@@ -1,5 +1,13 @@
-import { notImplementedGenerator } from "./_stub";
+import { generateSectionsPdf } from "./_shared/sections-pdf";
+import type { ArtifactGenerator } from "./types";
 
-// Phase 3: migrates the investment-package export route's one_pager
-// format logic into this generator.
-export default notImplementedGenerator("one_pager");
+const onePagerGenerator: ArtifactGenerator = async (opts) =>
+  generateSectionsPdf(opts, {
+    kind: "one_pager",
+    artifactTitle: "One-Pager",
+    eyebrow: "SUMMARY",
+    subtitle: "Deal Summary",
+    summaryPrefix: "One-Pager",
+  });
+
+export default onePagerGenerator;
