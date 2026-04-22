@@ -64,5 +64,13 @@ export default async function ReportsPage({ params }: PageProps) {
     };
   });
 
-  return <ReportsClient dealId={params.id} dealName={deal.name} artifacts={artifacts} />;
+  return (
+    <ReportsClient
+      dealId={params.id}
+      dealName={deal.name}
+      deal={deal}
+      uwRow={uw}
+      artifacts={artifacts}
+    />
+  );
 }

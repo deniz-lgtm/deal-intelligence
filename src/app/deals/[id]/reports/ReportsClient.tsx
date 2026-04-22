@@ -21,7 +21,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils";
 import type { ArtifactRow } from "@/lib/db";
+import type { Deal } from "@/lib/types";
 import type { KindMeta, ArtifactCategory } from "@/lib/artifact-generators";
+import LibraryWizardModal from "./LibraryWizardModal";
 
 type HydratedArtifact = ArtifactRow & {
   computed_status: "current" | "stale";
@@ -32,6 +34,11 @@ type HydratedArtifact = ArtifactRow & {
 interface Props {
   dealId: string;
   dealName: string;
+  /** Full deal record — needed by the wizard modal to build the IC
+   *  Package DealContext and to surface the deal name. */
+  deal: Deal | null;
+  /** Raw underwriting row; passed through to the wizard. */
+  uwRow: unknown;
   artifacts: HydratedArtifact[];
 }
 
@@ -53,11 +60,18 @@ const CATEGORY_DESCRIPTIONS: Record<ArtifactCategory, string> = {
   deal_documents: "LOIs and deal-stage documents",
 };
 
-export default function ReportsClient({ dealId, dealName, artifacts }: Props) {
+export default function ReportsClient({
+  dealId,
+  dealName,
+  deal,
+  uwRow,
+  artifacts,
+}: Props) {
   const router = useRouter();
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [openActionsId, setOpenActionsId] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const grouped = useMemo(() => {
     const map = new Map<ArtifactCategory, HydratedArtifact[]>();
@@ -132,20 +146,22 @@ export default function ReportsClient({ dealId, dealName, artifacts }: Props) {
             artifacts are flagged stale until regenerated.
           </p>
         </div>
-        {/* Header CTA — one tap from library to authoring. Shown whenever
-            there's content; the empty state has its own prominent CTA. */}
+        {/* Header CTA — opens the wizard modal right here in the
+            library. No navigation away; this IS the hub. */}
         {artifacts.length > 0 && (
-          <Button asChild size="sm" className="shrink-0">
-            <Link href={`/deals/${dealId}/investment-package`}>
-              <Plus className="h-4 w-4 mr-1.5" />
-              New Package
-            </Link>
+          <Button
+            size="sm"
+            className="shrink-0"
+            onClick={() => setWizardOpen(true)}
+          >
+            <Plus className="h-4 w-4 mr-1.5" />
+            New Package
           </Button>
         )}
       </header>
 
       {artifacts.length === 0 ? (
-        <EmptyState dealId={dealId} />
+        <EmptyState onStart={() => setWizardOpen(true)} dealId={dealId} />
       ) : (
         CATEGORY_ORDER.map((cat) => {
           const items = grouped.get(cat) ?? [];
@@ -181,6 +197,14 @@ export default function ReportsClient({ dealId, dealName, artifacts }: Props) {
           );
         })
       )}
+
+      <LibraryWizardModal
+        dealId={dealId}
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        deal={deal}
+        uwRow={uwRow}
+      />
     </div>
   );
 }
@@ -385,7 +409,13 @@ function StatusChip({ stale, tooltip }: { stale: boolean; tooltip: string }) {
   );
 }
 
-function EmptyState({ dealId }: { dealId: string }) {
+function EmptyState({
+  onStart,
+  dealId,
+}: {
+  onStart: () => void;
+  dealId: string;
+}) {
   return (
     <div className="border-2 border-dashed rounded-lg p-8 sm:p-12 text-center space-y-4">
       <div className="space-y-2">
@@ -398,12 +428,12 @@ function EmptyState({ dealId }: { dealId: string }) {
         </div>
       </div>
       <div className="flex items-center justify-center gap-2 flex-wrap">
-        <Button asChild size="sm">
-          <Link href={`/deals/${dealId}/investment-package`}>
-            <Sparkles className="h-4 w-4 mr-1.5" />
-            Generate Package
-          </Link>
+        <Button size="sm" onClick={onStart}>
+          <Sparkles className="h-4 w-4 mr-1.5" />
+          Generate Package
         </Button>
+        {/* Proforma stays a deep-link since it needs the live UW model
+            that lives on the underwriting page. */}
         <Button asChild size="sm" variant="outline">
           <Link href={`/deals/${dealId}/underwriting`}>
             Generate Proforma
