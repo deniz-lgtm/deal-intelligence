@@ -4,7 +4,18 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertCircle, Archive, CheckCircle2, Download, Eye, FileText, FolderArchive, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  Archive,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Eye,
+  FileText,
+  FolderArchive,
+  RefreshCw,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils";
 import type { ArtifactRow } from "@/lib/db";
@@ -44,6 +55,7 @@ export default function ReportsClient({ dealId, dealName, artifacts }: Props) {
   const router = useRouter();
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [openActionsId, setOpenActionsId] = useState<string | null>(null);
 
   const grouped = useMemo(() => {
     const map = new Map<ArtifactCategory, HydratedArtifact[]>();
@@ -72,6 +84,7 @@ export default function ReportsClient({ dealId, dealName, artifacts }: Props) {
       toast.error(err instanceof Error ? err.message : "Archive failed");
     } finally {
       setArchivingId(null);
+      setOpenActionsId(null);
     }
   }
 
@@ -97,21 +110,23 @@ export default function ReportsClient({ dealId, dealName, artifacts }: Props) {
       toast.error(err instanceof Error ? err.message : "Regeneration failed");
     } finally {
       setRegeneratingId(null);
+      setOpenActionsId(null);
     }
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8 space-y-10">
-      <header className="space-y-2">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <FolderArchive className="h-4 w-4" />
-          <span>{dealName}</span>
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-10">
+      <header className="space-y-1.5">
+        <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+          <FolderArchive className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+          <span className="truncate">{dealName}</span>
         </div>
-        <h1 className="text-3xl font-semibold tracking-tight">Reports &amp; Packages</h1>
+        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
+          Reports &amp; Packages
+        </h1>
         <p className="text-sm text-muted-foreground max-w-prose">
-          Every generated artifact for this deal — investor packages, analysis
-          outputs, and deal documents. When inputs change, artifacts are
-          flagged stale until regenerated.
+          Every generated artifact for this deal. When inputs change, artifacts
+          are flagged stale until regenerated.
         </p>
       </header>
 
@@ -124,7 +139,7 @@ export default function ReportsClient({ dealId, dealName, artifacts }: Props) {
           return (
             <section key={cat} className="space-y-3">
               <div>
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                <h2 className="text-xs sm:text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                   {CATEGORY_LABELS[cat]}
                 </h2>
                 <p className="text-xs text-muted-foreground">
@@ -141,6 +156,10 @@ export default function ReportsClient({ dealId, dealName, artifacts }: Props) {
                     onRegenerate={regenerate}
                     archiving={archivingId === artifact.id}
                     regenerating={regeneratingId === artifact.id}
+                    actionsOpen={openActionsId === artifact.id}
+                    onToggleActions={() =>
+                      setOpenActionsId(openActionsId === artifact.id ? null : artifact.id)
+                    }
                   />
                 ))}
               </div>
@@ -159,6 +178,8 @@ function ArtifactRowView({
   onRegenerate,
   archiving,
   regenerating,
+  actionsOpen,
+  onToggleActions,
 }: {
   dealId: string;
   artifact: HydratedArtifact;
@@ -166,75 +187,156 @@ function ArtifactRowView({
   onRegenerate: (id: string) => Promise<void>;
   archiving: boolean;
   regenerating: boolean;
+  actionsOpen: boolean;
+  onToggleActions: () => void;
 }) {
   const stale = artifact.computed_status === "stale";
-  const formatLabel = (artifact.mime_type ?? "").split("/").pop()?.toUpperCase() ?? "—";
-  const kindLabel = artifact.kind_meta?.label ?? artifact.category ?? artifact.kind ?? "Artifact";
+  // mime_type like "application/pdf" → "PDF". Shown only on wider screens;
+  // all generated artifacts are PDFs today, so it's low-value noise on mobile.
+  const formatLabel =
+    (artifact.mime_type ?? "").split("/").pop()?.toUpperCase() ?? "—";
+  const kindLabel =
+    artifact.kind_meta?.label ?? artifact.category ?? artifact.kind ?? "Artifact";
   const tooltip = stale
-    ? `Stale since inputs changed: ${artifact.stale_reasons.join(", ") || "deal state"}`
+    ? `Stale — inputs changed since generation: ${artifact.stale_reasons.join(", ") || "deal state"}`
     : "Up to date with current deal state";
 
   return (
-    <div className="flex items-center gap-4 px-4 py-3 hover:bg-muted/30 transition-colors">
-      <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium truncate">{artifact.name}</span>
-          <span className="text-xs uppercase tracking-wider text-muted-foreground border rounded px-1.5 py-0.5">
-            {kindLabel}
-          </span>
-          <span className="text-xs uppercase tracking-wider text-muted-foreground border rounded px-1.5 py-0.5">
-            {formatLabel}
-          </span>
-          <span className="text-xs text-muted-foreground">v{artifact.version}</span>
-          <StatusChip stale={stale} tooltip={tooltip} />
-        </div>
-        {artifact.ai_summary && (
-          <div className="text-xs text-muted-foreground mt-0.5 truncate">
-            {artifact.ai_summary}
+    <div className="px-3 py-3 sm:px-4 sm:py-3 hover:bg-muted/30 transition-colors">
+      {/* Top row — title + chips. Stacks on mobile, inline on desktop. */}
+      <div className="flex items-start gap-3">
+        <FileText className="h-5 w-5 text-muted-foreground shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="font-medium truncate text-sm sm:text-base">
+            {artifact.name}
           </div>
-        )}
-        <div className="text-xs text-muted-foreground mt-0.5">
-          Generated {formatDate(artifact.uploaded_at)}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="uppercase tracking-wider text-muted-foreground border rounded px-1.5 py-0.5">
+              {kindLabel}
+            </span>
+            <span className="hidden sm:inline-flex uppercase tracking-wider text-muted-foreground border rounded px-1.5 py-0.5">
+              {formatLabel}
+            </span>
+            <span className="text-muted-foreground">v{artifact.version}</span>
+            <StatusChip stale={stale} tooltip={tooltip} />
+          </div>
+          {artifact.ai_summary && (
+            <div className="text-xs text-muted-foreground truncate sm:whitespace-normal">
+              {artifact.ai_summary}
+            </div>
+          )}
+          <div className="text-xs text-muted-foreground">
+            Generated {formatDate(artifact.uploaded_at)}
+          </div>
+        </div>
+
+        {/* Mobile: dropdown trigger. Desktop: inline actions. */}
+        <div className="sm:hidden shrink-0">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleActions}
+            aria-expanded={actionsOpen}
+            aria-label="Artifact actions"
+          >
+            {actionsOpen ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+
+        <div className="hidden sm:flex items-center gap-1 shrink-0">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href={`/deals/${dealId}/reports/${artifact.id}`}>
+              <Eye className="h-4 w-4 mr-1" />
+              View
+            </Link>
+          </Button>
+          {artifact.file_path && (
+            <Button variant="ghost" size="sm" asChild>
+              <a
+                href={`/api/deals/${dealId}/artifacts/${artifact.id}/download`}
+                download={artifact.original_name}
+              >
+                <Download className="h-4 w-4 mr-1" />
+                Download
+              </a>
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onRegenerate(artifact.id)}
+            disabled={regenerating}
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-1 ${regenerating ? "animate-spin" : ""}`}
+            />
+            {regenerating ? "Regenerating" : "Regenerate"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onArchive(artifact.id)}
+            disabled={archiving}
+            aria-label="Archive"
+          >
+            <Archive className="h-4 w-4" />
+          </Button>
         </div>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <Button variant="ghost" size="sm" asChild>
-          <Link href={`/deals/${dealId}/reports/${artifact.id}`}>
-            <Eye className="h-4 w-4 mr-1" />
-            View
-          </Link>
-        </Button>
-        {artifact.file_path && (
-          <Button variant="ghost" size="sm" asChild>
-            <a
-              href={`/api/deals/${dealId}/artifacts/${artifact.id}/download`}
-              download={artifact.original_name}
-            >
-              <Download className="h-4 w-4 mr-1" />
-              Download
-            </a>
+
+      {/* Mobile actions sheet — expanded row. */}
+      {actionsOpen && (
+        <div className="sm:hidden mt-3 pt-3 border-t grid grid-cols-2 gap-2">
+          <Button variant="outline" size="sm" asChild className="justify-start">
+            <Link href={`/deals/${dealId}/reports/${artifact.id}`}>
+              <Eye className="h-4 w-4 mr-1.5" />
+              View
+            </Link>
           </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onRegenerate(artifact.id)}
-          disabled={regenerating}
-        >
-          <RefreshCw className={`h-4 w-4 mr-1 ${regenerating ? "animate-spin" : ""}`} />
-          {regenerating ? "Regenerating" : "Regenerate"}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onArchive(artifact.id)}
-          disabled={archiving}
-        >
-          <Archive className="h-4 w-4 mr-1" />
-          {archiving ? "Archiving" : "Archive"}
-        </Button>
-      </div>
+          {artifact.file_path && (
+            <Button
+              variant="outline"
+              size="sm"
+              asChild
+              className="justify-start"
+            >
+              <a
+                href={`/api/deals/${dealId}/artifacts/${artifact.id}/download`}
+                download={artifact.original_name}
+              >
+                <Download className="h-4 w-4 mr-1.5" />
+                Download
+              </a>
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onRegenerate(artifact.id)}
+            disabled={regenerating}
+            className="justify-start"
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-1.5 ${regenerating ? "animate-spin" : ""}`}
+            />
+            {regenerating ? "Regenerating" : "Regenerate"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onArchive(artifact.id)}
+            disabled={archiving}
+            className="justify-start"
+          >
+            <Archive className="h-4 w-4 mr-1.5" />
+            {archiving ? "Archiving" : "Archive"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -243,7 +345,7 @@ function StatusChip({ stale, tooltip }: { stale: boolean; tooltip: string }) {
   if (stale) {
     return (
       <span
-        className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200"
+        className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200"
         title={tooltip}
       >
         <AlertCircle className="h-3 w-3" />
@@ -253,7 +355,7 @@ function StatusChip({ stale, tooltip }: { stale: boolean; tooltip: string }) {
   }
   return (
     <span
-      className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-200"
+      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-200"
       title={tooltip}
     >
       <CheckCircle2 className="h-3 w-3" />
@@ -264,13 +366,14 @@ function StatusChip({ stale, tooltip }: { stale: boolean; tooltip: string }) {
 
 function EmptyState() {
   return (
-    <div className="border-2 border-dashed rounded-lg p-12 text-center space-y-2">
+    <div className="border-2 border-dashed rounded-lg p-8 sm:p-12 text-center space-y-2">
       <FolderArchive className="h-8 w-8 text-muted-foreground mx-auto" />
       <div className="font-medium">No generated artifacts yet</div>
       <div className="text-sm text-muted-foreground max-w-md mx-auto">
-        Generate an IC Package, investment memo, proforma, or other report from
-        the relevant authoring page and it will appear here. Older exports
-        saved through the prior document library are also surfaced.
+        Generate an IC Package, investment memo, proforma, DD abstract,
+        zoning report, or LOI from its authoring page and it will appear
+        here. Older exports from before the library launch are also
+        surfaced.
       </div>
     </div>
   );
