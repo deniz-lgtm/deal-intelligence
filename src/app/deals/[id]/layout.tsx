@@ -107,12 +107,7 @@ const BASE_NAV_GROUPS: NavGroup[] = [
       // format — pitch deck, investment memo, one-pager, and IC Package.
       // Exports land in Reports & Packages instead of one-shot downloads.
       { href: "/investment-package", label: "Inv. Package", icon: Presentation },
-      // Reports & Packages — central library for every generated artifact.
-      // Gated by NEXT_PUBLIC_REPORTS_LIBRARY during the rollout so power
-      // users see it first. Phase 5 removes the flag.
-      ...(process.env.NEXT_PUBLIC_REPORTS_LIBRARY === "1"
-        ? [{ href: "/reports", label: "Reports & Packages", icon: FolderArchive }]
-        : []),
+      { href: "/reports", label: "Reports & Packages", icon: FolderArchive },
       { href: "/room", label: "Deal Room", icon: Share2 },
     ],
   },

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
 import {
-  Loader2, MapPin, Sparkles, RefreshCw, Download, Save,
+  Loader2, MapPin, Sparkles, RefreshCw, Save,
   Building2, Ruler, Trees, ChevronDown, ChevronRight, FileText,
   Map as MapIcon, ExternalLink, CalendarClock, Wand2, Info,
   Pencil, Copy, Trash2, Star,

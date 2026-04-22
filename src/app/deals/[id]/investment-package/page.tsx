@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 import {
-  Plus, Trash2, Save, Loader2, FileText, Download, Sparkles,
+  Plus, Trash2, Save, Loader2, FileText, Sparkles,
   ChevronDown, ChevronUp, Edit3, Eye, RefreshCw, AlertTriangle,
   CheckCircle2, Circle, ArrowRight, Target, TrendingUp,
 } from "lucide-react";
