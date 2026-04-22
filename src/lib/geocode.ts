@@ -183,6 +183,54 @@ export async function enrichCompWithGeocode<
   return payload;
 }
 
+/**
+ * Re-geocode a comp when a PATCH changes any of its address fields.
+ *
+ * Used by `/api/deals/[id]/comps/[compId]` and `/api/workspace/comps/[id]`
+ * so analysts don't have to click a "Geocode" button — the moment they
+ * type a street address on a comp that came through extraction without
+ * coords, the row auto-resolves to lat/lng and shows up on the map.
+ *
+ * Behavior:
+ *   - If the patch doesn't touch address / city / state, return the patch
+ *     unchanged (no geocoder call).
+ *   - Otherwise build the full address from (patched ∪ existing) and
+ *     geocode. Overwrite any stale lat/lng since the user changed the
+ *     address and the old coords no longer match.
+ *   - If the patch explicitly provides lat/lng, respect them (analyst
+ *     override — no re-geocode).
+ *   - Geocoder failures leave the patch untouched so the save still
+ *     persists the user's address edit.
+ */
+export async function enrichCompPatchWithGeocode(
+  patch: Record<string, unknown>,
+  existing: {
+    address?: string | null;
+    city?: string | null;
+    state?: string | null;
+  } | null
+): Promise<Record<string, unknown>> {
+  const touchesAddress =
+    Object.prototype.hasOwnProperty.call(patch, "address") ||
+    Object.prototype.hasOwnProperty.call(patch, "city") ||
+    Object.prototype.hasOwnProperty.call(patch, "state");
+  if (!touchesAddress) return patch;
+  // Respect explicit analyst overrides — don't re-geocode if they
+  // entered coordinates directly.
+  if (patch.lat != null && patch.lng != null) return patch;
+
+  const merged = {
+    address: (patch.address as string | null | undefined) ?? existing?.address ?? null,
+    city: (patch.city as string | null | undefined) ?? existing?.city ?? null,
+    state: (patch.state as string | null | undefined) ?? existing?.state ?? null,
+  };
+  const addr = buildCompAddress(merged);
+  if (!addr) return patch;
+  const result = await geocodeAddress(addr);
+  if (!result) return patch;
+  return { ...patch, lat: result.lat, lng: result.lng };
+}
+
 // ─── Google Places ───────────────────────────────────────────────────────────
 //
 // Census only understands complete street addresses. Broker comp books

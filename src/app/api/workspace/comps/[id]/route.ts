@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { compQueries, getPool } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { enrichCompPatchWithGeocode } from "@/lib/geocode";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -47,13 +48,20 @@ export async function PATCH(
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
 
-    const { ok } = await userCanAccessComp(params.id, userId);
+    const { ok, comp } = await userCanAccessComp(params.id, userId);
     if (!ok) {
       return NextResponse.json({ error: "Comp not found" }, { status: 404 });
     }
 
     const body = await req.json();
-    const row = await compQueries.update(params.id, body);
+    // Auto-geocode when an address field changes — no "Geocode" button
+    // needed for comps that came through extraction without coords.
+    const patched = await enrichCompPatchWithGeocode(body, comp ? {
+      address: comp.address as string | null,
+      city: comp.city as string | null,
+      state: comp.state as string | null,
+    } : null);
+    const row = await compQueries.update(params.id, patched);
     return NextResponse.json({ data: row });
   } catch (error) {
     console.error("PATCH /api/workspace/comps/[id] error:", error);
