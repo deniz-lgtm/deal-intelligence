@@ -103,6 +103,7 @@ const BASE_NAV_GROUPS: NavGroup[] = [
       { href: "/loi", label: "LOI", icon: FileSignature },
       { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
       { href: "/investment-package", label: "Inv. Package", icon: Presentation },
+      { href: "/ic-package", label: "IC Package", icon: FileText },
       { href: "/room", label: "Deal Room", icon: Share2 },
     ],
   },
