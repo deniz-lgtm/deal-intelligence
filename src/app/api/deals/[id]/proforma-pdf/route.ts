@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Buffer } from "node:buffer";
 import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { dealQueries, getBrandingForDeal, documentQueries } from "@/lib/db";
@@ -141,7 +140,12 @@ export async function POST(
     // library write fails.
     try {
       const docId = uuidv4();
-      const buffer = Buffer.from(pdfBytes);
+      // `pdfBytes` is already a Uint8Array; Buffer.from() wraps it
+      // without copying. Global Buffer is always available in Node
+      // runtimes — no explicit import needed (and `node:buffer` can
+      // trip up some older Next bundlers).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const buffer = (globalThis as any).Buffer.from(pdfBytes) as Buffer;
       const dateStamp = new Date().toISOString().slice(0, 10);
       const blobPath = `deals/${params.id}/reports/${dateStamp}-${docId}-${filename}`;
       const url = await uploadBlob(blobPath, buffer, "application/pdf");
@@ -172,7 +176,14 @@ export async function POST(
       },
     });
   } catch (err) {
+    // Surface the real error to the client so the analyst can see why
+    // the export failed instead of the generic "export failed" toast.
+    // Trimmed + logged server-side for deep traces.
     console.error("[proforma-pdf] error:", err);
-    return NextResponse.json({ error: "PDF generation failed" }, { status: 500 });
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json(
+      { error: `PDF generation failed: ${message.slice(0, 300)}` },
+      { status: 500 }
+    );
   }
 }
