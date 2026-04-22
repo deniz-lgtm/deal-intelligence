@@ -14,6 +14,7 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalList
 import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import GenerateToLibraryButton from "@/components/GenerateToLibraryButton";
 import DealNotes from "@/components/DealNotes";
 import MaxBidPanel from "@/components/MaxBidPanel";
 import type { CalcFn } from "@/lib/max-bid";
@@ -1710,7 +1711,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [renamingScenarioId, setRenamingScenarioId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
   const [showCompareModal, setShowCompareModal] = useState(false);
-  const [exportingPdf, setExportingPdf] = useState(false);
   const [compareSelection, setCompareSelection] = useState<Set<string>>(new Set());
   const [showMaxBidModal, setShowMaxBidModal] = useState(false);
   const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null });
@@ -2488,32 +2488,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     setShowCompareModal(true);
   };
 
-  const exportProformaPdf = async () => {
-    setExportingPdf(true);
-    try {
-      const res = await fetch(`/api/deals/${params.id}/proforma-pdf`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uwData: effectiveData, mode: calcMode, ...(projectMassingId ? { massing_id: projectMassingId } : {}) }),
-      });
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        toast.error(json.error || "PDF export failed");
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Proforma-${deal?.name || "export"}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      toast.error("PDF export failed");
-    } finally {
-      setExportingPdf(false);
-    }
-  };
 
   const toggleCompareSelection = (key: string) => {
     setCompareSelection(prev => {
@@ -2600,10 +2574,14 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <Button variant="outline" size="sm" onClick={openDocViewer}>
             <Eye className="h-4 w-4 mr-2" />Docs
           </Button>
-          <Button variant="outline" size="sm" onClick={exportProformaPdf} disabled={exportingPdf}>
-            {exportingPdf ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
-            Export PDF
-          </Button>
+          <GenerateToLibraryButton
+            dealId={params.id}
+            kind="proforma_pdf"
+            getPayload={() => ({ uwData: effectiveData, mode: calcMode })}
+            massingId={projectMassingId ?? null}
+            size="sm"
+            variant="outline"
+          />
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={openDocPicker} disabled={autofilling || saving}>
               {autofilling ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}

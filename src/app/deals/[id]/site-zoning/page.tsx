@@ -20,6 +20,7 @@ import { useViewMode } from "@/lib/use-view-mode";
 import ViewModeToggle from "@/components/ViewModeToggle";
 import type { Document } from "@/lib/types";
 import { DocCoverageChip } from "@/components/ai";
+import GenerateToLibraryButton from "@/components/GenerateToLibraryButton";
 import type {
   SitePlan as SitePlanType,
   SitePlanScenario as SitePlanScenarioType,
@@ -452,7 +453,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [deal, setDeal] = useState<any>(null);
 
@@ -833,39 +833,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     }
   };
 
-  // ── Export Word ─────────────────────────────────────────────────────────
-  const exportWord = async () => {
-    setExporting(true);
-    try {
-      const res = await fetch(`/api/deals/${params.id}/zoning-report/export`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dealName: deal?.name || "Deal",
-          siteInfo,
-          zoningInfo: zoning,
-          devParams: recalcBuilding(siteInfo, devParams),
-          narrative,
-        }),
-      });
-      if (!res.ok) throw new Error("Export failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Zoning-Report-${(deal?.name || "Deal").replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      toast.success("PDF downloaded");
-    } catch {
-      toast.error("Export failed");
-    } finally {
-      setExporting(false);
-    }
-  };
-
   // ── Update helpers ─────────────────────────────────────────────────────
   const updateSite = (k: keyof SiteInfo, v: any) => {
     setSiteInfo(prev => {
@@ -1012,10 +979,19 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           {/* Zoning Report buttons hidden in Basic mode — they're a
               communication artifact for memos, not part of the model. */}
           {!isBasic && narrative && (
-            <Button variant="outline" size="sm" onClick={exportWord} disabled={exporting}>
-              {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-              Export Word
-            </Button>
+            <GenerateToLibraryButton
+              dealId={params.id}
+              kind="zoning_report"
+              getPayload={() => ({
+                dealName: deal?.name || "Deal",
+                siteInfo,
+                zoningInfo: zoning,
+                devParams: recalcBuilding(siteInfo, devParams),
+                narrative,
+              })}
+              size="sm"
+              variant="outline"
+            />
           )}
           {!isBasic && (
             <div className="flex items-center gap-2">
@@ -1948,29 +1924,22 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             <ReactMarkdown>{narrative}</ReactMarkdown>
           </div>
           <div className="flex gap-2 mt-4 pt-3 border-t border-border/30">
-            <Button variant="outline" size="sm" onClick={exportWord} disabled={exporting}>
-              {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-              Export Word
-            </Button>
-            <Button variant="outline" size="sm" onClick={async () => {
-              try {
-                const res = await fetch(`/api/deals/${params.id}/zoning-report/export`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ dealName: deal?.name || "Deal", siteInfo, zoningInfo: zoning, devParams, narrative }),
-                });
-                if (!res.ok) throw new Error();
-                const blob = await res.blob();
-                const formData = new FormData();
-                formData.append("deal_id", params.id);
-                formData.append("files", new File([blob], `Zoning-Report-${(deal?.name || "Deal").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`, { type: blob.type }));
-                const uploadRes = await fetch("/api/documents/upload", { method: "POST", body: formData });
-                if (uploadRes.ok) toast.success("Zoning report saved to deal documents");
-                else throw new Error();
-              } catch { toast.error("Failed to save report to documents"); }
-            }}>
-              <FileText className="h-4 w-4 mr-2" /> Save to Documents
-            </Button>
+            {/* Single Generate → Library button replaces the old
+                separate "Export Word" + "Save to Documents" buttons.
+                The library IS the destination now. */}
+            <GenerateToLibraryButton
+              dealId={params.id}
+              kind="zoning_report"
+              getPayload={() => ({
+                dealName: deal?.name || "Deal",
+                siteInfo,
+                zoningInfo: zoning,
+                devParams,
+                narrative,
+              })}
+              size="sm"
+              variant="outline"
+            />
           </div>
         </Section>
       )}

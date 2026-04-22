@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { Loader2, FileText, RefreshCw, AlertCircle, Download, Settings2 } from "lucide-react";
+import { Loader2, FileText, RefreshCw, AlertCircle, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Document } from "@/lib/types";
 import { DocCoverageChip } from "@/components/ai";
+import GenerateToLibraryButton from "@/components/GenerateToLibraryButton";
 
 const ALL_SECTIONS = [
   { id: "executive_summary", label: "Executive Summary", default: true },
@@ -31,7 +32,6 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
   const massingId = searchParams?.get("massing") || null;
   const [abstract, setAbstract] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dealName, setDealName] = useState("Deal");
   const [showPicker, setShowPicker] = useState(false);
@@ -169,38 +169,6 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
     }
   };
 
-  const exportWord = async () => {
-    if (!abstract) return;
-    setExporting(true);
-    try {
-      const res = await fetch(`/api/deals/${params.id}/dd-abstract/export`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ markdown: abstract, dealName, ...(massingId ? { massing_id: massingId } : {}) }),
-      });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json.error || "Export failed");
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `DD-Abstract-${dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      toast.success("Word document downloaded");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Export failed");
-    } finally {
-      setExporting(false);
-    }
-  };
-
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -213,10 +181,14 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
         </div>
         <div className="flex items-center gap-2">
           {abstract && (
-            <Button variant="outline" size="sm" onClick={exportWord} disabled={exporting}>
-              {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-              Export to Word
-            </Button>
+            <GenerateToLibraryButton
+              dealId={params.id}
+              kind="dd_abstract"
+              getPayload={() => ({ markdown: abstract, dealName })}
+              massingId={massingId}
+              size="sm"
+              variant="outline"
+            />
           )}
           <Button onClick={() => setShowPicker(true)} disabled={generating} size="sm">
             {generating ? (
@@ -307,10 +279,15 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
             <span className="text-xs text-muted-foreground font-medium">DD Abstract — {dealName}</span>
             <div className="flex items-center gap-2">
               {savedDocId && <span className="text-[10px] text-emerald-600">Saved to documents</span>}
-              <Button variant="ghost" size="sm" onClick={exportWord} disabled={exporting} className="h-7 text-xs">
-                {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" />}
-                Export PDF
-              </Button>
+              <GenerateToLibraryButton
+                dealId={params.id}
+                kind="dd_abstract"
+                getPayload={() => ({ markdown: abstract, dealName })}
+                massingId={massingId}
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+              />
             </div>
           </div>
           <div className="p-6">
