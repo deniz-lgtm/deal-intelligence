@@ -123,6 +123,29 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS auto_diff_result JSONB",
     "CREATE INDEX IF NOT EXISTS idx_documents_parent ON documents(parent_document_id) WHERE parent_document_id IS NOT NULL",
+    // Reports & Packages — every AI/system-generated artifact is a document
+    // with `is_generated=true`. `kind` is the machine-friendly generator
+    // identifier the library keys off. `input_hash` + `input_snapshot`
+    // enable auto-detecting staleness: re-hash current inputs on read and
+    // compare to the stored hash. `status` tracks archive state; staleness
+    // is derived (not stored) so history rows don't flip as the deal moves.
+    // `source_artifact_id` links a rendered export back to its editable
+    // source (e.g. IC Package PDF → its ic_packages row).
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS kind TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_generated BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS input_hash TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS input_snapshot JSONB",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'current'",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_artifact_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_documents_generated ON documents(deal_id, is_generated, kind) WHERE is_generated = true",
+    // Backfill: existing exports saved via documentQueries.create already
+    // sit in documents with `category` values like 'investment_package',
+    // 'dd_abstract', 'proforma', 'zoning_report', 'ic_package'. Flip them
+    // to is_generated=true and set kind from category so they surface in
+    // the new library the moment this migration lands.
+    `UPDATE documents SET is_generated = true, kind = category
+     WHERE is_generated = false
+       AND category IN ('investment_package','dd_abstract','proforma','zoning_report','ic_package')`,
     // photos table
     "ALTER TABLE photos ADD COLUMN IF NOT EXISTS is_cover BOOLEAN NOT NULL DEFAULT false",
     // chat_messages table — expanded to support a universal (cross-page)
@@ -2266,6 +2289,199 @@ export const documentQueries = {
     return doc;
   },
 };
+
+// ─── Artifact queries ────────────────────────────────────────────────────────
+//
+// "Artifacts" = generated documents (PPTX/DOCX/PDF/HTML) produced by any
+// authoring surface in the app. They live in the `documents` table with
+// `is_generated = true`, versioned by the existing `parent_document_id`
+// chain (one parent link per version; the chain head is the original,
+// the tail is the latest).
+//
+// This query layer is the read/write path used by the Reports & Packages
+// library. Every export generator eventually calls `saveLatest`; the
+// library UI calls `listLatest` + `getVersionChain` (from documentQueries).
+
+export interface ArtifactRow {
+  id: string;
+  deal_id: string;
+  name: string;
+  original_name: string;
+  category: string;
+  kind: string | null;
+  is_generated: boolean;
+  file_path: string | null;
+  file_size: number | null;
+  mime_type: string | null;
+  content_text: string | null;
+  ai_summary: string | null;
+  ai_tags: string[] | null;
+  parent_document_id: string | null;
+  version: number;
+  input_hash: string | null;
+  input_snapshot: unknown;
+  status: string;
+  source_artifact_id: string | null;
+  uploaded_at: string;
+}
+
+export const artifactQueries = {
+  /**
+   * Latest artifact per (deal_id, kind) — i.e. chain tails. A row is a
+   * chain tail when no other row points to it via parent_document_id.
+   * Returned ordered most-recent first.
+   */
+  listLatest: async (
+    dealId: string,
+    opts: { kind?: string; includeArchived?: boolean } = {}
+  ): Promise<ArtifactRow[]> => {
+    const pool = getPool();
+    const params: unknown[] = [dealId];
+    let kindClause = "";
+    if (opts.kind) {
+      params.push(opts.kind);
+      kindClause = `AND d.kind = $${params.length}`;
+    }
+    const statusClause = opts.includeArchived
+      ? ""
+      : "AND d.status <> 'archived'";
+    const res = await pool.query(
+      `SELECT d.*
+       FROM documents d
+       WHERE d.deal_id = $1
+         AND d.is_generated = true
+         ${kindClause}
+         ${statusClause}
+         AND NOT EXISTS (
+           SELECT 1 FROM documents child
+           WHERE child.parent_document_id = d.id
+         )
+       ORDER BY d.uploaded_at DESC`,
+      params
+    );
+    return res.rows as ArtifactRow[];
+  },
+
+  /** Single artifact by id. Returns null if not found or not a generated artifact. */
+  getById: async (id: string): Promise<ArtifactRow | null> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM documents WHERE id = $1 AND is_generated = true`,
+      [id]
+    );
+    return (res.rows[0] as ArtifactRow | undefined) ?? null;
+  },
+
+  /**
+   * Save a new version of an artifact. If `previousId` is provided, the
+   * new row links to it via parent_document_id and increments version.
+   * Otherwise it's version 1 with no parent.
+   *
+   * Caller is responsible for uploading the blob (via uploadBlob) and
+   * passing the resulting `file_path` — this function only persists
+   * the row.
+   */
+  saveLatest: async (input: {
+    id: string;
+    deal_id: string;
+    kind: string;
+    category: string; // human-friendly grouping: 'investor_packages' | 'analysis_outputs' | 'deal_documents'
+    name: string;
+    original_name: string;
+    file_path: string | null;
+    file_size: number | null;
+    mime_type: string | null;
+    content_text?: string | null;
+    ai_summary?: string | null;
+    ai_tags?: string[] | null;
+    input_hash: string;
+    input_snapshot: unknown;
+    source_artifact_id?: string | null;
+    previousId?: string | null;
+  }): Promise<ArtifactRow> => {
+    const pool = getPool();
+    const version = input.previousId
+      ? await nextVersionForChain(pool, input.previousId)
+      : 1;
+    await pool.query(
+      `INSERT INTO documents
+        (id, deal_id, name, original_name, category, kind, is_generated,
+         file_path, file_size, mime_type, content_text, ai_summary, ai_tags,
+         parent_document_id, version, input_hash, input_snapshot,
+         status, source_artifact_id, uploaded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,true,
+               $7,$8,$9,$10,$11,$12,
+               $13,$14,$15,$16::jsonb,
+               'current',$17, NOW())`,
+      [
+        input.id,
+        input.deal_id,
+        input.name,
+        input.original_name,
+        input.category,
+        input.kind,
+        input.file_path,
+        input.file_size,
+        input.mime_type,
+        input.content_text ?? null,
+        input.ai_summary ?? null,
+        input.ai_tags ? JSON.stringify(input.ai_tags) : null,
+        input.previousId ?? null,
+        version,
+        input.input_hash,
+        JSON.stringify(input.input_snapshot),
+        input.source_artifact_id ?? null,
+      ]
+    );
+    const row = await artifactQueries.getById(input.id);
+    if (!row) throw new Error(`Failed to persist artifact ${input.id}`);
+    return row;
+  },
+
+  /** Set status = 'archived' so the library hides the row by default. */
+  archive: async (id: string): Promise<ArtifactRow | null> => {
+    const pool = getPool();
+    await pool.query(
+      `UPDATE documents SET status = 'archived' WHERE id = $1 AND is_generated = true`,
+      [id]
+    );
+    return artifactQueries.getById(id);
+  },
+
+  /** Un-archive (mark back to 'current'). */
+  unarchive: async (id: string): Promise<ArtifactRow | null> => {
+    const pool = getPool();
+    await pool.query(
+      `UPDATE documents SET status = 'current' WHERE id = $1 AND is_generated = true`,
+      [id]
+    );
+    return artifactQueries.getById(id);
+  },
+};
+
+/**
+ * Walk to the chain tail of the given document and return its
+ * `version + 1`. Cheap because chains are short (typically <10 versions
+ * per artifact).
+ */
+async function nextVersionForChain(
+  pool: ReturnType<typeof getPool>,
+  startId: string
+): Promise<number> {
+  const res = await pool.query(
+    `WITH RECURSIVE chain AS (
+       SELECT id, version, 0 AS depth FROM documents WHERE id = $1
+       UNION ALL
+       SELECT d.id, d.version, c.depth + 1
+       FROM documents d
+       JOIN chain c ON d.parent_document_id = c.id
+     )
+     SELECT MAX(version) AS v FROM chain`,
+    [startId]
+  );
+  const max = (res.rows[0]?.v as number | null) ?? 1;
+  return max + 1;
+}
 
 // ─── Photo queries ─────────────────────────────────────────────────────────────
 
