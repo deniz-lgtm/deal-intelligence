@@ -39,6 +39,9 @@ interface Props {
   deal: Deal | null;
   /** Raw underwriting row; passed through to the wizard. */
   uwRow: unknown;
+  /** Active massing from the URL (`?massing=<id>`). Threaded through to
+   *  the wizard modal so generate-all can scope to the right UW row. */
+  massingId: string | null;
   artifacts: HydratedArtifact[];
 }
 
@@ -65,6 +68,7 @@ export default function ReportsClient({
   dealName,
   deal,
   uwRow,
+  massingId,
   artifacts,
 }: Props) {
   const router = useRouter();
@@ -204,6 +208,7 @@ export default function ReportsClient({
         onClose={() => setWizardOpen(false)}
         deal={deal}
         uwRow={uwRow}
+        massingId={massingId}
       />
     </div>
   );

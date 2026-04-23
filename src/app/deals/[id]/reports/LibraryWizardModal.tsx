@@ -86,6 +86,11 @@ interface Props {
   deal: Deal | null;
   /** Raw underwriting row; used by dealToContext for IC Package. */
   uwRow: unknown;
+  /** Active massing scope from the URL (`?massing=<id>`). Passed to
+   *  generate-all so the endpoint loads the correct per-massing UW row
+   *  — without it, Claude sees the base-case (or an empty sibling) and
+   *  calls out DATA GAPs even when the model is populated. */
+  massingId?: string | null;
 }
 
 type Stage =
@@ -101,6 +106,7 @@ export default function LibraryWizardModal({
   onClose,
   deal,
   uwRow,
+  massingId,
 }: Props) {
   const router = useRouter();
   const [audience, setAudience] = useState("lp_investor");
@@ -152,6 +158,7 @@ export default function LibraryWizardModal({
       body: JSON.stringify({
         kind: "ic_package",
         payload: { prose: proseJson.prose, context },
+        massingId: massingId ?? null,
       }),
     });
     if (!artifactRes.ok) {
@@ -165,11 +172,17 @@ export default function LibraryWizardModal({
     const sectionIds = FORMAT_SECTIONS[format] ?? ALL_SECTIONS.map((s) => s.id);
 
     // Fan out to Claude for every section in one request. Can take
-    // ~60s for a full investment memo.
+    // ~60s for a full investment memo. massing_id threads through so
+    // the server loads the right per-massing UW row.
     const genRes = await fetch(`/api/deals/${dealId}/investment-package/generate-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ audience, format, sections: sectionIds }),
+      body: JSON.stringify({
+        audience,
+        format,
+        sections: sectionIds,
+        ...(massingId ? { massing_id: massingId } : {}),
+      }),
     });
     if (!genRes.ok) {
       throw new Error((await genRes.text()) || "Content generation failed");
@@ -199,6 +212,7 @@ export default function LibraryWizardModal({
       body: JSON.stringify({
         kind: format,
         payload: { sections, dealName: d.name },
+        massingId: massingId ?? null,
       }),
     });
     if (!artifactRes.ok) {
@@ -245,6 +259,11 @@ export default function LibraryWizardModal({
             Pick a format and audience. We&apos;ll draft the content with
             Claude, render the PDF, and land it here.
           </p>
+          {massingId && (
+            <div className="mt-2 text-[11px] font-medium text-muted-foreground">
+              Scoped to active massing · {massingId.slice(0, 8)}
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">

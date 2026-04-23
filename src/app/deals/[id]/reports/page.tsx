@@ -8,6 +8,7 @@ import ReportsClient from "./ReportsClient";
 
 interface PageProps {
   params: { id: string };
+  searchParams: { massing?: string };
 }
 
 /**
@@ -18,10 +19,16 @@ interface PageProps {
  * Staleness is computed on the server at request time by re-hashing
  * the current deal + UW state and comparing to the artifact's stored
  * hash, so users always see truthful "current vs out-of-date" chips.
+ *
+ * Reads `?massing=<id>` from the URL so the Generate wizard can pass
+ * the scope through to the generate-all endpoint — without it the
+ * server falls through to the base-case massing (or an empty sibling)
+ * and Claude sees zeros for rent / NOI / YoC.
  */
-export default async function ReportsPage({ params }: PageProps) {
+export default async function ReportsPage({ params, searchParams }: PageProps) {
   const { userId, errorResponse } = await requireAuth();
   if (errorResponse) redirect("/sign-in");
+  const massingId = typeof searchParams?.massing === "string" ? searchParams.massing : null;
 
   const [deal, uw, rows] = await Promise.all([
     dealQueries.getById(params.id).catch(() => null),
@@ -70,6 +77,7 @@ export default async function ReportsPage({ params }: PageProps) {
       dealName={deal.name}
       deal={deal}
       uwRow={uw}
+      massingId={massingId}
       artifacts={artifacts}
     />
   );
