@@ -48,6 +48,16 @@ export function AcquisitionPanel({ deals, allDeals }: Props) {
       ? (scored.reduce((s, d) => s + (d.om_score || 0), 0) / scored.length).toFixed(1)
       : "—";
 
+  // Auto-ingested deals (from the AI sourcing inbox) sit in "needs triage"
+  // state until a human opens them. Surface the count on the nameplate only
+  // when there's real flow — zero means the chip doesn't render at all.
+  const unreviewed = allDeals.filter(
+    (d) => d.auto_ingested && !d.inbox_reviewed_at,
+  ).length;
+  const action = unreviewed > 0
+    ? { label: `${unreviewed} to review`, href: "/inbox" }
+    : null;
+
   // Top-of-panel rows: sort by om_score desc (nulls last), tiebreak by updated_at
   const rows = [...deals]
     .sort((a, b) => {
@@ -67,6 +77,7 @@ export function AcquisitionPanel({ deals, allDeals }: Props) {
       motif={Compass}
       count={deals.length}
       isEmpty={deals.length === 0}
+      action={action}
       kpis={
         <>
           <PhaseKPI

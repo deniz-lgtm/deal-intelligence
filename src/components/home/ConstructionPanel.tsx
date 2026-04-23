@@ -25,6 +25,20 @@ export function ConstructionPanel({ deals, signals }: Props) {
   const withDraws = deals.filter((d) => signals[d.id]?.has_draws).length;
   const withPermits = deals.filter((d) => signals[d.id]?.has_permits).length;
 
+  // Pending draws across the portfolio = draws submitted by the GC awaiting
+  // owner approval. This is the single most time-sensitive Construction
+  // queue. Chip hides entirely when nothing's waiting.
+  const pendingDraws = deals.reduce(
+    (sum, d) => sum + (signals[d.id]?.draws_pending ?? 0),
+    0,
+  );
+  const action = pendingDraws > 0
+    ? {
+        label: `${pendingDraws} draw${pendingDraws === 1 ? "" : "s"} to review`,
+        href: "/construction",
+      }
+    : null;
+
   // Prioritize deals with the most active flow (draws + permits + reports)
   const rows = [...deals]
     .sort((a, b) => {
@@ -54,6 +68,7 @@ export function ConstructionPanel({ deals, signals }: Props) {
       motif={HardHat}
       count={deals.length}
       isEmpty={deals.length === 0}
+      action={action}
       emptyState={
         <p className="text-xs text-muted-foreground/50 text-center max-w-[24ch] font-nameplate italic">
           No projects are under construction yet.
