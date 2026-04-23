@@ -19,6 +19,7 @@ import ViewModeToggle from "@/components/ViewModeToggle";
 import type { Document } from "@/lib/types";
 import { DocCoverageChip } from "@/components/ai";
 import GenerateToLibraryButton from "@/components/GenerateToLibraryButton";
+import AmiReference from "@/components/AmiReference";
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface Setback { label: string; feet: number | null; }
@@ -1625,6 +1626,12 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         >+ Add legislation</button>
       </Section>
       )}
+
+      {/* AMI reference from Location Intel — HUD income limits + max
+          rents for the deal's HMFA. Lives on the zoning page because
+          density bonuses, affordability requirements, and AMI tiers
+          are what the analyst is cross-referencing here. */}
+      {isMF && <AmiReference dealId={params.id} />}
 
       {/* Empty state */}
       {!narrative && !zoning.zoning_designation && (

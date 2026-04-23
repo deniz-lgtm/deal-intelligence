@@ -21,7 +21,6 @@ import type { CalcFn } from "@/lib/max-bid";
 import type { UWData as LibUWData } from "@/lib/underwriting-calc";
 import { useSetPageContext } from "@/lib/page-context";
 import { type AffordabilityConfig } from "@/components/AffordabilityPlanner";
-import AmiReference from "@/components/AmiReference";
 import type {
   DevBudgetLineItem, ParkingConfig, ParkingEntry, ParkingType,
   LeaseUpConfig, ConstructionLoanConfig, ConstructionDrawPeriod,
@@ -5617,9 +5616,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <DealNotes dealId={params.id} preview={3} />
         </div>
       </div>
-
-      {/* AMI reference from Location Intel — quick lookup while underwriting */}
-      {isMF && <AmiReference dealId={params.id} />}
 
       <div className="flex justify-end">
         <Button onClick={save} disabled={saving} size="lg">
