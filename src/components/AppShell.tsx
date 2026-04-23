@@ -14,6 +14,15 @@ import {
   HardHat,
   PanelLeftClose,
   PanelLeftOpen,
+  Compass,
+  Building,
+  FileCheck2,
+  FileSpreadsheet,
+  Receipt,
+  Wrench,
+  Image as ImageIcon,
+  Ruler,
+  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
@@ -38,39 +47,51 @@ interface NavItem {
   badgeKey?: "inbox";
 }
 
+// Nav is split into four groups to mirror the triptych home:
+//
+//   (unlabeled)   Home, Inbox                      — the editorial cover + shared inbox
+//   Acquisition   Pipeline, Comps, Contacts, ...   — the hunt; tinted --phase-acq
+//   Development   Projects, Schedule, ...          — shaping; tinted --phase-dev
+//   Construction  Projects, Budgets, Draws, ...    — making; tinted --phase-con
+//
+// Each phase group's label picks up its accent color in the group label
+// render below so the sidebar reads as three clearly-owned workspaces.
 const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
-    label: "Workspace",
+    label: null,
     items: [
       { href: "/", label: "Home", icon: Home },
-      {
-        href: "/inbox",
-        label: "Inbox",
-        icon: Inbox,
-        badgeKey: "inbox",
-      },
-      {
-        href: "/comps-library",
-        label: "Comps Library",
-        icon: BarChart3,
-      },
-      {
-        href: "/business-plans",
-        label: "Business Plans",
-        icon: BookOpen,
-        permission: "business_plans.access",
-      },
-      {
-        href: "/contacts",
-        label: "Contacts",
-        icon: Users,
-        permission: "contacts.access",
-      },
-      {
-        href: "/execution",
-        label: "Construction",
-        icon: HardHat,
-      },
+      { href: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" },
+    ],
+  },
+  {
+    label: "Acquisition",
+    items: [
+      { href: "/acquisition", label: "Pipeline", icon: Compass },
+      { href: "/comps-library", label: "Comps Library", icon: BarChart3 },
+      { href: "/contacts", label: "Contacts", icon: Users, permission: "contacts.access" },
+      { href: "/business-plans", label: "Business Plans", icon: BookOpen, permission: "business_plans.access" },
+    ],
+  },
+  {
+    label: "Development",
+    items: [
+      { href: "/development", label: "Projects", icon: Building },
+      { href: "/development/schedule", label: "Schedule", icon: ClipboardCheck, comingSoon: true },
+      { href: "/development/entitlements", label: "Entitlements", icon: FileCheck2, comingSoon: true },
+      { href: "/development/programming", label: "Programming", icon: Ruler, comingSoon: true },
+    ],
+  },
+  {
+    label: "Construction",
+    items: [
+      { href: "/construction", label: "Projects", icon: HardHat },
+      { href: "/construction/budget", label: "Budgets", icon: FileSpreadsheet, comingSoon: true },
+      { href: "/construction/draws", label: "Draws", icon: Receipt, comingSoon: true },
+      { href: "/construction/change-orders", label: "Change Orders", icon: Wrench, comingSoon: true },
+      { href: "/construction/permits", label: "Permits", icon: FileCheck2, comingSoon: true },
+      { href: "/construction/vendors", label: "Vendors", icon: Users, comingSoon: true },
+      { href: "/construction/reports", label: "Progress", icon: ImageIcon, comingSoon: true },
     ],
   },
 ];
@@ -227,7 +248,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {NAV_GROUPS.map((group, gi) => (
             <div key={gi} className="flex flex-col gap-0.5">
               {group.label && !collapsed && (
-                <div className="px-2 pb-1 text-2xs uppercase tracking-wider text-muted-foreground/60 font-medium">
+                <div
+                  className={cn(
+                    "px-2 pb-1 text-2xs uppercase tracking-[0.15em] font-medium",
+                    group.label === "Acquisition" && "text-[hsl(var(--phase-acq))]",
+                    group.label === "Development" && "text-[hsl(var(--phase-dev))]",
+                    group.label === "Construction" && "text-[hsl(var(--phase-con))]",
+                    !["Acquisition", "Development", "Construction"].includes(group.label) &&
+                      "text-muted-foreground/60",
+                  )}
+                >
                   {group.label}
                 </div>
               )}

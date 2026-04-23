@@ -45,6 +45,14 @@
 
     /* ── Radius ── */
     --radius: 0.5rem;
+
+    /* ── Phase accents — triptych home (Acquisition / Development / Construction) ──
+       Three points of a refined triangle sitting in the same saturation/value
+       band as --primary. Use these for headings, rules, icons, and accent
+       chips — never for body copy (contrast is ~5:1, fine for large). */
+    --phase-acq: 36 80% 56%;    /* #D4943C — warm gold (mirrors --primary) */
+    --phase-dev: 168 22% 56%;   /* #7BA098 — verdigris / deep-teal */
+    --phase-con: 20 55% 51%;    /* #C56B3F — oxidized copper */
   }
 }
 
@@ -123,6 +131,29 @@
   }
   .glow-teal {
     box-shadow: 0 0 0 1px hsl(166 72% 50% / 0.15), 0 0 20px hsl(166 72% 50% / 0.08);
+  }
+  /* ── Phase utilities (triptych home) ── */
+  .gradient-verdigris {
+    background: linear-gradient(135deg, hsl(168 28% 64%), hsl(168 22% 46%));
+  }
+  .gradient-copper {
+    background: linear-gradient(135deg, hsl(20 60% 60%), hsl(20 55% 42%));
+  }
+  .glow-verdigris {
+    box-shadow: 0 0 0 1px hsl(var(--phase-dev) / 0.15), 0 0 20px hsl(var(--phase-dev) / 0.08);
+  }
+  .glow-copper {
+    box-shadow: 0 0 0 1px hsl(var(--phase-con) / 0.15), 0 0 20px hsl(var(--phase-con) / 0.08);
+  }
+  .font-nameplate {
+    font-family: "Instrument Serif", Georgia, "Times New Roman", serif;
+    letter-spacing: -0.01em;
+    font-weight: 400;
+  }
+  .rule-hairline {
+    height: 1px;
+    background: currentColor;
+    opacity: 0.35;
   }
   .shadow-card {
     box-shadow:

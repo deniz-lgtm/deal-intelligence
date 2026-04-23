@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import DealNotes from "@/components/DealNotes";
+import { PhasePinControl } from "@/components/deals/PhasePinControl";
 import { formatCurrency, formatNumber, titleCase } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
 import { toast } from "sonner";
@@ -473,6 +474,11 @@ export default function DealOverviewPage({
                 )}
                 {deal.loi_executed && <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">LOI ✓</span>}
                 {deal.psa_executed && <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">PSA ✓</span>}
+                <PhasePinControl
+                  dealId={deal.id}
+                  value={deal.current_phase ?? null}
+                  onChange={(next) => setDeal({ ...deal, current_phase: next })}
+                />
               </div>
               <h1 className="font-display text-2xl tracking-tight">{deal.name}</h1>
               {hasAddress && <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-0.5"><MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />{addressString}</p>}
