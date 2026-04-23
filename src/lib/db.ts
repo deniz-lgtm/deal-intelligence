@@ -280,6 +280,25 @@ export async function ensureColumns(): Promise<void> {
     // jump from "Application Submittal" to the actual filed PDF in the
     // documents tab. JSONB array of strings; empty / null is fine.
     "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS linked_document_ids JSONB",
+    // Schedule track: 'acquisition' | 'development' | 'construction'.
+    // All three tracks live in one table so CPM can flow dependencies
+    // across them (Acq closing → Dev pre-dev; Dev GC selection →
+    // Construction mobilization). Existing rows back-fill to
+    // 'development', which is the prior implicit meaning.
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS track TEXT NOT NULL DEFAULT 'development'",
+    // Point-in-time events (call for offers, LOI signed, closing, TCO)
+    // vs. multi-day periods. Renders as a diamond on the gantt instead
+    // of a bar.
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS is_milestone BOOLEAN NOT NULL DEFAULT false",
+    // CPM outputs — recomputed on every mutation. Nullable so a row can
+    // exist before the first compute pass runs.
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS earliest_start DATE",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS earliest_finish DATE",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS latest_start DATE",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS latest_finish DATE",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS total_slack_days INTEGER",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS is_critical BOOLEAN NOT NULL DEFAULT false",
+    "CREATE INDEX IF NOT EXISTS idx_deal_dev_phases_track ON deal_dev_phases(deal_id, track)",
     // User-owned entitlement templates. Each row is a named list of
     // tasks the analyst can re-apply under any deal's entitlements
     // phase. Scoped to the creating user.
@@ -4641,12 +4660,13 @@ export const devPhaseQueries = {
   create: async (phase: Record<string, unknown>) => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO deal_dev_phases (id, deal_id, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, linked_document_ids, pct_complete, budget, status, notes, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, NOW(), NOW())
+      `INSERT INTO deal_dev_phases (id, deal_id, track, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, linked_document_ids, pct_complete, budget, status, notes, sort_order, is_milestone, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16, $17, $18, $19, $20, NOW(), NOW())
        RETURNING *`,
       [
         phase.id,
         phase.deal_id,
+        phase.track ?? "development",
         phase.phase_key,
         phase.label,
         phase.start_date ?? null,
@@ -4665,6 +4685,7 @@ export const devPhaseQueries = {
         phase.status ?? "not_started",
         phase.notes ?? null,
         phase.sort_order ?? 0,
+        phase.is_milestone ?? false,
       ]
     );
     return res.rows[0];
@@ -4677,7 +4698,7 @@ export const devPhaseQueries = {
     let idx = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order"].includes(key)) {
+      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order", "track", "is_milestone"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
         idx++;
@@ -4701,14 +4722,49 @@ export const devPhaseQueries = {
     return res.rows[0] ?? null;
   },
 
-  // Bulk-update computed start/end dates after a recompute pass
-  bulkUpdateDates: async (updates: Array<{ id: string; start_date: string | null; end_date: string | null }>) => {
+  // Bulk-write every field the CPM recompute produces: start/end dates
+  // plus earliest/latest start+finish, total_slack_days, is_critical.
+  // Called from recomputeSchedule() in the dev-schedule routes after a
+  // mutation so the table stays in sync with the computed graph.
+  bulkUpdateSchedule: async (
+    updates: Array<{
+      id: string;
+      start_date: string | null;
+      end_date: string | null;
+      earliest_start: string | null;
+      earliest_finish: string | null;
+      latest_start: string | null;
+      latest_finish: string | null;
+      total_slack_days: number | null;
+      is_critical: boolean;
+    }>
+  ) => {
     if (updates.length === 0) return;
     const pool = getPool();
     for (const u of updates) {
       await pool.query(
-        "UPDATE deal_dev_phases SET start_date = $1, end_date = $2, updated_at = NOW() WHERE id = $3",
-        [u.start_date, u.end_date, u.id]
+        `UPDATE deal_dev_phases
+         SET start_date = $1,
+             end_date = $2,
+             earliest_start = $3,
+             earliest_finish = $4,
+             latest_start = $5,
+             latest_finish = $6,
+             total_slack_days = $7,
+             is_critical = $8,
+             updated_at = NOW()
+         WHERE id = $9`,
+        [
+          u.start_date,
+          u.end_date,
+          u.earliest_start,
+          u.earliest_finish,
+          u.latest_start,
+          u.latest_finish,
+          u.total_slack_days,
+          u.is_critical,
+          u.id,
+        ]
       );
     }
   },

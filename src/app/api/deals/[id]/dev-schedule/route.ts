@@ -40,12 +40,12 @@ async function recomputeSchedule(dealId: string) {
   const computed = computeSchedule(phases);
   const updates = diffComputedDates(phases, computed);
   if (updates.length > 0) {
-    await devPhaseQueries.bulkUpdateDates(updates);
+    await devPhaseQueries.bulkUpdateSchedule(updates);
   }
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -61,6 +61,14 @@ export async function GET(
       await ensureDevPhasesTable();
       phases = await devPhaseQueries.getByDealId(params.id);
     }
+
+    // Optional ?track= filter. Client passes its current view so it
+    // doesn't have to filter on every render.
+    const track = req.nextUrl.searchParams.get("track");
+    if (track) {
+      phases = phases.filter((p: { track?: string }) => (p.track ?? "development") === track);
+    }
+
     return NextResponse.json({ data: phases });
   } catch (error) {
     console.error("GET /api/deals/[id]/dev-schedule error:", error);
@@ -79,7 +87,7 @@ export async function POST(
     if (accessError) return accessError;
 
     const body = await req.json();
-    const { phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, linked_document_ids, pct_complete, budget, status, notes, sort_order } = body;
+    const { phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, linked_document_ids, pct_complete, budget, status, notes, sort_order, track, is_milestone } = body;
 
     if (!label?.trim()) {
       return NextResponse.json({ error: "label is required" }, { status: 400 });
@@ -88,6 +96,7 @@ export async function POST(
     const payload = {
       id: uuidv4(),
       deal_id: params.id,
+      track: track || "development",
       phase_key: phase_key || label.trim().toLowerCase().replace(/\s+/g, "_"),
       label: label.trim(),
       start_date: start_date || null,
@@ -106,6 +115,7 @@ export async function POST(
       status: status || "not_started",
       notes: notes || null,
       sort_order: sort_order ?? 0,
+      is_milestone: is_milestone === true,
     };
 
     let phase;
