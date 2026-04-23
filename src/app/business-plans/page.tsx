@@ -1055,8 +1055,8 @@ export default function BusinessPlansPage() {
               <ArrowLeft className="h-4 w-4 text-muted-foreground" />
             </Link>
             <div>
-              <h1 className="font-display text-sm leading-none">Business Plans</h1>
-              <p className="text-2xs text-muted-foreground mt-0.5">Investment strategy library</p>
+              <h1 className="font-nameplate text-base leading-none tracking-tight">Business Plans</h1>
+              <p className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/70 mt-1">Investment Strategy Library</p>
             </div>
           </div>
           {!creating && (

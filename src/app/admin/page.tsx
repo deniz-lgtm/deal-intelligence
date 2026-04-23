@@ -25,7 +25,7 @@ export default async function AdminPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-950 text-neutral-100 p-6">
         <div className="max-w-md text-center space-y-4">
-          <h1 className="text-2xl font-semibold">Access denied</h1>
+          <h1 className="font-nameplate text-3xl leading-none tracking-tight">Access denied</h1>
           <p className="text-neutral-400">
             You need admin privileges to view this page. Ask the owner to grant
             you access, or set <code className="text-neutral-200">ADMIN_EMAILS</code> in
@@ -46,8 +46,8 @@ export default async function AdminPage() {
       <div className="max-w-6xl mx-auto px-6 py-10">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Admin Portal</h1>
-            <p className="text-sm text-neutral-400 mt-1">
+            <h1 className="font-nameplate text-4xl leading-none tracking-tight">Admin Portal</h1>
+            <p className="text-sm text-neutral-400 mt-2">
               Manage user roles and feature permissions.
             </p>
           </div>

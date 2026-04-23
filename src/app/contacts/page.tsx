@@ -141,16 +141,16 @@ export default function ContactsPage() {
               </button>
             </Link>
             <span className="text-border text-xs">/</span>
-            <span className="font-display text-sm">Contacts</span>
-            <span className="text-2xs text-muted-foreground ml-1">{contacts.length}</span>
+            <span className="font-nameplate text-base leading-none tracking-tight">Contacts</span>
+            <span className="text-2xs text-muted-foreground ml-1 tabular-nums">{contacts.length}</span>
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
         <div>
-          <h1 className="font-display text-xl">Contacts</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="font-nameplate text-3xl leading-none tracking-tight">Contacts</h1>
+          <p className="text-sm text-muted-foreground mt-2">
             Workspace-shared directory of brokers, sellers, lenders, attorneys, and other stakeholders.
           </p>
         </div>

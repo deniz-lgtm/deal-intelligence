@@ -480,7 +480,7 @@ export default function DealOverviewPage({
                   onChange={(next) => setDeal({ ...deal, current_phase: next })}
                 />
               </div>
-              <h1 className="font-display text-2xl tracking-tight">{deal.name}</h1>
+              <h1 className="font-nameplate text-3xl leading-none tracking-tight">{deal.name}</h1>
               {hasAddress && <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-0.5"><MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />{addressString}</p>}
             </div>
             <div className="flex items-center gap-1">
