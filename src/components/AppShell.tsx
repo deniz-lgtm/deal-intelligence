@@ -226,7 +226,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="w-6 h-6 rounded-md gradient-gold flex items-center justify-center flex-shrink-0">
                 <Kanban className="h-3.5 w-3.5 text-primary-foreground" />
               </span>
-              <span className="font-display text-sm text-foreground tracking-tight truncate">
+              <span className="font-nameplate text-base leading-none tracking-tight text-foreground truncate">
                 Deal Intel
               </span>
             </Link>

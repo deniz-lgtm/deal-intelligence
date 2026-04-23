@@ -475,12 +475,13 @@ export default function CompsLibraryPage() {
           <div className="absolute inset-0 gradient-mesh" />
           <div className="relative max-w-full mx-auto px-6 sm:px-8">
             <div className="flex items-center justify-between h-14">
-              <div className="flex items-center gap-3">
-                <span className="font-display text-base text-foreground tracking-tight">
+              <div className="flex items-center gap-2.5">
+                <BarChart3 className="h-4 w-4 text-primary" />
+                <span className="font-nameplate text-xl leading-none tracking-tight">
                   Comps Library
                 </span>
-                <span className="text-[10px] text-muted-foreground hidden sm:inline">
-                  Workspace-level
+                <span className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/70 hidden sm:inline">
+                  Workspace
                 </span>
               </div>
               <div className="flex items-center gap-2">
