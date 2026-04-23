@@ -1512,7 +1512,7 @@ function MBox({ label, value, sub, hi, warn }: { label: string; value: string; s
   );
 }
 
-function Section({ title, icon, children, open: defaultOpen = true }: { title: string; icon: React.ReactNode; children: React.ReactNode; open?: boolean; }) {
+function Section({ title, icon, children, open: defaultOpen = false }: { title: string; icon: React.ReactNode; children: React.ReactNode; open?: boolean; }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="border rounded-xl bg-card overflow-hidden">

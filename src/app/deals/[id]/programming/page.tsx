@@ -40,7 +40,7 @@ const SitePlanMetrics = dynamic(
 const fc = (n: number) => n || n === 0 ? "$" + Math.round(n).toLocaleString("en-US") : "—";
 const fn = (n: number) => n || n === 0 ? Math.round(n).toLocaleString("en-US") : "—";
 
-function Section({ title, icon, children, defaultOpen = true }: {
+function Section({ title, icon, children, defaultOpen = false }: {
   title: string; icon: React.ReactNode; children: React.ReactNode; defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);

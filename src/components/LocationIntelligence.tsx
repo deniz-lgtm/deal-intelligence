@@ -164,7 +164,7 @@ function Panel({
   title,
   icon,
   children,
-  defaultOpen = true,
+  defaultOpen = false,
   action,
 }: {
   title: string;

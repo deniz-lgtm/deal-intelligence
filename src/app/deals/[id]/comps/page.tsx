@@ -91,7 +91,7 @@ function Section({
   icon,
   children,
   action,
-  defaultOpen = true,
+  defaultOpen = false,
 }: {
   title: string;
   icon?: React.ReactNode;
