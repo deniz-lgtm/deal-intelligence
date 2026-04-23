@@ -16,13 +16,6 @@ import {
   PanelLeftOpen,
   Compass,
   Building,
-  FileCheck2,
-  FileSpreadsheet,
-  Receipt,
-  Wrench,
-  Image as ImageIcon,
-  Ruler,
-  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
@@ -47,21 +40,28 @@ interface NavItem {
   badgeKey?: "inbox";
 }
 
-// Nav is split into four groups to mirror the triptych home:
+// Workspace-level entries sit above the three role departments so the
+// shared tools (Contacts, Business Plans, Comps) are reachable with one
+// glance, regardless of which role a user primarily operates in.
 //
-//   (unlabeled)   Home, Inbox                      — the editorial cover + shared inbox
-//   Acquisition   Pipeline, Comps, Contacts, ...   — the hunt; tinted --phase-acq
-//   Development   Projects, Schedule, ...          — shaping; tinted --phase-dev
-//   Construction  Projects, Budgets, Draws, ...    — making; tinted --phase-con
+//   (unlabeled)   Home, Inbox, Contacts, Business Plans    — shared workspace
+//   Acquisition   Pipeline, Comps Library                  — the hunt (gold)
+//   Development   Projects                                 — shaping (verdigris)
+//   Construction  Projects                                 — making (copper)
 //
-// Each phase group's label picks up its accent color in the group label
-// render below so the sidebar reads as three clearly-owned workspaces.
+// Each phase group's label picks up its accent color in the render below so
+// the sidebar reads as three clearly-owned workspaces. Sub-pages that don't
+// have real portfolio routes yet are intentionally omitted — per-deal
+// construction / development screens remain reachable from each deal's
+// detail page, so leaving them out of the sidebar isn't a regression.
 const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
     label: null,
     items: [
       { href: "/", label: "Home", icon: Home },
       { href: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" },
+      { href: "/contacts", label: "Contacts", icon: Users, permission: "contacts.access" },
+      { href: "/business-plans", label: "Business Plans", icon: BookOpen, permission: "business_plans.access" },
     ],
   },
   {
@@ -69,29 +69,18 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     items: [
       { href: "/acquisition", label: "Pipeline", icon: Compass },
       { href: "/comps-library", label: "Comps Library", icon: BarChart3 },
-      { href: "/contacts", label: "Contacts", icon: Users, permission: "contacts.access" },
-      { href: "/business-plans", label: "Business Plans", icon: BookOpen, permission: "business_plans.access" },
     ],
   },
   {
     label: "Development",
     items: [
       { href: "/development", label: "Projects", icon: Building },
-      { href: "/development/schedule", label: "Schedule", icon: ClipboardCheck, comingSoon: true },
-      { href: "/development/entitlements", label: "Entitlements", icon: FileCheck2, comingSoon: true },
-      { href: "/development/programming", label: "Programming", icon: Ruler, comingSoon: true },
     ],
   },
   {
     label: "Construction",
     items: [
       { href: "/construction", label: "Projects", icon: HardHat },
-      { href: "/construction/budget", label: "Budgets", icon: FileSpreadsheet, comingSoon: true },
-      { href: "/construction/draws", label: "Draws", icon: Receipt, comingSoon: true },
-      { href: "/construction/change-orders", label: "Change Orders", icon: Wrench, comingSoon: true },
-      { href: "/construction/permits", label: "Permits", icon: FileCheck2, comingSoon: true },
-      { href: "/construction/vendors", label: "Vendors", icon: Users, comingSoon: true },
-      { href: "/construction/reports", label: "Progress", icon: ImageIcon, comingSoon: true },
     ],
   },
 ];
@@ -226,7 +215,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="w-6 h-6 rounded-md gradient-gold flex items-center justify-center flex-shrink-0">
                 <Kanban className="h-3.5 w-3.5 text-primary-foreground" />
               </span>
-              <span className="font-display text-sm text-foreground tracking-tight truncate">
+              <span className="font-nameplate text-base leading-none tracking-tight text-foreground truncate">
                 Deal Intel
               </span>
             </Link>

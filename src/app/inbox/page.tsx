@@ -230,12 +230,12 @@ export default function InboxPage() {
           <div className="absolute inset-0 gradient-mesh" />
           <div className="relative max-w-full mx-auto px-6 sm:px-8">
             <div className="flex items-center justify-between h-14">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5">
                 <InboxIcon className="h-4 w-4 text-primary" />
-                <span className="font-display text-base text-foreground tracking-tight">
+                <span className="font-nameplate text-xl leading-none tracking-tight">
                   Inbox
                 </span>
-                <span className="text-[10px] text-muted-foreground hidden sm:inline">
+                <span className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/70 hidden sm:inline">
                   AI Deal Sourcing · {items.length} pending
                 </span>
               </div>

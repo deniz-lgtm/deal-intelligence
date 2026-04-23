@@ -8,6 +8,10 @@ import type { DealPhase } from "@/lib/types";
 // Department masthead for the triptych home. Instrument Serif display name,
 // phase-tinted motif glyph, and a hairline rule that animates across on hover
 // — editorial magazine feel, not a dashboard title.
+//
+// `action` is an optional "something needs your attention" chip — e.g. "3 to
+// review" — that only renders when the panel has real pending work. Quiet
+// when there's nothing to do; not a manufactured metric.
 
 interface Props {
   phase: DealPhase;
@@ -16,9 +20,10 @@ interface Props {
   motif: LucideIcon;
   href: string;
   accentVar: string;  // e.g. "--phase-acq"
+  action?: { label: string; href?: string } | null;
 }
 
-export function PhaseNameplate({ phase, label, count, motif: Motif, href, accentVar }: Props) {
+export function PhaseNameplate({ phase, label, count, motif: Motif, href, accentVar, action }: Props) {
   return (
     <div className="group/nameplate">
       <div className="flex items-baseline justify-between gap-3">
@@ -39,6 +44,29 @@ export function PhaseNameplate({ phase, label, count, motif: Motif, href, accent
           >
             {count} {count === 1 ? "deal" : "deals"}
           </span>
+          {action &&
+            (action.href ? (
+              <Link
+                href={action.href}
+                className="text-2xs font-medium uppercase tracking-[0.15em] px-1.5 py-0.5 rounded transition-opacity hover:opacity-80"
+                style={{
+                  background: `hsl(var(${accentVar}) / 0.14)`,
+                  color: `hsl(var(${accentVar}))`,
+                }}
+              >
+                {action.label}
+              </Link>
+            ) : (
+              <span
+                className="text-2xs font-medium uppercase tracking-[0.15em] px-1.5 py-0.5 rounded"
+                style={{
+                  background: `hsl(var(${accentVar}) / 0.14)`,
+                  color: `hsl(var(${accentVar}))`,
+                }}
+              >
+                {action.label}
+              </span>
+            ))}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Motif

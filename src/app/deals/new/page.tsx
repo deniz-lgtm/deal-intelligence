@@ -334,14 +334,14 @@ export default function NewDealPage() {
           <div className="h-4 w-px bg-border/40" />
           <div className="flex items-center gap-2">
             <Building2 className="h-4 w-4 text-muted-foreground" />
-            <h1 className="font-display text-sm">New Deal</h1>
+            <h1 className="font-nameplate text-base leading-none tracking-tight">New Deal</h1>
           </div>
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-6 py-8">
         <div className="mb-6">
-          <h2 className="font-display text-xl tracking-tight">Create a new deal</h2>
+          <h2 className="font-nameplate text-3xl leading-none tracking-tight">Create a new deal</h2>
           <p className="text-muted-foreground text-sm mt-1">
             A diligence checklist with 65+ items will be automatically created.
           </p>

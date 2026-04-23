@@ -123,11 +123,11 @@ export default function NotesPage() {
               <ArrowLeft className="h-3 w-3" />
               Dashboard
             </Link>
-            <h1 className="text-2xl font-display flex items-center gap-2">
-              <StickyNote className="h-5 w-5 text-primary" />
+            <h1 className="font-nameplate text-3xl leading-none tracking-tight flex items-center gap-2.5">
+              <StickyNote className="h-5 w-5 text-primary" strokeWidth={1.5} />
               Notes
               {activeDealName && (
-                <span className="text-sm text-muted-foreground font-normal">
+                <span className="text-base text-muted-foreground font-normal">
                   / {activeDealName}
                 </span>
               )}

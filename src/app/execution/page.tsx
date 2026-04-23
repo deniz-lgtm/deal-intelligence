@@ -120,23 +120,25 @@ export default function ExecutionPage() {
   return (
     <AppShell>
       <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="px-6 sm:px-8 pt-6 pb-0">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-2xl font-bold font-display">
-                Execution Portfolio
-              </h1>
-              <p className="text-sm text-muted-foreground mt-1">
-                Construction management for deals in post-closing execution.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="h-10 w-10 rounded-lg gradient-gold flex items-center justify-center">
-                <HardHat className="h-5 w-5 text-primary-foreground" />
+        {/* Masthead */}
+        <header className="relative overflow-hidden border-b border-border/40 shrink-0">
+          <div className="absolute inset-0 gradient-mesh" />
+          <div className="relative max-w-full mx-auto px-6 sm:px-8">
+            <div className="flex items-center justify-between h-14 min-w-0">
+              <div className="flex items-center gap-2.5">
+                <HardHat className="h-4 w-4" style={{ color: "hsl(var(--phase-con))" }} />
+                <span className="font-nameplate text-xl leading-none tracking-tight">
+                  Execution Portfolio
+                </span>
+                <span className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/70 hidden sm:inline">
+                  Post-closing
+                </span>
               </div>
             </div>
           </div>
+        </header>
+
+        <div className="px-6 sm:px-8 pt-6 pb-0">
 
           {/* Summary Stats Bar */}
           {deals.length > 0 && (

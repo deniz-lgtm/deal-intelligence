@@ -27,6 +27,41 @@ export function DevelopmentPanel({ deals, signals }: Props) {
   const withProgramming = deals.filter((d) => signals[d.id]?.has_programming).length;
   const withCeqa = deals.filter((d) => signals[d.id]?.has_ceqa).length;
 
+  // Find the nearest upcoming milestone across dev deals. Only surface
+  // on the nameplate if it's within two weeks — otherwise it's noise.
+  // `next_milestone_at` on the signals payload is already filtered to
+  // uncomplete + >= today by the SQL aggregate.
+  const nearest = (() => {
+    let soonest: string | null = null;
+    let soonestDealId: string | null = null;
+    for (const d of deals) {
+      const at = signals[d.id]?.next_milestone_at;
+      if (!at) continue;
+      if (!soonest || at < soonest) {
+        soonest = at;
+        soonestDealId = d.id;
+      }
+    }
+    if (!soonest) return null;
+    const daysOut = Math.ceil(
+      (new Date(soonest).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+    );
+    if (daysOut > 14 || daysOut < 0) return null;
+    return { daysOut, dealId: soonestDealId };
+  })();
+
+  const action = nearest
+    ? {
+        label:
+          nearest.daysOut <= 0
+            ? "Milestone today"
+            : nearest.daysOut === 1
+            ? "Milestone tomorrow"
+            : `Milestone in ${nearest.daysOut}d`,
+        href: nearest.dealId ? `/deals/${nearest.dealId}/project` : "/development",
+      }
+    : null;
+
   // Surface the most-active dev deals first: those with real signals
   // (CEQA / programming / predev) ahead of bare closed-fallback entries.
   const rows = [...deals]
@@ -51,6 +86,7 @@ export function DevelopmentPanel({ deals, signals }: Props) {
       motif={Building}
       count={deals.length}
       isEmpty={deals.length === 0}
+      action={action}
       emptyState={
         <p className="text-xs text-muted-foreground/50 text-center max-w-[24ch] font-nameplate italic">
           Close a value-add or ground-up deal to begin development.

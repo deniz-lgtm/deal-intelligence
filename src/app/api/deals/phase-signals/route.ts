@@ -17,6 +17,10 @@ interface Signals {
   has_permits: boolean;
   has_vendors: boolean;
   has_progress_reports: boolean;
+  // Action signals — only set when there's real pending work. The panel
+  // chrome hides its alert chip if these are absent/zero.
+  draws_pending: number;                // draws awaiting approval (Construction)
+  next_milestone_at: string | null;     // earliest uncomplete milestone date (Development)
 }
 
 export async function GET() {
@@ -39,7 +43,14 @@ export async function GET() {
       EXISTS (SELECT 1 FROM deal_draws            x WHERE x.deal_id = d.id) AS has_draws,
       EXISTS (SELECT 1 FROM deal_permits          x WHERE x.deal_id = d.id) AS has_permits,
       EXISTS (SELECT 1 FROM deal_vendors          x WHERE x.deal_id = d.id) AS has_vendors,
-      EXISTS (SELECT 1 FROM progress_reports      x WHERE x.deal_id = d.id) AS has_progress_reports
+      EXISTS (SELECT 1 FROM progress_reports      x WHERE x.deal_id = d.id) AS has_progress_reports,
+      (SELECT COUNT(*)::int FROM deal_draws dr
+         WHERE dr.deal_id = d.id AND dr.status = 'submitted')          AS draws_pending,
+      (SELECT MIN(target_date)::text FROM deal_milestones m
+         WHERE m.deal_id = d.id
+           AND m.completed_at IS NULL
+           AND m.target_date IS NOT NULL
+           AND m.target_date >= CURRENT_DATE)                          AS next_milestone_at
     FROM deals d
     LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
     WHERE d.owner_id = $1 OR ds.deal_id IS NOT NULL
@@ -58,6 +69,8 @@ export async function GET() {
         has_permits: !!row.has_permits,
         has_vendors: !!row.has_vendors,
         has_progress_reports: !!row.has_progress_reports,
+        draws_pending: Number(row.draws_pending ?? 0),
+        next_milestone_at: row.next_milestone_at ?? null,
       };
     }
     return NextResponse.json({ data: out });
