@@ -1,17 +1,19 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import dynamic from "next/dynamic";
 import { v4 as uuidv4 } from "uuid";
 import {
   Loader2, Save, Plus, Trash2, Layers, Building2, Car, DollarSign, Star,
-  ChevronDown, ChevronRight, ArrowRight, Sparkles,
+  ChevronDown, ChevronRight, ArrowRight, Sparkles, Map as MapIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import type {
   BuildingProgram, OtherIncomeItem, CommercialTenant, CommercialLeaseType,
+  SitePlan,
 } from "@/lib/types";
-import { COMMON_OTHER_INCOME } from "@/lib/types";
+import { COMMON_OTHER_INCOME, DEFAULT_SITE_PLAN } from "@/lib/types";
 import MassingSection from "@/components/massing/MassingSection";
 import ScenarioVariantsPanel from "@/components/massing/ScenarioVariantsPanel";
 import AffordabilityPlanner from "@/components/AffordabilityPlanner";
@@ -24,6 +26,15 @@ import { SortableContext, sortableKeyboardCoordinates, horizontalListSortingStra
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import { splitUnitGroupsByAffordability } from "@/lib/affordability-split";
+
+const SitePlanGenerator = dynamic(
+  () => import("@/components/site-plan/SitePlanGenerator"),
+  { ssr: false, loading: () => <div className="h-[560px] flex items-center justify-center text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin mr-2" />Loading map…</div> }
+);
+const SitePlanMetrics = dynamic(
+  () => import("@/components/site-plan/SitePlanMetrics"),
+  { ssr: false, loading: () => <div className="h-20 animate-pulse bg-muted/20 rounded-lg" /> }
+);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const fc = (n: number) => n || n === 0 ? "$" + Math.round(n).toLocaleString("en-US") : "—";
@@ -66,28 +77,6 @@ function NumInput({ label, value, onChange, prefix, suffix, decimals = 0 }: {
   );
 }
 
-// Compact read-only chip for the zoning / bonuses context strip.
-// `color` just picks a tint; content is opaque so we can stuff either
-// a zoning designation, a metric, or a density-bonus source into it.
-function ZoningChip({
-  children, color = "blue", title,
-}: { children: React.ReactNode; color?: "blue" | "emerald" | "slate"; title?: string }) {
-  const tint =
-    color === "emerald"
-      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
-      : color === "slate"
-      ? "bg-slate-500/10 border-slate-500/30 text-slate-200"
-      : "bg-blue-500/10 border-blue-500/30 text-blue-200";
-  return (
-    <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] ${tint}`}
-      title={title}
-    >
-      {children}
-    </span>
-  );
-}
-
 // ── Main Page ────────────────────────────────────────────────────────────────
 export default function ProgrammingPage({ params }: { params: { id: string } }) {
   const [viewMode, setViewMode] = useViewMode();
@@ -104,20 +93,13 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
   const [deal, setDeal] = useState<any>(null);
 
   // Data from UW JSONB
+  const [sitePlan, setSitePlan] = useState<SitePlan>(DEFAULT_SITE_PLAN);
+  const [sitePlanSetbacks, setSitePlanSetbacks] = useState<{ front: number | null; side: number | null; rear: number | null; corner: number | null }>({ front: null, side: null, rear: null, corner: null });
   const [buildingProgram, setBuildingProgram] = useState<BuildingProgram>(newBuildingProgram());
   const [otherIncomeItems, setOtherIncomeItems] = useState<OtherIncomeItem[]>([]);
   const [commercialTenants, setCommercialTenants] = useState<CommercialTenant[]>([]);
   const [zoningInputs, setZoningInputs] = useState<ZoningInputs>({ land_sf: 0, far: 0, lot_coverage_pct: 0, height_limit_ft: 0, height_limit_stories: 0 });
   const [densityBonuses, setDensityBonuses] = useState<Array<{ source: string; description: string; additional_density: string }>>([]);
-  // Read-only zoning context surfaced as chips on this page so analysts
-  // see the constraints driving the active massing without jumping back
-  // to Site & Zoning. Purely display — edits still go to that page.
-  const [zoningContext, setZoningContext] = useState<{
-    zoning_designation: string;
-    overlays: string[];
-    height_limits: Array<{ label: string; value: string }>;
-  }>({ zoning_designation: "", overlays: [], height_limits: [] });
-  const [zoningOpen, setZoningOpen] = useState(false);
   const [unitGroups, setUnitGroups] = useState<any[]>([]);
   const [affordabilityConfig, setAffordabilityConfig] = useState<any>(null);
   const [taxesAnnual, setTaxesAnnual] = useState(0);
@@ -368,11 +350,20 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
           (b: any) => b?.enabled !== false
         )
       );
-      setZoningContext({
-        zoning_designation: uw.zoning_info?.zoning_designation || "",
-        overlays: Array.isArray(uw.zoning_info?.overlays) ? uw.zoning_info.overlays : [],
-        height_limits: Array.isArray(uw.zoning_info?.height_limits) ? uw.zoning_info.height_limits : [],
-      });
+      // Load the site plan drawing (written by the map on this page)
+      if (uw.site_plan) setSitePlan(uw.site_plan as SitePlan);
+      // Compute setback envelope from zoning_info for the map overlay
+      const sbRows: Array<{ label: string; feet: number | null }> = Array.isArray(uw.zoning_info?.setbacks) ? uw.zoning_info.setbacks : [];
+      const findSb = (include: string, exclude?: string): number | null => {
+        const row = sbRows.find(s => {
+          const lbl = (s.label || "").toLowerCase();
+          if (!lbl.includes(include)) return false;
+          if (exclude && lbl.includes(exclude)) return false;
+          return true;
+        });
+        return row?.feet ?? null;
+      };
+      setSitePlanSetbacks({ front: findSb("front"), side: findSb("side", "corner"), rear: findSb("rear"), corner: findSb("corner") });
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [params.id]);
@@ -416,6 +407,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
 
       const merged = {
         ...current,
+        site_plan: sitePlan,
         building_program: buildingProgram,
         other_income_items: otherIncomeItems,
         commercial_tenants: commercialTenants,
@@ -437,7 +429,7 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     } finally {
       setSaving(false);
     }
-  }, [params.id, buildingProgram, otherIncomeItems, commercialTenants, affordabilityConfig, activeMassingId]);
+  }, [params.id, sitePlan, buildingProgram, otherIncomeItems, commercialTenants, affordabilityConfig, activeMassingId]);
 
   // Auto-save
   useEffect(() => {
@@ -445,6 +437,21 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     const t = setTimeout(saveAll, 3000);
     return () => clearTimeout(t);
   }, [dirty, loading, saveAll]);
+
+  const updateSitePlan = useCallback((next: SitePlan) => {
+    setSitePlan(prev => {
+      const contentChanged =
+        prev.scenarios !== next.scenarios ||
+        prev.active_scenario_id !== next.active_scenario_id ||
+        prev.show_setbacks !== next.show_setbacks ||
+        prev.snap_right_angle !== next.snap_right_angle ||
+        prev.snap_vertex !== next.snap_vertex ||
+        prev.snap_grid_ft !== next.snap_grid_ft ||
+        prev.map_style !== next.map_style;
+      if (contentChanged) setDirty(true);
+      return next;
+    });
+  }, []);
 
   // Auto-sync to Underwriting after a successful save. Declared below
   // once autoSyncProgrammingToUw is in scope (see effect further down
@@ -1076,13 +1083,32 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
     return s + item.amount * 12; // per_property is monthly
   }, 0);
 
+  const dealCenter =
+    deal?.lat != null && deal?.lng != null
+      ? { lat: Number(deal.lat), lng: Number(deal.lng) }
+      : null;
+
+  // Per-building massing metrics for map labels
+  const buildingMetrics: Record<string, { unitCount: number; floors: number; gsfTotal: number }> = {};
+  if (currentMassing) {
+    for (const s of buildingProgram.scenarios.filter(sc => sc.site_plan_scenario_id === currentMassing.id)) {
+      if (!s.site_plan_building_id) continue;
+      const sm = computeMassingSummary(s, zoningInputs);
+      buildingMetrics[s.site_plan_building_id] = {
+        unitCount: sm.total_units,
+        floors: s.floors.length,
+        gsfTotal: sm.total_gsf,
+      };
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h2 className="text-xl font-bold">Programming</h2>
+          <h2 className="text-xl font-bold">Site Plan &amp; Program</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Define what you&apos;re building — massing, unit mix, commercial tenants, and income sources. Every save syncs to Underwriting automatically.
+            Draw the site plan and define what you&apos;re building — massing, unit mix, commercial tenants, and income sources. Every save syncs to Underwriting automatically.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-shrink-0">
@@ -1100,13 +1126,33 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
         </div>
       </div>
 
-      {/* Massing tabs — driven 1:1 by site_plan.scenarios. To rename,
-          add or delete a Massing the analyst goes back to Site & Zoning;
-          this page is read-only on the structure (it just edits the
-          floor stacks within each cell).
+      {/* ── Site Plan ─────────────────────────────────────────────────── */}
+      <Section title="Site Plan" icon={<MapIcon className="h-4 w-4 text-amber-400" />}>
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+          <SitePlanGenerator
+            value={sitePlan}
+            onChange={updateSitePlan}
+            setbacks={sitePlanSetbacks}
+            fallbackCenter={dealCenter}
+            height={560}
+            dealId={params.id}
+            buildingMetrics={buildingMetrics}
+          />
+          <SitePlanMetrics
+            value={sitePlan}
+            onChange={updateSitePlan}
+            setbacks={sitePlanSetbacks}
+            zoningLotCoveragePct={zoningInputs.lot_coverage_pct}
+            expectedLandSf={zoningInputs.land_sf}
+            dealId={params.id}
+          />
+        </div>
+      </Section>
+
+      {/* Massing tabs — driven 1:1 by site_plan.scenarios. The scenario
+          structure (massings + buildings) is managed here via the map above.
           Shown even in the single-massing case so the analyst always
-          knows which massing they're editing — the chip acts as a
-          breadcrumb and an affordance for adding alternates later. */}
+          knows which massing they're editing. */}
       {sitePlanMassings.length > 0 && (
         <MassingTabsRow
           massings={sitePlanMassings}
@@ -1171,99 +1217,6 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
               </button>
             );
           })}
-        </div>
-      )}
-
-      {/* Collapsed by default. Zoning and bonus constraints drive the
-          massing but the analyst rarely references them while editing
-          unit mix / rents. A one-line summary stays visible so they
-          know the context exists; click to expand for full chips. */}
-      {(zoningContext.zoning_designation ||
-        zoningContext.overlays.length > 0 ||
-        zoningContext.height_limits.length > 0 ||
-        zoningInputs.far > 0 ||
-        zoningInputs.lot_coverage_pct > 0 ||
-        densityBonuses.length > 0) && (
-        <div className="border border-border/40 rounded-md bg-muted/5">
-          <button
-            onClick={() => setZoningOpen((o) => !o)}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-muted/15 transition-colors"
-          >
-            {zoningOpen ? (
-              <ChevronDown className="h-3 w-3 text-muted-foreground/60 shrink-0" />
-            ) : (
-              <ChevronRight className="h-3 w-3 text-muted-foreground/60 shrink-0" />
-            )}
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Zoning constraints
-            </span>
-            {!zoningOpen && (
-              <span className="text-[11px] text-muted-foreground/80 truncate">
-                {[
-                  zoningContext.zoning_designation,
-                  zoningInputs.far > 0 ? `FAR ${zoningInputs.far}` : null,
-                  zoningInputs.lot_coverage_pct > 0 ? `Cov ≤ ${zoningInputs.lot_coverage_pct}%` : null,
-                  densityBonuses.length > 0
-                    ? `${densityBonuses.length} bonus${densityBonuses.length > 1 ? "es" : ""}`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-            )}
-          </button>
-          {zoningOpen && (
-            <div className="flex items-center gap-1.5 flex-wrap text-[11px] px-3 pb-2 pt-1 border-t border-border/40">
-              {zoningContext.zoning_designation && (
-                <ZoningChip color="blue">{zoningContext.zoning_designation}</ZoningChip>
-              )}
-              {zoningInputs.far > 0 && (
-                <ZoningChip color="blue">FAR {zoningInputs.far}</ZoningChip>
-              )}
-              {zoningInputs.lot_coverage_pct > 0 && (
-                <ZoningChip color="blue">Coverage ≤ {zoningInputs.lot_coverage_pct}%</ZoningChip>
-              )}
-              {zoningContext.height_limits
-                .filter((h) => typeof h?.value === "string" && h.value.trim() !== "")
-                .slice(0, 2)
-                .map((h, i) => (
-                  <ZoningChip key={`hl-${i}`} color="blue" title={typeof h.label === "string" ? h.label : undefined}>
-                    {String(h.value)}
-                  </ZoningChip>
-                ))}
-              {zoningContext.overlays
-                .filter((o) => typeof o === "string" && o.trim() !== "")
-                .slice(0, 3)
-                .map((o, i) => (
-                  <ZoningChip key={`ov-${i}`} color="slate">{String(o)}</ZoningChip>
-                ))}
-              {densityBonuses.length > 0 && (
-                <>
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground mx-1">
-                    Bonuses
-                  </span>
-                  {densityBonuses.map((b, i) => (
-                    <ZoningChip
-                      key={`db-${i}`}
-                      color="emerald"
-                      title={typeof b?.description === "string" ? b.description : undefined}
-                    >
-                      {String(b?.source || "")}
-                      {typeof b?.additional_density === "string" && b.additional_density
-                        ? ` · ${b.additional_density}`
-                        : ""}
-                    </ZoningChip>
-                  ))}
-                </>
-              )}
-              <a
-                href={`/deals/${params.id}/site-zoning`}
-                className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline decoration-dotted"
-              >
-                Edit on Site &amp; Zoning →
-              </a>
-            </div>
-          )}
         </div>
       )}
 

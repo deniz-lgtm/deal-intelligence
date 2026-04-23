@@ -73,6 +73,9 @@ export interface SitePlanGeneratorProps {
   // Deal ID — required to upload snapshots to the documents store.
   // When omitted, the Snapshot button is hidden.
   dealId?: string;
+  // Per-building massing metrics — rendered as permanent tooltip labels
+  // centered on each building polygon. Key is SitePlanBuilding.id.
+  buildingMetrics?: Record<string, { unitCount: number; floors: number; gsfTotal: number }>;
 }
 
 type Tool = "pan" | "parcel" | "building" | "cutout" | "frontage" | "measure";
@@ -401,7 +404,7 @@ const toLatLng = (p: SitePlanPoint): [number, number] => [p.lat, p.lng];
 // ── The full component ──────────────────────────────────────────────────────
 
 export default function SitePlanGenerator({
-  value, onChange, setbacks, fallbackCenter, height = 560, dealId,
+  value, onChange, setbacks, fallbackCenter, height = 560, dealId, buildingMetrics,
 }: SitePlanGeneratorProps) {
   const [tool, setTool] = useState<Tool>("pan");
   // Set when Mapbox tiles fail and we auto-fall-back to CARTO/Esri, so
@@ -1439,9 +1442,34 @@ export default function SitePlanGenerator({
                 },
               }}
             >
-              <Tooltip direction="center" className="site-plan-dim-label">
-                {b.label} · {b.area_sf.toLocaleString()} SF
-              </Tooltip>
+              {(() => {
+                const m = buildingMetrics?.[b.id];
+                if (m && (m.unitCount > 0 || m.floors > 0 || m.gsfTotal > 0)) {
+                  return (
+                    <Tooltip
+                      direction="center"
+                      permanent
+                      className="site-plan-building-metrics"
+                    >
+                      <div style={{ textAlign: "center", lineHeight: 1.3 }}>
+                        <div style={{ fontWeight: 600, fontSize: 10 }}>{b.label}</div>
+                        <div style={{ fontSize: 9, opacity: 0.9 }}>
+                          {m.unitCount > 0 ? `${m.unitCount} units` : ""}
+                          {m.unitCount > 0 && m.floors > 0 ? " · " : ""}
+                          {m.floors > 0 ? `${m.floors} fl` : ""}
+                          {(m.unitCount > 0 || m.floors > 0) && m.gsfTotal > 0 ? " · " : ""}
+                          {m.gsfTotal > 0 ? `${m.gsfTotal.toLocaleString()} SF` : ""}
+                        </div>
+                      </div>
+                    </Tooltip>
+                  );
+                }
+                return (
+                  <Tooltip direction="center" className="site-plan-dim-label">
+                    {b.label} · {b.area_sf.toLocaleString()} SF
+                  </Tooltip>
+                );
+              })()}
             </Polygon>
           );
         })}
@@ -1714,6 +1742,16 @@ export default function SitePlanGenerator({
           box-shadow: none;
         }
         .site-plan-dim-label.leaflet-tooltip::before { display: none; }
+        .site-plan-building-metrics.leaflet-tooltip {
+          background: rgba(30, 41, 59, 0.92);
+          color: #fff;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          padding: 3px 7px;
+          border-radius: 5px;
+          box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+          pointer-events: none;
+        }
+        .site-plan-building-metrics.leaflet-tooltip::before { display: none; }
       `}</style>
     </div>
   );

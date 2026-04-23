@@ -1,13 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
 import {
-  Loader2, MapPin, Sparkles, RefreshCw, Save,
+  Loader2, MapPin, Sparkles, RefreshCw, Download, Save,
   Building2, Ruler, Trees, ChevronDown, ChevronRight, FileText,
-  Map as MapIcon, ExternalLink, CalendarClock, Wand2, Info,
-  Pencil, Copy, Trash2, Star,
+  ExternalLink, CalendarClock, Wand2, Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -21,27 +19,6 @@ import ViewModeToggle from "@/components/ViewModeToggle";
 import type { Document } from "@/lib/types";
 import { DocCoverageChip } from "@/components/ai";
 import GenerateToLibraryButton from "@/components/GenerateToLibraryButton";
-import type {
-  SitePlan as SitePlanType,
-  SitePlanScenario as SitePlanScenarioType,
-  SitePlanBuilding as SitePlanBuildingType,
-  SitePlanPoint as SitePlanPointType,
-} from "@/lib/types";
-import { DEFAULT_SITE_PLAN, newSitePlanScenario } from "@/lib/types";
-import SitePlanMetrics from "@/components/site-plan/SitePlanMetrics";
-
-// SitePlanGenerator is client-only (leaflet touches window on import).
-const SitePlanGenerator = dynamic(
-  () => import("@/components/site-plan/SitePlanGenerator"),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="border border-border/40 rounded-xl bg-card/40 h-[560px] flex items-center justify-center text-xs text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading site plan…
-      </div>
-    ),
-  }
-);
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface Setback { label: string; feet: number | null; }
@@ -250,40 +227,18 @@ function Section({ title, icon, children, defaultOpen = true, headerRight }: {
   );
 }
 
-function FieldInput({ label, value, onChange, suffix, placeholder, type = "text", className = "", formatted = false }: {
+function FieldInput({ label, value, onChange, suffix, placeholder, type = "text", className = "" }: {
   label: string; value: string | number; onChange: (v: string) => void;
-  suffix?: string; placeholder?: string; type?: string; className?: string; formatted?: boolean;
+  suffix?: string; placeholder?: string; type?: string; className?: string;
 }) {
-  // Thousand-separated, integer-only display. Keeps a raw string so
-  // mid-typing doesn't fight the user, then rounds + reformats on blur.
-  const fmt = useCallback((v: string | number) => {
-    const n = typeof v === "number" ? v : parseFloat(String(v).replace(/,/g, ""));
-    if (!Number.isFinite(n) || n === 0) return "";
-    return Math.round(n).toLocaleString("en-US");
-  }, []);
-  const [raw, setRaw] = useState<string>(formatted ? fmt(value) : String(value ?? ""));
-  useEffect(() => {
-    if (formatted) setRaw(fmt(value));
-  }, [value, formatted, fmt]);
   return (
     <div className={className}>
       <label className="block text-[10px] text-muted-foreground uppercase tracking-wide mb-1">{label}</label>
       <div className="flex items-center border border-border/40 rounded-lg bg-muted/20 overflow-hidden">
         <input
-          type={formatted ? "text" : type}
-          inputMode={formatted ? "decimal" : undefined}
-          value={formatted ? raw : value}
-          onChange={e => {
-            if (formatted) setRaw(e.target.value);
-            else onChange(e.target.value);
-          }}
-          onBlur={() => {
-            if (!formatted) return;
-            const n = parseFloat(raw.replace(/,/g, "")) || 0;
-            const rounded = Math.round(n);
-            onChange(String(rounded));
-            setRaw(fmt(rounded));
-          }}
+          type={type}
+          value={value}
+          onChange={e => onChange(e.target.value)}
           placeholder={placeholder || "—"}
           className="flex-1 px-3 py-1.5 text-sm bg-transparent outline-none"
         />
@@ -328,101 +283,6 @@ function SelectInput({ label, value, onChange, options, className = "" }: {
   );
 }
 
-// Single scenario tab — doubles as a clickable switcher and carries inline
-// rename / duplicate / delete affordances. Rename is edit-in-place: click
-// the label to enter edit mode, Enter / blur commits, Esc cancels.
-function ScenarioTab({
-  scenario, isActive, canDelete, onSelect, onRename, onDelete, onDuplicate, onToggleBaseCase,
-}: {
-  scenario: SitePlanScenarioType;
-  isActive: boolean;
-  canDelete: boolean;
-  onSelect: () => void;
-  onRename: (name: string) => void;
-  onDelete: () => void;
-  onDuplicate: () => void;
-  onToggleBaseCase: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(scenario.name);
-  useEffect(() => { setDraft(scenario.name); }, [scenario.name]);
-
-  const isBaseCase = !!scenario.is_base_case;
-
-  return (
-    <div
-      className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] transition-colors ${
-        isActive
-          ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
-          : "bg-muted/10 border-border/40 text-muted-foreground hover:text-foreground hover:border-border"
-      }`}
-    >
-      {/* Star is always visible so analysts can see at a glance which
-          massing is the project's base case. Click toggles; only one
-          can be base case at a time — the setter above clears other
-          massings before flipping this one on. */}
-      <button
-        onClick={onToggleBaseCase}
-        title={isBaseCase ? "Base case — click to un-star" : "Mark as base case (shared with Programming & Underwriting)"}
-        className={`-ml-0.5 ${isBaseCase ? "text-amber-300" : "text-muted-foreground/40 hover:text-amber-300"}`}
-      >
-        <Star className={`h-3 w-3 ${isBaseCase ? "fill-amber-300" : ""}`} />
-      </button>
-      {editing ? (
-        <input
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            if (draft.trim()) onRename(draft.trim());
-            setEditing(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              if (draft.trim()) onRename(draft.trim());
-              setEditing(false);
-            } else if (e.key === "Escape") {
-              setDraft(scenario.name);
-              setEditing(false);
-            }
-          }}
-          className="w-28 bg-transparent outline-none border-b border-border/60 text-[11px]"
-        />
-      ) : (
-        <button onClick={onSelect} className="font-medium">
-          {scenario.name}
-        </button>
-      )}
-      {isActive && !editing && (
-        <>
-          <button
-            onClick={() => setEditing(true)}
-            title="Rename scenario"
-            className="ml-1 text-muted-foreground/70 hover:text-foreground"
-          >
-            <Pencil className="h-3 w-3" />
-          </button>
-          <button
-            onClick={onDuplicate}
-            title="Duplicate scenario"
-            className="text-muted-foreground/70 hover:text-foreground"
-          >
-            <Copy className="h-3 w-3" />
-          </button>
-          {canDelete && (
-            <button
-              onClick={onDelete}
-              title="Delete scenario"
-              className="text-muted-foreground/70 hover:text-red-400"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
 
 function CheckboxGroup({ label, options, selected, onChange }: {
   label: string; options: string[]; selected: string[]; onChange: (v: string[]) => void;
@@ -453,13 +313,13 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [deal, setDeal] = useState<any>(null);
 
   const [siteInfo, setSiteInfo] = useState<SiteInfo>(DEFAULT_SITE_INFO);
   const [zoning, setZoning] = useState<ZoningInfo>(DEFAULT_ZONING);
   const [devParams, setDevParams] = useState<DevParams>(DEFAULT_DEV);
-  const [sitePlan, setSitePlan] = useState<SitePlanType>(DEFAULT_SITE_PLAN);
   const [narrative, setNarrative] = useState("");
   const [lastReportDate, setLastReportDate] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -552,89 +412,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       };
       setDevParams(dp);
 
-      // Hydrate the drawn site plan if the analyst has previously traced it.
-      // Migration handles three shapes in order:
-      //   1. Current: `{ scenarios: [...], active_scenario_id }` — use as-is.
-      //   2. Multi-building (flat): `{ buildings, parcel_points, ... }` →
-      //      wrap into scenarios: [{ name: "Base Case", ... }].
-      //   3. Initial release: `{ building_points, building_area_sf,
-      //      parcel_points }` single-building → migrate buildings[0] into
-      //      a wrapped Base Case scenario.
-      // All legacy top-level fields are dropped from state after migration
-      // so re-saves only write the new scenarios[] shape.
-      if (uw?.site_plan) {
-        const raw = uw.site_plan as any;
-        let scenarios: SitePlanScenarioType[] = Array.isArray(raw.scenarios)
-          ? raw.scenarios
-          : [];
-        let activeScenarioId: string | null = raw.active_scenario_id ?? null;
-
-        if (scenarios.length === 0) {
-          // Flatten legacy shapes into a single "Base Case" scenario.
-          let buildings: SitePlanBuildingType[] = Array.isArray(raw.buildings) ? raw.buildings : [];
-          let activeBuildingId: string | null = raw.active_building_id ?? null;
-          const parcelPoints: SitePlanPointType[] = Array.isArray(raw.parcel_points) ? raw.parcel_points : [];
-          const parcelAreaSf: number = Number(raw.parcel_area_sf) || 0;
-          if (
-            buildings.length === 0 &&
-            Array.isArray(raw.building_points) &&
-            raw.building_points.length >= 3
-          ) {
-            const migratedId =
-              (crypto as any)?.randomUUID?.() ||
-              `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-            buildings = [{
-              id: migratedId,
-              label: "Building 1",
-              points: raw.building_points,
-              area_sf: Math.round(raw.building_area_sf || 0),
-            }];
-            activeBuildingId = migratedId;
-          }
-          if (parcelPoints.length > 0 || buildings.length > 0) {
-            const baseScen = newSitePlanScenario("Massing 1");
-            baseScen.parcel_points = parcelPoints;
-            baseScen.parcel_area_sf = parcelAreaSf;
-            baseScen.buildings = buildings;
-            baseScen.active_building_id = activeBuildingId;
-            scenarios = [baseScen];
-            activeScenarioId = baseScen.id;
-          }
-        }
-
-        // Ensure there's always at least one scenario so the tab bar has
-        // something to anchor; also ensure active_scenario_id points to
-        // something valid.
-        if (scenarios.length === 0) {
-          const s = newSitePlanScenario("Massing 1");
-          scenarios = [s];
-          activeScenarioId = s.id;
-        }
-        if (!activeScenarioId || !scenarios.some((s) => s.id === activeScenarioId)) {
-          activeScenarioId = scenarios[0].id;
-        }
-
-        // Strip the legacy top-level fields from the destructured rest so
-        // we don't persist them again on subsequent saves.
-        const {
-          building_points: _bp,
-          building_area_sf: _ba,
-          parcel_points: _pp,
-          parcel_area_sf: _pa,
-          buildings: _bldgs,
-          active_building_id: _abid,
-          scenarios: _scen,
-          active_scenario_id: _asid,
-          ...rest
-        } = raw;
-        setSitePlan({
-          ...DEFAULT_SITE_PLAN,
-          ...rest,
-          scenarios,
-          active_scenario_id: activeScenarioId,
-        });
-      }
-
       setNarrative(uw?.zoning_narrative || "");
       setLastReportDate(uw?.last_report_date || null);
       setLoading(false);
@@ -689,7 +466,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         site_info: siteInfo,
         zoning_info: zoningForSave,
         dev_params: finalDev,
-        site_plan: sitePlan,
         zoning_narrative: narrative,
         last_report_date: lastReportDate,
         // Also sync flat fields used by underwriting page
@@ -720,20 +496,16 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       }
 
       setDirty(false);
-      toast.success("Site & zoning data saved");
+      toast.success("Zoning saved");
     } catch {
       toast.error("Failed to save");
     } finally {
       setSaving(false);
     }
-  }, [params.id, siteInfo, zoning, devParams, sitePlan, narrative, lastReportDate, deal, recalcBuilding]);
+  }, [params.id, siteInfo, zoning, devParams, narrative, lastReportDate, deal, recalcBuilding]);
 
-  // ── Autosave: fires 2s after any meaningful change, mirrors the
-  //    programming page behaviour so drawing a site plan or editing a
-  //    zoning field doesn't require clicking Save. The Save button still
-  //    works for explicit saves; it just becomes redundant while the
-  //    page is idle. Pan/zoom never trigger dirty (see updateSitePlan
-  //    below) so map exploration won't thrash the endpoint.
+  // ── Autosave: fires 2s after any meaningful change. The Save button still
+  //    works for explicit saves; it just becomes redundant while the page is idle.
   useEffect(() => {
     if (loading || !dirty) return;
     const t = setTimeout(saveAll, 2000);
@@ -833,6 +605,39 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     }
   };
 
+  // ── Export Word ─────────────────────────────────────────────────────────
+  const exportWord = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/deals/${params.id}/zoning-report/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dealName: deal?.name || "Deal",
+          siteInfo,
+          zoningInfo: zoning,
+          devParams: recalcBuilding(siteInfo, devParams),
+          narrative,
+        }),
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Zoning-Report-${(deal?.name || "Deal").replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60)}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Word document downloaded");
+    } catch {
+      toast.error("Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // ── Update helpers ─────────────────────────────────────────────────────
   const updateSite = (k: keyof SiteInfo, v: any) => {
     setSiteInfo(prev => {
@@ -849,27 +654,6 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
     setZoning(prev => ({ ...prev, [k]: v }));
     setDirty(true);
   };
-
-  // Map-controlled updates flow through here. Pan/zoom events also come
-  // through onChange (we persist center/zoom so the map re-opens where the
-  // user left it), but we do NOT mark the page dirty for pure view changes
-  // — otherwise just looking around the map would flip the Save button on
-  // and fight autosave. We compare meaningful fields; anything else is
-  // treated as a content edit and marks dirty.
-  const updateSitePlan = useCallback((next: SitePlanType) => {
-    setSitePlan(prev => {
-      const contentChanged =
-        prev.scenarios !== next.scenarios ||
-        prev.active_scenario_id !== next.active_scenario_id ||
-        prev.show_setbacks !== next.show_setbacks ||
-        prev.snap_right_angle !== next.snap_right_angle ||
-        prev.snap_vertex !== next.snap_vertex ||
-        prev.snap_grid_ft !== next.snap_grid_ft ||
-        prev.map_style !== next.map_style;
-      if (contentChanged) setDirty(true);
-      return next;
-    });
-  }, []);
 
   const updateDev = (k: keyof DevParams, v: number) => {
     setDevParams(prev => {
@@ -927,50 +711,16 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
 
   const isIndustrial = deal?.property_type === "industrial";
   const isMF = ["multifamily", "sfr", "student_housing"].includes(deal?.property_type || "");
-  const isGroundUp = deal?.investment_strategy === "ground_up";
-  // Site plan is only relevant where the analyst is shaping a physical
-  // program — ground-up, value-add (redevelopment), and opportunistic. Core /
-  // core-plus acquisitions typically don't need to sketch a new footprint.
-  const isDev = ["ground_up", "value_add", "opportunistic"].includes(
-    deal?.investment_strategy || ""
-  );
   const computedDev = recalcBuilding(siteInfo, devParams);
-
-  // Map zoning.setbacks[] (label + feet) into the {front, side, rear, corner}
-  // shape the SitePlanGenerator / SitePlanMetrics expect. Matches by the
-  // label string case-insensitively so analysts who renamed a row still get
-  // the envelope — anything we can't match just doesn't drive the inset.
-  // We match "side" but exclude rows containing "corner" so a "Corner Side"
-  // row feeds the corner slot rather than the side slot.
-  const findSetback = (include: string, exclude?: string): number | null => {
-    const row = zoning.setbacks.find(s => {
-      const label = (s.label || "").toLowerCase();
-      if (!label.includes(include)) return false;
-      if (exclude && label.includes(exclude)) return false;
-      return true;
-    });
-    return row?.feet ?? null;
-  };
-  const sitePlanSetbacks = {
-    front: findSetback("front"),
-    side: findSetback("side", "corner"),
-    rear: findSetback("rear"),
-    corner: findSetback("corner"),
-  };
-
-  const dealCenter =
-    deal?.lat != null && deal?.lng != null
-      ? { lat: Number(deal.lat), lng: Number(deal.lng) }
-      : null;
 
   return (
     <div className="space-y-5 animate-fade-up">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h2 className="text-xl font-bold">Site & Zoning</h2>
+          <h2 className="text-xl font-bold">Zoning</h2>
           <p className="text-sm text-muted-foreground">
-            Site information, zoning analysis, and development parameters
+            Site information and zoning analysis
             {lastReportDate && <span className="ml-2 text-xs">· AI report {new Date(lastReportDate).toLocaleDateString()}</span>}
           </p>
         </div>
@@ -979,19 +729,10 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
           {/* Zoning Report buttons hidden in Basic mode — they're a
               communication artifact for memos, not part of the model. */}
           {!isBasic && narrative && (
-            <GenerateToLibraryButton
-              dealId={params.id}
-              kind="zoning_report"
-              getPayload={() => ({
-                dealName: deal?.name || "Deal",
-                siteInfo,
-                zoningInfo: zoning,
-                devParams: recalcBuilding(siteInfo, devParams),
-                narrative,
-              })}
-              size="sm"
-              variant="outline"
-            />
+            <Button variant="outline" size="sm" onClick={exportWord} disabled={exporting}>
+              {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+              Export Word
+            </Button>
           )}
           {!isBasic && (
             <div className="flex items-center gap-2">
@@ -1013,7 +754,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
       <Section title="Site Information" icon={<MapPin className="h-4 w-4 text-emerald-400" />}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <FieldInput label="Land (Acres)" value={siteInfo.land_acres || ""} onChange={v => updateSite("land_acres", parseFloat(v) || 0)} type="number" suffix="AC" />
-          <FieldInput label="Land (Square Feet)" value={siteInfo.land_sf || ""} onChange={v => updateSite("land_sf", parseFloat(v) || 0)} suffix="SF" formatted />
+          <FieldInput label="Land (Square Feet)" value={siteInfo.land_sf || ""} onChange={v => updateSite("land_sf", parseFloat(v) || 0)} type="number" suffix="SF" />
           {/* Parcel ID / APN — auto-populated from the deal address via the
               parcel-lookup endpoint. The button re-runs the lookup and
               overwrites any existing value. */}
@@ -1116,7 +857,7 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             placeholder="Existing structures, parking, etc."
           />
           {/* Site notes — Advanced only. The field is included in the
-              Zoning Report PDF export but rarely needed in Basic mode. */}
+              Zoning Report Word export but rarely needed in Basic mode. */}
           {!isBasic && (
             <TextArea
               label="Site Conditions & Environmental Notes (shown in Zoning Report export)"
@@ -1715,204 +1456,14 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
         )}
       </Section>
 
-      {/* ── Site Plan (parcel + building footprint on satellite) ──────────── */}
-      {/* Only shown for strategies where the analyst is shaping the physical
-          program: ground-up, value-add (redevelopment), or opportunistic.
-          The drawn building footprint (SF) flows into the Programming page's
-          active massing scenario footprint_sf on hydrate. Backwards
-          compatible: if nothing is drawn, the old typed-footprint workflow
-          on Programming is unaffected. */}
-      {isDev && (
-        <Section title="Site Plan" icon={<MapIcon className="h-4 w-4 text-amber-400" />}>
-          {/* Status strip: tells the analyst at-a-glance whether their
-              drawing is saved. Complements the page-level Save button;
-              clicking "Save now" flushes immediately instead of waiting
-              for the 2s autosave debounce. */}
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <p className="text-xs text-muted-foreground">
-              Trace the parcel boundary, then draw the building footprint on the
-              satellite map. Setbacks from the zoning section above appear live
-              as a buildable envelope. The drawn footprint SF feeds the
-              Programming page&apos;s active massing scenario.
-            </p>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <span
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ${
-                  saving
-                    ? "bg-blue-500/15 text-blue-300"
-                    : dirty
-                    ? "bg-amber-500/15 text-amber-300"
-                    : "bg-emerald-500/15 text-emerald-300"
-                }`}
-                title={
-                  saving
-                    ? "Saving changes…"
-                    : dirty
-                    ? "Unsaved — will autosave shortly, or click Save now"
-                    : "All changes saved"
-                }
-              >
-                {saving ? (
-                  <>
-                    <Loader2 className="h-2.5 w-2.5 animate-spin" /> Saving
-                  </>
-                ) : dirty ? (
-                  "Unsaved"
-                ) : (
-                  <>
-                    <Save className="h-2.5 w-2.5" /> Saved
-                  </>
-                )}
-              </span>
-              <Button size="sm" variant="outline" onClick={saveAll} disabled={saving || !dirty}>
-                {saving ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : (
-                  <Save className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                Save now
-              </Button>
-            </div>
-          </div>
-
-          {/* Massing tab bar — one tab per drawn massing. Analysts use
-              massings to compare alternatives on the same site (as-of-
-              right vs with bonus vs max build). Each massing owns its
-              parcel + buildings and is the same unit Programming and
-              Underwriting consume. Inline rename, duplicate (deep-
-              copies the parcel + buildings), and delete (disabled at
-              count = 1) live on each tab. */}
-          <div className="flex items-center gap-1 flex-wrap mb-3 pb-2 border-b border-border/40">
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
-              Massing
-            </span>
-            {(sitePlan.scenarios || []).map((s) => {
-              const isActive = s.id === sitePlan.active_scenario_id;
-              return (
-                <ScenarioTab
-                  key={s.id}
-                  scenario={s}
-                  isActive={isActive}
-                  canDelete={(sitePlan.scenarios || []).length > 1}
-                  onSelect={() =>
-                    updateSitePlan({
-                      ...sitePlan,
-                      active_scenario_id: s.id,
-                      updated_at: new Date().toISOString(),
-                    })
-                  }
-                  onRename={(name) =>
-                    updateSitePlan({
-                      ...sitePlan,
-                      scenarios: (sitePlan.scenarios || []).map((x) =>
-                        x.id === s.id ? { ...x, name } : x
-                      ),
-                      updated_at: new Date().toISOString(),
-                    })
-                  }
-                  onDelete={() => {
-                    const remaining = (sitePlan.scenarios || []).filter((x) => x.id !== s.id);
-                    updateSitePlan({
-                      ...sitePlan,
-                      scenarios: remaining,
-                      active_scenario_id:
-                        isActive ? (remaining[0]?.id || null) : sitePlan.active_scenario_id,
-                      updated_at: new Date().toISOString(),
-                    });
-                  }}
-                  onDuplicate={() => {
-                    const copy = newSitePlanScenario(`${s.name} (copy)`);
-                    copy.parcel_points = s.parcel_points.map((p) => ({ ...p }));
-                    copy.parcel_area_sf = s.parcel_area_sf;
-                    copy.buildings = s.buildings.map((b) => ({
-                      ...b,
-                      id:
-                        (typeof crypto !== "undefined" &&
-                          typeof (crypto as any).randomUUID === "function"
-                            ? (crypto as any).randomUUID()
-                            : `bld-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-                      points: b.points.map((p) => ({ ...p })),
-                    }));
-                    copy.active_building_id = null;
-                    updateSitePlan({
-                      ...sitePlan,
-                      scenarios: [...(sitePlan.scenarios || []), copy],
-                      active_scenario_id: copy.id,
-                      updated_at: new Date().toISOString(),
-                    });
-                  }}
-                  onToggleBaseCase={() => {
-                    // Toggle base case on this scenario, clearing the flag
-                    // from siblings so at most one massing is ever the
-                    // base case.
-                    const wasBase = !!s.is_base_case;
-                    updateSitePlan({
-                      ...sitePlan,
-                      scenarios: (sitePlan.scenarios || []).map((x) => ({
-                        ...x,
-                        is_base_case: x.id === s.id ? !wasBase : false,
-                      })),
-                      updated_at: new Date().toISOString(),
-                    });
-                  }}
-                />
-              );
-            })}
-            <button
-              onClick={() => {
-                // Seed "Scenario N" with the lowest unused integer.
-                const used = new Set((sitePlan.scenarios || []).map((x) => x.name));
-                let n = (sitePlan.scenarios || []).length + 1;
-                while (used.has(`Massing ${n}`)) n++;
-                const s = newSitePlanScenario(`Massing ${n}`);
-                updateSitePlan({
-                  ...sitePlan,
-                  scenarios: [...(sitePlan.scenarios || []), s],
-                  active_scenario_id: s.id,
-                  updated_at: new Date().toISOString(),
-                });
-              }}
-              className="px-2 py-1 text-[11px] rounded-md border border-dashed border-border/60 text-muted-foreground hover:text-foreground hover:border-border"
-              title="Add a new blank massing"
-            >
-              + New massing
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
-            <SitePlanGenerator
-              value={sitePlan}
-              onChange={updateSitePlan}
-              setbacks={sitePlanSetbacks}
-              fallbackCenter={dealCenter}
-              height={560}
-              dealId={params.id}
-            />
-            <SitePlanMetrics
-              value={sitePlan}
-              onChange={updateSitePlan}
-              setbacks={sitePlanSetbacks}
-              zoningLotCoveragePct={zoning.lot_coverage_pct}
-              expectedLandSf={siteInfo.land_sf}
-            />
-          </div>
-        </Section>
-      )}
-
-      {/* The old "Development Summary" tiles (FAR / Max GSF / Max NRSF /
-          Lot Coverage) have moved to the Programming page's headline
-          summary so analysts have a single source of truth. The tiles
-          here just duplicated what Programming already shows, so we
-          dropped them. */}
-
       {/* ── Zoning Report (Export Only) ─ Advanced view ────────────────── */}
       {!isBasic && narrative && (
         <Section title="Zoning Report — Export Only" icon={<Sparkles className="h-4 w-4 text-amber-400" />}>
           <p className="text-[11px] text-muted-foreground mb-3">
             Auto-generated narrative for investment memos. Not an input to
             the model — the structured fields above drive all downstream
-            calcs. Use <strong>Generate → Library</strong> to produce a
-            branded PDF that lands in Reports &amp; Packages.
+            calcs. Use the export buttons to drop into Word or save to the
+            deal&apos;s Documents.
           </p>
           <div className="prose prose-sm prose-invert max-w-none
             prose-headings:text-foreground prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
@@ -1924,22 +1475,29 @@ export default function SiteZoningPage({ params }: { params: { id: string } }) {
             <ReactMarkdown>{narrative}</ReactMarkdown>
           </div>
           <div className="flex gap-2 mt-4 pt-3 border-t border-border/30">
-            {/* Single Generate → Library button replaces the old
-                separate "Export Word" + "Save to Documents" buttons.
-                The library IS the destination now. */}
-            <GenerateToLibraryButton
-              dealId={params.id}
-              kind="zoning_report"
-              getPayload={() => ({
-                dealName: deal?.name || "Deal",
-                siteInfo,
-                zoningInfo: zoning,
-                devParams,
-                narrative,
-              })}
-              size="sm"
-              variant="outline"
-            />
+            <Button variant="outline" size="sm" onClick={exportWord} disabled={exporting}>
+              {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+              Export Word
+            </Button>
+            <Button variant="outline" size="sm" onClick={async () => {
+              try {
+                const res = await fetch(`/api/deals/${params.id}/zoning-report/export`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ dealName: deal?.name || "Deal", siteInfo, zoningInfo: zoning, devParams, narrative }),
+                });
+                if (!res.ok) throw new Error();
+                const blob = await res.blob();
+                const formData = new FormData();
+                formData.append("deal_id", params.id);
+                formData.append("files", new File([blob], `Zoning-Report-${(deal?.name || "Deal").replace(/[^a-zA-Z0-9]/g, "_")}.docx`, { type: blob.type }));
+                const uploadRes = await fetch("/api/documents/upload", { method: "POST", body: formData });
+                if (uploadRes.ok) toast.success("Zoning report saved to deal documents");
+                else throw new Error();
+              } catch { toast.error("Failed to save report to documents"); }
+            }}>
+              <FileText className="h-4 w-4 mr-2" /> Save to Documents
+            </Button>
           </div>
         </Section>
       )}
