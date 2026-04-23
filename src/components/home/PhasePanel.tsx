@@ -24,6 +24,7 @@ interface Props {
   emptyState?: ReactNode;
   isEmpty?: boolean;
   className?: string;
+  action?: { label: string; href?: string } | null;
 }
 
 export function PhasePanel({
@@ -39,6 +40,7 @@ export function PhasePanel({
   emptyState,
   isEmpty,
   className,
+  action,
 }: Props) {
   return (
     <section
@@ -56,6 +58,7 @@ export function PhasePanel({
         href={href}
         accentVar={accentVar}
         motif={motif}
+        action={action}
       />
 
       {/* KPI row — three figures max */}

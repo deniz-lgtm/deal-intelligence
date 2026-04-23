@@ -20,6 +20,9 @@ export interface PhaseSignals {
   has_permits?: boolean;
   has_vendors?: boolean;
   has_progress_reports?: boolean;
+  // Action signals — absent/zero means nothing pending, UI stays quiet.
+  draws_pending?: number;
+  next_milestone_at?: string | null;
 }
 
 export interface PhaseResult {
