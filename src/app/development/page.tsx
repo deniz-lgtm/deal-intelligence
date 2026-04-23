@@ -50,7 +50,7 @@ export default function DevelopmentPage() {
 
   const rows: Row[] = useMemo(() => {
     return deals
-      .filter((d) => classifyDealPhase(d, signals[d.id] ?? {}).phases.includes("development"))
+      .filter((d) => classifyDealPhase(d).phases.includes("development"))
       .map((deal) => ({ deal, signals: signals[deal.id] ?? {} }))
       .sort((a, b) => {
         const aAct =

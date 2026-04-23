@@ -1,15 +1,18 @@
 // Phase classification — turns a Deal into the set of role-based
 // "departments" (Acquisition / Development / Construction) it belongs to for
-// the triptych home page. A nullable `current_phase` override on the deal
-// wins over the auto-classification; `"multi"` recomputes the auto set and
-// lets the deal surface in every matching department.
+// the triptych home page.
+//
+// Rules (simple, explicit, no auto-signals):
+//   - Acquisition:  the deal's pipeline status is one of the acq stages.
+//   - Development:  deal.show_in_development === true (owner opted in).
+//   - Construction: deal.show_in_construction === true (owner opted in).
+//
+// A deal can belong to any combination — e.g. a deal that has closed but
+// has Dev and Construction toggled on appears in both. Signals (CEQA /
+// programming / hardcost etc.) still inform panel KPIs but no longer drive
+// membership.
 
-import type {
-  Deal,
-  DealPhase,
-  InvestmentThesis,
-  DealScope,
-} from "@/lib/types";
+import type { Deal, DealPhase } from "@/lib/types";
 
 export interface PhaseSignals {
   has_ceqa?: boolean;
@@ -26,9 +29,8 @@ export interface PhaseSignals {
 }
 
 export interface PhaseResult {
-  phases: DealPhase[];   // the departments this deal surfaces in
-  primary: DealPhase;    // for stacked-mobile ordering and nav default
-  isOverride: boolean;   // true when current_phase was explicitly set
+  phases: DealPhase[];
+  primary: DealPhase;
 }
 
 const ACQ_STAGES = new Set([
@@ -40,57 +42,13 @@ const ACQ_STAGES = new Set([
   "closing",
 ]);
 
-const DEV_THESIS = new Set<InvestmentThesis>(["value_add", "ground_up"]);
-const DEV_SCOPE = new Set<DealScope>(["value_add_expansion", "ground_up"]);
-
-function autoPhases(deal: Deal, s: PhaseSignals): DealPhase[] {
-  const out: DealPhase[] = [];
-
-  if (ACQ_STAGES.has(deal.status)) out.push("acquisition");
-
-  if (deal.status === "closed") {
-    const dev =
-      (deal.investment_strategy !== null && DEV_THESIS.has(deal.investment_strategy)) ||
-      (deal.deal_scope !== null && DEV_SCOPE.has(deal.deal_scope)) ||
-      !!s.has_ceqa ||
-      !!s.has_programming ||
-      !!s.has_predev_costs;
-    if (dev) out.push("development");
-
-    const con =
-      !!s.has_hardcost_items ||
-      !!s.has_draws ||
-      !!s.has_permits ||
-      !!s.has_vendors ||
-      !!s.has_progress_reports;
-    if (con) out.push("construction");
-
-    // Fallback: a closed deal with no dev/construction signals still needs
-    // a home — park it in Development where portfolio work typically begins.
-    if (out.length === 0) out.push("development");
-  }
-
-  return out;
-}
-
-export function classifyDealPhase(
-  deal: Deal,
-  signals: PhaseSignals = {}
-): PhaseResult {
-  const override = deal.current_phase;
-
-  if (override && override !== "multi") {
-    return { phases: [override], primary: override, isOverride: true };
-  }
-
-  const auto = autoPhases(deal, signals);
-  const primary = auto[0] ?? "acquisition";
-
-  if (override === "multi") {
-    return { phases: auto, primary, isOverride: true };
-  }
-
-  return { phases: auto, primary, isOverride: false };
+export function classifyDealPhase(deal: Deal): PhaseResult {
+  const phases: DealPhase[] = [];
+  if (ACQ_STAGES.has(deal.status)) phases.push("acquisition");
+  if (deal.show_in_development) phases.push("development");
+  if (deal.show_in_construction) phases.push("construction");
+  const primary = phases[0] ?? "acquisition";
+  return { phases, primary };
 }
 
 export function dealBelongsTo(result: PhaseResult, phase: DealPhase): boolean {

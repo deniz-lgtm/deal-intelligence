@@ -94,8 +94,14 @@ export interface Deal {
   // Execution / Post-Closing
   execution_phase: ExecutionPhase | null;
   execution_started_at: string | null;
-  // Role-based phase classification (triptych home). Null = auto-classify
-  // from status + data signals; non-null = explicit owner override.
+  // Role-based phase access (triptych home). Acquisition membership is
+  // stage-based. Development + Construction are explicit per-deal opt-ins
+  // — toggled by the owner via the PhasePinControl on the deal detail page.
+  show_in_development: boolean;
+  show_in_construction: boolean;
+  // Retained for backward compatibility with any rows set during the
+  // short-lived auto-classification era. Unused by the current UI; the
+  // migration backfills these flags into show_in_development/construction.
   current_phase: DealPhaseOverride | null;
   created_at: string;
   updated_at: string;

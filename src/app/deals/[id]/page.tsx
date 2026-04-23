@@ -476,8 +476,15 @@ export default function DealOverviewPage({
                 {deal.psa_executed && <span className="text-2xs text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">PSA ✓</span>}
                 <PhasePinControl
                   dealId={deal.id}
-                  value={deal.current_phase ?? null}
-                  onChange={(next) => setDeal({ ...deal, current_phase: next })}
+                  inDevelopment={!!deal.show_in_development}
+                  inConstruction={!!deal.show_in_construction}
+                  onChange={(next) =>
+                    setDeal({
+                      ...deal,
+                      show_in_development: next.show_in_development,
+                      show_in_construction: next.show_in_construction,
+                    })
+                  }
                 />
               </div>
               <h1 className="font-nameplate text-3xl leading-none tracking-tight">{deal.name}</h1>

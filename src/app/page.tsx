@@ -93,7 +93,7 @@ export default function HomePage() {
     const dev: DealWithStats[] = [];
     const con: DealWithStats[] = [];
     for (const deal of filtered) {
-      const result = classifyDealPhase(deal, signals[deal.id] ?? {});
+      const result = classifyDealPhase(deal);
       if (result.phases.includes("acquisition")) acq.push(deal);
       if (result.phases.includes("development")) dev.push(deal);
       if (result.phases.includes("construction")) con.push(deal);
