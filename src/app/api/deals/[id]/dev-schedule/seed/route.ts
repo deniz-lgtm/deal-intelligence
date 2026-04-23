@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { devPhaseQueries, getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { DEFAULT_DEV_PHASES } from "@/lib/types";
+import {
+  DEFAULT_ACQ_PHASES,
+  DEFAULT_DEV_PHASES,
+  DEFAULT_CONSTRUCTION_PHASES,
+  type DefaultPhaseSeed,
+  type ScheduleTrack,
+} from "@/lib/types";
 import { computeSchedule, diffComputedDates } from "@/lib/dev-schedule-compute";
 import type { DevPhase } from "@/lib/types";
 
@@ -33,7 +39,14 @@ async function ensureDevPhasesTable() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  // Note: column additions are handled by the startup migration in src/lib/db.ts
+  // Column additions (track, is_milestone, CPM fields) are handled by the
+  // startup migration in src/lib/db.ts.
+}
+
+interface SeedPlanRow {
+  seed: DefaultPhaseSeed;
+  track: ScheduleTrack;
+  sort_order: number;
 }
 
 export async function POST(
@@ -53,41 +66,62 @@ export async function POST(
       return NextResponse.json({ data: { phases: existing, seeded: false } });
     }
 
-    // Optional anchor start date (defaults to today)
+    // Optional anchor start date (defaults to today). This anchors the very
+    // first phase of the acquisition track; everything else chains off of it.
     let anchorDate = new Date().toISOString().split("T")[0];
     try {
       const body = await req.json();
       if (body?.start_date) anchorDate = body.start_date;
     } catch {}
 
-    // Seed phases with durations + predecessor chain
-    // First phase is the anchor (gets a start_date), rest are linked sequentially
-    let prevPhaseId: string | null = null;
-    for (let i = 0; i < DEFAULT_DEV_PHASES.length; i++) {
-      const p = DEFAULT_DEV_PHASES[i];
-      const phaseId = uuidv4();
-      const durationDays = p.duration_months * 30;
+    // Combine all three tracks into one ordered plan. sort_order is
+    // monotonically increasing across tracks so the unified gantt shows
+    // Acq → Dev → Construction in natural order.
+    const plan: SeedPlanRow[] = [];
+    let sort = 0;
+    for (const seed of DEFAULT_ACQ_PHASES)          plan.push({ seed, track: "acquisition",  sort_order: sort++ });
+    for (const seed of DEFAULT_DEV_PHASES)          plan.push({ seed, track: "development",  sort_order: sort++ });
+    for (const seed of DEFAULT_CONSTRUCTION_PHASES) plan.push({ seed, track: "construction", sort_order: sort++ });
+
+    // Two passes: create every phase with a generated id (no predecessor_id
+    // yet), then resolve cross-track predecessor_key → predecessor_id.
+    const idByKey = new Map<string, string>();
+
+    for (const row of plan) {
+      const id = uuidv4();
+      idByKey.set(row.seed.phase_key, id);
       await devPhaseQueries.create({
-        id: phaseId,
+        id,
         deal_id: params.id,
-        phase_key: p.phase_key,
-        label: p.label,
-        // Only first phase has an anchor start_date; rest are linked
-        start_date: i === 0 ? anchorDate : null,
-        duration_days: durationDays,
-        predecessor_id: prevPhaseId,
+        track: row.track,
+        phase_key: row.seed.phase_key,
+        label: row.seed.label,
+        // Anchor the very first phase with the caller-supplied date; every
+        // other phase's start is derived from its predecessor.
+        start_date: row.seed.predecessor_key ? null : anchorDate,
+        duration_days: row.seed.duration_days,
+        predecessor_id: null, // filled in below
         lag_days: 0,
-        sort_order: i,
+        sort_order: row.sort_order,
+        is_milestone: row.seed.is_milestone === true,
       });
-      prevPhaseId = phaseId;
     }
 
-    // Run compute pass to fill in start/end dates from the chain
+    for (const row of plan) {
+      if (!row.seed.predecessor_key) continue;
+      const selfId = idByKey.get(row.seed.phase_key);
+      const predId = idByKey.get(row.seed.predecessor_key);
+      if (!selfId || !predId) continue;
+      await devPhaseQueries.update(selfId, { predecessor_id: predId });
+    }
+
+    // Run the CPM pass so forward/backward fields are populated on first
+    // render — no need for the client to wait for a second request.
     const phases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
     const computed = computeSchedule(phases);
     const updates = diffComputedDates(phases, computed);
     if (updates.length > 0) {
-      await devPhaseQueries.bulkUpdateDates(updates);
+      await devPhaseQueries.bulkUpdateSchedule(updates);
     }
 
     const finalPhases = await devPhaseQueries.getByDealId(params.id);

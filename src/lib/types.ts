@@ -1312,6 +1312,20 @@ export interface DealContactLink extends Contact {
 export type DevPhaseStatus = "not_started" | "in_progress" | "complete" | "delayed";
 
 /**
+ * Which of the three project schedules a phase belongs to. All three
+ * tracks share the same table so dependencies can chain across them
+ * (Acq closing → Dev pre-dev; Dev GC selection → Construction
+ * mobilization).
+ */
+export type ScheduleTrack = "acquisition" | "development" | "construction";
+
+export const SCHEDULE_TRACK_LABELS: Record<ScheduleTrack, string> = {
+  acquisition: "Acquisition",
+  development: "Development",
+  construction: "Construction",
+};
+
+/**
  * Entitlement task category — drives the visual chip on child rows and
  * keeps related tasks visually grouped. Top-level phases typically
  * leave this null (not used for them).
@@ -1334,6 +1348,11 @@ export const TASK_CATEGORY_CONFIG: Record<TaskCategory, { label: string; color: 
 export interface DevPhase {
   id: string;
   deal_id: string;
+  /**
+   * Which schedule this phase belongs to. Legacy rows created before
+   * the three-track split all default to 'development'.
+   */
+  track: ScheduleTrack;
   phase_key: string;
   label: string;
   start_date: string | null;
@@ -1370,6 +1389,21 @@ export interface DevPhase {
   status: DevPhaseStatus;
   notes: string | null;
   sort_order: number;
+  /**
+   * Point-in-time events (call for offers, LOI signed, closing, TCO)
+   * render as a diamond marker rather than a duration bar. Duration is
+   * typically 0 for milestones, though the UI doesn't enforce it.
+   */
+  is_milestone: boolean;
+  // ─── CPM outputs ─────────────────────────────────────────────────────
+  // Computed by dev-schedule-compute.ts on every mutation. Never
+  // user-edited. Nullable until the first compute pass runs.
+  earliest_start: string | null;
+  earliest_finish: string | null;
+  latest_start: string | null;
+  latest_finish: string | null;
+  total_slack_days: number | null;
+  is_critical: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -1381,22 +1415,61 @@ export const DEV_PHASE_STATUS_CONFIG: Record<DevPhaseStatus, { label: string; co
   delayed: { label: "Delayed", color: "text-red-400", bg: "bg-red-500/50" },
 };
 
-// Default development phases (typical CRE development timeline)
-export const DEFAULT_DEV_PHASES: Array<{
+// Each default phase references the `phase_key` of the predecessor it
+// depends on (or null for the very first phase). Cross-track links —
+// e.g. Dev.pre_dev.predecessor_key = "acq_closing" — are how the CPM
+// pass pulls Dev's start from Acq's closing date automatically.
+export interface DefaultPhaseSeed {
   phase_key: string;
   label: string;
-  duration_months: number;
-}> = [
-  { phase_key: "acquisition", label: "Acquisition & Closing", duration_months: 2 },
-  { phase_key: "predevelopment", label: "Pre-Development", duration_months: 3 },
-  { phase_key: "entitlements", label: "Entitlements & Permits", duration_months: 6 },
-  { phase_key: "design", label: "Design & Engineering", duration_months: 4 },
-  { phase_key: "procurement", label: "Procurement & Bidding", duration_months: 2 },
-  { phase_key: "construction", label: "Construction", duration_months: 18 },
-  { phase_key: "marketing", label: "Marketing & Pre-Lease", duration_months: 6 },
-  { phase_key: "lease_up", label: "Lease-Up", duration_months: 12 },
-  { phase_key: "stabilization", label: "Stabilization", duration_months: 3 },
+  /** Expressed in days so milestones (duration 0) and week-scale tasks both fit. */
+  duration_days: number;
+  /** phase_key of the predecessor; may reference any track. */
+  predecessor_key: string | null;
+  is_milestone?: boolean;
+}
+
+/** Acquisition: the deal-stage chain from first tour through close. */
+export const DEFAULT_ACQ_PHASES: DefaultPhaseSeed[] = [
+  { phase_key: "acq_call_for_offers", label: "Call for Offers",      duration_days: 0,  predecessor_key: null,                    is_milestone: true },
+  { phase_key: "acq_site_walk",       label: "Site Walk",             duration_days: 0,  predecessor_key: "acq_call_for_offers",   is_milestone: true },
+  { phase_key: "acq_loi_signed",      label: "LOI Signed",            duration_days: 0,  predecessor_key: "acq_site_walk",         is_milestone: true },
+  { phase_key: "acq_psa_executed",    label: "PSA Executed",          duration_days: 14, predecessor_key: "acq_loi_signed" },
+  { phase_key: "acq_dd_period",       label: "Diligence Period",      duration_days: 45, predecessor_key: "acq_psa_executed" },
+  { phase_key: "acq_escrow",          label: "Escrow",                duration_days: 21, predecessor_key: "acq_dd_period" },
+  { phase_key: "acq_closing",         label: "Closing",               duration_days: 0,  predecessor_key: "acq_escrow",            is_milestone: true },
 ];
+
+/** Development: post-close, pre-construction. Anchored to Acq closing. */
+export const DEFAULT_DEV_PHASES: DefaultPhaseSeed[] = [
+  { phase_key: "dev_pre_dev",       label: "Pre-Development",        duration_days: 60,  predecessor_key: "acq_closing" },
+  { phase_key: "dev_design",        label: "Design & Engineering",   duration_days: 120, predecessor_key: "dev_pre_dev" },
+  { phase_key: "dev_entitlements",  label: "Entitlements",           duration_days: 180, predecessor_key: "dev_design" },
+  { phase_key: "dev_ceqa",          label: "CEQA / Environmental",   duration_days: 120, predecessor_key: "dev_design" },
+  { phase_key: "dev_permitting",    label: "Building Permits",       duration_days: 90,  predecessor_key: "dev_entitlements" },
+  { phase_key: "dev_bid_package",   label: "Bid Package",            duration_days: 30,  predecessor_key: "dev_permitting" },
+  { phase_key: "dev_gc_selection",  label: "GC Selection",           duration_days: 45,  predecessor_key: "dev_bid_package" },
+];
+
+/** Construction: from GC mobilization through cert. of occupancy. */
+export const DEFAULT_CONSTRUCTION_PHASES: DefaultPhaseSeed[] = [
+  { phase_key: "con_mobilization",  label: "Mobilization",           duration_days: 14,  predecessor_key: "dev_gc_selection" },
+  { phase_key: "con_sitework",      label: "Sitework & Grading",     duration_days: 60,  predecessor_key: "con_mobilization" },
+  { phase_key: "con_foundation",    label: "Foundation",             duration_days: 60,  predecessor_key: "con_sitework" },
+  { phase_key: "con_superstruct",   label: "Superstructure",         duration_days: 180, predecessor_key: "con_foundation" },
+  { phase_key: "con_envelope",      label: "Envelope",               duration_days: 90,  predecessor_key: "con_superstruct" },
+  { phase_key: "con_mep_rough",     label: "MEP Rough-In",           duration_days: 90,  predecessor_key: "con_superstruct" },
+  { phase_key: "con_finishes",      label: "Interior Finishes",      duration_days: 120, predecessor_key: "con_envelope" },
+  { phase_key: "con_closeout",      label: "Closeout & Punch",       duration_days: 30,  predecessor_key: "con_finishes" },
+  { phase_key: "con_tco",           label: "TCO",                    duration_days: 0,   predecessor_key: "con_closeout",   is_milestone: true },
+  { phase_key: "con_cofo",          label: "Certificate of Occupancy", duration_days: 0, predecessor_key: "con_tco",        is_milestone: true },
+];
+
+export const DEFAULT_PHASES_BY_TRACK: Record<ScheduleTrack, DefaultPhaseSeed[]> = {
+  acquisition: DEFAULT_ACQ_PHASES,
+  development: DEFAULT_DEV_PHASES,
+  construction: DEFAULT_CONSTRUCTION_PHASES,
+};
 
 // ─── Pre-Development Budget Tracker ──────────────────────────────────────
 

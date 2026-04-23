@@ -278,7 +278,9 @@ export default function DevelopmentSchedule({ dealId }: Props) {
   const loadAll = useCallback(async () => {
     try {
       const [phasesRes, costsRes, settingsRes] = await Promise.all([
-        fetch(`/api/deals/${dealId}/dev-schedule`),
+        // Filter to the development track — Acq and Construction live in
+        // the same table now but render on their own pages.
+        fetch(`/api/deals/${dealId}/dev-schedule?track=development`),
         fetch(`/api/deals/${dealId}/predev-costs`),
         fetch(`/api/deals/${dealId}/predev-settings`),
       ]);

@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import ProjectManagement from "@/components/ProjectManagement";
 import DevelopmentSchedule from "@/components/DevelopmentSchedule";
 import CEQATracker from "@/components/CEQATracker";
+import { OtherTrackLinks } from "@/components/schedule/TrackSchedule";
 import type { DealStatus, ExecutionPhase } from "@/lib/types";
 
 interface DealSummary {
@@ -66,6 +67,7 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="space-y-8">
+      <OtherTrackLinks dealId={params.id} current="development" />
       {showHandoff && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">

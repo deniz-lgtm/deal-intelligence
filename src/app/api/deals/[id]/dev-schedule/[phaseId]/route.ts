@@ -14,7 +14,7 @@ async function recomputeSchedule(dealId: string) {
   const computed = computeSchedule(phases);
   const updates = diffComputedDates(phases, computed);
   if (updates.length > 0) {
-    await devPhaseQueries.bulkUpdateDates(updates);
+    await devPhaseQueries.bulkUpdateSchedule(updates);
   }
 }
 
