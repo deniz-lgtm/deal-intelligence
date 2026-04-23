@@ -65,7 +65,10 @@ export async function POST(
       exitCapRate:     uwData.exit_cap_rate,
       inPlaceCapRate:  m.inPlaceCapRate,
       // Capitalization
+      isDevelopment:   !!uwData.development_mode,
       purchasePrice:   uwData.purchase_price,
+      hardCosts:       m.totalHardCosts,
+      softCosts:       m.softCostsTotal,
       closingCosts:    m.closingCosts,
       capexTotal:      m.capexTotal,
       totalCost:       m.totalCost,
@@ -73,6 +76,7 @@ export async function POST(
       acqLtc:          uwData.acq_ltc,
       acqInterestRate: uwData.acq_interest_rate,
       acqAmortYears:   uwData.acq_amort_years,
+      acqIoYears:      uwData.acq_io_years ?? 0,
       equity:          m.equity,
       hasFinancing:    uwData.has_financing,
       // Assumptions
@@ -110,6 +114,18 @@ export async function POST(
       exitValue:       m.exitValue,
       exitEquity:      m.exitEquity,
       totalCashFlows:  m.totalCashFlows,
+      // Unit mix for the rent roll table
+      unitGroups: (uwData.unit_groups || []).map((g: any) => ({
+        label:                g.label || "",
+        unit_count:           g.unit_count || 0,
+        sf_per_unit:          g.sf_per_unit || 0,
+        bedrooms:             g.bedrooms ?? 0,
+        current_rent_per_unit: g.current_rent_per_unit || 0,
+        market_rent_per_unit:  g.market_rent_per_unit || 0,
+        current_rent_per_sf:   g.current_rent_per_sf || 0,
+        market_rent_per_sf:    g.market_rent_per_sf || 0,
+        is_commercial:         g.lease_type === "NNN" || g.lease_type === "Gross" || false,
+      })),
     });
 
     const safeName = (deal.name || "Proforma").replace(/[^a-z0-9\-_ ]/gi, "").trim().replace(/\s+/g, "-");
