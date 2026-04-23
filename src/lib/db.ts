@@ -112,10 +112,13 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS auto_ingested BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS inbox_reviewed_at TIMESTAMPTZ",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS ingested_from_path TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS current_phase TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS ceqa_data JSONB",
     "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS watched_folder_path TEXT",
     "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS last_polled_at TIMESTAMPTZ",
     "CREATE INDEX IF NOT EXISTS idx_deals_auto_ingested ON deals(auto_ingested) WHERE auto_ingested = true",
     "CREATE INDEX IF NOT EXISTS idx_deals_ingested_from_path ON deals(ingested_from_path) WHERE ingested_from_path IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_deals_current_phase ON deals(current_phase) WHERE current_phase IS NOT NULL",
     // documents table
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
     // Document Intelligence Pipeline: version chains
@@ -1463,6 +1466,9 @@ export async function initSchema(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS auto_ingested BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS inbox_reviewed_at TIMESTAMPTZ",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS ingested_from_path TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS current_phase TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS ceqa_data JSONB",
+    "CREATE INDEX IF NOT EXISTS idx_deals_current_phase ON deals(current_phase) WHERE current_phase IS NOT NULL",
     "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS watched_folder_path TEXT",
     "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS last_polled_at TIMESTAMPTZ",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'",

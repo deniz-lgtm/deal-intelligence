@@ -94,9 +94,28 @@ export interface Deal {
   // Execution / Post-Closing
   execution_phase: ExecutionPhase | null;
   execution_started_at: string | null;
+  // Role-based phase classification (triptych home). Null = auto-classify
+  // from status + data signals; non-null = explicit owner override.
+  current_phase: DealPhaseOverride | null;
   created_at: string;
   updated_at: string;
 }
+
+// ─── Deal Phase (role-based home triptych) ────────────────────────────────
+// The three role-based "departments": Acquisition, Development, Construction.
+// `current_phase` on a deal is nullable — when null, the deal is auto-classified
+// from its stage + data signals via classifyDealPhase() in phase-classification.ts.
+// When set, it acts as an owner override. `multi` forces the deal to appear in
+// every department its auto-classification matches.
+
+export type DealPhase = "acquisition" | "development" | "construction";
+export type DealPhaseOverride = DealPhase | "multi";
+
+export const DEAL_PHASE_LABELS: Record<DealPhase, string> = {
+  acquisition: "Acquisition",
+  development: "Development",
+  construction: "Construction",
+};
 
 export type NewDeal = Omit<Deal, "id" | "created_at" | "updated_at">;
 

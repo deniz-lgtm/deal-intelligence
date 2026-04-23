@@ -38,6 +38,20 @@ export async function PATCH(
     if (accessError) return accessError;
 
     const body = await req.json();
+
+    // Validate current_phase if present — it drives the role-based triptych
+    // classification on the home page and must be constrained to the known
+    // enum values (or null to clear the override back to auto-classification).
+    if ("current_phase" in body) {
+      const valid = [null, "acquisition", "development", "construction", "multi"];
+      if (!valid.includes(body.current_phase)) {
+        return NextResponse.json(
+          { error: `Invalid current_phase: ${body.current_phase}` },
+          { status: 400 }
+        );
+      }
+    }
+
     const deal = await dealQueries.update(params.id, body);
 
     // Re-geocode if the address changed and coordinates weren't explicitly
