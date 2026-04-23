@@ -49,7 +49,7 @@ export default function ConstructionPage() {
 
   const rows: Row[] = useMemo(() => {
     return deals
-      .filter((d) => classifyDealPhase(d, signals[d.id] ?? {}).phases.includes("construction"))
+      .filter((d) => classifyDealPhase(d).phases.includes("construction"))
       .map((deal) => ({ deal, signals: signals[deal.id] ?? {} }))
       .sort((a, b) => {
         const aAct =

@@ -114,11 +114,26 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS ingested_from_path TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS current_phase TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS ceqa_data JSONB",
+    // Explicit per-deal access flags for the home triptych's Dev and
+    // Construction departments. Default false — a deal stays invisible in
+    // those departments until the owner opts it in. Acquisition membership
+    // is still stage-based (unchanged).
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS show_in_development BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS show_in_construction BOOLEAN NOT NULL DEFAULT false",
+    // One-time backfill from the short-lived current_phase enum:
+    //   'development' → show_in_development
+    //   'construction' → show_in_construction
+    //   'multi'        → both
+    // Idempotent; the AND-guard makes re-runs cheap.
+    "UPDATE deals SET show_in_development = true WHERE current_phase IN ('development','multi') AND show_in_development = false",
+    "UPDATE deals SET show_in_construction = true WHERE current_phase IN ('construction','multi') AND show_in_construction = false",
     "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS watched_folder_path TEXT",
     "ALTER TABLE dropbox_accounts ADD COLUMN IF NOT EXISTS last_polled_at TIMESTAMPTZ",
     "CREATE INDEX IF NOT EXISTS idx_deals_auto_ingested ON deals(auto_ingested) WHERE auto_ingested = true",
     "CREATE INDEX IF NOT EXISTS idx_deals_ingested_from_path ON deals(ingested_from_path) WHERE ingested_from_path IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_deals_current_phase ON deals(current_phase) WHERE current_phase IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_deals_show_in_development ON deals(show_in_development) WHERE show_in_development = true",
+    "CREATE INDEX IF NOT EXISTS idx_deals_show_in_construction ON deals(show_in_construction) WHERE show_in_construction = true",
     // documents table
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_key BOOLEAN NOT NULL DEFAULT false",
     // Document Intelligence Pipeline: version chains

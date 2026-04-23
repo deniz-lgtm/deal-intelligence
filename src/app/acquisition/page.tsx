@@ -211,7 +211,7 @@ export default function AcquisitionPage() {
   // drops closed/executed deals that have moved on to Development or
   // Construction unless their owner has explicitly pinned them back.
   const acqDeals = deals.filter((d) => {
-    const result = classifyDealPhase(d, signals[d.id] ?? {});
+    const result = classifyDealPhase(d);
     return result.phases.includes("acquisition");
   });
 

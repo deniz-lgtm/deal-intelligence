@@ -39,9 +39,17 @@ export async function PATCH(
 
     const body = await req.json();
 
-    // Validate current_phase if present — it drives the role-based triptych
-    // classification on the home page and must be constrained to the known
-    // enum values (or null to clear the override back to auto-classification).
+    // The per-deal Dev / Construction access flags drive home-triptych
+    // visibility and must be booleans. `current_phase` is retained for
+    // backward compatibility but accepts the legacy enum set.
+    for (const key of ["show_in_development", "show_in_construction"] as const) {
+      if (key in body && typeof body[key] !== "boolean") {
+        return NextResponse.json(
+          { error: `${key} must be a boolean` },
+          { status: 400 }
+        );
+      }
+    }
     if ("current_phase" in body) {
       const valid = [null, "acquisition", "development", "construction", "multi"];
       if (!valid.includes(body.current_phase)) {
