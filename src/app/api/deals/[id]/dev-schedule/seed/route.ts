@@ -64,6 +64,7 @@ interface SeedPlanRow {
   seed: DefaultPhaseSeed;
   track: ScheduleTrack;
   sort_order: number;
+}
 
 export async function POST(
   req: NextRequest,
