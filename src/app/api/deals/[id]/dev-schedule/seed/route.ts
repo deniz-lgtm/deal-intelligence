@@ -39,15 +39,31 @@ async function ensureDevPhasesTable() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  // Column additions (track, is_milestone, CPM fields) are handled by the
-  // startup migration in src/lib/db.ts.
+  // Self-healing migrations. Column additions are also applied by the
+  // startup migration in src/lib/db.ts, but inlining them here means a
+  // pool that came up before the newer migrations landed still satisfies
+  // the INSERT in devPhaseQueries.create. Without this, the seed route
+  // silently 500s with "column X does not exist" and the user sees "Seed
+  // Default Phases does nothing".
+  const alters = [
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS parent_phase_id TEXT",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS task_category TEXT",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS task_owner TEXT",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS linked_document_ids JSONB",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS track TEXT",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS is_milestone BOOLEAN NOT NULL DEFAULT false",
+  ];
+  for (const sql of alters) {
+    try { await pool.query(sql); } catch (err) {
+      console.warn("dev-phases ALTER skipped:", (err as Error).message?.slice(0, 120));
+    }
+  }
 }
 
 interface SeedPlanRow {
   seed: DefaultPhaseSeed;
   track: ScheduleTrack;
   sort_order: number;
-}
 
 export async function POST(
   req: NextRequest,

@@ -234,7 +234,40 @@ export default function DealLayout({
 }) {
   const { can, isAdmin } = usePermissions();
   const [deal, setDeal] = useState<Deal | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Commit an edited deal name. Optimistically updates the local deal
+  // so the header reflects the change instantly; reverts on PATCH
+  // failure. Trim + collapse whitespace so analysts can't accidentally
+  // save a trailing-space name they can't see.
+  const commitName = async () => {
+    if (!deal) return;
+    const trimmed = nameDraft.trim().replace(/\s+/g, " ");
+    if (!trimmed || trimmed === deal.name) {
+      setEditingName(false);
+      return;
+    }
+    const prev = deal.name;
+    setDeal({ ...deal, name: trimmed });
+    setEditingName(false);
+    setSavingName(true);
+    try {
+      const res = await fetch(`/api/deals/${params.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) throw new Error("Rename failed");
+    } catch (err) {
+      console.error(err);
+      setDeal((d) => (d ? { ...d, name: prev } : d));
+    } finally {
+      setSavingName(false);
+    }
+  };
   // Mobile: the sidebar is hidden off-screen by default and slid in as an
   // overlay drawer when `mobileSidebarOpen` is true. The same header
   // toggle drives both desktop collapse and mobile open/close.
@@ -338,9 +371,35 @@ export default function DealLayout({
 
             {deal ? (
               <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                <span className="font-display text-sm text-foreground truncate max-w-[140px] sm:max-w-xs">
-                  {deal.name}
-                </span>
+                {editingName ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    onBlur={commitName}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        (e.currentTarget as HTMLInputElement).blur();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingName(false);
+                      }
+                    }}
+                    className="font-display text-sm text-foreground bg-transparent outline-none border-b border-primary/40 focus:border-primary min-w-[120px] max-w-xs"
+                    disabled={savingName}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setNameDraft(deal.name); setEditingName(true); }}
+                    title="Click to rename"
+                    className="font-display text-sm text-foreground truncate max-w-[140px] sm:max-w-xs text-left hover:text-primary transition-colors cursor-text"
+                  >
+                    {deal.name}
+                  </button>
+                )}
                 {deal.starred && (
                   <Star className="h-3 w-3 text-amber-400 fill-amber-400 flex-shrink-0" />
                 )}

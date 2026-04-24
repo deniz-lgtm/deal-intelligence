@@ -308,14 +308,21 @@ export default function DevelopmentSchedule({ dealId }: Props) {
   const handleSeedPhases = async () => {
     setSeeding(true);
     try {
-      await fetch(`/api/deals/${dealId}/dev-schedule/seed`, {
+      const res = await fetch(`/api/deals/${dealId}/dev-schedule/seed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ start_date: new Date().toISOString().split("T")[0] }),
       });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        toast.error(json.error || `Seed failed (HTTP ${res.status})`);
+        return;
+      }
       await loadAll();
+      toast.success("Default phases seeded");
     } catch (err) {
       console.error("Failed to seed phases:", err);
+      toast.error("Failed to seed phases — check console");
     } finally {
       setSeeding(false);
     }
