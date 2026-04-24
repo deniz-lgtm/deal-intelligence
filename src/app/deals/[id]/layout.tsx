@@ -40,6 +40,11 @@ import {
   Flag,
   GanttChart,
   CalendarDays,
+  Compass,
+  PencilRuler,
+  Stamp,
+  Leaf,
+  Handshake,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
@@ -128,13 +133,19 @@ const BASE_NAV_GROUPS: NavGroup[] = [
   },
   {
     // Development-track workspace: the design / entitlement / CEQA work
-    // that happens between close and GC mobilization. Schedule points at
-    // /project (which renders DevelopmentSchedule filtered to the dev
-    // track plus CEQATracker). Site Plan & Program lives in Analysis
-    // because for ground-up it's a precondition for underwriting.
+    // between close and GC mobilization. Each item is a focused view on
+    // the shared deal_dev_phases table, filtered by workstream; the
+    // master Schedule page is the unified CPM gantt. Site Plan & Program
+    // lives in Analysis because for ground-up it's a precondition for
+    // underwriting.
     label: "Development",
     items: [
-      { href: "/project", label: "Schedule", icon: GanttChart },
+      { href: "/project",              label: "Schedule",        icon: GanttChart },
+      { href: "/project/pre-dev",      label: "Pre-Dev",         icon: Compass },
+      { href: "/project/design",       label: "Design",          icon: PencilRuler },
+      { href: "/project/entitlements", label: "Entitlements",    icon: Stamp },
+      { href: "/project/ceqa",         label: "CEQA",            icon: Leaf },
+      { href: "/project/procurement",  label: "Procurement",     icon: Handshake },
     ],
   },
   {
@@ -167,7 +178,15 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
 // they stay visually out of the way on the sidebar. Construction-track
 // items are already hidden via the execution_phase gate below so they
 // don't need muting.
-const ACQUISITION_MUTED_HREFS = new Set(["/programming", "/project"]);
+const ACQUISITION_MUTED_HREFS = new Set([
+  "/programming",
+  "/project",
+  "/project/pre-dev",
+  "/project/design",
+  "/project/entitlements",
+  "/project/ceqa",
+  "/project/procurement",
+]);
 const MUTED_REASON_ACQUISITION = "Not typically used for acquisition deals.";
 
 // Massing-aware routes read the active project from `?massing=<id>`.

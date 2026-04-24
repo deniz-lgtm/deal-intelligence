@@ -1435,6 +1435,68 @@ export interface DefaultPhaseSeed {
   is_milestone?: boolean;
 }
 
+/**
+ * Workstream groupings for the development track. Drives the
+ * /project/<workstream> subpages: each page filters the shared
+ * deal_dev_phases rows by the set of phase_keys mapped here. User-added
+ * phases whose phase_key isn't in PHASE_WORKSTREAM fall into the "other"
+ * bucket — visible on the master Schedule page only.
+ */
+export type DevWorkstream =
+  | "pre_dev"
+  | "design"
+  | "entitlements"
+  | "ceqa"
+  | "permitting"
+  | "procurement"
+  | "financing"
+  | "other";
+
+export const DEV_WORKSTREAM_LABEL: Record<DevWorkstream, string> = {
+  pre_dev: "Pre-Dev",
+  design: "Design",
+  entitlements: "Entitlements",
+  ceqa: "CEQA",
+  permitting: "Permitting",
+  procurement: "Procurement",
+  financing: "Financing",
+  other: "Other",
+};
+
+export const PHASE_WORKSTREAM: Record<string, DevWorkstream> = {
+  // Pre-Dev diligence
+  dev_feasibility_study: "pre_dev",
+  dev_financial_modeling: "pre_dev",
+  dev_consultant_onboarding: "pre_dev",
+  dev_site_investigation: "pre_dev",
+  // Design (AIA phases + utility coord)
+  dev_schematic_design: "design",
+  dev_design_development: "design",
+  dev_construction_docs: "design",
+  dev_utility_coordination: "design",
+  // Entitlements + outreach
+  dev_community_outreach: "entitlements",
+  dev_entitlements: "entitlements",
+  // CEQA
+  dev_ceqa: "ceqa",
+  // Permitting
+  dev_permitting: "permitting",
+  dev_permit_issuance: "permitting",
+  // Procurement / preconstruction
+  dev_bid_package: "procurement",
+  dev_gc_selection: "procurement",
+  dev_precon_services: "procurement",
+  dev_gmp_negotiation: "procurement",
+  dev_subcontractor_buyout: "procurement",
+  // Financing / kickoff milestones
+  dev_construction_loan_close: "financing",
+  dev_ntp: "financing",
+};
+
+export function workstreamForPhase(phaseKey: string): DevWorkstream {
+  return PHASE_WORKSTREAM[phaseKey] ?? "other";
+}
+
 /** Acquisition: the deal-stage chain from first tour through close. */
 export const DEFAULT_ACQ_PHASES: DefaultPhaseSeed[] = [
   { phase_key: "acq_call_for_offers", label: "Call for Offers",      duration_days: 0,  predecessor_key: null,                    is_milestone: true },
