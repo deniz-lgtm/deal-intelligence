@@ -63,6 +63,7 @@ import {
 } from "@/lib/types";
 import {
   TASK_CATEGORY_CONFIG,
+  SCHEDULE_TRACK_LABELS,
   workstreamForPhase,
 } from "@/lib/types";
 import type {
@@ -72,6 +73,7 @@ import type {
   PreDevCost,
   PreDevCostStatus,
   PreDevSettings,
+  ScheduleTrack,
   TaskCategory,
 } from "@/lib/types";
 import {
@@ -135,16 +137,26 @@ function clearLegacyLocalTemplates(): void {
 interface Props {
   dealId: string;
   /**
+   * Which deal_dev_phases track to render. Defaults to "development"
+   * (the component's original scope), but the same UI drives the
+   * Acquisition and Construction schedule pages too so all three phases
+   * of a deal feel like one continuous process. Dev-specific features
+   * (Seed Defaults button, Pre-Dev Budget tracker, workstream filter)
+   * auto-hide for other tracks.
+   */
+  track?: ScheduleTrack;
+  /**
    * Workstream filter. When set, only root phases whose phase_key maps
    * into one of these workstreams (plus their child tasks) render on
    * the schedule. Used by /project/<workstream> subpages to give each
    * DM workstream a focused view while sharing the underlying
-   * deal_dev_phases rows with the master gantt.
+   * deal_dev_phases rows with the master gantt. Only applied when
+   * track === "development".
    */
   workstreams?: DevWorkstream[];
   /** Suppress the Schedule section — Pre-Dev page could use this to show budget only. */
   hideSchedule?: boolean;
-  /** Suppress the Pre-Development Budget section — master gantt + most subpages hide it. */
+  /** Suppress the Pre-Development Budget section — master gantt + most subpages hide it. Auto-forced true on non-dev tracks. */
   hideBudget?: boolean;
 }
 
@@ -153,10 +165,18 @@ const fc = (n: number) =>
 
 export default function DevelopmentSchedule({
   dealId,
+  track = "development",
   workstreams,
   hideSchedule = false,
   hideBudget = false,
 }: Props) {
+  // Dev-specific UI (Seed Defaults button, Pre-Dev Budget section,
+  // workstream filter, entitlement scenario seeder) is scoped to the
+  // Development track. Acq / Construction reuse the same schedule UI
+  // but without the dev-only extras.
+  const isDevTrack = track === "development";
+  const effectiveHideBudget = hideBudget || !isDevTrack;
+  const effectiveWorkstreams = isDevTrack ? workstreams : undefined;
   const [phases, setPhases] = useState<DevPhase[]>([]);
   const [costs, setCosts] = useState<PreDevCost[]>([]);
   const [settings, setSettings] = useState<PreDevSettings>({
@@ -297,11 +317,18 @@ export default function DevelopmentSchedule({
   const loadAll = useCallback(async () => {
     try {
       const [phasesRes, costsRes, settingsRes] = await Promise.all([
-        // Filter to the development track — Acq and Construction live in
-        // the same table now but render on their own pages.
-        fetch(`/api/deals/${dealId}/dev-schedule?track=development`),
-        fetch(`/api/deals/${dealId}/predev-costs`),
-        fetch(`/api/deals/${dealId}/predev-settings`),
+        // Filter to the caller-supplied track. deal_dev_phases holds all
+        // three tracks (acquisition / development / construction); the
+        // page is just picking which slice to render.
+        fetch(`/api/deals/${dealId}/dev-schedule?track=${track}`),
+        // Pre-dev costs + settings are dev-track-only; skip the fetch
+        // entirely on acq/con to cut round-trips.
+        isDevTrack
+          ? fetch(`/api/deals/${dealId}/predev-costs`)
+          : Promise.resolve(new Response(JSON.stringify({ data: [] }), { status: 200 })),
+        isDevTrack
+          ? fetch(`/api/deals/${dealId}/predev-settings`)
+          : Promise.resolve(new Response(JSON.stringify({ data: null }), { status: 200 })),
       ]);
       const [pj, cj, sj] = await Promise.all([phasesRes.json(), costsRes.json(), settingsRes.json()]);
       setPhases(pj.data || []);
@@ -317,7 +344,7 @@ export default function DevelopmentSchedule({
     } finally {
       setLoading(false);
     }
-  }, [dealId]);
+  }, [dealId, track, isDevTrack]);
 
   useEffect(() => {
     loadAll();
@@ -411,6 +438,10 @@ export default function DevelopmentSchedule({
     // If phase has a predecessor, server will compute start_date — clear the manual one
     const hasPredecessor = !!phaseForm.predecessor_id;
     const payload = {
+      // Stamp the track on create so the server-side default (develop-
+      // ment) doesn't stash every new row in the dev track regardless
+      // of which schedule page the user was on.
+      track,
       label: phaseForm.label,
       duration_days: phaseForm.duration_days,
       predecessor_id: phaseForm.predecessor_id || null,
@@ -1155,7 +1186,7 @@ export default function DevelopmentSchedule({
         >
           {scheduleExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
           <GanttChart className="h-4 w-4 text-primary" />
-          <span className="font-medium text-sm">Development Schedule</span>
+          <span className="font-medium text-sm">{SCHEDULE_TRACK_LABELS[track]} Schedule</span>
           <Badge variant="secondary" className="ml-auto text-2xs">
             {phases.filter((p) => p.status === "complete").length}/{phases.length} phases
           </Badge>
@@ -1167,7 +1198,7 @@ export default function DevelopmentSchedule({
               <Button size="sm" variant="outline" className="text-xs" onClick={openCreatePhase}>
                 <Plus className="h-3 w-3 mr-1" /> Add Phase
               </Button>
-              {phases.length === 0 && (
+              {isDevTrack && phases.length === 0 && (
                 <Button size="sm" variant="outline" className="text-xs" onClick={handleSeedPhases} disabled={seeding}>
                   {seeding ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Calendar className="h-3 w-3 mr-1" />}
                   Seed Default Phases
@@ -1216,8 +1247,11 @@ export default function DevelopmentSchedule({
                     // root phases whose phase_key maps into the allowed
                     // workstreams. Children ride along with their parent
                     // via childrenByParent so filtered children aren't
-                    // orphaned off-screen.
-                    const workstreamSet = workstreams ? new Set(workstreams) : null;
+                    // orphaned off-screen. effectiveWorkstreams drops
+                    // the filter on non-dev tracks automatically.
+                    const workstreamSet = effectiveWorkstreams
+                      ? new Set(effectiveWorkstreams)
+                      : null;
                     const rootPhases = phases
                       .filter((p) => !p.parent_phase_id)
                       .filter(
@@ -1750,7 +1784,7 @@ export default function DevelopmentSchedule({
       )}
 
       {/* ── Pre-Development Budget Tracker ── */}
-      {!hideBudget && (
+      {!effectiveHideBudget && (
       <section className="border border-border/50 rounded-lg bg-card/50">
         <button
           onClick={() => setBudgetExpanded(!budgetExpanded)}
