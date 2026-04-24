@@ -87,6 +87,12 @@ const BASE_NAV_GROUPS: NavGroup[] = [
     label: "Analysis",
     items: [
       { href: "/site-zoning", label: "Zoning", icon: MapPin },
+      // Ground-up deals need the site plan & program locked before
+      // underwriting can price a pro forma — unit mix, parking, FAR feed
+      // directly into rents and costs. Sits above Underwriting for that
+      // reason. Muted for acquisition-scope deals via
+      // ACQUISITION_MUTED_HREFS.
+      { href: "/programming", label: "Site Plan & Program", icon: Layers },
       { href: "/underwriting", label: "Underwriting", icon: Calculator },
       { href: "/comps", label: "Comps", icon: BarChart3 },
       { href: "/location", label: "Location Intel", icon: Globe },
@@ -124,12 +130,11 @@ const BASE_NAV_GROUPS: NavGroup[] = [
     // Development-track workspace: the design / entitlement / CEQA work
     // that happens between close and GC mobilization. Schedule points at
     // /project (which renders DevelopmentSchedule filtered to the dev
-    // track plus CEQATracker); Site Plan & Program moved here from
-    // Analysis because programming is a development activity.
+    // track plus CEQATracker). Site Plan & Program lives in Analysis
+    // because for ground-up it's a precondition for underwriting.
     label: "Development",
     items: [
       { href: "/project", label: "Schedule", icon: GanttChart },
-      { href: "/programming", label: "Site Plan & Program", icon: Layers },
     ],
   },
   {
