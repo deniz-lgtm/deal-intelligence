@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
 import type { DealNote, DealNoteCategory } from "@/lib/types";
 import { DEAL_NOTE_CATEGORIES } from "@/lib/types";
+import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 
 interface ChatAction {
   type: "context_saved" | "deal_updated";
@@ -89,9 +90,7 @@ export default function ChatInterface({
     loadNotes();
   }, [dealId, loadNotes]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  useStickToBottom(messagesEndRef, [messages, loading]);
 
   const loadMessages = async () => {
     try {
