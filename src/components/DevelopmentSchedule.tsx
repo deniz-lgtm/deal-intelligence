@@ -170,10 +170,10 @@ export default function DevelopmentSchedule({
   hideSchedule = false,
   hideBudget = false,
 }: Props) {
-  // Dev-specific UI (Seed Defaults button, Pre-Dev Budget section,
-  // workstream filter, entitlement scenario seeder) is scoped to the
-  // Development track. Acq / Construction reuse the same schedule UI
-  // but without the dev-only extras.
+  // Dev-specific UI (Pre-Dev Budget section, workstream filter,
+  // entitlement scenario seeder) is scoped to the Development track.
+  // The Seed Defaults button is available on every track and seeds
+  // only that track's phases; see /api/deals/[id]/dev-schedule/seed.
   const isDevTrack = track === "development";
   const effectiveHideBudget = hideBudget || !isDevTrack;
   const effectiveWorkstreams = isDevTrack ? workstreams : undefined;
@@ -357,15 +357,23 @@ export default function DevelopmentSchedule({
       const res = await fetch(`/api/deals/${dealId}/dev-schedule/seed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start_date: new Date().toISOString().split("T")[0] }),
+        body: JSON.stringify({
+          start_date: new Date().toISOString().split("T")[0],
+          track,
+        }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
         toast.error(json.error || `Seed failed (HTTP ${res.status})`);
         return;
       }
+      const json = await res.json().catch(() => ({}));
       await loadAll();
-      toast.success("Default phases seeded");
+      if (json?.data?.seeded) {
+        toast.success("Default phases seeded");
+      } else {
+        toast.info("Phases already exist on this track");
+      }
     } catch (err) {
       console.error("Failed to seed phases:", err);
       toast.error("Failed to seed phases — check console");
@@ -1198,7 +1206,7 @@ export default function DevelopmentSchedule({
               <Button size="sm" variant="outline" className="text-xs" onClick={openCreatePhase}>
                 <Plus className="h-3 w-3 mr-1" /> Add Phase
               </Button>
-              {isDevTrack && phases.length === 0 && (
+              {phases.length === 0 && (
                 <Button size="sm" variant="outline" className="text-xs" onClick={handleSeedPhases} disabled={seeding}>
                   {seeding ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Calendar className="h-3 w-3 mr-1" />}
                   Seed Default Phases

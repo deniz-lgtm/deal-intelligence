@@ -3,14 +3,18 @@ import { v4 as uuidv4 } from "uuid";
 import { devPhaseQueries, getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import {
-  DEFAULT_ACQ_PHASES,
-  DEFAULT_DEV_PHASES,
-  DEFAULT_CONSTRUCTION_PHASES,
+  DEFAULT_PHASES_BY_TRACK,
   type DefaultPhaseSeed,
   type ScheduleTrack,
 } from "@/lib/types";
 import { computeSchedule, diffComputedDates } from "@/lib/dev-schedule-compute";
 import type { DevPhase } from "@/lib/types";
+
+const ALL_TRACKS: ScheduleTrack[] = ["acquisition", "development", "construction"];
+
+function isValidTrack(v: unknown): v is ScheduleTrack {
+  return typeof v === "string" && (ALL_TRACKS as string[]).includes(v);
+}
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -78,31 +82,65 @@ export async function POST(
 
     await ensureDevPhasesTable();
 
-    const existing = await devPhaseQueries.getByDealId(params.id);
-    if (existing.length > 0) {
-      return NextResponse.json({ data: { phases: existing, seeded: false } });
-    }
-
-    // Optional anchor start date (defaults to today). This anchors the very
-    // first phase of the acquisition track; everything else chains off of it.
+    // Parse body once: anchor date + optional track scope.
     let anchorDate = new Date().toISOString().split("T")[0];
+    let requestedTrack: ScheduleTrack | null = null;
     try {
       const body = await req.json();
       if (body?.start_date) anchorDate = body.start_date;
+      if (isValidTrack(body?.track)) requestedTrack = body.track;
     } catch {}
 
-    // Combine all three tracks into one ordered plan. sort_order is
-    // monotonically increasing across tracks so the unified gantt shows
-    // Acq → Dev → Construction in natural order.
+    // Track scope: if the caller passed a specific track, seed only that
+    // track and only if that track is currently empty. Without a track
+    // we preserve the legacy "seed all three when deal is empty" behavior
+    // so any older caller keeps working.
+    const tracksToSeed: ScheduleTrack[] = requestedTrack ? [requestedTrack] : ALL_TRACKS;
+
+    const existingAll = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
+    const existingByTrack = new Map<ScheduleTrack, DevPhase[]>();
+    for (const t of ALL_TRACKS) existingByTrack.set(t, []);
+    for (const p of existingAll) {
+      const t = (p.track ?? "development") as ScheduleTrack;
+      if (existingByTrack.has(t)) existingByTrack.get(t)!.push(p);
+    }
+
+    const skippedTracks: ScheduleTrack[] = [];
+    const tracksActuallySeeded: ScheduleTrack[] = [];
+    for (const t of tracksToSeed) {
+      if ((existingByTrack.get(t) ?? []).length > 0) skippedTracks.push(t);
+      else tracksActuallySeeded.push(t);
+    }
+
+    if (tracksActuallySeeded.length === 0) {
+      return NextResponse.json({
+        data: {
+          phases: existingAll,
+          seeded: false,
+          tracks_seeded: [],
+          tracks_skipped: skippedTracks,
+        },
+      });
+    }
+
+    // sort_order continues after whatever's already in the deal so a single-
+    // track reseed slots in after existing phases on other tracks.
+    let sort = existingAll.reduce((m, p) => Math.max(m, p.sort_order ?? 0), -1) + 1;
     const plan: SeedPlanRow[] = [];
-    let sort = 0;
-    for (const seed of DEFAULT_ACQ_PHASES)          plan.push({ seed, track: "acquisition",  sort_order: sort++ });
-    for (const seed of DEFAULT_DEV_PHASES)          plan.push({ seed, track: "development",  sort_order: sort++ });
-    for (const seed of DEFAULT_CONSTRUCTION_PHASES) plan.push({ seed, track: "construction", sort_order: sort++ });
+    for (const track of tracksActuallySeeded) {
+      for (const seed of DEFAULT_PHASES_BY_TRACK[track]) {
+        plan.push({ seed, track, sort_order: sort++ });
+      }
+    }
 
     // Two passes: create every phase with a generated id (no predecessor_id
     // yet), then resolve cross-track predecessor_key → predecessor_id.
+    // Cross-track predecessors may point at phases that already exist on a
+    // track we're not seeding, so seed idByKey from those too.
     const idByKey = new Map<string, string>();
+    for (const p of existingAll) {
+      if (p.phase_key) idByKey.set(p.phase_key, p.id);
+    }
 
     for (const row of plan) {
       const id = uuidv4();
@@ -113,9 +151,11 @@ export async function POST(
         track: row.track,
         phase_key: row.seed.phase_key,
         label: row.seed.label,
-        // Anchor the very first phase with the caller-supplied date; every
-        // other phase's start is derived from its predecessor.
-        start_date: row.seed.predecessor_key ? null : anchorDate,
+        // Anchor any phase whose predecessor isn't resolvable (either the
+        // first phase of acquisition on a fresh deal, or the first phase of
+        // a later track seeded in isolation with no prior phases to chain
+        // from). CPM will recompute everything below.
+        start_date: row.seed.predecessor_key && idByKey.has(row.seed.predecessor_key) ? null : anchorDate,
         duration_days: row.seed.duration_days,
         predecessor_id: null, // filled in below
         lag_days: 0,
@@ -142,7 +182,14 @@ export async function POST(
     }
 
     const finalPhases = await devPhaseQueries.getByDealId(params.id);
-    return NextResponse.json({ data: { phases: finalPhases, seeded: true } });
+    return NextResponse.json({
+      data: {
+        phases: finalPhases,
+        seeded: true,
+        tracks_seeded: tracksActuallySeeded,
+        tracks_skipped: skippedTracks,
+      },
+    });
   } catch (error) {
     console.error("POST /api/deals/[id]/dev-schedule/seed error:", error);
     return NextResponse.json({ error: "Failed to seed dev schedule" }, { status: 500 });
