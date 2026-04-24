@@ -258,6 +258,10 @@ export type DocumentCategory =
   | "insurance"
   | "leases"
   | "permits"
+  // Feasibility / massing exports from third-party tools (Giraffe, etc.).
+  // Uploaded GeoJSON is auto-classified here and becomes the source for
+  // the Giraffe → Programming importer.
+  | "giraffe_export"
   // AI-generated reports / exports. Each generator (DD Abstract, Investment
   // Package, Proforma PDF, Zoning Report) saves its output into documents
   // under one of these categories so analysts can browse past runs.
@@ -346,6 +350,11 @@ export const DOCUMENT_CATEGORIES: Record<
     label: "Permits",
     icon: "🔑",
     description: "Building permits, certificates of occupancy",
+  },
+  giraffe_export: {
+    label: "Giraffe Export",
+    icon: "🦒",
+    description: "Feasibility / massing GeoJSON from Giraffe or similar tools",
   },
   dd_abstract: {
     label: "DD Abstract",

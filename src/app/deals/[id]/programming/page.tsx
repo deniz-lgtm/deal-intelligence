@@ -17,6 +17,7 @@ import { COMMON_OTHER_INCOME, DEFAULT_SITE_PLAN } from "@/lib/types";
 import MassingSection from "@/components/massing/MassingSection";
 import ScenarioVariantsPanel from "@/components/massing/ScenarioVariantsPanel";
 import AffordabilityPlanner from "@/components/AffordabilityPlanner";
+import GiraffeImportBanner from "@/components/giraffe/GiraffeImportBanner";
 import { useViewMode } from "@/lib/use-view-mode";
 import ViewModeToggle from "@/components/ViewModeToggle";
 import { newBuildingProgram, computeMassingSummary, newScenario } from "@/components/massing/massing-utils";
@@ -1104,6 +1105,15 @@ export default function ProgrammingPage({ params }: { params: { id: string } }) 
 
   return (
     <div className="space-y-6">
+      <GiraffeImportBanner
+        dealId={params.id}
+        onCommitted={() => {
+          // Re-fetch the underwriting blob so the freshly imported
+          // massing + programming surfaces land on the page without
+          // a full reload.
+          window.location.reload();
+        }}
+      />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-xl font-bold">Site Plan &amp; Program</h2>
