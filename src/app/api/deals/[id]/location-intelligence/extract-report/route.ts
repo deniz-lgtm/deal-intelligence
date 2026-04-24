@@ -149,6 +149,8 @@ export async function POST(
       top_employers: Array.isArray(extracted.top_employers)
         ? extracted.top_employers as DemographicSnapshot["top_employers"]
         : [],
+      renter_households_by_income: null,
+      renter_rent_burden: null,
     };
 
     // Build projections from extracted data

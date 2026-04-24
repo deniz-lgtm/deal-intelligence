@@ -20,7 +20,8 @@ export type ArtifactKind =
   | "proforma_pdf"
   | "dd_abstract"
   | "zoning_report"
-  | "loi";
+  | "loi"
+  | "market_study";
 
 /**
  * Pieces of deal state a generator might depend on. Not every kind uses

@@ -741,6 +741,25 @@ export interface DemographicSnapshot {
   // Household composition
   avg_household_size: number | null;
   family_households_pct: number | null;        // %
+  // Renter households by income tranche (Census B25118). Counts of renter
+  // households falling into Concord-style tranches. Null when the source
+  // table isn't available or the geography returned no data.
+  renter_households_by_income: {
+    total: number | null;
+    under_50k: number | null;
+    income_50_75k: number | null;
+    income_75_100k: number | null;
+    income_100_150k: number | null;
+    over_150k: number | null;
+  } | null;
+  // Rent burden — share of renter households spending X% of income on gross
+  // rent (Census B25070). Excludes "not computed" bucket.
+  renter_rent_burden: {
+    computed_total: number | null;
+    under_20_pct: number | null;
+    pct_20_to_29: number | null;
+    pct_30_plus: number | null;
+  } | null;
 }
 
 export interface LocationIntelligence {

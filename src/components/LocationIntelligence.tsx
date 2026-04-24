@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import GenerateToLibraryButton from "@/components/GenerateToLibraryButton";
 import type {
   DemographicSnapshot,
   LocationIntelligence as LocationIntelligenceType,
@@ -691,6 +692,68 @@ function DataPanels({
               </div>
             </div>
           )}
+        </Panel>
+      )}
+
+      {/* ── Renter Households by Income & Rent Burden (ACS B25118/B25070) ── */}
+      {snapshot && (snapshot.renter_households_by_income || snapshot.renter_rent_burden) && (
+        <Panel title="Renter Households" icon={<Users className="h-4 w-4 text-primary" />}>
+          {snapshot.renter_households_by_income && (() => {
+            const r = snapshot.renter_households_by_income;
+            const total = r.total ?? 0;
+            const share = (n: number | null) =>
+              total > 0 && n != null ? (n / total) * 100 : null;
+            const rows: Array<[string, number | null]> = [
+              ["Under $50k", r.under_50k],
+              ["$50k – $75k", r.income_50_75k],
+              ["$75k – $100k", r.income_75_100k],
+              ["$100k – $150k", r.income_100_150k],
+              ["$150k+", r.over_150k],
+            ];
+            return (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                  Renter Income Tranches · {fn(total)} total renter HHs
+                </div>
+                <div className="grid grid-cols-5 gap-2">
+                  {rows.map(([label, count]) => (
+                    <div key={label} className="border border-border/40 rounded-lg bg-muted/10 p-2.5 text-center">
+                      <div className="text-[10px] text-muted-foreground">{label}</div>
+                      <div className="text-sm font-semibold">{fn(count)}</div>
+                      <div className="text-[10px] text-muted-foreground">{fpct(share(count))}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+          {snapshot.renter_rent_burden && (() => {
+            const b = snapshot.renter_rent_burden;
+            const total = b.computed_total ?? 0;
+            const share = (n: number | null) =>
+              total > 0 && n != null ? (n / total) * 100 : null;
+            const rows: Array<[string, number | null]> = [
+              ["Spends < 20% on rent", b.under_20_pct],
+              ["Spends 20–29%", b.pct_20_to_29],
+              ["Rent-burdened (30%+)", b.pct_30_plus],
+            ];
+            return (
+              <div className="mt-4">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                  Rent Burden · Gross Rent as % of Household Income
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {rows.map(([label, count]) => (
+                    <div key={label} className="border border-border/40 rounded-lg bg-muted/10 p-2.5 text-center">
+                      <div className="text-[10px] text-muted-foreground">{label}</div>
+                      <div className="text-sm font-semibold">{fn(count)}</div>
+                      <div className="text-[10px] text-muted-foreground">{fpct(share(count))}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </Panel>
       )}
 
@@ -1473,6 +1536,16 @@ export default function LocationIntelligence({
             <FileText className="h-3.5 w-3.5 mr-1.5" />
             Paste Report
           </Button>
+          <GenerateToLibraryButton
+            dealId={dealId}
+            kind="market_study"
+            getPayload={() => ({
+              radius_miles: selectedRadius,
+            })}
+            label="Market Study"
+            variant="outline"
+            size="sm"
+          />
         </div>
       </div>
 

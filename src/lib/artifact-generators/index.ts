@@ -26,6 +26,7 @@ const REGISTRY: Record<ArtifactKind, Loader> = {
   dd_abstract: () => import("./dd_abstract"),
   zoning_report: () => import("./zoning_report"),
   loi: () => import("./loi"),
+  market_study: () => import("./market_study"),
 };
 
 export async function loadGenerator(kind: ArtifactKind): Promise<ArtifactGenerator> {
