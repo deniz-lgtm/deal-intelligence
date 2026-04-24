@@ -13,9 +13,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import ProjectManagement from "@/components/ProjectManagement";
 import DevelopmentSchedule from "@/components/DevelopmentSchedule";
-import CEQATracker from "@/components/CEQATracker";
 import { OtherTrackLinks } from "@/components/schedule/TrackSchedule";
 import type { DealStatus, ExecutionPhase } from "@/lib/types";
 
@@ -52,7 +50,6 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
       toast.success("Deal handed off to Execution");
       setHandoffOpen(false);
       router.refresh();
-      // Reload deal state
       const updated = await fetch(`/api/deals/${params.id}`).then((r) => r.json());
       setDeal(updated.data);
     } catch (err) {
@@ -132,32 +129,14 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
 
       <div>
         <div className="mb-6">
-          <h2 className="text-xl font-bold">Project Management</h2>
+          <h2 className="text-xl font-bold">Development Schedule</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Track milestones, tasks, and deadlines for this deal.
+            Unified CPM gantt across every development workstream. Use the sidebar
+            to drill into Pre-Dev, Design, Entitlements, CEQA, or Procurement for
+            focused views with their workstream-specific widgets.
           </p>
         </div>
-        <ProjectManagement dealId={params.id} />
-      </div>
-
-      <div>
-        <div className="mb-6">
-          <h2 className="text-xl font-bold">Development Schedule & Pre-Dev Budget</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Phase-by-phase development timeline and itemized pre-development spend with approval gates.
-          </p>
-        </div>
-        <DevelopmentSchedule dealId={params.id} />
-      </div>
-
-      <div>
-        <div className="mb-6">
-          <h2 className="text-xl font-bold">CEQA Process Tracker</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            California Environmental Quality Act review pathway, process steps, mitigation measures, and public hearings.
-          </p>
-        </div>
-        <CEQATracker dealId={params.id} />
+        <DevelopmentSchedule dealId={params.id} hideBudget />
       </div>
     </div>
   );

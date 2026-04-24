@@ -63,10 +63,12 @@ import {
 } from "@/lib/types";
 import {
   TASK_CATEGORY_CONFIG,
+  workstreamForPhase,
 } from "@/lib/types";
 import type {
   DevPhase,
   DevPhaseStatus,
+  DevWorkstream,
   PreDevCost,
   PreDevCostStatus,
   PreDevSettings,
@@ -132,12 +134,29 @@ function clearLegacyLocalTemplates(): void {
 
 interface Props {
   dealId: string;
+  /**
+   * Workstream filter. When set, only root phases whose phase_key maps
+   * into one of these workstreams (plus their child tasks) render on
+   * the schedule. Used by /project/<workstream> subpages to give each
+   * DM workstream a focused view while sharing the underlying
+   * deal_dev_phases rows with the master gantt.
+   */
+  workstreams?: DevWorkstream[];
+  /** Suppress the Schedule section — Pre-Dev page could use this to show budget only. */
+  hideSchedule?: boolean;
+  /** Suppress the Pre-Development Budget section — master gantt + most subpages hide it. */
+  hideBudget?: boolean;
 }
 
 const fc = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 
-export default function DevelopmentSchedule({ dealId }: Props) {
+export default function DevelopmentSchedule({
+  dealId,
+  workstreams,
+  hideSchedule = false,
+  hideBudget = false,
+}: Props) {
   const [phases, setPhases] = useState<DevPhase[]>([]);
   const [costs, setCosts] = useState<PreDevCost[]>([]);
   const [settings, setSettings] = useState<PreDevSettings>({
@@ -1128,6 +1147,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
   return (
     <div className="space-y-6">
       {/* ── Development Schedule (Phases) ── */}
+      {!hideSchedule && (
       <section className="border border-border/50 rounded-lg bg-card/50">
         <button
           onClick={() => setScheduleExpanded(!scheduleExpanded)}
@@ -1192,7 +1212,18 @@ export default function DevelopmentSchedule({ dealId }: Props) {
                     tasks (parent_phase_id set) nested below, indented. */}
                 <div className="space-y-1.5">
                   {(() => {
-                    const rootPhases = phases.filter((p) => !p.parent_phase_id);
+                    // When a workstream filter is active, only render
+                    // root phases whose phase_key maps into the allowed
+                    // workstreams. Children ride along with their parent
+                    // via childrenByParent so filtered children aren't
+                    // orphaned off-screen.
+                    const workstreamSet = workstreams ? new Set(workstreams) : null;
+                    const rootPhases = phases
+                      .filter((p) => !p.parent_phase_id)
+                      .filter(
+                        (p) =>
+                          !workstreamSet || workstreamSet.has(workstreamForPhase(p.phase_key))
+                      );
                     const childrenByParent = new Map<string, DevPhase[]>();
                     for (const p of phases) {
                       if (!p.parent_phase_id) continue;
@@ -1716,8 +1747,10 @@ export default function DevelopmentSchedule({ dealId }: Props) {
           </div>
         )}
       </section>
+      )}
 
       {/* ── Pre-Development Budget Tracker ── */}
+      {!hideBudget && (
       <section className="border border-border/50 rounded-lg bg-card/50">
         <button
           onClick={() => setBudgetExpanded(!budgetExpanded)}
@@ -1870,6 +1903,7 @@ export default function DevelopmentSchedule({ dealId }: Props) {
           </div>
         )}
       </section>
+      )}
 
       {/* ── Phase Dialog ── */}
       <Dialog open={phaseDialogOpen} onOpenChange={(open) => {
