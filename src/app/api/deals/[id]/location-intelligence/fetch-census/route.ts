@@ -60,6 +60,31 @@ const CENSUS_VARIABLES: Record<string, string> = {
   B25010_001E: "avg_household_size",
   B11001_002E: "_family_households",
   B11001_001E: "_total_households",
+  // B25118 — Tenure by Household Income (renter side, codes _015..._025).
+  // Feeds Concord-style exhibit I-7 renter-income tranches.
+  B25118_014E: "_renter_income_total",
+  B25118_015E: "_renter_inc_u5k",
+  B25118_016E: "_renter_inc_5_10k",
+  B25118_017E: "_renter_inc_10_15k",
+  B25118_018E: "_renter_inc_15_20k",
+  B25118_019E: "_renter_inc_20_25k",
+  B25118_020E: "_renter_inc_25_35k",
+  B25118_021E: "_renter_inc_35_50k",
+  B25118_022E: "_renter_inc_50_75k",
+  B25118_023E: "_renter_inc_75_100k",
+  B25118_024E: "_renter_inc_100_150k",
+  B25118_025E: "_renter_inc_150k_plus",
+  // B25070 — Gross Rent as % of HH Income. Feeds the rent-burden half of
+  // exhibit I-7. _011E (not computed) is excluded from denominators.
+  B25070_002E: "_rentburden_u10",
+  B25070_003E: "_rentburden_10_15",
+  B25070_004E: "_rentburden_15_20",
+  B25070_005E: "_rentburden_20_25",
+  B25070_006E: "_rentburden_25_30",
+  B25070_007E: "_rentburden_30_35",
+  B25070_008E: "_rentburden_35_40",
+  B25070_009E: "_rentburden_40_50",
+  B25070_010E: "_rentburden_50_plus",
 };
 
 // Subset for prior-year comparison (growth rates)
@@ -282,6 +307,17 @@ function aggregateTracts(
   let totalEduUniverse = 0;
   let totalFamilyHH = 0;
   let totalHouseholds = 0;
+  // B25118 renter income tranches (counts of renter HHs)
+  let rInc_total = 0;
+  let rInc_u50 = 0;
+  let rInc_50_75 = 0;
+  let rInc_75_100 = 0;
+  let rInc_100_150 = 0;
+  let rInc_150_plus = 0;
+  // B25070 rent burden (counts of renter HHs with computed burden)
+  let rb_u20 = 0;
+  let rb_20_29 = 0;
+  let rb_30_plus = 0;
 
   // For population-weighted medians: collect (value, weight) pairs
   const wAge: Array<[number, number]> = [];
@@ -314,6 +350,33 @@ function aggregateTracts(
     totalEduUniverse += row.B15003_001E ?? 0;
     totalFamilyHH += row.B11001_002E ?? 0;
     totalHouseholds += row.B11001_001E ?? 0;
+
+    // Renter income tranches — sum the raw buckets into Concord ranges.
+    rInc_total += row.B25118_014E ?? 0;
+    rInc_u50 +=
+      (row.B25118_015E ?? 0) +
+      (row.B25118_016E ?? 0) +
+      (row.B25118_017E ?? 0) +
+      (row.B25118_018E ?? 0) +
+      (row.B25118_019E ?? 0) +
+      (row.B25118_020E ?? 0) +
+      (row.B25118_021E ?? 0);
+    rInc_50_75 += row.B25118_022E ?? 0;
+    rInc_75_100 += row.B25118_023E ?? 0;
+    rInc_100_150 += row.B25118_024E ?? 0;
+    rInc_150_plus += row.B25118_025E ?? 0;
+
+    // Rent burden — sum buckets, exclude "not computed" (B25070_011E).
+    rb_u20 +=
+      (row.B25070_002E ?? 0) +
+      (row.B25070_003E ?? 0) +
+      (row.B25070_004E ?? 0);
+    rb_20_29 += (row.B25070_005E ?? 0) + (row.B25070_006E ?? 0);
+    rb_30_plus +=
+      (row.B25070_007E ?? 0) +
+      (row.B25070_008E ?? 0) +
+      (row.B25070_009E ?? 0) +
+      (row.B25070_010E ?? 0);
 
     if (row.B01002_001E != null) wAge.push([row.B01002_001E, pop]);
     if (row.B19013_001E != null) wIncome.push([row.B19013_001E, pop]);
@@ -406,6 +469,26 @@ function aggregateTracts(
     top_industries: [], // filled separately
     avg_household_size: wAvgDec(wHHSize),
     family_households_pct: pct(totalFamilyHH, totalHouseholds),
+    renter_households_by_income:
+      rInc_total > 0
+        ? {
+            total: rInc_total,
+            under_50k: rInc_u50,
+            income_50_75k: rInc_50_75,
+            income_75_100k: rInc_75_100,
+            income_100_150k: rInc_100_150,
+            over_150k: rInc_150_plus,
+          }
+        : null,
+    renter_rent_burden:
+      rb_u20 + rb_20_29 + rb_30_plus > 0
+        ? {
+            computed_total: rb_u20 + rb_20_29 + rb_30_plus,
+            under_20_pct: rb_u20,
+            pct_20_to_29: rb_20_29,
+            pct_30_plus: rb_30_plus,
+          }
+        : null,
   };
 }
 
@@ -492,6 +575,8 @@ function emptySnapshot(): DemographicSnapshot {
     top_industries: [],
     avg_household_size: null,
     family_households_pct: null,
+    renter_households_by_income: null,
+    renter_rent_burden: null,
   };
 }
 
