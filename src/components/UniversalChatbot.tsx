@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
+import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import { usePageContext } from "@/lib/page-context";
 import type { UnderwritingSurface } from "@/lib/page-context";
 import { toast } from "sonner";
@@ -78,9 +79,7 @@ export default function UniversalChatbot() {
     loadMessages();
   }, [loadMessages]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  useStickToBottom(messagesEndRef, [messages]);
 
   const sendMessage = async (text?: string) => {
     const msg = (text || input).trim();

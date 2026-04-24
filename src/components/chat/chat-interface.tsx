@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef } from "react"
 import { Send, Bot, User, Loader2, FileText, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
+import { useStickToBottom } from "@/hooks/use-stick-to-bottom"
 
 interface ChatMessage {
   id: string
@@ -43,13 +44,7 @@ export function ChatInterface() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }
-
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+  useStickToBottom(messagesEndRef, [messages])
 
   const handleSend = async (question?: string) => {
     const messageText = question || input.trim()
