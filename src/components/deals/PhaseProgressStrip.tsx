@@ -76,20 +76,35 @@ function weightedPct(phases: DevPhase[]): number {
   return den > 0 ? Math.round(num / den) : 0;
 }
 
-// Which canonical Dev stage should be highlighted as "current"? Use the first
-// stage that contains a dev-track phase with pct_complete < 100; if every
-// matched phase is complete, the deal has cleared Dev and we land on
-// Ready-to-Build. If no dev-track phases exist at all we highlight Pre-Dev
-// so the user sees the canonical progression rather than a blank row.
+// Which canonical Dev stage should be highlighted as "current"?
+//
+// Three cases the matcher has to handle:
+//   1. No dev-track phases at all → Pre-Dev (the deal hasn't started
+//      anything; render the canonical progression rather than a blank row).
+//   2. Dev-track phases exist but none match any of our canonical stage
+//      matchers → Pre-Dev. This covers custom/legacy schedules whose
+//      phase_keys don't follow the DEFAULT_DEV_PHASES naming. Landing
+//      on Ready-to-Build here was the old bug — it made every earlier
+//      stage render "completed" even though no work was actually done.
+//   3. Matched phases exist → pick the first stage with any in-progress
+//      matched phase; if every matched phase is 100%, the deal has
+//      cleared Dev and we land on Ready-to-Build.
 function currentDevStageKey(devPhases: DevPhase[]): string {
   if (devPhases.length === 0) return DEV_STAGES[0].key;
+  let sawAnyMatch = false;
   for (const stage of DEV_STAGES) {
     const matched = devPhases.filter((p) => stage.matches(p.phase_key));
-    if (matched.length > 0 && matched.some((p) => (p.pct_complete ?? 0) < 100)) {
+    if (matched.length === 0) continue;
+    sawAnyMatch = true;
+    if (matched.some((p) => (p.pct_complete ?? 0) < 100)) {
       return stage.key;
     }
   }
-  // Everything we know about is complete → Ready-to-Build.
+  // Phases exist but nothing matched our canonical stages → treat as
+  // unseeded so the bar reflects "nothing started yet" rather than
+  // implying the dev team has already cleared the first four stages.
+  if (!sawAnyMatch) return DEV_STAGES[0].key;
+  // Every matched phase is complete → Ready-to-Build.
   return DEV_STAGES[DEV_STAGES.length - 1].key;
 }
 
@@ -127,16 +142,24 @@ function buildAcqRow(deal: Deal, onAdvance?: (status: DealStatus) => void): Row 
 
 function buildDevRow(devPhases: DevPhase[]): Row {
   const devTrack = devPhases.filter((p) => (p.track ?? "development") === "development");
+  const hasRecognizedPhases = devTrack.some((p) =>
+    DEV_STAGES.some((s) => s.matches(p.phase_key))
+  );
   const currentKey = currentDevStageKey(devTrack);
   const currentIdx = DEV_STAGES.findIndex((s) => s.key === currentKey);
-  const fillPct = weightedPct(devTrack);
+  // A track with no rows, or rows whose phase_keys don't map to any
+  // canonical stage, shows a "No schedule" tag rather than a numeric %
+  // so the bar doesn't look authoritative about a progression it can't
+  // actually measure.
+  const hasUsableSchedule = devTrack.length > 0 && hasRecognizedPhases;
+  const fillPct = hasUsableSchedule ? weightedPct(devTrack) : 0;
   return {
     phase: "dev",
     label: "DEV",
     stages: DEV_STAGES.map((s) => ({ key: s.key, label: s.label })),
     currentIdx,
     fillPct,
-    badge: devTrack.length === 0 ? "No schedule" : undefined,
+    badge: hasUsableSchedule ? undefined : "No schedule",
   };
 }
 
