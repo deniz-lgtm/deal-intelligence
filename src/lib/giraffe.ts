@@ -484,22 +484,22 @@ export function parseGiraffeGeoJSON(raw: unknown): GiraffeParsed {
   for (const bf of buildings) {
     const props = bf.properties || {};
     const bz = extractZoning(props);
-    (Object.keys(bz) as Array<keyof GiraffeZoningInput>).forEach((k) => {
-      if (k === "setbacks") {
-        const sb = zoning.setbacks;
-        const bsb = bz.setbacks;
-        zoning.setbacks = {
-          front: sb.front ?? bsb.front,
-          side: sb.side ?? bsb.side,
-          rear: sb.rear ?? bsb.rear,
-          corner: sb.corner ?? bsb.corner,
-        };
-      } else {
-        if (zoning[k] == null && bz[k] != null) {
-          (zoning as Record<string, unknown>)[k] = bz[k];
-        }
-      }
-    });
+    if (zoning.far == null && bz.far != null) zoning.far = bz.far;
+    if (zoning.height_ft == null && bz.height_ft != null) zoning.height_ft = bz.height_ft;
+    if (zoning.height_stories == null && bz.height_stories != null) zoning.height_stories = bz.height_stories;
+    if (zoning.lot_coverage_pct == null && bz.lot_coverage_pct != null) zoning.lot_coverage_pct = bz.lot_coverage_pct;
+    if (zoning.parking_ratio_residential == null && bz.parking_ratio_residential != null) {
+      zoning.parking_ratio_residential = bz.parking_ratio_residential;
+    }
+    if (zoning.parking_ratio_commercial == null && bz.parking_ratio_commercial != null) {
+      zoning.parking_ratio_commercial = bz.parking_ratio_commercial;
+    }
+    zoning.setbacks = {
+      front: zoning.setbacks.front ?? bz.setbacks.front,
+      side: zoning.setbacks.side ?? bz.setbacks.side,
+      rear: zoning.setbacks.rear ?? bz.setbacks.rear,
+      corner: zoning.setbacks.corner ?? bz.setbacks.corner,
+    };
   }
 
   if (parsedBuildings.length === 0) {
