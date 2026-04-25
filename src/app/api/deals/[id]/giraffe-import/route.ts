@@ -162,7 +162,10 @@ function buildPreview(
   // Existing values come in with the commit request (we don't have
   // deal context here); commit-time will decide whether to overwrite.
   const z = parsed.zoning;
-  const addFill = (field: GiraffeAction extends { type: "fill_zoning"; field: infer F } ? F : never, value: number | null) => {
+  const addFill = (
+    field: Extract<GiraffeAction, { type: "fill_zoning" }>["field"],
+    value: number | null
+  ) => {
     if (value == null) return;
     actions.push({ type: "fill_zoning", field, value, existing: null });
   };
