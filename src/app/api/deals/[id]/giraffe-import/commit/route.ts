@@ -378,7 +378,7 @@ function buildFloors(pa: Extract<GiraffeAction, { type: "seed_programming" }>): 
   for (let i = 0; i < inferredFloors; i++) {
     floors.push({
       id: `f_${i}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      use_type: "multifamily",
+      use_type: "residential",
       label: `L${i + 1}`,
       floor_plate_sf: pa.footprint_sf,
       floor_to_floor_ft: 10.5,
