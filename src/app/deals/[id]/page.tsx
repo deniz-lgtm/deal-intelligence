@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
+// Leaflet needs access to `window` / `document` at import time, so the
+// cover map is loaded client-side only. The surrounding hero div already
+// reserves its own height, so no explicit loading fallback is needed.
+const CoverMap = dynamic(() => import("@/components/deals/CoverMap"), { ssr: false });
 import {
   Building2,
   FileText,
@@ -38,17 +43,20 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import DealNotes from "@/components/DealNotes";
 import { PhasePinControl } from "@/components/deals/PhasePinControl";
-import { formatCurrency, formatNumber, titleCase } from "@/lib/utils";
+import { PhaseProgressStrip } from "@/components/deals/PhaseProgressStrip";
+import { classifyDealPhase } from "@/lib/phase-classification";
+import { formatCurrency, formatNumber, titleCase, cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import type { Deal, DealStatus, Document, ChecklistItem, BusinessPlan, InvestmentThesis, Photo, UnderwritingData } from "@/lib/types";
+import type { Deal, DealStatus, Document, ChecklistItem, BusinessPlan, InvestmentThesis, Photo, UnderwritingData, DevPhase } from "@/lib/types";
 import {
   DEAL_PIPELINE,
   DEAL_STAGE_LABELS,
   STAGE_GATES,
   INVESTMENT_THESIS_LABELS,
   DEAL_SCOPE_LABELS,
+  EXECUTION_PHASE_CONFIG,
 } from "@/lib/types";
 import type { DealScope } from "@/lib/types";
 import { calc, getDefaultsForPropertyType, type UWData } from "@/lib/underwriting-calc";
@@ -102,10 +110,35 @@ export default function DealOverviewPage({
   const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null; deal_scope: DealScope | null }>({ year_built: null, land_acres: null, investment_strategy: null, deal_scope: null });
 
   const [lastActivity, setLastActivity] = useState<Record<string, string>>({});
+  // Dev/Con schedule rows feed the per-phase progress strip. Fetched
+  // separately so the overview can render ACQ progress immediately
+  // without waiting on the schedule query.
+  const [devPhases, setDevPhases] = useState<DevPhase[]>([]);
+  const [devPhasesLoading, setDevPhasesLoading] = useState(true);
 
   useEffect(() => {
     const stored = localStorage.getItem(`dealCoverMode:${params.id}`);
     if (stored) setCoverMode(stored);
+  }, [params.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDevPhasesLoading(true);
+    fetch(`/api/deals/${params.id}/dev-schedule`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (cancelled) return;
+        setDevPhases((j.data ?? []) as DevPhase[]);
+      })
+      .catch(() => {
+        if (!cancelled) setDevPhases([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDevPhasesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [params.id]);
 
   const pickCover = (mode: string) => {
@@ -276,6 +309,40 @@ export default function DealOverviewPage({
     : null;
   const prevStatus = !isOffPipeline && currentPipelineIdx > 0 ? DEAL_PIPELINE[currentPipelineIdx - 1] : null;
 
+  // Which teams are active on this deal — drives the right-column card
+  // set (Diligence for Acq, upcoming milestones for Dev, current phase
+  // for Con). Acquisition-phase cards hide once the deal is closed so
+  // the overview can focus on execution work.
+  const { phases: activePhases } = classifyDealPhase(deal);
+  const showAcqCards = activePhases.includes("acquisition") && deal.status !== "closed";
+  const showDevCards = deal.show_in_development === true;
+  const showConCards = deal.show_in_construction === true;
+
+  // Next 3 upcoming Dev / Con phases by earliest_start — feeds the two
+  // new phase-conditional cards. Completed phases are excluded; rows
+  // with no date fall to the end so they don't crowd the list.
+  const upcoming = (track: "development" | "construction") =>
+    devPhases
+      .filter((p) => (p.track ?? "development") === track && (p.pct_complete ?? 0) < 100)
+      .sort((a, b) => {
+        const aDate = a.earliest_start || a.start_date;
+        const bDate = b.earliest_start || b.start_date;
+        if (!aDate && !bDate) return 0;
+        if (!aDate) return 1;
+        if (!bDate) return -1;
+        return aDate.localeCompare(bDate);
+      })
+      .slice(0, 3);
+  const upcomingDev = upcoming("development");
+  const upcomingCon = upcoming("construction");
+  const currentConMilestone = devPhases
+    .filter((p) => p.track === "construction" && p.is_milestone && (p.pct_complete ?? 0) < 100)
+    .sort((a, b) => {
+      const aDate = a.earliest_start || a.start_date || "";
+      const bDate = b.earliest_start || b.start_date || "";
+      return aDate.localeCompare(bDate);
+    })[0];
+
   // Compute financial highlights from underwriting data
   const highlights = computeHighlights(underwriting, deal);
   const addressString = [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ");
@@ -290,14 +357,30 @@ export default function DealOverviewPage({
   // → street view (falls through to a gradient if the deal has no
   // address). "photo:<id>" references are sanity-checked against the
   // current photo list so a deleted photo doesn't leave a broken tile.
+  // "map" and "satellite" both render the interactive Leaflet map and
+  // require geocoded coords; they fall back to street view if coords
+  // aren't available yet.
   const photoMatch = coverMode?.startsWith("photo:")
     ? photos.find((p) => p.id === coverMode.slice("photo:".length))
     : null;
-  const activeCover: { kind: "photo"; photo: Photo } | { kind: "street_view" } | { kind: "satellite" } | { kind: "empty" } =
+  const hasCoords = typeof deal.lat === "number" && typeof deal.lng === "number";
+  const activeCover:
+    | { kind: "photo"; photo: Photo }
+    | { kind: "street_view" }
+    | { kind: "map" }
+    | { kind: "satellite" }
+    | { kind: "empty" } =
     photoMatch
       ? { kind: "photo", photo: photoMatch }
       : coverMode === "street_view" && streetViewEmbed
       ? { kind: "street_view" }
+      : coverMode === "map" && hasCoords
+      ? { kind: "map" }
+      : coverMode === "satellite" && hasCoords
+      ? { kind: "satellite" }
+      // Legacy: pre-Leaflet cover mode was iframe satellite — fall back
+      // to the interactive satellite view when coords exist so saved
+      // preferences keep working.
       : coverMode === "satellite" && satelliteEmbed
       ? { kind: "satellite" }
       : photos.length > 0
@@ -361,6 +444,15 @@ export default function DealOverviewPage({
               referrerPolicy="no-referrer-when-downgrade"
               title="Property street view"
             />
+          ) : (activeCover.kind === "map" || activeCover.kind === "satellite") && hasCoords ? (
+            <div className="absolute inset-0">
+              <CoverMap
+                dealId={params.id}
+                lat={deal.lat as number}
+                lng={deal.lng as number}
+                style={activeCover.kind === "satellite" ? "satellite" : "map"}
+              />
+            </div>
           ) : activeCover.kind === "satellite" && satelliteEmbed ? (
             <iframe
               src={satelliteEmbed}
@@ -372,7 +464,10 @@ export default function DealOverviewPage({
           ) : (
             <div className="absolute inset-0 bg-gradient-to-br from-muted/80 to-muted/30" />
           )}
-          {activeCover.kind !== "photo" && (
+          {/* Skip the gradient overlay on interactive maps so pan/zoom
+              controls stay legible. Keep it on static backdrops so the
+              deal info overlay has contrast. */}
+          {activeCover.kind !== "photo" && activeCover.kind !== "map" && activeCover.kind !== "satellite" && (
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent pointer-events-none" />
           )}
 
@@ -391,7 +486,8 @@ export default function DealOverviewPage({
                 <div className="absolute right-0 top-full mt-1 min-w-[180px] bg-card border border-border/60 rounded-lg shadow-card overflow-hidden text-xs z-20">
                   {[
                     { key: "street_view", label: "Street View", disabled: !streetViewEmbed, hint: !streetViewEmbed ? "Add an address" : undefined },
-                    { key: "satellite", label: "Satellite", disabled: !satelliteEmbed, hint: !satelliteEmbed ? "Add an address" : undefined },
+                    { key: "map", label: "Map (drag to reframe)", disabled: !hasCoords, hint: !hasCoords ? "Geocoding in progress" : undefined },
+                    { key: "satellite", label: "Satellite", disabled: !hasCoords && !satelliteEmbed, hint: !hasCoords && !satelliteEmbed ? "Add an address" : undefined },
                   ].map((opt) => {
                     const isActive = activeCover.kind === opt.key;
                     return (
@@ -506,37 +602,30 @@ export default function DealOverviewPage({
           </div>
         </div>
 
-        {/* Compact pipeline bar */}
-        <div className="px-5 py-2.5 bg-card border-t border-border/40">
-          <div className="flex items-center gap-1">
-            {DEAL_PIPELINE.map((stage, i) => {
-              const isCompleted = !isOffPipeline && currentPipelineIdx > i;
-              const isCurrent = !isOffPipeline && currentPipelineIdx === i;
-              return (
-                <button key={stage} onClick={() => changeStatus(stage)} disabled={advancingTo !== null}
-                  className={`flex-1 h-1.5 rounded-full transition-all cursor-pointer hover:opacity-80 ${isCompleted ? "gradient-gold" : isCurrent ? "bg-primary/40" : "bg-muted/50"} ${isOffPipeline ? "opacity-30" : ""}`}
-                  title={DEAL_STAGE_LABELS[stage]}
-                />
-              );
-            })}
+        {/* Per-phase progress — one row per active phase (ACQ / DEV / CON).
+            The ACQ row's stage chips remain clickable (advance the deal's
+            pipeline status); DEV and CON are read-only and derive position
+            from the deal's dev_schedule. Next-stage / Reactivate actions
+            live below the strip so they're consistent across phases. */}
+        <PhaseProgressStrip
+          deal={deal}
+          devPhases={devPhases}
+          devPhasesLoading={devPhasesLoading}
+          onAdvanceStatus={(s) => changeStatus(s)}
+        />
+        {(nextStatus || isOffPipeline) && (
+          <div className="flex items-center px-5 py-2 bg-card border-t border-border/40 gap-2">
             {nextStatus && (
-              <Button size="sm" className="text-2xs gap-1 h-6 ml-2 shrink-0" onClick={() => changeStatus(nextStatus)} disabled={advancingTo !== null}>
+              <Button size="sm" className="text-2xs gap-1 h-6" onClick={() => changeStatus(nextStatus)} disabled={advancingTo !== null}>
                 {advancingTo === nextStatus ? <Loader2 className="h-3 w-3 animate-spin" /> : <ChevronRight className="h-3 w-3" />}
                 {DEAL_STAGE_LABELS[nextStatus]}
               </Button>
             )}
             {isOffPipeline && (
-              <Button variant="outline" size="sm" className="text-2xs h-6 ml-2" onClick={() => changeStatus("sourcing")}>Reactivate</Button>
+              <Button variant="outline" size="sm" className="text-2xs h-6" onClick={() => changeStatus("sourcing")}>Reactivate</Button>
             )}
           </div>
-          <div className="flex items-center gap-1 mt-1">
-            {DEAL_PIPELINE.map((stage, i) => {
-              const isCurrent = !isOffPipeline && currentPipelineIdx === i;
-              return <span key={stage} className={`flex-1 text-[9px] text-center ${isCurrent ? "text-primary font-semibold" : "text-muted-foreground/40"}`}>{DEAL_STAGE_LABELS[stage]}</span>;
-            })}
-            {(nextStatus || isOffPipeline) && <span className="w-[80px] ml-2 shrink-0" />}
-          </div>
-        </div>
+        )}
 
         {/* Action bar */}
         <div className="flex items-center px-5 py-1.5 bg-card border-t border-border/40 gap-1.5">
@@ -900,9 +989,57 @@ export default function DealOverviewPage({
           )}
         </div>
 
-        {/* RIGHT COLUMN: Diligence + Docs + Quick Access + Business Plan */}
+        {/* RIGHT COLUMN: Business Plan + per-phase cards + Documents.
+            Business Plan sits on top as the project's north star. Below
+            it the right column becomes phase-conditional: Diligence when
+            the deal is still in acquisition, Dev Milestones when the dev
+            team is active, Construction Status once vertical kicks off.
+            Documents always renders at the bottom as the entry point to
+            the file library. */}
         <div className="md:col-span-2 space-y-4">
-          {/* Diligence Progress — per-category breakdown */}
+          {/* Business Plan — the project thesis. Pinned to the top of the
+              right column so the metrics below always read against it. */}
+          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+              <h3 className="font-display text-sm">Business Plan</h3>
+              <Link href="/business-plans"><Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">Manage <ArrowRight className="h-3 w-3" /></Button></Link>
+            </div>
+            <div className="p-4">
+              <select value={selectedPlanId} onChange={(e) => {
+                const newVal = e.target.value; const planId = newVal || null;
+                setSelectedPlanId(newVal);
+                setBusinessPlan(planId ? allPlans.find((p) => p.id === planId) || null : null);
+                setChangingPlan(true);
+                fetch(`/api/deals/${params.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ business_plan_id: planId }) })
+                  .then(r => r.json()).then(json => { if (json.data) { setDeal(json.data as Deal); toast.success(planId ? "Business plan linked" : "Business plan removed"); } else { setSelectedPlanId(deal.business_plan_id || ""); toast.error("Failed to update"); } })
+                  .catch(() => { setSelectedPlanId(deal.business_plan_id || ""); toast.error("Failed to update"); })
+                  .finally(() => setChangingPlan(false));
+              }} disabled={changingPlan} className="w-full text-xs border border-border rounded-lg px-2.5 py-1.5 bg-background outline-none focus:ring-1 focus:ring-ring mb-2">
+                <option value="">No business plan</option>
+                {allPlans.map((p) => <option key={p.id} value={p.id}>{p.name}{p.is_default ? " (Default)" : ""}</option>)}
+              </select>
+              {businessPlan && (
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap gap-1">
+                    {(businessPlan.investment_theses || []).map((t) => (
+                      <span key={t} className="text-2xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-medium">
+                        {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap text-2xs text-muted-foreground">
+                    {(businessPlan.target_irr_min || businessPlan.target_irr_max) && <span>IRR {businessPlan.target_irr_min ?? "?"}–{businessPlan.target_irr_max ?? "?"}%</span>}
+                    {(businessPlan.target_equity_multiple_min || businessPlan.target_equity_multiple_max) && <span>EM {businessPlan.target_equity_multiple_min ?? "?"}–{businessPlan.target_equity_multiple_max ?? "?"}x</span>}
+                    {(businessPlan.hold_period_min || businessPlan.hold_period_max) && <span>{businessPlan.hold_period_min}–{businessPlan.hold_period_max}yr</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Diligence Progress — per-category breakdown. Hidden once the
+              deal closes since diligence is an acquisition workstream. */}
+          {showAcqCards && (
           <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
               <div className="flex items-center gap-2.5">
@@ -969,8 +1106,148 @@ export default function DealOverviewPage({
               </div>
             )}
           </div>
+          )}
 
-          {/* Documents Summary — compact */}
+          {/* Development Milestones — next three upcoming Dev-track phases
+              by earliest_start, with a critical-path tag. Shows up once
+              the owner toggles Dev on via the header badge. */}
+          {showDevCards && (
+          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+              <div className="flex items-center gap-2.5">
+                <h3 className="font-display text-sm">Development Milestones</h3>
+                <span className="text-2xs font-bold tabular-nums px-1.5 py-0.5 rounded-full bg-[hsl(var(--phase-dev))]/10 text-[hsl(var(--phase-dev))] border border-[hsl(var(--phase-dev))]/20">
+                  Next {upcomingDev.length}
+                </span>
+              </div>
+              <Link href={`/deals/${params.id}/project`}>
+                <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
+                  Schedule <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
+            <div className="p-4">
+              {upcomingDev.length === 0 ? (
+                <p className="text-2xs text-muted-foreground text-center py-2">
+                  No upcoming dev phases. {devPhases.length === 0 ? "Start by seeding the schedule." : "Everything on the dev track is complete."}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {upcomingDev.map((p) => {
+                    const startDate = p.earliest_start || p.start_date;
+                    return (
+                      <div key={p.id} className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-medium truncate">{p.label}</span>
+                            {p.is_critical && (
+                              <span className="text-[9px] uppercase tracking-wider px-1 py-0.5 rounded bg-red-500/15 text-red-300 border border-red-500/30 flex-shrink-0">
+                                Critical
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-2xs text-muted-foreground">
+                            {startDate ? new Date(startDate).toLocaleDateString() : "Unscheduled"}
+                            {p.total_slack_days != null && p.total_slack_days > 0 && !p.is_critical && (
+                              <span className="ml-2">{p.total_slack_days}d slack</span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-2xs tabular-nums text-muted-foreground shrink-0">
+                          {p.pct_complete ?? 0}%
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          )}
+
+          {/* Construction Status — current execution phase + next con-track
+              milestone. Visible as soon as Con is pinned even before
+              execution_phase is set (card prompts the user to set it). */}
+          {showConCards && (
+          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+              <div className="flex items-center gap-2.5">
+                <h3 className="font-display text-sm">Construction Status</h3>
+                {deal.execution_phase ? (
+                  <span className={cn(
+                    "text-2xs font-medium px-2 py-0.5 rounded-full",
+                    EXECUTION_PHASE_CONFIG[deal.execution_phase].color,
+                  )}>
+                    {EXECUTION_PHASE_CONFIG[deal.execution_phase].label}
+                  </span>
+                ) : (
+                  <span className="text-2xs px-2 py-0.5 rounded-full bg-muted/50 text-muted-foreground border border-border/30">
+                    Not started
+                  </span>
+                )}
+              </div>
+              <Link href={`/deals/${params.id}/construction`}>
+                <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
+                  Dashboard <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
+            <div className="p-4 space-y-3">
+              {upcomingCon.length > 0 ? (
+                <div className="space-y-2">
+                  {upcomingCon.map((p) => {
+                    const startDate = p.earliest_start || p.start_date;
+                    return (
+                      <div key={p.id} className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-medium truncate">{p.label}</span>
+                            {p.is_critical && (
+                              <span className="text-[9px] uppercase tracking-wider px-1 py-0.5 rounded bg-red-500/15 text-red-300 border border-red-500/30 flex-shrink-0">
+                                Critical
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-2xs text-muted-foreground">
+                            {startDate ? new Date(startDate).toLocaleDateString() : "Unscheduled"}
+                          </div>
+                        </div>
+                        <span className="text-2xs tabular-nums text-muted-foreground shrink-0">
+                          {p.pct_complete ?? 0}%
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-2xs text-muted-foreground text-center py-2">
+                  {devPhases.filter((p) => p.track === "construction").length === 0
+                    ? "No construction schedule seeded yet."
+                    : "All construction phases complete."}
+                </p>
+              )}
+              {currentConMilestone && (
+                <div className="pt-2 border-t border-border/40">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">
+                    Next milestone
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium truncate">{currentConMilestone.label}</span>
+                    <span className="text-2xs text-muted-foreground shrink-0">
+                      {currentConMilestone.earliest_start || currentConMilestone.start_date
+                        ? new Date((currentConMilestone.earliest_start || currentConMilestone.start_date)!).toLocaleDateString()
+                        : "TBD"}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          )}
+
+          {/* Documents Summary — kept as the footer card so analysts can
+              jump into the file library from the overview regardless of
+              which phase is active. */}
           <Link href={`/deals/${params.id}/documents`} className="block">
             <div className="border border-border/60 rounded-xl p-4 bg-card shadow-card hover:bg-muted/20 transition-colors">
               <div className="flex items-center justify-between mb-2">
@@ -990,45 +1267,6 @@ export default function DealOverviewPage({
               )}
             </div>
           </Link>
-
-          {/* Business Plan — compact */}
-          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
-              <h3 className="font-display text-sm">Business Plan</h3>
-              <Link href="/business-plans"><Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">Manage <ArrowRight className="h-3 w-3" /></Button></Link>
-            </div>
-            <div className="p-4">
-              <select value={selectedPlanId} onChange={(e) => {
-                const newVal = e.target.value; const planId = newVal || null;
-                setSelectedPlanId(newVal);
-                setBusinessPlan(planId ? allPlans.find((p) => p.id === planId) || null : null);
-                setChangingPlan(true);
-                fetch(`/api/deals/${params.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ business_plan_id: planId }) })
-                  .then(r => r.json()).then(json => { if (json.data) { setDeal(json.data as Deal); toast.success(planId ? "Business plan linked" : "Business plan removed"); } else { setSelectedPlanId(deal.business_plan_id || ""); toast.error("Failed to update"); } })
-                  .catch(() => { setSelectedPlanId(deal.business_plan_id || ""); toast.error("Failed to update"); })
-                  .finally(() => setChangingPlan(false));
-              }} disabled={changingPlan} className="w-full text-xs border border-border rounded-lg px-2.5 py-1.5 bg-background outline-none focus:ring-1 focus:ring-ring mb-2">
-                <option value="">No business plan</option>
-                {allPlans.map((p) => <option key={p.id} value={p.id}>{p.name}{p.is_default ? " (Default)" : ""}</option>)}
-              </select>
-              {businessPlan && (
-                <div className="space-y-1.5">
-                  <div className="flex flex-wrap gap-1">
-                    {(businessPlan.investment_theses || []).map((t) => (
-                      <span key={t} className="text-2xs px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-medium">
-                        {INVESTMENT_THESIS_LABELS[t as InvestmentThesis] || t}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-3 flex-wrap text-2xs text-muted-foreground">
-                    {(businessPlan.target_irr_min || businessPlan.target_irr_max) && <span>IRR {businessPlan.target_irr_min ?? "?"}–{businessPlan.target_irr_max ?? "?"}%</span>}
-                    {(businessPlan.target_equity_multiple_min || businessPlan.target_equity_multiple_max) && <span>EM {businessPlan.target_equity_multiple_min ?? "?"}–{businessPlan.target_equity_multiple_max ?? "?"}x</span>}
-                    {(businessPlan.hold_period_min || businessPlan.hold_period_max) && <span>{businessPlan.hold_period_min}–{businessPlan.hold_period_max}yr</span>}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
 
         </div>
       </div>

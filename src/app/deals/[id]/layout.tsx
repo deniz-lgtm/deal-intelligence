@@ -64,6 +64,8 @@ interface Deal {
   owner_id: string | null;
   execution_phase: ExecutionPhase | null;
   deal_scope: DealScope | null;
+  show_in_development: boolean;
+  show_in_construction: boolean;
 }
 
 type NavItem = {
@@ -203,8 +205,15 @@ const MASSING_AWARE_HREFS = new Set([
 ]);
 
 
-function applyScopeGating(groups: NavGroup[], dealScope: DealScope | null): NavGroup[] {
-  if (dealScope !== "acquisition") return groups;
+function applyScopeGating(
+  groups: NavGroup[],
+  dealScope: DealScope | null,
+  showInDevelopment: boolean
+): NavGroup[] {
+  // If the owner has explicitly opted the deal into Development, the Dev
+  // items become first-class even on an acquisition-scope deal — clicking
+  // the Dev badge is the signal that the dev team is now involved.
+  if (dealScope !== "acquisition" || showInDevelopment) return groups;
   return groups.map((group) => ({
     ...group,
     items: group.items.map((item) =>
@@ -217,9 +226,16 @@ function applyScopeGating(groups: NavGroup[], dealScope: DealScope | null): NavG
 
 function getNavGroups(
   executionPhase: ExecutionPhase | null,
-  dealScope: DealScope | null
+  dealScope: DealScope | null,
+  showInDevelopment: boolean,
+  showInConstruction: boolean
 ): NavGroup[] {
-  const base = executionPhase
+  // Construction group appears whenever the deal has been promoted to
+  // execution OR the owner has pinned the deal to Construction via the
+  // header badge. Either signal means the construction team is now
+  // active; the sidebar shouldn't wait on the other.
+  const showConstructionGroup = executionPhase != null || showInConstruction;
+  const base = showConstructionGroup
     ? (() => {
         const groups = [...BASE_NAV_GROUPS];
         // Insert Construction between Development (index 4) and Activity
@@ -229,7 +245,7 @@ function getNavGroups(
         return groups;
       })()
     : BASE_NAV_GROUPS;
-  return applyScopeGating(base, dealScope);
+  return applyScopeGating(base, dealScope, showInDevelopment);
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -498,7 +514,12 @@ export default function DealLayout({
           )}
         >
           <nav className="py-3 px-2 flex flex-col gap-4 min-h-full">
-            {getNavGroups(deal?.execution_phase ?? null, deal?.deal_scope ?? null).map((group, gi) => {
+            {getNavGroups(
+              deal?.execution_phase ?? null,
+              deal?.deal_scope ?? null,
+              deal?.show_in_development ?? false,
+              deal?.show_in_construction ?? false,
+            ).map((group, gi) => {
               // Groups with a label can be collapsed by the user. When the
               // whole sidebar is in icon-only mode we ignore per-group
               // collapse so all icons remain reachable — the compact mode

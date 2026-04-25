@@ -119,4 +119,10 @@ export const KIND_META: Record<ArtifactKind, KindMeta> = {
     category: "deal_documents",
     description: "LOI · PDF",
   },
+  market_study: {
+    kind: "market_study",
+    label: "Market Study",
+    category: "analysis_outputs",
+    description: "Market-study exhibits (demographics, rentership, rent comps) · PDF",
+  },
 };
