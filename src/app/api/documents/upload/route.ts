@@ -104,7 +104,19 @@ export async function POST(req: NextRequest) {
       let summary = "";
       let tags: string[] = [];
 
-      if (contentText || file.name) {
+      // .geojson is always a feasibility / massing export — skip the AI
+      // classifier and route straight to the Giraffe category. The
+      // importer dialog picks up from there.
+      const isGeoJson =
+        /\.geojson$/i.test(file.name) ||
+        file.type === "application/geo+json" ||
+        file.type === "application/vnd.geo+json";
+
+      if (isGeoJson) {
+        category = "giraffe_export";
+        summary = "Feasibility / massing GeoJSON export — import via the Programming page.";
+        tags = ["giraffe", "geojson", "massing"];
+      } else if (contentText || file.name) {
         try {
           const result = await classifyDocument(file.name, contentText);
           category = result.category;
