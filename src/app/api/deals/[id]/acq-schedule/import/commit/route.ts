@@ -75,13 +75,24 @@ export async function POST(
     let patched = 0;
     let created = 0;
 
+    // Dedup applyRows by phase_key. If the extractor surfaced the same
+    // event twice (we saw "Appraisal Period × 2" in the wild) we keep
+    // the first and drop the rest — preserving the higher-confidence
+    // one when they happen to be in confidence-desc order.
+    const seenKeys = new Set<string>();
+    const uniqueApplyRows = applyRows.filter((r) => {
+      if (seenKeys.has(r.phase_key)) return false;
+      seenKeys.add(r.phase_key);
+      return true;
+    });
+
     // Sort canonical Acq rows in dependency-order so freshly-created
     // free-form rows can resolve their predecessor against earlier
     // rows in this batch.
     const canonicalOrder = new Map<string, number>(
       ACQ_PHASE_KEYS.map((k, i) => [k, i])
     );
-    applyRows.sort(
+    uniqueApplyRows.sort(
       (a, b) =>
         (canonicalOrder.get(a.phase_key) ?? 999) -
         (canonicalOrder.get(b.phase_key) ?? 999)
@@ -92,11 +103,22 @@ export async function POST(
       -1
     ) + 1;
 
-    for (const r of applyRows) {
+    for (const r of uniqueApplyRows) {
       const existing = acqByKey.get(r.phase_key);
       const updates: Record<string, unknown> = {};
       if (r.start_date !== undefined) updates.start_date = r.start_date;
       if (r.duration_days !== undefined) updates.duration_days = r.duration_days;
+
+      // Heal broken predecessor chains from earlier import attempts.
+      // If the existing row has no predecessor_id and we can resolve
+      // a sensible one (canonical chain → closest existing), patch it
+      // along with the dates so the row drops back into the gantt
+      // instead of floating at the project anchor.
+      if (existing && !existing.predecessor_id) {
+        const def = DEFAULT_ACQ_PHASES.find((d) => d.phase_key === r.phase_key);
+        const predId = pickPredecessor(r.phase_key, def?.predecessor_key, acqByKey, existing.id);
+        if (predId) updates.predecessor_id = predId;
+      }
 
       if (existing) {
         if (Object.keys(updates).length > 0) {
@@ -107,7 +129,7 @@ export async function POST(
         // No existing phase for this key — seed one.
         const def = DEFAULT_ACQ_PHASES.find((d) => d.phase_key === r.phase_key);
         const isCanonical = ACQ_PHASE_KEYS.includes(r.phase_key as AcqPhaseKey);
-        const predecessor_id = pickPredecessor(r.phase_key, def?.predecessor_key, acqByKey);
+        const predecessor_id = pickPredecessor(r.phase_key, def?.predecessor_key, acqByKey, null);
         const id = uuidv4();
         await devPhaseQueries.create({
           id,
@@ -200,12 +222,15 @@ function buildAcqByKey(phases: DevPhase[]): Map<string, DevPhase> {
 function pickPredecessor(
   phaseKey: string,
   defaultPredecessorKey: string | null | undefined,
-  acqByKey: Map<string, DevPhase>
+  acqByKey: Map<string, DevPhase>,
+  /** Self-id when called from a PATCH path. We never link a row to
+   *  itself — that's a degenerate cycle. */
+  selfId: string | null
 ): string | null {
   // Default predecessor present on the deal? Use it.
   if (defaultPredecessorKey) {
     const direct = acqByKey.get(defaultPredecessorKey);
-    if (direct) return direct.id;
+    if (direct && direct.id !== selfId) return direct.id;
   }
 
   // Walk back the canonical chain. For canonical keys we step through
@@ -217,7 +242,7 @@ function pickPredecessor(
   const startIdx = idx > 0 ? idx - 1 : ACQ_PHASE_KEYS.length - 1;
   for (let i = startIdx; i >= 0; i--) {
     const candidate = acqByKey.get(ACQ_PHASE_KEYS[i]);
-    if (candidate) return candidate.id;
+    if (candidate && candidate.id !== selfId) return candidate.id;
   }
   return null;
 }
