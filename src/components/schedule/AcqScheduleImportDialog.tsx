@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Loader2,
   UploadCloud,
@@ -8,6 +8,7 @@ import {
   ArrowRight,
   AlertTriangle,
   FileText,
+  FolderOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +20,8 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { DOCUMENT_CATEGORIES } from "@/lib/types";
+import type { DocumentCategory } from "@/lib/types";
 
 interface PreviewRow {
   phase_key: string;
@@ -35,6 +38,15 @@ interface PreviewRow {
 
 type RowAction = "apply" | "keep_existing" | "skip";
 
+interface DealDocument {
+  id: string;
+  original_name: string;
+  category: string;
+  mime_type: string;
+  file_size: number;
+  uploaded_at: string;
+}
+
 interface Props {
   dealId: string;
   open: boolean;
@@ -42,30 +54,41 @@ interface Props {
   onCommitted: () => void;
 }
 
+// Document categories likely to contain acq dates. We surface these
+// first in the picker; everything else is grouped under "Other".
+const ACQ_RELEVANT_CATEGORIES: DocumentCategory[] = [
+  "legal",
+  "om",
+  "title_ownership",
+  "financial",
+];
+
 /**
  * Two-step Acquisition-doc importer:
  *
- *   1. Upload an LOI / PSA / broker schedule / email PDF or text. The
- *      server runs the extractor (acq-schedule-extract.ts) and returns
- *      one PreviewRow per detected acq event, paired with the deal's
- *      current value for that phase.
+ *   1. Pick a doc — fresh upload OR from the deal's existing document
+ *      repository. The repository tab pulls /api/deals/[id]/documents
+ *      and surfaces acquisition-relevant categories first.
  *
- *   2. The dialog renders existing-vs-proposed side-by-side. The
- *      analyst picks one of three actions per row:
+ *   2. The server runs the extractor and returns one PreviewRow per
+ *      detected acq event, paired with the deal's current value for
+ *      that phase. The dialog renders existing-vs-proposed side-by-
+ *      side. Per-row action: Apply / Keep existing / Skip.
  *
- *        - apply         → take the proposed value (PATCH or CREATE)
- *        - keep_existing → leave the deal's current value alone
- *        - skip          → drop the row entirely
+ *      Default actions:
+ *        - low confidence → Skip
+ *        - existing has a value AND proposed differs → Keep existing
+ *          (real conflict — analyst opts in to overwrite)
+ *        - everything else → Apply (fresh fills, matching values)
  *
- *      Default action is "apply" for high-confidence rows that don't
- *      conflict with an existing value, and "keep_existing" when the
- *      proposed value differs from what's already on the deal.
+ *      The "fresh fill" case (existing null, proposed real) defaults
+ *      to Apply; previously it defaulted to Keep existing because the
+ *      conflict check treated "null vs date" as a conflict, which
+ *      meant nothing landed when the user hit the Apply button.
  *
- * Mirrors GcScheduleImportDialog visually so analysts who use the GC
- * importer recognize the pattern, but the conflict-aware row UI is
- * specific to the Acq side where every phase usually exists already
- * (from Seed Default Phases) and the doc is updating dates rather
- * than seeding from scratch.
+ * If the deal has no acq phases yet the commit endpoint auto-seeds
+ * the seven canonical defaults first so every patch lands on a row
+ * with predecessor chains already wired.
  */
 export default function AcqScheduleImportDialog({
   dealId,
@@ -73,7 +96,11 @@ export default function AcqScheduleImportDialog({
   onOpenChange,
   onCommitted,
 }: Props) {
+  const [step, setStep] = useState<"pick" | "preview">("pick");
+  const [pickerTab, setPickerTab] = useState<"upload" | "library">("upload");
   const [file, setFile] = useState<File | null>(null);
+  const [docs, setDocs] = useState<DealDocument[] | null>(null);
+  const [docsLoading, setDocsLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
@@ -81,18 +108,38 @@ export default function AcqScheduleImportDialog({
   const [actions, setActions] = useState<Record<string, RowAction>>({});
 
   const reset = () => {
+    setStep("pick");
+    setPickerTab("upload");
     setFile(null);
     setPreview(null);
     setSourceFilename("");
     setActions({});
   };
 
-  const handleUpload = async () => {
-    if (!file) return;
+  // Lazy-load the deal's documents the first time the user switches
+  // to the Library tab. Avoids a round-trip on dialog open for users
+  // who only ever upload fresh.
+  useEffect(() => {
+    if (!open || pickerTab !== "library" || docs !== null || docsLoading) return;
+    setDocsLoading(true);
+    fetch(`/api/deals/${dealId}/documents`)
+      .then((r) => r.json())
+      .then((j) => setDocs(Array.isArray(j.data) ? j.data : []))
+      .catch(() => setDocs([]))
+      .finally(() => setDocsLoading(false));
+  }, [open, pickerTab, dealId, docs, docsLoading]);
+
+  /**
+   * Run a fresh File through the extractor. Used by both upload and
+   * library-pick paths — the library path fetches the existing doc's
+   * bytes via /api/documents/[id]/view, wraps them as a File, and
+   * funnels into the same code path.
+   */
+  const extractFromFile = async (f: File) => {
     setUploading(true);
     try {
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", f);
       const res = await fetch(`/api/deals/${dealId}/acq-schedule/import`, {
         method: "POST",
         body: fd,
@@ -106,33 +153,40 @@ export default function AcqScheduleImportDialog({
         return;
       }
       const rows: PreviewRow[] = Array.isArray(j.data?.rows) ? j.data.rows : [];
-      setSourceFilename(j.data?.source_filename || file.name);
+      setSourceFilename(j.data?.source_filename || f.name);
       if (rows.length === 0) {
         toast.error("No acquisition dates found in that document.");
         setPreview([]);
+        setStep("preview");
         return;
       }
       setPreview(rows);
-      // Default action per row:
-      //  - apply       → no conflict OR no existing value, and confidence isn't low
-      //  - keep_existing → conflict (proposed differs from existing) — let the analyst opt in
-      //  - skip        → low-confidence rows
-      const initial: Record<string, RowAction> = {};
-      for (const r of rows) {
-        if (r.confidence === "low") {
-          initial[r.phase_key] = "skip";
-          continue;
-        }
-        const conflict =
-          r.existing_phase_id &&
-          ((r.existing_start_date ?? null) !== r.proposed_start_date ||
-            (r.existing_duration_days ?? null) !== r.proposed_duration_days);
-        initial[r.phase_key] = conflict ? "keep_existing" : "apply";
-      }
-      setActions(initial);
+      setActions(defaultActions(rows));
+      setStep("preview");
     } catch (err) {
       toast.error((err as Error).message || "Upload failed");
     } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!file) return;
+    await extractFromFile(file);
+  };
+
+  const handlePickDoc = async (doc: DealDocument) => {
+    setUploading(true);
+    try {
+      const res = await fetch(`/api/documents/${doc.id}/view`);
+      if (!res.ok) throw new Error("Could not load that document");
+      const blob = await res.blob();
+      const f = new File([blob], doc.original_name, {
+        type: doc.mime_type || blob.type || "application/octet-stream",
+      });
+      await extractFromFile(f);
+    } catch (err) {
+      toast.error((err as Error).message || "Could not load document");
       setUploading(false);
     }
   };
@@ -168,8 +222,11 @@ export default function AcqScheduleImportDialog({
         return;
       }
       const total = j.data?.total ?? applyCount;
+      const seeded = j.data?.auto_seeded
+        ? " · seeded the canonical Acq chain first"
+        : "";
       toast.success(
-        `Acquisition schedule updated · ${total} phase${total === 1 ? "" : "s"} applied`
+        `Acquisition schedule updated · ${total} phase${total === 1 ? "" : "s"} applied${seeded}`
       );
       onCommitted();
       onOpenChange(false);
@@ -193,64 +250,96 @@ export default function AcqScheduleImportDialog({
         <DialogHeader>
           <DialogTitle>Import Acquisition dates from doc</DialogTitle>
           <DialogDescription>
-            Upload an LOI, PSA, broker timeline, or any acquisition-side
-            document. We&apos;ll pull dates and durations and let you pick
-            row-by-row whether to apply each one to the schedule.
+            Pull dates from an LOI, PSA, broker timeline, or any acquisition-
+            side document — uploaded fresh or already on the deal. We&apos;ll
+            extract the dates and let you confirm row-by-row before applying.
           </DialogDescription>
         </DialogHeader>
 
-        {!preview ? (
-          <div className="py-4">
-            <label className="flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-10 cursor-pointer hover:border-primary/50 transition-colors">
-              <UploadCloud className="h-8 w-8 text-muted-foreground" />
-              <div className="text-center">
-                <p className="text-sm font-medium">
-                  {file ? file.name : "Click to select a PDF or text file"}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  LOI, PSA, broker schedule, email — the model picks out the dates
-                </p>
-              </div>
-              <input
-                type="file"
-                accept="application/pdf,text/plain,.txt,.eml,.md"
-                className="hidden"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        {step === "pick" ? (
+          <div className="py-2">
+            {/* Tabs */}
+            <div className="flex items-center gap-1 mb-4 border-b border-border/40">
+              <TabBtn
+                label="Upload"
+                icon={<UploadCloud className="h-3.5 w-3.5" />}
+                active={pickerTab === "upload"}
+                onClick={() => setPickerTab("upload")}
               />
-            </label>
-
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleUpload}
-                disabled={!file || uploading}
-                className="gap-1.5"
-              >
-                {uploading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {uploading ? "Extracting…" : "Extract dates"}
-              </Button>
+              <TabBtn
+                label="From deal documents"
+                icon={<FolderOpen className="h-3.5 w-3.5" />}
+                active={pickerTab === "library"}
+                onClick={() => setPickerTab("library")}
+              />
             </div>
+
+            {pickerTab === "upload" ? (
+              <div className="space-y-4">
+                <label className="flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-10 cursor-pointer hover:border-primary/50 transition-colors">
+                  <UploadCloud className="h-8 w-8 text-muted-foreground" />
+                  <div className="text-center">
+                    <p className="text-sm font-medium">
+                      {file ? file.name : "Click to select a PDF or text file"}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      LOI, PSA, broker schedule, email — the model picks out the dates
+                    </p>
+                  </div>
+                  <input
+                    type="file"
+                    accept="application/pdf,text/plain,.txt,.eml,.md"
+                    className="hidden"
+                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                  />
+                </label>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={() => onOpenChange(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleUpload}
+                    disabled={!file || uploading}
+                    className="gap-1.5"
+                  >
+                    {uploading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    {uploading ? "Extracting…" : "Extract dates"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <DocLibraryPicker
+                docs={docs}
+                loading={docsLoading || uploading}
+                onPick={handlePickDoc}
+                onCancel={() => onOpenChange(false)}
+              />
+            )}
           </div>
         ) : (
           <div className="space-y-4">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <FileText className="h-4 w-4 flex-shrink-0" />
               <span className="truncate">{sourceFilename}</span>
-              <span>·</span>
-              <span>
-                {preview.length} acquisition row{preview.length === 1 ? "" : "s"} extracted
-              </span>
+              {preview && preview.length > 0 && (
+                <>
+                  <span>·</span>
+                  <span>
+                    {preview.length} acquisition row
+                    {preview.length === 1 ? "" : "s"} extracted
+                  </span>
+                </>
+              )}
             </div>
 
-            {preview.length === 0 ? (
+            {!preview || preview.length === 0 ? (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-4 text-sm flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 flex-shrink-0" />
                 <span>
-                  No acquisition dates were extracted from this document. Try a more
-                  date-dense doc (LOI / PSA) or seed the schedule manually with the
-                  Default Phases button.
+                  No acquisition dates were extracted from this document. Try a
+                  more date-dense doc (LOI / PSA) or seed the schedule manually
+                  with the Default Phases button.
                 </span>
               </div>
             ) : (
@@ -278,7 +367,7 @@ export default function AcqScheduleImportDialog({
                 </Button>
                 <Button
                   onClick={handleCommit}
-                  disabled={committing || preview.length === 0}
+                  disabled={committing || !preview || preview.length === 0}
                   className="gap-1.5"
                 >
                   {committing ? (
@@ -299,6 +388,178 @@ export default function AcqScheduleImportDialog({
   );
 }
 
+/**
+ * Determine the default action for each preview row.
+ *
+ *  - low confidence → Skip
+ *  - existing has a real value AND proposed differs → Keep existing
+ *    (real conflict — analyst opts in to overwrite)
+ *  - everything else → Apply (covers fresh fills where existing is
+ *    null, and matching values where there's nothing to change)
+ */
+function defaultActions(rows: PreviewRow[]): Record<string, RowAction> {
+  const out: Record<string, RowAction> = {};
+  for (const r of rows) {
+    if (r.confidence === "low") {
+      out[r.phase_key] = "skip";
+      continue;
+    }
+    const existingHasValue =
+      r.existing_phase_id &&
+      (r.existing_start_date != null || (r.existing_duration_days ?? 0) > 0);
+    const conflict =
+      existingHasValue &&
+      ((r.existing_start_date ?? null) !== r.proposed_start_date ||
+        (r.existing_duration_days ?? null) !== r.proposed_duration_days);
+    out[r.phase_key] = conflict ? "keep_existing" : "apply";
+  }
+  return out;
+}
+
+function TabBtn({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors -mb-[1px] ${
+        active
+          ? "border-primary text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function DocLibraryPicker({
+  docs,
+  loading,
+  onPick,
+  onCancel,
+}: {
+  docs: DealDocument[] | null;
+  loading: boolean;
+  onPick: (doc: DealDocument) => void;
+  onCancel: () => void;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/60" />
+      </div>
+    );
+  }
+  if (!docs || docs.length === 0) {
+    return (
+      <div className="text-center py-10 space-y-2">
+        <p className="text-sm text-muted-foreground">
+          No documents on this deal yet.
+        </p>
+        <p className="text-xs text-muted-foreground/70">
+          Upload one through the Documents tab, or use the Upload tab here.
+        </p>
+        <div className="pt-3">
+          <Button variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Acquisition-relevant categories first, others last. Within each
+  // group, newest first.
+  const sorted = [...docs].sort((a, b) => {
+    const aRelevant = ACQ_RELEVANT_CATEGORIES.includes(
+      a.category as DocumentCategory
+    );
+    const bRelevant = ACQ_RELEVANT_CATEGORIES.includes(
+      b.category as DocumentCategory
+    );
+    if (aRelevant !== bRelevant) return aRelevant ? -1 : 1;
+    return new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime();
+  });
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Pick any document on this deal. We&apos;ll extract acquisition dates
+        from it. PDFs and text files work; images and spreadsheets aren&apos;t
+        supported yet.
+      </p>
+      <div className="rounded-lg border border-border/60 max-h-80 overflow-y-auto divide-y divide-border/30">
+        {sorted.map((doc) => {
+          const cat = DOCUMENT_CATEGORIES[doc.category as DocumentCategory];
+          const isAcqRelevant = ACQ_RELEVANT_CATEGORIES.includes(
+            doc.category as DocumentCategory
+          );
+          const isSupported =
+            doc.mime_type === "application/pdf" ||
+            doc.mime_type.startsWith("text/") ||
+            /\.(pdf|txt|eml|md)$/i.test(doc.original_name);
+          return (
+            <button
+              key={doc.id}
+              onClick={() => isSupported && onPick(doc)}
+              disabled={!isSupported}
+              className={`w-full flex items-start gap-3 px-3 py-2.5 text-left transition-colors ${
+                isSupported
+                  ? "hover:bg-card/40 cursor-pointer"
+                  : "opacity-50 cursor-not-allowed"
+              }`}
+            >
+              <div className="mt-0.5 flex-shrink-0">
+                <FileText className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium truncate">
+                    {doc.original_name}
+                  </span>
+                  {cat && (
+                    <Badge
+                      variant="outline"
+                      className={`text-2xs ${
+                        isAcqRelevant ? "border-primary/40 text-primary" : ""
+                      }`}
+                    >
+                      {cat.icon} {cat.label}
+                    </Badge>
+                  )}
+                  {!isSupported && (
+                    <Badge variant="outline" className="text-2xs text-muted-foreground">
+                      Unsupported format
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-2xs text-muted-foreground mt-0.5">
+                  {new Date(doc.uploaded_at).toLocaleDateString()}
+                </p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function RowCard({
   row,
   action,
@@ -308,8 +569,11 @@ function RowCard({
   action: RowAction;
   onAction: (a: RowAction) => void;
 }) {
-  const conflict =
+  const existingHasValue =
     row.existing_phase_id &&
+    (row.existing_start_date != null || (row.existing_duration_days ?? 0) > 0);
+  const conflict =
+    existingHasValue &&
     ((row.existing_start_date ?? null) !== row.proposed_start_date ||
       (row.existing_duration_days ?? null) !== row.proposed_duration_days);
   const isNew = !row.existing_phase_id;
