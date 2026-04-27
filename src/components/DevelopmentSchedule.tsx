@@ -47,6 +47,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { InlineNumber, InlineDate, InlinePredecessor } from "@/components/schedule/InlineEdit";
 import {
   Dialog,
   DialogContent,
@@ -495,6 +496,39 @@ export default function DevelopmentSchedule({
       loadAll();
     } catch (err) {
       console.error("Failed to save phase:", err);
+    }
+  };
+
+  /**
+   * Inline-edit helper. Patches a single field on a phase and reloads.
+   * Optimistic: we mutate local state first so the UI doesn't flicker
+   * while the network round-trip is in flight, then trigger a full
+   * reload so the server's recompute (predecessor cascades, end_date
+   * recompute) lands in the view.
+   */
+  const updatePhaseField = async (id: string, updates: Record<string, unknown>) => {
+    setPhases((prev) =>
+      prev.map((p) => (p.id === id ? ({ ...p, ...updates } as DevPhase) : p))
+    );
+    try {
+      const res = await fetch(`/api/deals/${dealId}/dev-schedule/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const msg = j.detail
+          ? `${j.error || "Update failed"}: ${j.detail}`
+          : j.error || "Update failed";
+        toast.error(msg);
+        await loadAll(); // revert optimistic
+        return;
+      }
+      await loadAll();
+    } catch (err) {
+      toast.error((err as Error).message || "Update failed");
+      await loadAll();
     }
   };
 
@@ -1125,52 +1159,16 @@ export default function DevelopmentSchedule({
     : null;
   const showToday = todayPct !== null && todayPct >= 0 && todayPct <= 100;
 
-  // ── Critical path detection ──
-  // A phase is on the critical path if it has no slack: it's either an anchor
-  // or its predecessor is also critical, and it's not yet complete.
-  // Simple heuristic: phases that are in_progress or delayed with successor chains.
+  // Critical-path detection used to live here as a local longest-chain
+  // heuristic. The math was a recurring source of drift (it computed
+  // its own answer rather than reading is_critical from the DB) and
+  // the visual treatment — a small red triangle — wasn't earning its
+  // keep on a feasibility-stage gantt. Stripped along with the
+  // backward-pass CPM in the dev-schedule-compute simplification;
+  // see #143 follow-up. Empty set keeps existing render paths
+  // happy while we phase out callers.
   const criticalPhaseIds = new Set<string>();
   const phaseById = new Map(phases.map((p) => [p.id, p]));
-  // Find the longest dependency chain (critical path heuristic)
-  const getChainEnd = (id: string): string | null => {
-    const successors = phases.filter((p) => p.predecessor_id === id);
-    if (successors.length === 0) return id;
-    // Pick the successor that ends latest
-    let latestEnd = "";
-    let latestId = id;
-    for (const s of successors) {
-      const chainEnd = getChainEnd(s.id);
-      const endPhase = chainEnd ? phaseById.get(chainEnd) : null;
-      if (endPhase?.end_date && endPhase.end_date > latestEnd) {
-        latestEnd = endPhase.end_date;
-        latestId = chainEnd!;
-      }
-    }
-    return latestId;
-  };
-  // Mark phases on the longest path that are not yet complete
-  if (phases.length > 0) {
-    // Find anchor phases (no predecessor)
-    const anchors = phases.filter((p) => !p.predecessor_id);
-    for (const anchor of anchors) {
-      // Walk the chain
-      let current: string | undefined = anchor.id;
-      while (current) {
-        const phase = phaseById.get(current);
-        if (phase && phase.status !== "complete") {
-          criticalPhaseIds.add(current);
-        }
-        const successors = phases.filter((p) => p.predecessor_id === current);
-        // Follow the successor that ends latest (critical path)
-        if (successors.length === 0) break;
-        let latest = successors[0];
-        for (const s of successors) {
-          if ((s.end_date || "") > (latest.end_date || "")) latest = s;
-        }
-        current = latest.id;
-      }
-    }
-  }
 
   const isDelayed = (p: DevPhase) => {
     if (p.status === "delayed") return true;
@@ -1320,22 +1318,23 @@ export default function DevelopmentSchedule({
                                 <GripVertical className="h-3 w-3" />
                               </button>
                             )}
-                            {/* Label + category chip (child rows only) */}
-                            <button
-                              onClick={() => openEditPhase(p)}
+                            {/* Label cell — was a single button wrapping
+                                every chip; now a div so the inline-edit
+                                chips (duration, predecessor, anchor
+                                date) can each own their own click
+                                handler without nesting buttons. The
+                                label text is still the modal trigger;
+                                the trailing Pencil opens the same
+                                full-edit dialog for less common fields
+                                (notes, child tasks, docs). */}
+                            <div
                               className={cn(
-                                "col-span-3 text-left text-xs hover:text-primary truncate flex items-center gap-1",
+                                "col-span-3 text-xs flex items-center gap-1 min-w-0",
                                 delayed && "text-red-400",
                                 isChild && "pl-4 text-muted-foreground"
                               )}
                             >
                               {isChild && <span className="text-muted-foreground/50">└</span>}
-                              {!isChild && isCritical && (
-                                <span title="Critical path"><AlertTriangle className="h-2.5 w-2.5 text-red-400 flex-shrink-0" /></span>
-                              )}
-                              {!isChild && !isCritical && !p.predecessor_id && (
-                                <span className="text-2xs text-amber-400" title="Anchor phase">⚓</span>
-                              )}
                               {isChild && catCfg && (
                                 <span
                                   className={cn(
@@ -1349,9 +1348,53 @@ export default function DevelopmentSchedule({
                                   {catCfg.label}
                                 </span>
                               )}
-                              <span className="truncate">{p.label}</span>
-                              {p.duration_days && (
-                                <span className="text-2xs text-muted-foreground flex-shrink-0">{p.duration_days}d</span>
+                              <button
+                                onClick={() => openEditPhase(p)}
+                                className="text-left truncate hover:text-primary transition-colors min-w-0"
+                                title="Open full edit dialog (notes, child tasks, doc links)"
+                              >
+                                {p.label}
+                              </button>
+                              {/* Duration — inline-editable */}
+                              <InlineNumber
+                                value={p.duration_days}
+                                suffix="d"
+                                onSave={(v) => updatePhaseField(p.id, { duration_days: v })}
+                                title="Click to edit duration"
+                              />
+                              {/* Predecessor / anchor — root rows only.
+                                  Children inherit their parent's chain
+                                  in the UI (their order is managed via
+                                  up/down arrows + sort_order). */}
+                              {!isChild && (
+                                <InlinePredecessor
+                                  value={p.predecessor_id ?? null}
+                                  ownTrack={p.track ?? null}
+                                  options={phases.map((x) => ({
+                                    id: x.id,
+                                    label: x.label,
+                                    track: x.track ?? null,
+                                  }))}
+                                  excludeIds={new Set([p.id])}
+                                  onSave={(predId) =>
+                                    updatePhaseField(p.id, { predecessor_id: predId })
+                                  }
+                                />
+                              )}
+                              {/* Anchor date — only when this phase is
+                                  an anchor (no predecessor). For chained
+                                  rows the start_date is computed from
+                                  the predecessor's end + lag and editing
+                                  it here would be confusing. */}
+                              {!isChild && !p.predecessor_id && (
+                                <InlineDate
+                                  value={p.start_date ?? null}
+                                  onSave={(d) =>
+                                    updatePhaseField(p.id, { start_date: d })
+                                  }
+                                  title="Anchor start date"
+                                  placeholder="set start"
+                                />
                               )}
                               {isChild && p.task_owner && (
                                 <span
@@ -1397,7 +1440,7 @@ export default function DevelopmentSchedule({
                                   </span>
                                 );
                               })()}
-                            </button>
+                            </div>
                             {/* Bar */}
                             <div className={cn("col-span-7 relative rounded", isChild ? "h-3 bg-muted/20" : "h-5 bg-muted/30")}>
                               {showToday && (
@@ -1455,9 +1498,47 @@ export default function DevelopmentSchedule({
                                   </button>
                                 </>
                               )}
-                              <Badge variant="secondary" className={cn("text-2xs", delayed ? "text-red-400 bg-red-500/10" : cfg.color)}>
-                                {p.pct_complete}%
-                              </Badge>
+                              {/* Click-to-cycle status badge.
+                                  Cycles not_started → in_progress →
+                                  complete → not_started. The pair
+                                  status↔pct_complete coercion in
+                                  devPhaseQueries.update keeps
+                                  pct_complete in sync (complete →
+                                  100%, not_started → 0%); in_progress
+                                  preserves whatever pct was set. */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const cycle: Record<DevPhase["status"], DevPhase["status"]> = {
+                                    not_started: "in_progress",
+                                    in_progress: "complete",
+                                    complete: "not_started",
+                                    delayed: "in_progress",
+                                  };
+                                  const next = cycle[p.status] ?? "in_progress";
+                                  const nextPct =
+                                    next === "complete"
+                                      ? 100
+                                      : next === "not_started"
+                                        ? 0
+                                        : p.pct_complete;
+                                  updatePhaseField(p.id, {
+                                    status: next,
+                                    pct_complete: nextPct,
+                                  });
+                                }}
+                                title={`Status: ${cfg.label}${delayed ? " (delayed)" : ""} · click to cycle`}
+                              >
+                                <Badge
+                                  variant="secondary"
+                                  className={cn(
+                                    "text-2xs cursor-pointer hover:opacity-80 transition-opacity",
+                                    delayed ? "text-red-400 bg-red-500/10" : cfg.color
+                                  )}
+                                >
+                                  {p.pct_complete}%
+                                </Badge>
+                              </button>
                               <button
                                 onClick={() => handleDeletePhase(p.id)}
                                 className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all"

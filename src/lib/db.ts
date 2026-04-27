@@ -4647,6 +4647,38 @@ export const auditLogQueries = {
 
 // ─── Development Phase queries ────────────────────────────────────────────────
 
+/**
+ * Coerce a date input (Date object from pg, ISO string, YYYY-MM-DD
+ * string, null, or undefined) into a YYYY-MM-DD string, or null when
+ * we can't get a parseable date out. Mirrors the helper in
+ * dev-schedule-compute.ts — duplicated here to avoid an import cycle
+ * between db.ts and the compute module.
+ */
+function normalizeDateInput(input: unknown): string | null {
+  if (input == null) return null;
+  if (input instanceof Date) {
+    if (Number.isNaN(input.getTime())) return null;
+    return input.toISOString().slice(0, 10);
+  }
+  if (typeof input === "string") {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
+    const m = input.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+    const parsed = new Date(input);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+  return null;
+}
+
+/** Inline addDays helper. Same shape as dev-schedule-compute's. */
+function addDaysIso(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
 export const devPhaseQueries = {
   getByDealId: async (dealId: string) => {
     const pool = getPool();
@@ -4659,6 +4691,16 @@ export const devPhaseQueries = {
 
   create: async (phase: Record<string, unknown>) => {
     const pool = getPool();
+    // Belt-and-suspenders end_date: when a row arrives with a
+    // start_date and a duration but no end_date, compute it directly
+    // on insert so the gantt has something to draw even before
+    // recompute runs. Forward-only formula: end = start + max(0, dur-1).
+    const startStr = normalizeDateInput(phase.start_date);
+    const dur = typeof phase.duration_days === "number" ? phase.duration_days : null;
+    let endStr = normalizeDateInput(phase.end_date);
+    if (!endStr && startStr && dur != null) {
+      endStr = addDaysIso(startStr, Math.max(0, dur - 1));
+    }
     const res = await pool.query(
       `INSERT INTO deal_dev_phases (id, deal_id, track, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, linked_document_ids, pct_complete, budget, status, notes, sort_order, is_milestone, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16, $17, $18, $19, $20, NOW(), NOW())
@@ -4669,8 +4711,8 @@ export const devPhaseQueries = {
         phase.track ?? "development",
         phase.phase_key,
         phase.label,
-        phase.start_date ?? null,
-        phase.end_date ?? null,
+        startStr,
+        endStr,
         phase.duration_days ?? null,
         phase.predecessor_id ?? null,
         phase.lag_days ?? 0,
@@ -4711,6 +4753,34 @@ export const devPhaseQueries = {
       normalized.status = "complete";
     }
 
+    // Belt-and-suspenders end_date: when start_date or duration_days
+    // changes and we don't get an explicit end_date in the same
+    // payload, recompute end = start + max(0, dur-1). Means edits land
+    // on the gantt even if a downstream recompute fails. Skipped when
+    // the caller is already setting end_date explicitly.
+    if (
+      normalized.end_date === undefined &&
+      (normalized.start_date !== undefined || normalized.duration_days !== undefined)
+    ) {
+      // Need both pieces; pull from existing row if either was unchanged.
+      let startStr = normalizeDateInput(normalized.start_date);
+      let dur = typeof normalized.duration_days === "number" ? normalized.duration_days : null;
+      if (startStr == null || dur == null) {
+        const existing = await pool.query(
+          `SELECT start_date, duration_days FROM deal_dev_phases WHERE id = $1`,
+          [id]
+        );
+        const row = existing.rows[0] as { start_date: unknown; duration_days: number | null } | undefined;
+        if (row) {
+          if (startStr == null) startStr = normalizeDateInput(row.start_date);
+          if (dur == null && typeof row.duration_days === "number") dur = row.duration_days;
+        }
+      }
+      if (startStr && dur != null) {
+        normalized.end_date = addDaysIso(startStr, Math.max(0, dur - 1));
+      }
+    }
+
     for (const [key, value] of Object.entries(normalized)) {
       if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order", "track", "is_milestone"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
@@ -4736,21 +4806,17 @@ export const devPhaseQueries = {
     return res.rows[0] ?? null;
   },
 
-  // Bulk-write every field the CPM recompute produces: start/end dates
-  // plus earliest/latest start+finish, total_slack_days, is_critical.
-  // Called from recomputeSchedule() in the dev-schedule routes after a
-  // mutation so the table stays in sync with the computed graph.
+  // Bulk-write the start/end dates produced by computeSchedule's
+  // forward pass. The legacy CPM columns (latest_start, latest_finish,
+  // total_slack_days, is_critical) used to land here too but are no
+  // longer maintained — the UI never rendered them and the math was a
+  // recurring source of bugs. Columns stay on the table for backwards
+  // compat; we simply stop writing.
   bulkUpdateSchedule: async (
     updates: Array<{
       id: string;
       start_date: string | null;
       end_date: string | null;
-      earliest_start: string | null;
-      earliest_finish: string | null;
-      latest_start: string | null;
-      latest_finish: string | null;
-      total_slack_days: number | null;
-      is_critical: boolean;
     }>
   ) => {
     if (updates.length === 0) return;
@@ -4760,25 +4826,9 @@ export const devPhaseQueries = {
         `UPDATE deal_dev_phases
          SET start_date = $1,
              end_date = $2,
-             earliest_start = $3,
-             earliest_finish = $4,
-             latest_start = $5,
-             latest_finish = $6,
-             total_slack_days = $7,
-             is_critical = $8,
              updated_at = NOW()
-         WHERE id = $9`,
-        [
-          u.start_date,
-          u.end_date,
-          u.earliest_start,
-          u.earliest_finish,
-          u.latest_start,
-          u.latest_finish,
-          u.total_slack_days,
-          u.is_critical,
-          u.id,
-        ]
+         WHERE id = $3`,
+        [u.start_date, u.end_date, u.id]
       );
     }
   },

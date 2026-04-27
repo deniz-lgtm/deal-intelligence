@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { devPhaseQueries, getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import { computeSchedule, diffComputedDates } from "@/lib/dev-schedule-compute";
+import { computeSchedule, diffComputedDates, normalizeDateString } from "@/lib/dev-schedule-compute";
 import type { DevPhase } from "@/lib/types";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
@@ -69,7 +69,23 @@ export async function GET(
       phases = phases.filter((p: { track?: string }) => (p.track ?? "development") === track);
     }
 
-    return NextResponse.json({ data: phases });
+    // node-postgres returns DATE columns as Date objects; coerce to
+    // YYYY-MM-DD strings before sending so the client doesn't have to
+    // care about either shape. JSON.stringify on a Date would serialize
+    // as a full ISO timestamp ("2026-04-23T00:00:00.000Z") which works
+    // for new Date() but breaks the gantt's `dateStr + "T00:00:00"`
+    // header formatter.
+    const normalized = (phases as Array<Record<string, unknown>>).map((p) => ({
+      ...p,
+      start_date: normalizeDateString(p.start_date),
+      end_date: normalizeDateString(p.end_date),
+      earliest_start: normalizeDateString(p.earliest_start),
+      earliest_finish: normalizeDateString(p.earliest_finish),
+      latest_start: normalizeDateString(p.latest_start),
+      latest_finish: normalizeDateString(p.latest_finish),
+    }));
+
+    return NextResponse.json({ data: normalized });
   } catch (error) {
     console.error("GET /api/deals/[id]/dev-schedule error:", error);
     return NextResponse.json({ error: "Failed to fetch phases" }, { status: 500 });
