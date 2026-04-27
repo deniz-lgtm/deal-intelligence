@@ -4,15 +4,56 @@ import type { DevPhase } from "./types";
 // Matches the prior behavior of the forward-only pass.
 const DEFAULT_DURATION_DAYS = 30;
 
-function addDays(dateStr: string, days: number): string {
+/**
+ * Coerce whatever pg/JSON.parse handed us into a YYYY-MM-DD string.
+ *
+ * node-postgres returns DATE columns as JavaScript Date objects by
+ * default. Concatenating those with "T00:00:00Z" coerces via
+ * Date.toString() ("Thu Apr 23 2026 00:00:00 GMT+0000 (UTC)") which
+ * is unparseable, so addDays would throw on .toISOString() and the
+ * recompute try/catch in the route handler would swallow the error.
+ * Net effect: phases got patched start_dates but never gained
+ * end_dates, so the gantt rendered no bars and "Invalid Date"
+ * headers from undefined min/max.
+ *
+ * Also tolerates ISO strings ("2026-04-23T00:00:00.000Z") that come
+ * back through JSON round-trips, and pre-trimmed YYYY-MM-DD strings
+ * which we pass through unchanged.
+ */
+function normalizeDateString(input: unknown): string | null {
+  if (input == null) return null;
+  if (input instanceof Date) {
+    if (Number.isNaN(input.getTime())) return null;
+    return input.toISOString().slice(0, 10);
+  }
+  if (typeof input === "string") {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
+    // Tolerate ISO strings; trim to the date part.
+    const m = input.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+    // Last-ditch parse for things like "Thu Apr 23 2026".
+    const parsed = new Date(input);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+  return null;
+}
+
+function addDays(input: string | Date | null | undefined, days: number): string {
+  const dateStr = normalizeDateString(input);
+  if (!dateStr) throw new Error(`addDays: unparseable date input ${String(input)}`);
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().split("T")[0];
 }
 
-function daysBetween(aISO: string, bISO: string): number {
-  const a = new Date(aISO + "T00:00:00Z").getTime();
-  const b = new Date(bISO + "T00:00:00Z").getTime();
+function daysBetween(aISO: string | Date, bISO: string | Date): number {
+  const aStr = normalizeDateString(aISO);
+  const bStr = normalizeDateString(bISO);
+  if (!aStr || !bStr) return 0;
+  const a = new Date(aStr + "T00:00:00Z").getTime();
+  const b = new Date(bStr + "T00:00:00Z").getTime();
   return Math.round((b - a) / 86_400_000);
 }
 
@@ -49,13 +90,13 @@ export function computeSchedule(phases: DevPhase[]): DevPhase[] {
     if (visiting.has(phaseId)) {
       // Cycle — fall back to the phase's own anchor date.
       const phase = byId.get(phaseId);
-      if (phase?.start_date) {
-        const d = durationOf(phase);
-        const start = phase.start_date;
-        const finish = addDays(start, Math.max(0, d - 1));
-        es.set(phaseId, start);
+      const anchor = phase ? normalizeDateString(phase.start_date) : null;
+      if (anchor) {
+        const d = durationOf(phase!);
+        const finish = addDays(anchor, Math.max(0, d - 1));
+        es.set(phaseId, anchor);
         ef.set(phaseId, finish);
-        return { start, finish };
+        return { start: anchor, finish };
       }
       return null;
     }
@@ -68,7 +109,11 @@ export function computeSchedule(phases: DevPhase[]): DevPhase[] {
       const pred = forward(phase.predecessor_id, visiting);
       if (pred) start = addDays(pred.finish, (phase.lag_days ?? 0) + 1);
     }
-    if (!start && phase.start_date) start = phase.start_date;
+    if (!start) {
+      // Anchor date can come back from pg as a Date object — normalize.
+      const anchor = normalizeDateString(phase.start_date);
+      if (anchor) start = anchor;
+    }
     visiting.delete(phaseId);
 
     if (!start) return null;
@@ -157,12 +202,18 @@ export function computeSchedule(phases: DevPhase[]): DevPhase[] {
       startF && startL ? Math.max(0, daysBetween(startF, startL)) : null;
     const isCritical = slack === 0;
 
+    // pg returns DATE columns as Date objects unless a custom parser
+    // is registered; coerce to YYYY-MM-DD strings here so downstream
+    // consumers (UI, JSON, diffComputedDates equality checks) all
+    // work against a consistent type.
+    const pinnedStart = normalizeDateString(p.start_date);
+    const pinnedEnd = normalizeDateString(p.end_date);
     return {
       ...p,
       // Populate user-facing start/end from the forward pass when not
       // explicitly pinned. If the user pinned a start_date, respect it.
-      start_date: p.start_date ?? startF,
-      end_date: p.end_date ?? finishF,
+      start_date: pinnedStart ?? startF,
+      end_date: pinnedEnd ?? finishF,
       earliest_start: startF,
       earliest_finish: finishF,
       latest_start: startL,
@@ -223,13 +274,17 @@ export function diffComputedDates(
   for (const c of computed) {
     const o = origById.get(c.id);
     if (!o) continue;
+    // Normalize before comparing — a Date object stored in `o` and a
+    // YYYY-MM-DD string in `c` would always !== each other, producing
+    // spurious bulkUpdateSchedule writes (and missing the no-op fast
+    // path).
     const changed =
-      o.start_date !== c.start_date ||
-      o.end_date !== c.end_date ||
-      o.earliest_start !== c.earliest_start ||
-      o.earliest_finish !== c.earliest_finish ||
-      o.latest_start !== c.latest_start ||
-      o.latest_finish !== c.latest_finish ||
+      normalizeDateString(o.start_date) !== normalizeDateString(c.start_date) ||
+      normalizeDateString(o.end_date) !== normalizeDateString(c.end_date) ||
+      normalizeDateString(o.earliest_start) !== normalizeDateString(c.earliest_start) ||
+      normalizeDateString(o.earliest_finish) !== normalizeDateString(c.earliest_finish) ||
+      normalizeDateString(o.latest_start) !== normalizeDateString(c.latest_start) ||
+      normalizeDateString(o.latest_finish) !== normalizeDateString(c.latest_finish) ||
       o.total_slack_days !== c.total_slack_days ||
       o.is_critical !== c.is_critical;
     if (changed) {
