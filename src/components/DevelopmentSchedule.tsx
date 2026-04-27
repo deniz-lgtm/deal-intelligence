@@ -483,7 +483,10 @@ export default function DevelopmentSchedule({
       }
       if (!res.ok) {
         const err = await res.json();
-        alert(err.error || "Failed to save phase");
+        const msg = err.detail
+          ? `${err.error || "Failed to save phase"}: ${err.detail}`
+          : err.error || "Failed to save phase";
+        alert(msg);
         return;
       }
       setPhaseDialogOpen(false);

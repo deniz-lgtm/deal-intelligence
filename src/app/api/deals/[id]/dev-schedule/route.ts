@@ -126,12 +126,22 @@ export async function POST(
       phase = await devPhaseQueries.create(payload);
     }
 
-    // Recompute schedule for the whole deal so dependent phases shift
-    await recomputeSchedule(params.id);
+    // Recompute schedule for the whole deal so dependent phases shift.
+    // Isolated from the create — a CPM compute failure shouldn't roll
+    // back the row the user just added.
+    try {
+      await recomputeSchedule(params.id);
+    } catch (recomputeErr) {
+      console.error("POST /api/deals/[id]/dev-schedule recompute error:", recomputeErr);
+    }
 
     return NextResponse.json({ data: phase });
   } catch (error) {
     console.error("POST /api/deals/[id]/dev-schedule error:", error);
-    return NextResponse.json({ error: "Failed to create phase" }, { status: 500 });
+    const detail = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: "Failed to create phase", detail: detail.slice(0, 240) },
+      { status: 500 }
+    );
   }
 }
