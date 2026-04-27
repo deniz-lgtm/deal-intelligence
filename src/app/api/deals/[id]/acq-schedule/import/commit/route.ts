@@ -18,10 +18,19 @@ export const maxDuration = 30;
  *                CREATE if no existing phase for that key).
  *   - "skip"   → ignore this row entirely.
  *
- * The route never silently overwrites — every conflict was already
- * resolved in the dialog. CPM recompute runs at the end inside its own
- * try/catch so a downstream compute error doesn't undo the user's
- * imported dates.
+ * If the deal has *no* acquisition phases yet, we transparently seed
+ * the seven canonical defaults first so every patch lands on a row
+ * with predecessor chains intact. This matches what the analyst would
+ * see if they'd hit "Seed Default Phases" before importing — the
+ * importer just inlines that step.
+ *
+ * For non-canonical free-form events the doc surfaced (financing
+ * contingency expiry, lender deadlines, etc.) we walk back the
+ * canonical Acq chain to find the closest existing predecessor so the
+ * row chains naturally instead of floating loose.
+ *
+ * CPM recompute runs at the end inside its own try/catch so a
+ * downstream compute error doesn't undo the user's imported dates.
  */
 export async function POST(
   req: NextRequest,
@@ -43,20 +52,32 @@ export async function POST(
       );
     }
 
-    const allPhases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
-    const acqByKey = new Map<string, DevPhase>();
-    for (const p of allPhases) {
-      if ((p.track ?? "development") === "acquisition" && p.phase_key) {
-        acqByKey.set(p.phase_key, p);
-      }
+    let allPhases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
+    let acqByKey = buildAcqByKey(allPhases);
+
+    // ── Auto-seed defaults if the acq track is empty ───────────────
+    // Without this, an analyst on a fresh deal who imports an LOI
+    // gets disconnected rows. Seeding the canonical chain first
+    // means every patch lands on a row that already has its
+    // predecessor wired up.
+    let autoSeeded = false;
+    if (acqByKey.size === 0) {
+      const nextSort = allPhases.reduce(
+        (m, p) => ((p.sort_order ?? 0) > m ? (p.sort_order ?? 0) : m),
+        -1
+      ) + 1;
+      await seedAcqDefaults(params.id, nextSort);
+      allPhases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
+      acqByKey = buildAcqByKey(allPhases);
+      autoSeeded = true;
     }
 
     let patched = 0;
     let created = 0;
 
-    // Sort canonical Acq rows so siblings later in the chain (closing
-    // after escrow, etc.) get inserted in dependency-order — that keeps
-    // sort_order tidy when we have to create rows from scratch.
+    // Sort canonical Acq rows in dependency-order so freshly-created
+    // free-form rows can resolve their predecessor against earlier
+    // rows in this batch.
     const canonicalOrder = new Map<string, number>(
       ACQ_PHASE_KEYS.map((k, i) => [k, i])
     );
@@ -66,8 +87,6 @@ export async function POST(
         (canonicalOrder.get(b.phase_key) ?? 999)
     );
 
-    // Highest sort_order across the deal → seed new rows below it so we
-    // don't collide with existing phases (acq, dev, or construction).
     let nextSort = allPhases.reduce(
       (m, p) => ((p.sort_order ?? 0) > m ? (p.sort_order ?? 0) : m),
       -1
@@ -85,21 +104,10 @@ export async function POST(
           patched++;
         }
       } else {
-        // No existing phase for this key — seed one. For canonical
-        // keys we look up the default label / milestone flag; for
-        // free-form keys (financing_contingency_expiry, etc.) we use
-        // the analyst-provided label as-is.
+        // No existing phase for this key — seed one.
         const def = DEFAULT_ACQ_PHASES.find((d) => d.phase_key === r.phase_key);
         const isCanonical = ACQ_PHASE_KEYS.includes(r.phase_key as AcqPhaseKey);
-        // Predecessor for canonical phases comes from the seed table.
-        // If the predecessor row already exists on the deal, link it;
-        // otherwise leave null and let the user re-link (or chain via
-        // a future seed-defaults click).
-        let predecessor_id: string | null = null;
-        if (def?.predecessor_key) {
-          const pred = acqByKey.get(def.predecessor_key);
-          if (pred) predecessor_id = pred.id;
-        }
+        const predecessor_id = pickPredecessor(r.phase_key, def?.predecessor_key, acqByKey);
         const id = uuidv4();
         await devPhaseQueries.create({
           id,
@@ -117,8 +125,8 @@ export async function POST(
             : (r.duration_days ?? 0) === 0,
           notes: r.source_quote ? `Imported from doc: "${r.source_quote}"` : null,
         });
-        // Track the freshly-created row so subsequent rows in this
-        // batch can resolve their predecessor against it.
+        // Track freshly-created rows so subsequent rows in this batch
+        // can resolve their predecessor against them.
         acqByKey.set(r.phase_key, {
           id,
           phase_key: r.phase_key,
@@ -128,9 +136,9 @@ export async function POST(
       }
     }
 
-    // Recompute CPM. Isolated try/catch — same pattern as the rest of
-    // the schedule mutation routes after #137; a compute failure
-    // doesn't undo imported dates.
+    // ── Recompute CPM ─────────────────────────────────────────────
+    // Isolated try/catch — a compute failure doesn't undo imported
+    // dates. Same isolation pattern as #137.
     try {
       const fresh = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
       const computed = computeSchedule(fresh);
@@ -147,6 +155,7 @@ export async function POST(
       data: {
         patched,
         created,
+        auto_seeded: autoSeeded,
         total: patched + created,
       },
     });
@@ -167,4 +176,86 @@ interface CommitRow {
   start_date?: string | null;
   duration_days?: number;
   source_quote?: string | null;
+}
+
+function buildAcqByKey(phases: DevPhase[]): Map<string, DevPhase> {
+  const m = new Map<string, DevPhase>();
+  for (const p of phases) {
+    if ((p.track ?? "development") === "acquisition" && p.phase_key) {
+      m.set(p.phase_key, p);
+    }
+  }
+  return m;
+}
+
+/**
+ * Find the best predecessor for a phase being created on the acq track.
+ *
+ * Canonical phases use their default predecessor when it exists on the
+ * deal; free-form phases (or canonical phases whose default predecessor
+ * isn't on the deal yet) walk back the canonical chain looking for the
+ * closest existing predecessor. That keeps imported rows connected to
+ * the chain instead of floating loose.
+ */
+function pickPredecessor(
+  phaseKey: string,
+  defaultPredecessorKey: string | null | undefined,
+  acqByKey: Map<string, DevPhase>
+): string | null {
+  // Default predecessor present on the deal? Use it.
+  if (defaultPredecessorKey) {
+    const direct = acqByKey.get(defaultPredecessorKey);
+    if (direct) return direct.id;
+  }
+
+  // Walk back the canonical chain. For canonical keys we step through
+  // ACQ_PHASE_KEYS in order; for free-form keys we use the chain as-is
+  // (a free-form event imported with no anchor will hang off the latest
+  // canonical phase that exists on the deal — typically a sensible
+  // chronological ordering).
+  const idx = ACQ_PHASE_KEYS.indexOf(phaseKey as AcqPhaseKey);
+  const startIdx = idx > 0 ? idx - 1 : ACQ_PHASE_KEYS.length - 1;
+  for (let i = startIdx; i >= 0; i--) {
+    const candidate = acqByKey.get(ACQ_PHASE_KEYS[i]);
+    if (candidate) return candidate.id;
+  }
+  return null;
+}
+
+/**
+ * Inline copy of the seed route's per-track logic. Creates the seven
+ * canonical Acq phases with predecessor chains wired up. We don't anchor
+ * a start_date on any phase — the import that triggered this seed will
+ * patch real dates onto these rows in the next step. CPM will compute
+ * end_dates from the chain once everything's in place.
+ */
+async function seedAcqDefaults(dealId: string, startSort: number): Promise<void> {
+  const idByKey = new Map<string, string>();
+  let sort = startSort;
+  // First pass: insert each phase with no predecessor_id.
+  for (const seed of DEFAULT_ACQ_PHASES) {
+    const id = uuidv4();
+    idByKey.set(seed.phase_key, id);
+    await devPhaseQueries.create({
+      id,
+      deal_id: dealId,
+      track: "acquisition",
+      phase_key: seed.phase_key,
+      label: seed.label,
+      start_date: null,
+      duration_days: seed.duration_days,
+      predecessor_id: null,
+      lag_days: 0,
+      sort_order: sort++,
+      is_milestone: seed.is_milestone === true,
+    });
+  }
+  // Second pass: resolve predecessor_key → predecessor_id.
+  for (const seed of DEFAULT_ACQ_PHASES) {
+    if (!seed.predecessor_key) continue;
+    const selfId = idByKey.get(seed.phase_key);
+    const predId = idByKey.get(seed.predecessor_key);
+    if (!selfId || !predId) continue;
+    await devPhaseQueries.update(selfId, { predecessor_id: predId });
+  }
 }
