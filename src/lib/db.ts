@@ -4697,7 +4697,21 @@ export const devPhaseQueries = {
     const values: unknown[] = [];
     let idx = 1;
 
-    for (const [key, value] of Object.entries(updates)) {
+    // Status and pct_complete should travel together. Marking a phase
+    // complete without also setting pct_complete=100 leaves the
+    // progress bar stuck partway and confuses the analyst (the gantt
+    // shows the row as "in progress" while the status chip says
+    // "Complete"). Coerce the pair when the caller doesn't pass an
+    // explicit pct.
+    const normalized: Record<string, unknown> = { ...updates };
+    if (normalized.status === "complete" && normalized.pct_complete === undefined) {
+      normalized.pct_complete = 100;
+    }
+    if (normalized.pct_complete === 100 && normalized.status === undefined) {
+      normalized.status = "complete";
+    }
+
+    for (const [key, value] of Object.entries(normalized)) {
       if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order", "track", "is_milestone"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);

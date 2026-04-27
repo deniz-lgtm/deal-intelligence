@@ -111,6 +111,56 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 2, baseDelayMs = 80
 
 const ACQ_KEY_SET = new Set<string>(ACQ_PHASE_KEYS);
 
+/**
+ * Map common phase-name synonyms onto canonical keys. The model
+ * usually obeys the system prompt's mapping rules but occasionally
+ * coins its own snake_case keys (`inspection_period`, `closing_date`)
+ * for events that should be canonical. This post-processor catches
+ * those before they land as free-form custom phases — without it,
+ * the Acq schedule shows duplicate canonical+custom rows for the
+ * same milestone and the imported chain breaks.
+ */
+const PHASE_KEY_SYNONYMS: Record<string, AcqPhaseKey> = {
+  // DD / inspection / due-diligence variants
+  inspection: "acq_dd_period",
+  inspection_period: "acq_dd_period",
+  due_diligence: "acq_dd_period",
+  due_diligence_period: "acq_dd_period",
+  dd: "acq_dd_period",
+  dd_period: "acq_dd_period",
+  diligence: "acq_dd_period",
+  contingency_period: "acq_dd_period",
+  feasibility_period: "acq_dd_period",
+  // Closing variants
+  close: "acq_closing",
+  closing_date: "acq_closing",
+  close_of_escrow: "acq_closing",
+  coe: "acq_closing",
+  // Escrow variants
+  escrow_period: "acq_escrow",
+  // PSA variants
+  psa: "acq_psa_executed",
+  psa_signed: "acq_psa_executed",
+  contract_executed: "acq_psa_executed",
+  definitive_agreement: "acq_psa_executed",
+  // LOI variants
+  loi: "acq_loi_signed",
+  letter_of_intent: "acq_loi_signed",
+  // Site walk
+  tour: "acq_site_walk",
+  site_visit: "acq_site_walk",
+  property_tour: "acq_site_walk",
+  // Call for offers
+  cfo: "acq_call_for_offers",
+  bid_deadline: "acq_call_for_offers",
+  offer_deadline: "acq_call_for_offers",
+};
+
+function normalizePhaseKey(key: string): string {
+  if (ACQ_KEY_SET.has(key)) return key;
+  return PHASE_KEY_SYNONYMS[key] ?? key;
+}
+
 function parseResponse(text: string): ExtractedAcqPhase[] {
   let payload = text.trim();
   if (payload.startsWith("```")) {
@@ -133,6 +183,9 @@ function parseResponse(text: string): ExtractedAcqPhase[] {
       ? r.phase_key.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "")
       : label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
     if (!key) key = `acq_event_${rows.length + 1}`;
+    // Normalize synonyms onto canonical keys so the importer doesn't
+    // create duplicate canonical+custom rows for the same event.
+    key = normalizePhaseKey(key);
     // De-dup non-canonical keys; canonical ones we leave alone (the
     // commit endpoint takes the first-row-wins for each canonical
     // phase, since semantically there's one of each per deal).
