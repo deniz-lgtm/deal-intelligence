@@ -46,13 +46,34 @@ export async function PATCH(
       return NextResponse.json({ error: "Phase not found or no updates" }, { status: 404 });
     }
 
-    // Recompute the whole schedule so changes cascade downstream
-    await recomputeSchedule(params.id);
+    // Recompute the whole schedule so changes cascade downstream. Run
+    // it in its own try/catch — a CPM compute failure (bad date math,
+    // a missing CPM column on an old deployment, etc.) shouldn't
+    // surface as "Failed to update phase" when the user's edit
+    // actually landed. The CPM fields just stay stale until the next
+    // successful mutation; the user's PATCH still reads as success.
+    try {
+      await recomputeSchedule(params.id);
+    } catch (recomputeErr) {
+      console.error(
+        "PATCH /api/deals/[id]/dev-schedule/[phaseId] recompute error:",
+        recomputeErr
+      );
+    }
 
     return NextResponse.json({ data: phase });
   } catch (error) {
     console.error("PATCH /api/deals/[id]/dev-schedule/[phaseId] error:", error);
-    return NextResponse.json({ error: "Failed to update phase" }, { status: 500 });
+    const detail = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      {
+        error: "Failed to update phase",
+        // Surface the underlying detail so the client toast / browser
+        // alert isn't a black box. Truncated to keep prod logs sane.
+        detail: detail.slice(0, 240),
+      },
+      { status: 500 }
+    );
   }
 }
 
@@ -81,12 +102,25 @@ export async function DELETE(
 
     await devPhaseQueries.delete(params.phaseId);
 
-    // Recompute after deletion since downstream phases may need to fall back to anchors
-    await recomputeSchedule(params.id);
+    // Recompute after deletion since downstream phases may need to fall
+    // back to anchors. Same isolation as the PATCH path — recompute
+    // failures don't undo the user's deletion.
+    try {
+      await recomputeSchedule(params.id);
+    } catch (recomputeErr) {
+      console.error(
+        "DELETE /api/deals/[id]/dev-schedule/[phaseId] recompute error:",
+        recomputeErr
+      );
+    }
 
     return NextResponse.json({ data: { success: true } });
   } catch (error) {
     console.error("DELETE /api/deals/[id]/dev-schedule/[phaseId] error:", error);
-    return NextResponse.json({ error: "Failed to delete phase" }, { status: 500 });
+    const detail = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: "Failed to delete phase", detail: detail.slice(0, 240) },
+      { status: 500 }
+    );
   }
 }
