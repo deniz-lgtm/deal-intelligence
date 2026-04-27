@@ -106,6 +106,10 @@ export default function AcqScheduleImportDialog({
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [sourceFilename, setSourceFilename] = useState<string>("");
   const [actions, setActions] = useState<Record<string, RowAction>>({});
+  // Default mode is replace — clean state every time. Analysts who
+  // hand-tune the schedule and just want to layer in fresh dates flip
+  // to merge.
+  const [mode, setMode] = useState<"replace" | "merge">("replace");
 
   const reset = () => {
     setStep("pick");
@@ -114,6 +118,7 @@ export default function AcqScheduleImportDialog({
     setPreview(null);
     setSourceFilename("");
     setActions({});
+    setMode("replace");
   };
 
   // Lazy-load the deal's documents the first time the user switches
@@ -211,7 +216,7 @@ export default function AcqScheduleImportDialog({
       const res = await fetch(`/api/deals/${dealId}/acq-schedule/import/commit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows }),
+        body: JSON.stringify({ rows, mode }),
       });
       const j = await res.json();
       if (!res.ok) {
@@ -332,6 +337,48 @@ export default function AcqScheduleImportDialog({
                 </>
               )}
             </div>
+
+            {preview && preview.length > 0 && (
+              <div className="rounded-md border border-border/60 p-3 space-y-2">
+                <p className="text-xs font-medium">Apply to schedule</p>
+                <div className="space-y-1.5">
+                  <label className="flex items-start gap-2 text-xs cursor-pointer">
+                    <input
+                      type="radio"
+                      checked={mode === "replace"}
+                      onChange={() => setMode("replace")}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="font-medium">Replace acquisition schedule</span>
+                      <span className="text-muted-foreground block text-2xs mt-0.5">
+                        Wipes existing acq phases, re-seeds the seven canonical
+                        defaults with predecessor chains, then applies dates from
+                        this doc. Recommended for first imports and to clean up
+                        broken schedules.
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-xs cursor-pointer">
+                    <input
+                      type="radio"
+                      checked={mode === "merge"}
+                      onChange={() => setMode("merge")}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="font-medium">Merge with existing</span>
+                      <span className="text-muted-foreground block text-2xs mt-0.5">
+                        Patches existing rows by phase key, creates rows for new
+                        events, repairs missing predecessor links. Use when
+                        you&apos;ve hand-tuned the schedule and just want to
+                        layer in fresh dates.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
 
             {!preview || preview.length === 0 ? (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-4 text-sm flex items-start gap-2">

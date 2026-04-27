@@ -18,16 +18,22 @@ export const maxDuration = 30;
  *                CREATE if no existing phase for that key).
  *   - "skip"   → ignore this row entirely.
  *
- * If the deal has *no* acquisition phases yet, we transparently seed
- * the seven canonical defaults first so every patch lands on a row
- * with predecessor chains intact. This matches what the analyst would
- * see if they'd hit "Seed Default Phases" before importing — the
- * importer just inlines that step.
+ * Two import modes:
+ *
+ *   - "replace" (default) — wipe the acq track first, auto-seed the
+ *     seven canonical defaults, then apply extracted dates. Clean
+ *     state every time. Best for first-time imports and for healing
+ *     deals that have accumulated cruft from earlier attempts.
+ *
+ *   - "merge" — keep existing acq phases. PATCH where keys match,
+ *     CREATE where they don't, and heal any null predecessors as we
+ *     go. Useful when the analyst has hand-tuned the schedule and
+ *     just wants to layer in dates from a new doc.
  *
  * For non-canonical free-form events the doc surfaced (financing
  * contingency expiry, lender deadlines, etc.) we walk back the
- * canonical Acq chain to find the closest existing predecessor so the
- * row chains naturally instead of floating loose.
+ * canonical Acq chain to find the closest existing predecessor so
+ * the row chains naturally instead of floating loose.
  *
  * CPM recompute runs at the end inside its own try/catch so a
  * downstream compute error doesn't undo the user's imported dates.
@@ -42,8 +48,9 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
-    const body = (await req.json()) as { rows?: CommitRow[] };
+    const body = (await req.json()) as { rows?: CommitRow[]; mode?: "replace" | "merge" };
     const rows: CommitRow[] = Array.isArray(body?.rows) ? body.rows : [];
+    const mode: "replace" | "merge" = body?.mode === "merge" ? "merge" : "replace";
     const applyRows = rows.filter((r) => r.action === "apply");
     if (applyRows.length === 0) {
       return NextResponse.json(
@@ -53,13 +60,34 @@ export async function POST(
     }
 
     let allPhases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
+
+    // ── Replace mode: wipe acq track first ────────────────────────
+    // Delete every acquisition-track phase on the deal. Cross-track
+    // dependencies (Dev or Construction phases pointing into Acq —
+    // typically an `acq_closing` predecessor) get their predecessor
+    // nulled out first so the foreign key lookup doesn't dangle.
+    if (mode === "replace") {
+      const acqPhases = allPhases.filter(
+        (p) => (p.track ?? "development") === "acquisition"
+      );
+      const acqIds = new Set(acqPhases.map((p) => p.id));
+      for (const p of allPhases) {
+        if (p.predecessor_id && acqIds.has(p.predecessor_id)) {
+          await devPhaseQueries.update(p.id, { predecessor_id: null });
+        }
+      }
+      for (const p of acqPhases) {
+        await devPhaseQueries.delete(p.id);
+      }
+      allPhases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
+    }
+
     let acqByKey = buildAcqByKey(allPhases);
 
-    // ── Auto-seed defaults if the acq track is empty ───────────────
-    // Without this, an analyst on a fresh deal who imports an LOI
-    // gets disconnected rows. Seeding the canonical chain first
-    // means every patch lands on a row that already has its
-    // predecessor wired up.
+    // ── Auto-seed canonical defaults if the acq track is empty ────
+    // After replace this is always true. In merge mode it fires only
+    // for fresh deals. Either way, every patch lands on a row that
+    // already has its predecessor wired up.
     let autoSeeded = false;
     if (acqByKey.size === 0) {
       const nextSort = allPhases.reduce(
@@ -178,6 +206,7 @@ export async function POST(
         patched,
         created,
         auto_seeded: autoSeeded,
+        mode,
         total: patched + created,
       },
     });
