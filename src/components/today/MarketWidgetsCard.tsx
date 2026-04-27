@@ -50,45 +50,69 @@ export function MarketWidgetsCard() {
   }, []);
 
   return (
-    <div className="border border-border/40 rounded-lg bg-card/60 backdrop-blur-sm p-3">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-1.5">
-          <TrendingUp className="h-3.5 w-3.5 text-primary" />
-          <span className="text-xs font-semibold">Market</span>
+    <section className="group/panel relative flex flex-col px-6 py-8 transition-colors duration-300 hover:bg-card/10">
+      {/* Editorial nameplate — mirrors PhaseNameplate so the strip
+          reads as part of the same magazine as the triptych below. */}
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-3 min-w-0">
+          <span className="font-nameplate text-3xl leading-none tracking-tight text-foreground">
+            Market
+          </span>
+          <span
+            className="text-2xs font-medium uppercase tracking-[0.15em]"
+            style={{ color: "hsl(var(--primary) / 0.8)" }}
+          >
+            FRED
+          </span>
         </div>
-        <span className="text-[10px] text-muted-foreground">FRED</span>
+        <TrendingUp
+          className="h-4 w-4 transition-transform duration-500 group-hover/panel:rotate-[8deg] text-primary"
+          strokeWidth={1.5}
+        />
       </div>
+      <div
+        className="mt-3 h-px origin-left transition-transform duration-[500ms] ease-out scale-x-[0.35] group-hover/panel:scale-x-100"
+        style={{ background: "hsl(var(--primary))" }}
+      />
 
-      {loading ? (
-        <div className="flex items-center justify-center py-6">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        </div>
-      ) : !data ? (
-        <div className="text-[11px] text-muted-foreground py-6 text-center">
-          Market data unavailable.
-        </div>
-      ) : !data.fred_configured ? (
-        <div className="text-[11px] text-muted-foreground py-4 text-center">
-          Set <code className="text-[10px] bg-muted/30 px-1 rounded">FRED_API_KEY</code>{" "}
-          to enable market widgets.
-          <div className="text-[10px] mt-1 opacity-70">
-            Free key: fred.stlouisfed.org/docs/api/api_key.html
+      <div className="mt-7 flex-1 min-h-0">
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground/60" />
           </div>
-        </div>
-      ) : !data.treasury_10y && !data.treasury_5y && !data.sp500 && !data.mortgage_30y ? (
-        <div className="text-[11px] text-muted-foreground py-4 text-center">
-          FRED API key is configured but data failed to load. This
-          may be a temporary outage or network issue — try reloading.
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-2">
-          <Metric series={data.treasury_10y} suffix="%" />
-          <Metric series={data.treasury_5y} suffix="%" />
-          <Metric series={data.sp500} />
-          <Metric series={data.mortgage_30y} suffix="%" />
-        </div>
-      )}
-    </div>
+        ) : !data ? (
+          <p className="text-xs text-muted-foreground/60 text-center py-10">
+            Market data unavailable.
+          </p>
+        ) : !data.fred_configured ? (
+          <div className="text-center py-6">
+            <p className="text-xs text-muted-foreground">
+              Set{" "}
+              <code className="text-[10px] bg-muted/30 px-1 rounded">FRED_API_KEY</code>{" "}
+              to enable market widgets.
+            </p>
+            <p className="text-2xs text-muted-foreground/60 mt-1">
+              Free key: fred.stlouisfed.org/docs/api/api_key.html
+            </p>
+          </div>
+        ) : !data.treasury_10y &&
+          !data.treasury_5y &&
+          !data.sp500 &&
+          !data.mortgage_30y ? (
+          <p className="text-xs text-muted-foreground/60 text-center py-6">
+            FRED API key is configured but data failed to load. This may be
+            a temporary outage — try reloading.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <Metric series={data.treasury_10y} suffix="%" />
+            <Metric series={data.treasury_5y} suffix="%" />
+            <Metric series={data.sp500} />
+            <Metric series={data.mortgage_30y} suffix="%" />
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
