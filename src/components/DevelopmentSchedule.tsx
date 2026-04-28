@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   DndContext,
@@ -43,11 +43,23 @@ import {
   Sparkles,
   Check,
   X as XIcon,
+  ArrowUpDown,
+  ArrowUpAZ,
+  ArrowDownAZ,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { InlineNumber, InlineDate, InlinePredecessor } from "@/components/schedule/InlineEdit";
+import {
+  InlineNumber,
+  InlineDate,
+  InlinePredecessor,
+  InlineCurrency,
+} from "@/components/schedule/InlineEdit";
+import {
+  ScheduleColumnsMenu,
+  type ScheduleColumnVisibility,
+} from "@/components/schedule/ScheduleColumnsMenu";
 import {
   Dialog,
   DialogContent,
@@ -189,6 +201,104 @@ export default function DevelopmentSchedule({
 
   const [scheduleExpanded, setScheduleExpanded] = useState(true);
   const [budgetExpanded, setBudgetExpanded] = useState(true);
+
+  // Sortable column header state. `null` => use manual sort_order (the
+  // default). Drag-reorder + up/down arrows always clear sort and fall
+  // back to manual order so the user's drop intent isn't immediately
+  // overwritten.
+  type SortKey =
+    | "name"
+    | "duration"
+    | "start"
+    | "finish"
+    | "budget"
+    | "predecessor";
+  const [sortBy, setSortBy] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // Column visibility — persists per (deal, track) so analysts can
+  // arrange Acquisition / Development / Construction tracks
+  // independently. Defaults give Dev/Con an Owner column out of the box;
+  // Predecessor is hidden by default everywhere (power-user feature).
+  const colDefaults: ScheduleColumnVisibility = useMemo(
+    () => ({
+      predecessor: false,
+      start: true,
+      finish: true,
+      budget: true,
+      owner: track !== "acquisition",
+    }),
+    [track]
+  );
+  const [columns, setColumns] =
+    useState<ScheduleColumnVisibility>(colDefaults);
+  const colsStorageKey = `dealSchedule:${dealId}:${track}:cols`;
+  const sortStorageKey = `dealSchedule:${dealId}:${track}:sort`;
+  // Load persisted prefs on mount / deal+track change.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const rawCols = window.localStorage.getItem(colsStorageKey);
+      if (rawCols) {
+        const parsed = JSON.parse(rawCols);
+        if (parsed && typeof parsed === "object") {
+          setColumns({ ...colDefaults, ...parsed });
+        } else {
+          setColumns(colDefaults);
+        }
+      } else {
+        setColumns(colDefaults);
+      }
+    } catch {
+      setColumns(colDefaults);
+    }
+    try {
+      const rawSort = window.localStorage.getItem(sortStorageKey);
+      if (rawSort) {
+        const parsed = JSON.parse(rawSort);
+        if (parsed && typeof parsed === "object") {
+          setSortBy(parsed.sortBy ?? null);
+          setSortDir(parsed.sortDir === "desc" ? "desc" : "asc");
+        }
+      } else {
+        setSortBy(null);
+      }
+    } catch {
+      setSortBy(null);
+    }
+  }, [colsStorageKey, sortStorageKey, colDefaults]);
+  // Persist column visibility on change.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(colsStorageKey, JSON.stringify(columns));
+    } catch { /* swallow */ }
+  }, [colsStorageKey, columns]);
+  // Persist sort on change.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        sortStorageKey,
+        JSON.stringify({ sortBy, sortDir })
+      );
+    } catch { /* swallow */ }
+  }, [sortStorageKey, sortBy, sortDir]);
+
+  // Header click cycles asc → desc → off (back to manual order).
+  const cycleSort = (key: SortKey) => {
+    if (sortBy !== key) {
+      setSortBy(key);
+      setSortDir("asc");
+      return;
+    }
+    if (sortDir === "asc") {
+      setSortDir("desc");
+      return;
+    }
+    setSortBy(null);
+    setSortDir("asc");
+  };
 
   // Phase dialog
   const [phaseDialogOpen, setPhaseDialogOpen] = useState(false);
@@ -958,6 +1068,12 @@ export default function DevelopmentSchedule({
       if (p.sort_order !== i) updates.push({ id: p.id, sort_order: i });
     });
     if (updates.length === 0) return;
+    // Drop intent overrides any active column sort — manual order is
+    // what the user just expressed by dragging.
+    if (sortBy !== null) {
+      setSortBy(null);
+      setSortDir("asc");
+    }
     setReorderingIds((s) => {
       const next = new Set(s);
       for (const u of updates) next.add(u.id);
@@ -992,6 +1108,11 @@ export default function DevelopmentSchedule({
     const swapWith =
       direction === "up" ? siblings[idx - 1] : siblings[idx + 1];
     if (!swapWith) return; // already at edge
+    // Same as drag: manual reorder clears any active column sort.
+    if (sortBy !== null) {
+      setSortBy(null);
+      setSortDir("asc");
+    }
     setReorderingIds((s) => {
       const next = new Set(s);
       next.add(phase.id);
@@ -1176,6 +1297,109 @@ export default function DevelopmentSchedule({
     return false;
   };
 
+  // Total budget across visible phases — sum of every phase's own
+  // `budget`, scoped to the workstream filter when one is active. Roots
+  // and children both contribute since either can carry a budget. Hidden
+  // (zero / null) when no phase has a budget set so fresh schedules
+  // stay quiet.
+  const totalScheduleBudget = (() => {
+    const workstreamSet = effectiveWorkstreams
+      ? new Set(effectiveWorkstreams)
+      : null;
+    // Roots in scope (after workstream filter).
+    const visibleRootIds = new Set(
+      phases
+        .filter((p) => !p.parent_phase_id)
+        .filter(
+          (p) =>
+            !workstreamSet || workstreamSet.has(workstreamForPhase(p.phase_key))
+        )
+        .map((p) => p.id)
+    );
+    let sum = 0;
+    for (const p of phases) {
+      const inScope = p.parent_phase_id
+        ? visibleRootIds.has(p.parent_phase_id)
+        : visibleRootIds.has(p.id);
+      if (!inScope) continue;
+      if (p.budget != null) sum += Number(p.budget);
+    }
+    return sum;
+  })();
+
+  // Build the CSS grid template from the current column-visibility
+  // state. Header row + every gantt row use the same template so cells
+  // line up perfectly; the bar always takes the largest fraction. Hidden
+  // columns omit their entry entirely so the bar gets that width back.
+  const gridTemplate = (() => {
+    const cols: string[] = ["minmax(160px, 1fr)"]; // name (always)
+    cols.push("48px"); // duration (always)
+    if (columns.predecessor) cols.push("130px");
+    if (columns.start) cols.push("90px");
+    if (columns.finish) cols.push("90px");
+    if (columns.budget) cols.push("96px");
+    if (columns.owner) cols.push("110px");
+    cols.push("minmax(0, 1.4fr)"); // bar (always)
+    cols.push("88px"); // status + actions (always)
+    return cols.join(" ");
+  })();
+
+  // Sort comparator. Null values sort to the bottom regardless of
+  // direction so empties don't pollute the top of the list.
+  const compare = (a: DevPhase, b: DevPhase): number => {
+    if (sortBy === null) return a.sort_order - b.sort_order;
+    const dir = sortDir === "asc" ? 1 : -1;
+    const nullLast = (av: unknown, bv: unknown): number | null => {
+      const an = av == null || av === "";
+      const bn = bv == null || bv === "";
+      if (an && bn) return 0;
+      if (an) return 1;
+      if (bn) return -1;
+      return null;
+    };
+    if (sortBy === "name") {
+      return a.label.localeCompare(b.label) * dir;
+    }
+    if (sortBy === "duration") {
+      const av = a.duration_days ?? 0;
+      const bv = b.duration_days ?? 0;
+      return (av - bv) * dir;
+    }
+    if (sortBy === "start") {
+      const av = a.start_date ?? null;
+      const bv = b.start_date ?? null;
+      const ord = nullLast(av, bv);
+      if (ord !== null) return ord;
+      return (av! < bv! ? -1 : av! > bv! ? 1 : 0) * dir;
+    }
+    if (sortBy === "finish") {
+      const av = a.end_date ?? null;
+      const bv = b.end_date ?? null;
+      const ord = nullLast(av, bv);
+      if (ord !== null) return ord;
+      return (av! < bv! ? -1 : av! > bv! ? 1 : 0) * dir;
+    }
+    if (sortBy === "budget") {
+      const av = a.budget != null ? Number(a.budget) : null;
+      const bv = b.budget != null ? Number(b.budget) : null;
+      const ord = nullLast(av, bv);
+      if (ord !== null) return ord;
+      return (av! - bv!) * dir;
+    }
+    if (sortBy === "predecessor") {
+      const al = a.predecessor_id
+        ? phases.find((x) => x.id === a.predecessor_id)?.label ?? ""
+        : "";
+      const bl = b.predecessor_id
+        ? phases.find((x) => x.id === b.predecessor_id)?.label ?? ""
+        : "";
+      const ord = nullLast(al || null, bl || null);
+      if (ord !== null) return ord;
+      return al.localeCompare(bl) * dir;
+    }
+    return 0;
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -1203,7 +1427,7 @@ export default function DevelopmentSchedule({
 
         {scheduleExpanded && (
           <div className="px-4 pb-4 space-y-3">
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <Button size="sm" variant="outline" className="text-xs" onClick={openCreatePhase}>
                 <Plus className="h-3 w-3 mr-1" /> Add Phase
               </Button>
@@ -1212,6 +1436,19 @@ export default function DevelopmentSchedule({
                   {seeding ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Calendar className="h-3 w-3 mr-1" />}
                   Seed Default Phases
                 </Button>
+              )}
+              <ScheduleColumnsMenu visibility={columns} onChange={setColumns} />
+              {sortBy !== null && (
+                <button
+                  onClick={() => {
+                    setSortBy(null);
+                    setSortDir("asc");
+                  }}
+                  className="text-2xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted/40"
+                  title="Clear sort and return to manual order"
+                >
+                  <ArrowUpDown className="h-3 w-3" /> Sorted by {sortBy} · clear
+                </button>
               )}
             </div>
 
@@ -1248,6 +1485,74 @@ export default function DevelopmentSchedule({
                   </div>
                 )}
 
+                {/* Sortable column header. Mirrors the row's grid
+                    template so cells line up. Each header is a button
+                    that cycles asc → desc → off. Drag-reorder + up/down
+                    arrows always clear sort and fall back to manual
+                    sort_order. */}
+                <div
+                  className="grid gap-2 items-center pb-1 border-b border-border/40 text-2xs uppercase tracking-wide text-muted-foreground/80"
+                  style={{ gridTemplateColumns: gridTemplate }}
+                >
+                  <SortHeader
+                    label="Task name"
+                    active={sortBy === "name"}
+                    direction={sortDir}
+                    onClick={() => cycleSort("name")}
+                    align="start"
+                  />
+                  <SortHeader
+                    label="Dur."
+                    active={sortBy === "duration"}
+                    direction={sortDir}
+                    onClick={() => cycleSort("duration")}
+                    align="start"
+                  />
+                  {columns.predecessor && (
+                    <SortHeader
+                      label="Predecessor"
+                      active={sortBy === "predecessor"}
+                      direction={sortDir}
+                      onClick={() => cycleSort("predecessor")}
+                      align="start"
+                    />
+                  )}
+                  {columns.start && (
+                    <SortHeader
+                      label="Start"
+                      active={sortBy === "start"}
+                      direction={sortDir}
+                      onClick={() => cycleSort("start")}
+                      align="start"
+                    />
+                  )}
+                  {columns.finish && (
+                    <SortHeader
+                      label="Finish"
+                      active={sortBy === "finish"}
+                      direction={sortDir}
+                      onClick={() => cycleSort("finish")}
+                      align="start"
+                    />
+                  )}
+                  {columns.budget && (
+                    <SortHeader
+                      label="Budget"
+                      active={sortBy === "budget"}
+                      direction={sortDir}
+                      onClick={() => cycleSort("budget")}
+                      align="start"
+                    />
+                  )}
+                  {columns.owner && (
+                    <span className="text-2xs uppercase tracking-wide px-1">
+                      Owner
+                    </span>
+                  )}
+                  <span /> {/* bar column — no header */}
+                  <span className="text-right pr-1">%</span>
+                </div>
+
                 {/* Gantt rows — roots render at top level with any child
                     tasks (parent_phase_id set) nested below, indented. */}
                 <div className="space-y-1.5">
@@ -1266,7 +1571,8 @@ export default function DevelopmentSchedule({
                       .filter(
                         (p) =>
                           !workstreamSet || workstreamSet.has(workstreamForPhase(p.phase_key))
-                      );
+                      )
+                      .sort(compare);
                     const childrenByParent = new Map<string, DevPhase[]>();
                     for (const p of phases) {
                       if (!p.parent_phase_id) continue;
@@ -1297,44 +1603,75 @@ export default function DevelopmentSchedule({
                         ? TASK_CATEGORY_CONFIG[p.task_category]
                         : null;
                       const isReordering = reorderingIds.has(p.id);
+                      // Variance suffix shown beside the Finish date for
+                      // completed children — small green / red delta vs.
+                      // planned duration. Pulled out so it can render in
+                      // the Finish cell without bloating the row.
+                      const varianceSuffix = (() => {
+                        if (
+                          !isChild ||
+                          p.status !== "complete" ||
+                          !p.start_date ||
+                          !p.end_date ||
+                          p.duration_days == null
+                        )
+                          return null;
+                        const s = new Date(p.start_date);
+                        const e = new Date(p.end_date);
+                        const actual = Math.max(
+                          0,
+                          Math.round((e.getTime() - s.getTime()) / 86400000)
+                        );
+                        const delta = actual - (p.duration_days || 0);
+                        const color =
+                          delta > 0
+                            ? "text-red-400"
+                            : delta < 0
+                              ? "text-emerald-400"
+                              : "text-muted-foreground/80";
+                        return (
+                          <span
+                            className={cn("text-[10px] tabular-nums ml-1", color)}
+                            title={`Planned ${p.duration_days}d · actual ${actual}d (${delta > 0 ? "+" : ""}${delta}d)`}
+                          >
+                            ({delta > 0 ? "+" : ""}
+                            {delta}d)
+                          </span>
+                        );
+                      })();
                       return (
                         <div key={p.id} className="group">
-                          <div className="grid grid-cols-12 gap-2 items-center">
-                            {/* Drag handle — rendered inside the label cell
-                                as an absolute-ish slot to the left. The
-                                activator ref + listeners come from
-                                SortableChild; regular clicks still hit the
-                                label button. */}
-                            {dragHandleProps && (
-                              <button
-                                ref={dragHandleProps.setActivatorNodeRef}
-                                {...dragHandleProps.attributes}
-                                {...(dragHandleProps.listeners as Record<string, unknown>)}
-                                className="absolute ml-[-12px] opacity-0 group-hover:opacity-60 hover:opacity-100 text-muted-foreground cursor-grab active:cursor-grabbing transition-opacity"
-                                title="Drag to reorder"
-                                aria-label="Drag to reorder"
-                                type="button"
-                              >
-                                <GripVertical className="h-3 w-3" />
-                              </button>
-                            )}
-                            {/* Label cell — was a single button wrapping
-                                every chip; now a div so the inline-edit
-                                chips (duration, predecessor, anchor
-                                date) can each own their own click
-                                handler without nesting buttons. The
-                                label text is still the modal trigger;
-                                the trailing Pencil opens the same
-                                full-edit dialog for less common fields
-                                (notes, child tasks, docs). */}
+                          <div
+                            className="grid gap-2 items-center"
+                            style={{ gridTemplateColumns: gridTemplate }}
+                          >
+                            {/* Name cell — drag handle + indent + label.
+                                The label text is still the full-edit
+                                modal trigger; doc-link icon and category
+                                badge ride along on this cell. */}
                             <div
                               className={cn(
-                                "col-span-3 text-xs flex items-center gap-1 min-w-0",
+                                "text-xs flex items-center gap-1 min-w-0 relative",
                                 delayed && "text-red-400",
                                 isChild && "pl-4 text-muted-foreground"
                               )}
                             >
-                              {isChild && <span className="text-muted-foreground/50">└</span>}
+                              {dragHandleProps && (
+                                <button
+                                  ref={dragHandleProps.setActivatorNodeRef}
+                                  {...dragHandleProps.attributes}
+                                  {...(dragHandleProps.listeners as Record<string, unknown>)}
+                                  className="absolute -left-3 opacity-0 group-hover:opacity-60 hover:opacity-100 text-muted-foreground cursor-grab active:cursor-grabbing transition-opacity"
+                                  title="Drag to reorder"
+                                  aria-label="Drag to reorder"
+                                  type="button"
+                                >
+                                  <GripVertical className="h-3 w-3" />
+                                </button>
+                              )}
+                              {isChild && (
+                                <span className="text-muted-foreground/50">└</span>
+                              )}
                               {isChild && catCfg && (
                                 <span
                                   className={cn(
@@ -1355,94 +1692,142 @@ export default function DevelopmentSchedule({
                               >
                                 {p.label}
                               </button>
-                              {/* Duration — inline-editable */}
+                              {Array.isArray(p.linked_document_ids) &&
+                                p.linked_document_ids.length > 0 && (
+                                  <button
+                                    onClick={() => openEditPhase(p)}
+                                    className="flex items-center gap-0.5 text-2xs text-primary/80 flex-shrink-0 hover:text-primary"
+                                    title={`${p.linked_document_ids.length} linked document${p.linked_document_ids.length === 1 ? "" : "s"} — click to open`}
+                                  >
+                                    <Paperclip className="h-2.5 w-2.5" />
+                                    {p.linked_document_ids.length}
+                                  </button>
+                                )}
+                            </div>
+
+                            {/* Duration cell */}
+                            <div className="text-xs">
                               <InlineNumber
                                 value={p.duration_days}
                                 suffix="d"
-                                onSave={(v) => updatePhaseField(p.id, { duration_days: v })}
+                                onSave={(v) =>
+                                  updatePhaseField(p.id, { duration_days: v })
+                                }
                                 title="Click to edit duration"
                               />
-                              {/* Predecessor / anchor — root rows only.
-                                  Children inherit their parent's chain
-                                  in the UI (their order is managed via
-                                  up/down arrows + sort_order). */}
-                              {!isChild && (
-                                <InlinePredecessor
-                                  value={p.predecessor_id ?? null}
-                                  ownTrack={p.track ?? null}
-                                  options={phases.map((x) => ({
-                                    id: x.id,
-                                    label: x.label,
-                                    track: x.track ?? null,
-                                  }))}
-                                  excludeIds={new Set([p.id])}
-                                  onSave={(predId) =>
-                                    updatePhaseField(p.id, { predecessor_id: predId })
-                                  }
-                                />
-                              )}
-                              {/* Anchor date — only when this phase is
-                                  an anchor (no predecessor). For chained
-                                  rows the start_date is computed from
-                                  the predecessor's end + lag and editing
-                                  it here would be confusing. */}
-                              {!isChild && !p.predecessor_id && (
-                                <InlineDate
-                                  value={p.start_date ?? null}
-                                  onSave={(d) =>
-                                    updatePhaseField(p.id, { start_date: d })
-                                  }
-                                  title="Anchor start date"
-                                  placeholder="set start"
-                                />
-                              )}
-                              {isChild && p.task_owner && (
-                                <span
-                                  className="text-2xs text-muted-foreground/80 flex-shrink-0"
-                                  title={`Owner: ${p.task_owner}`}
-                                >
-                                  · {p.task_owner}
-                                </span>
-                              )}
-                              {isChild && Array.isArray(p.linked_document_ids) && p.linked_document_ids.length > 0 && (
-                                <span
-                                  className="flex items-center gap-0.5 text-2xs text-primary/80 flex-shrink-0"
-                                  title={`${p.linked_document_ids.length} linked document${p.linked_document_ids.length === 1 ? "" : "s"}`}
-                                >
-                                  <Paperclip className="h-2.5 w-2.5" />
-                                  {p.linked_document_ids.length}
-                                </span>
-                              )}
-                              {isChild && p.budget != null && Number(p.budget) > 0 && (
-                                <span
-                                  className="text-2xs text-emerald-400/80 flex-shrink-0 tabular-nums"
-                                  title="Budget"
-                                >
-                                  · {fc(Number(p.budget))}
-                                </span>
-                              )}
-                              {isChild && p.status === "complete" && p.start_date && p.end_date && p.duration_days != null && (() => {
-                                // Variance: actual calendar days elapsed
-                                // between start and end vs the planned
-                                // duration. Green = early / on-time,
-                                // red = late. Muted when 0-day delta.
-                                const s = new Date(p.start_date);
-                                const e = new Date(p.end_date);
-                                const actual = Math.max(0, Math.round((e.getTime() - s.getTime()) / 86400000));
-                                const delta = actual - (p.duration_days || 0);
-                                const color = delta > 0 ? "text-red-400" : delta < 0 ? "text-emerald-400" : "text-muted-foreground/80";
-                                return (
-                                  <span
-                                    className={cn("text-2xs flex-shrink-0 tabular-nums", color)}
-                                    title={`Planned ${p.duration_days}d · actual ${actual}d (${delta > 0 ? "+" : ""}${delta}d)`}
-                                  >
-                                    · actual {actual}d
-                                  </span>
-                                );
-                              })()}
                             </div>
+
+                            {/* Predecessor cell — root rows only. Children
+                                inherit their parent's chain so the cell
+                                renders empty for them. */}
+                            {columns.predecessor && (
+                              <div className="text-xs min-w-0 truncate">
+                                {!isChild ? (
+                                  <InlinePredecessor
+                                    value={p.predecessor_id ?? null}
+                                    ownTrack={p.track ?? null}
+                                    options={phases.map((x) => ({
+                                      id: x.id,
+                                      label: x.label,
+                                      track: x.track ?? null,
+                                    }))}
+                                    excludeIds={new Set([p.id])}
+                                    onSave={(predId) =>
+                                      updatePhaseField(p.id, {
+                                        predecessor_id: predId,
+                                      })
+                                    }
+                                  />
+                                ) : (
+                                  <span className="text-muted-foreground/40">
+                                    —
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Start cell — anchor rows are click-to-edit;
+                                chained / child rows show computed start
+                                as static text since editing it from here
+                                would be confusing. */}
+                            {columns.start && (
+                              <div className="text-xs">
+                                {!isChild && !p.predecessor_id ? (
+                                  <InlineDate
+                                    value={p.start_date ?? null}
+                                    onSave={(d) =>
+                                      updatePhaseField(p.id, { start_date: d })
+                                    }
+                                    title="Anchor start date"
+                                    placeholder="set start"
+                                  />
+                                ) : (
+                                  <span className="text-2xs text-muted-foreground tabular-nums">
+                                    {p.start_date ?? "—"}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Finish cell — always computed (end_date) */}
+                            {columns.finish && (
+                              <div className="text-xs">
+                                <span className="text-2xs text-muted-foreground tabular-nums">
+                                  {p.end_date ?? "—"}
+                                </span>
+                                {varianceSuffix}
+                              </div>
+                            )}
+
+                            {/* Budget cell */}
+                            {columns.budget && (
+                              <div className="text-xs">
+                                <InlineCurrency
+                                  value={p.budget != null ? Number(p.budget) : null}
+                                  onSave={(v) =>
+                                    updatePhaseField(p.id, { budget: v })
+                                  }
+                                  title="Click to edit budget"
+                                />
+                              </div>
+                            )}
+
+                            {/* Owner cell — child rows only. Editing falls
+                                through to the modal so we don't need an
+                                inline text-edit primitive. */}
+                            {columns.owner && (
+                              <div className="text-xs min-w-0 truncate">
+                                {isChild ? (
+                                  <button
+                                    onClick={() => openEditPhase(p)}
+                                    className="text-2xs text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded px-1 transition-colors truncate"
+                                    title={
+                                      p.task_owner
+                                        ? `Owner: ${p.task_owner} — click to edit`
+                                        : "Click to set owner"
+                                    }
+                                  >
+                                    {p.task_owner ?? (
+                                      <span className="text-muted-foreground/40">
+                                        —
+                                      </span>
+                                    )}
+                                  </button>
+                                ) : (
+                                  <span className="text-muted-foreground/40 px-1">
+                                    —
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
                             {/* Bar */}
-                            <div className={cn("col-span-7 relative rounded", isChild ? "h-3 bg-muted/20" : "h-5 bg-muted/30")}>
+                            <div
+                              className={cn(
+                                "relative rounded",
+                                isChild ? "h-3 bg-muted/20" : "h-5 bg-muted/30"
+                              )}
+                            >
                               {showToday && (
                                 <div
                                   className="absolute top-0 h-full w-px bg-red-500/50 z-10"
@@ -1452,10 +1837,13 @@ export default function DevelopmentSchedule({
                               <div
                                 className={cn(
                                   "absolute top-0 h-full rounded",
-                                  delayed ? "bg-red-500/30 ring-1 ring-red-500/40" :
-                                  isCritical ? "ring-1 ring-red-500/30 " + cfg.bg :
-                                  isChild ? "bg-primary/30" :
-                                  cfg.bg
+                                  delayed
+                                    ? "bg-red-500/30 ring-1 ring-red-500/40"
+                                    : isCritical
+                                      ? "ring-1 ring-red-500/30 " + cfg.bg
+                                      : isChild
+                                        ? "bg-primary/30"
+                                        : cfg.bg
                                 )}
                                 style={barStyle}
                                 title={`${p.label}: ${p.start_date || "?"} → ${p.end_date || "?"} (${p.pct_complete}%)${predLabel ? ` | After: ${predLabel}` : ""}${isCritical ? " [CRITICAL PATH]" : ""}${delayed ? " [DELAYED]" : ""}`}
@@ -1468,10 +1856,9 @@ export default function DevelopmentSchedule({
                                 )}
                               </div>
                             </div>
-                            {/* Status + actions. Child rows get up/down
-                                arrows for manual reordering within the
-                                parent's task list. */}
-                            <div className="col-span-2 flex items-center justify-end gap-1">
+
+                            {/* Status + actions */}
+                            <div className="flex items-center justify-end gap-1">
                               {isChild && (
                                 <>
                                   <button
@@ -1479,7 +1866,8 @@ export default function DevelopmentSchedule({
                                     disabled={childIdx === 0 || isReordering}
                                     className={cn(
                                       "text-muted-foreground/50 hover:text-foreground transition-colors",
-                                      (childIdx === 0 || isReordering) && "opacity-30 cursor-not-allowed"
+                                      (childIdx === 0 || isReordering) &&
+                                        "opacity-30 cursor-not-allowed"
                                     )}
                                     title="Move up"
                                   >
@@ -1487,10 +1875,13 @@ export default function DevelopmentSchedule({
                                   </button>
                                   <button
                                     onClick={() => handleReorderChild(p, "down")}
-                                    disabled={childIdx >= childCount - 1 || isReordering}
+                                    disabled={
+                                      childIdx >= childCount - 1 || isReordering
+                                    }
                                     className={cn(
                                       "text-muted-foreground/50 hover:text-foreground transition-colors",
-                                      (childIdx >= childCount - 1 || isReordering) && "opacity-30 cursor-not-allowed"
+                                      (childIdx >= childCount - 1 || isReordering) &&
+                                        "opacity-30 cursor-not-allowed"
                                     )}
                                     title="Move down"
                                   >
@@ -1498,18 +1889,13 @@ export default function DevelopmentSchedule({
                                   </button>
                                 </>
                               )}
-                              {/* Click-to-cycle status badge.
-                                  Cycles not_started → in_progress →
-                                  complete → not_started. The pair
-                                  status↔pct_complete coercion in
-                                  devPhaseQueries.update keeps
-                                  pct_complete in sync (complete →
-                                  100%, not_started → 0%); in_progress
-                                  preserves whatever pct was set. */}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const cycle: Record<DevPhase["status"], DevPhase["status"]> = {
+                                  const cycle: Record<
+                                    DevPhase["status"],
+                                    DevPhase["status"]
+                                  > = {
                                     not_started: "in_progress",
                                     in_progress: "complete",
                                     complete: "not_started",
@@ -1533,7 +1919,9 @@ export default function DevelopmentSchedule({
                                   variant="secondary"
                                   className={cn(
                                     "text-2xs cursor-pointer hover:opacity-80 transition-opacity",
-                                    delayed ? "text-red-400 bg-red-500/10" : cfg.color
+                                    delayed
+                                      ? "text-red-400 bg-red-500/10"
+                                      : cfg.color
                                   )}
                                 >
                                   {p.pct_complete}%
@@ -1556,8 +1944,13 @@ export default function DevelopmentSchedule({
                       const isEntitlement = p.phase_key === "entitlements";
                       // Children are stored by sort_order so up/down
                       // arrows can do stable pair-swaps.
+                      // sort_order is the natural order; an active column
+                      // sort overrides it so children re-sort along with
+                      // root rows.
                       const sortedChildren = [...children].sort(
-                        (a, b) => a.sort_order - b.sort_order
+                        sortBy === null
+                          ? (a, b) => a.sort_order - b.sort_order
+                          : compare
                       );
                       // Rolled-up budget + planned/actual summaries — only
                       // render the summary strip when children exist so the
@@ -1865,6 +2258,16 @@ export default function DevelopmentSchedule({
                     });
                   })()}
                 </div>
+                {totalScheduleBudget > 0 && columns.budget && (
+                  <div className="flex items-center justify-end pt-2 border-t border-border/30 text-2xs text-muted-foreground">
+                    <span>
+                      Total budget:&nbsp;
+                      <span className="text-emerald-400 font-medium tabular-nums">
+                        {fc(totalScheduleBudget)}
+                      </span>
+                    </span>
+                  </div>
+                )}
                 <div className="text-2xs text-muted-foreground pt-1">
                   ⚓ = anchor phase (manually set start date) · linked phases auto-shift when their predecessor moves
                 </div>
@@ -2595,6 +2998,50 @@ export default function DevelopmentSchedule({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * One sortable column header. Active column shows an up/down arrow that
+ * matches the current direction; inactive columns show the
+ * neutral two-arrow icon on hover so it's discoverable that they're
+ * sortable.
+ */
+function SortHeader({
+  label,
+  active,
+  direction,
+  onClick,
+  align = "start",
+}: {
+  label: string;
+  active: boolean;
+  direction: "asc" | "desc";
+  onClick: () => void;
+  align?: "start" | "end";
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1 px-1 py-0.5 rounded hover:bg-muted/40 hover:text-foreground transition-colors group",
+        align === "end" ? "justify-end" : "justify-start",
+        active && "text-foreground"
+      )}
+      title={`Sort by ${label}`}
+    >
+      <span className="truncate">{label}</span>
+      {active ? (
+        direction === "asc" ? (
+          <ArrowUpAZ className="h-3 w-3" />
+        ) : (
+          <ArrowDownAZ className="h-3 w-3" />
+        )
+      ) : (
+        <ArrowUpDown className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+      )}
+    </button>
   );
 }
 
