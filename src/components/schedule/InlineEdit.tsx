@@ -112,6 +112,107 @@ export function InlineNumber({
   );
 }
 
+interface CurrencyFieldProps {
+  value: number | null | undefined;
+  onSave: (value: number | null) => void | Promise<void>;
+  /** Step size for the underlying number input. */
+  step?: number;
+  min?: number;
+  title?: string;
+  placeholder?: string;
+  className?: string;
+}
+
+const currencyFmt = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+
+export function InlineCurrency({
+  value,
+  onSave,
+  step = 100,
+  min = 0,
+  title,
+  placeholder = "—",
+  className = "",
+}: CurrencyFieldProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>(value != null ? String(value) : "");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const commit = async () => {
+    const next = draft.trim();
+    setEditing(false);
+    if (next === "") {
+      if (value != null) await onSave(null);
+      return;
+    }
+    if (next === String(value ?? "")) return;
+    let n = Number(next);
+    if (!Number.isFinite(n)) return;
+    if (min != null) n = Math.max(min, n);
+    await onSave(n);
+  };
+
+  const cancel = () => {
+    setDraft(value != null ? String(value) : "");
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="number"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") cancel();
+        }}
+        step={step}
+        min={min}
+        className={`w-20 bg-background border border-primary/40 rounded px-1 py-0 text-2xs tabular-nums focus:outline-none focus:ring-1 focus:ring-primary ${className}`}
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
+  }
+
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        setDraft(value != null ? String(value) : "");
+        setEditing(true);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setDraft(value != null ? String(value) : "");
+          setEditing(true);
+        }
+      }}
+      title={title || "Click to edit budget"}
+      className={`text-2xs tabular-nums cursor-pointer hover:text-foreground hover:bg-muted/40 rounded px-1 transition-colors ${
+        value != null && value > 0 ? "text-emerald-400/90" : "text-muted-foreground"
+      } ${className}`}
+    >
+      {value != null && value > 0 ? currencyFmt.format(value) : placeholder}
+    </span>
+  );
+}
+
 interface DateFieldProps {
   value: string | null | undefined; // YYYY-MM-DD
   onSave: (value: string | null) => void | Promise<void>;
