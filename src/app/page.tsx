@@ -6,7 +6,6 @@ import { Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/AppShell";
 import { TodayStrip } from "@/components/today/TodayStrip";
-import { PortfolioKpiStrip } from "@/components/home/PortfolioKpiStrip";
 import { AcquisitionPanel } from "@/components/home/AcquisitionPanel";
 import { DevelopmentPanel } from "@/components/home/DevelopmentPanel";
 import { ConstructionPanel } from "@/components/home/ConstructionPanel";
@@ -154,13 +153,7 @@ export default function HomePage() {
           </div>
         </header>
 
-        {/* Portfolio KPI strip — team-wide pipeline snapshot ($/SF/Units)
-            with phase breakdowns underneath. Sits above TodayStrip so the
-            headline "where do we stand" totals are the first thing every
-            team member sees, not just the acquisitions lead. */}
-        <PortfolioKpiStrip deals={deals} />
-
-        {/* Today strip — slim AI summary band */}
+        {/* Today strip — Upcoming · Pipeline · Market */}
         <TodayStrip />
 
         {/* Mobile search (header version is hidden on small viewports) */}

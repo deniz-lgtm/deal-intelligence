@@ -3,13 +3,18 @@
 import { useState, useEffect } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { UpcomingMilestonesCard } from "./UpcomingMilestonesCard";
+import { PipelineCard } from "./PipelineCard";
 import { MarketWidgetsCard } from "./MarketWidgetsCard";
 
 // The "Today strip" sits above the triptych on the root landing page.
-// Two editorial sections side-by-side give the user a command-center
+// Three editorial sections side-by-side give the user a command-center
 // morning view:
 //
-//   [ Upcoming ]  [ Market ]
+//   [ Upcoming ]  [ Pipeline ]  [ Market ]
+//
+// Pipeline lives between the other two so every team member — Acq, Dev,
+// Construction — sees the portfolio's $/SF/Units snapshot the moment
+// they land on the home page, not just the acquisitions lead.
 //
 // Active Deals was removed — the triptych below already enumerates
 // every deal the user has access to, so the upper card was redundant
@@ -52,8 +57,9 @@ export function TodayStrip() {
       </button>
 
       {!collapsed && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 xl:divide-x divide-border/30 animate-fade-up">
+        <div className="grid grid-cols-1 xl:grid-cols-3 xl:divide-x divide-border/30 animate-fade-up">
           <UpcomingMilestonesCard />
+          <PipelineCard />
           <MarketWidgetsCard />
         </div>
       )}
