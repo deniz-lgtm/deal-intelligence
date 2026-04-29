@@ -6,18 +6,15 @@ import { PhaseKPI } from "./PhaseKPI";
 import { PhaseDealRow } from "./PhaseDealRow";
 import type { Deal, DealStatus } from "@/lib/types";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
-import { formatCompact, formatCompactCurrency } from "@/lib/utils";
 
-// Acquisition panel — the pipeline hunt. KPIs surface the size of the live
-// pipeline along three axes: dollars, square footage, and units. Rows show
-// the highest-signal deals first (scored highest, then most recent) with
-// stage + checklist % as the compact per-row signal. Active count shows up
-// as the chip on the nameplate; OM averages live on the /acquisition strip.
-
-// Stages that count as "in the pipeline" for KPI math — under-contract
-// through closing. Sourcing/screening/LOI are still surfaced as rows but
-// don't contribute to pipeline totals (no committed dollars yet).
-const PIPELINE_STAGES: DealStatus[] = ["under_contract", "diligence", "closing"];
+// Acquisition panel — the pipeline hunt. KPIs are status-based deal counts
+// across the funnel (Active total → LOI → Diligence), mirroring the way
+// the Development and Construction panels surface state with simple
+// integers. Headline pipeline $/SF/Units lives in the Today-strip
+// PipelineCard so it's visible to the whole team, not just here.
+//
+// Rows show the highest-signal deals first (scored highest, then most
+// recent) with stage + checklist % as the compact per-row signal.
 
 interface DealWithStats extends Deal {
   document_count?: number;
@@ -40,14 +37,13 @@ const STAGE_DOT: Partial<Record<DealStatus, string>> = {
   closing: "bg-emerald-400",
 };
 
-export function AcquisitionPanel({ deals, allDeals }: Props) {
-  const dealCost = (d: DealWithStats) =>
-    (d.total_project_cost && d.total_project_cost > 0 ? d.total_project_cost : d.asking_price) || 0;
+// Stages bundled under the "Diligence" KPI — once a PSA is on the table,
+// the deal is committed enough to belong on this counter.
+const DILIGENCE_STAGES: DealStatus[] = ["under_contract", "diligence", "closing"];
 
-  const pipelineDeals = allDeals.filter((d) => PIPELINE_STAGES.includes(d.status));
-  const pipelineValue = pipelineDeals.reduce((sum, d) => sum + dealCost(d), 0);
-  const pipelineSf = pipelineDeals.reduce((sum, d) => sum + (d.square_footage ?? 0), 0);
-  const pipelineUnits = pipelineDeals.reduce((sum, d) => sum + (d.units ?? 0), 0);
+export function AcquisitionPanel({ deals, allDeals }: Props) {
+  const loiCount = allDeals.filter((d) => d.status === "loi").length;
+  const diligenceCount = allDeals.filter((d) => DILIGENCE_STAGES.includes(d.status)).length;
 
   // Auto-ingested deals (from the AI sourcing inbox) sit in "needs triage"
   // state until a human opens them. Surface the count on the nameplate only
@@ -82,22 +78,22 @@ export function AcquisitionPanel({ deals, allDeals }: Props) {
       kpis={
         <>
           <PhaseKPI
-            value={pipelineValue > 0 ? formatCompactCurrency(pipelineValue) : "—"}
-            label="Pipeline $"
+            value={allDeals.length}
+            label="Active"
             accentVar="--phase-acq"
-            muted={pipelineValue === 0}
+            muted={allDeals.length === 0}
           />
           <PhaseKPI
-            value={pipelineSf > 0 ? formatCompact(pipelineSf) : "—"}
-            label="Pipeline SF"
+            value={loiCount}
+            label="LOI"
             accentVar="--phase-acq"
-            muted={pipelineSf === 0}
+            muted={loiCount === 0}
           />
           <PhaseKPI
-            value={pipelineUnits > 0 ? formatCompact(pipelineUnits) : "—"}
-            label="Pipeline Units"
+            value={diligenceCount}
+            label="Diligence"
             accentVar="--phase-acq"
-            muted={pipelineUnits === 0}
+            muted={diligenceCount === 0}
           />
         </>
       }
