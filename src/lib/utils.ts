@@ -27,6 +27,26 @@ export function formatNumber(value: number | null): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+// Compact number — "1.2M", "245K" — for tight KPI tiles where the full
+// comma-separated value (e.g. "1,234,567") would overflow.
+export function formatCompact(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+export function formatCompactCurrency(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 export function formatFileSize(bytes: number): string {
   return formatBytes(bytes);
 }

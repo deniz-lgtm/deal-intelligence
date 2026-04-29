@@ -6,12 +6,18 @@ import { PhaseKPI } from "./PhaseKPI";
 import { PhaseDealRow } from "./PhaseDealRow";
 import type { Deal, DealStatus } from "@/lib/types";
 import { DEAL_STAGE_LABELS } from "@/lib/types";
-import { formatCurrency } from "@/lib/utils";
+import { formatCompact, formatCompactCurrency } from "@/lib/utils";
 
-// Acquisition panel — the pipeline hunt. KPIs focus on active pipeline value,
-// count of active deals, and average OM score. Rows show the highest-signal
-// deals first (scored highest, then most recent) with stage + checklist %
-// as the compact per-row signal.
+// Acquisition panel — the pipeline hunt. KPIs surface the size of the live
+// pipeline along three axes: dollars, square footage, and units. Rows show
+// the highest-signal deals first (scored highest, then most recent) with
+// stage + checklist % as the compact per-row signal. Active count shows up
+// as the chip on the nameplate; OM averages live on the /acquisition strip.
+
+// Stages that count as "in the pipeline" for KPI math — under-contract
+// through closing. Sourcing/screening/LOI are still surfaced as rows but
+// don't contribute to pipeline totals (no committed dollars yet).
+const PIPELINE_STAGES: DealStatus[] = ["under_contract", "diligence", "closing"];
 
 interface DealWithStats extends Deal {
   document_count?: number;
@@ -38,15 +44,10 @@ export function AcquisitionPanel({ deals, allDeals }: Props) {
   const dealCost = (d: DealWithStats) =>
     (d.total_project_cost && d.total_project_cost > 0 ? d.total_project_cost : d.asking_price) || 0;
 
-  const pipelineValue = allDeals
-    .filter((d) => ["under_contract", "diligence", "closing"].includes(d.status))
-    .reduce((sum, d) => sum + dealCost(d), 0);
-
-  const scored = allDeals.filter((d) => d.om_score != null);
-  const avgOm =
-    scored.length > 0
-      ? (scored.reduce((s, d) => s + (d.om_score || 0), 0) / scored.length).toFixed(1)
-      : "—";
+  const pipelineDeals = allDeals.filter((d) => PIPELINE_STAGES.includes(d.status));
+  const pipelineValue = pipelineDeals.reduce((sum, d) => sum + dealCost(d), 0);
+  const pipelineSf = pipelineDeals.reduce((sum, d) => sum + (d.square_footage ?? 0), 0);
+  const pipelineUnits = pipelineDeals.reduce((sum, d) => sum + (d.units ?? 0), 0);
 
   // Auto-ingested deals (from the AI sourcing inbox) sit in "needs triage"
   // state until a human opens them. Surface the count on the nameplate only
@@ -81,21 +82,22 @@ export function AcquisitionPanel({ deals, allDeals }: Props) {
       kpis={
         <>
           <PhaseKPI
-            value={pipelineValue > 0 ? formatCurrency(pipelineValue) : "—"}
-            label="Pipeline"
+            value={pipelineValue > 0 ? formatCompactCurrency(pipelineValue) : "—"}
+            label="Pipeline $"
             accentVar="--phase-acq"
             muted={pipelineValue === 0}
           />
           <PhaseKPI
-            value={allDeals.length}
-            label="Active"
+            value={pipelineSf > 0 ? formatCompact(pipelineSf) : "—"}
+            label="Pipeline SF"
             accentVar="--phase-acq"
+            muted={pipelineSf === 0}
           />
           <PhaseKPI
-            value={avgOm}
-            label="Avg OM"
+            value={pipelineUnits > 0 ? formatCompact(pipelineUnits) : "—"}
+            label="Pipeline Units"
             accentVar="--phase-acq"
-            muted={avgOm === "—"}
+            muted={pipelineUnits === 0}
           />
         </>
       }

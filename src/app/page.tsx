@@ -87,7 +87,9 @@ export default function HomePage() {
     );
   }, [deals, search]);
 
-  // Bucket deals into phases via the classifier (handles overrides + signals).
+  // Bucket deals into phases via the classifier. Classification reads only
+  // deal columns (status + show_in_* flags), so signals isn't a dep here —
+  // signals are passed through to panels that surface them as KPI/row cues.
   const buckets = useMemo(() => {
     const acq: DealWithStats[] = [];
     const dev: DealWithStats[] = [];
@@ -99,7 +101,7 @@ export default function HomePage() {
       if (result.phases.includes("construction")) con.push(deal);
     }
     return { acquisition: acq, development: dev, construction: con };
-  }, [filtered, signals]);
+  }, [filtered]);
 
   // Stacked-mobile order: primary phase first. On xl+, the grid always flows
   // Acq → Dev → Con in reading order (the triptych's canonical sequence).
