@@ -1541,12 +1541,22 @@ export const dealQueries = {
           + COALESCE((u.data->>'purchase_price')::numeric, 0) * COALESCE((u.data->>'closing_costs_pct')::numeric, 0) / 100
         ELSE NULL
       END as total_project_cost`;
+    // Per-deal stats consumed by the dashboard rows (KanbanCard, PhaseDealRow):
+    // checklist completion ratio + document count. Computed via correlated
+    // subqueries so we don't multiply rows or need a GROUP BY.
+    const statsExprs = `
+      (SELECT COUNT(*)::int FROM checklist_items ci
+         WHERE ci.deal_id = d.id AND ci.status = 'complete') AS checklist_complete,
+      (SELECT COUNT(*)::int FROM checklist_items ci
+         WHERE ci.deal_id = d.id) AS checklist_total,
+      (SELECT COUNT(*)::int FROM documents doc
+         WHERE doc.deal_id = d.id) AS document_count`;
     if (!userId) {
-      const res = await pool.query(`SELECT d.*, ${totalCostExpr} FROM deals d LEFT JOIN underwriting u ON u.deal_id = d.id ORDER BY d.starred DESC, d.updated_at DESC`);
+      const res = await pool.query(`SELECT d.*, ${totalCostExpr}, ${statsExprs} FROM deals d LEFT JOIN underwriting u ON u.deal_id = d.id ORDER BY d.starred DESC, d.updated_at DESC`);
       return res.rows;
     }
     const res = await pool.query(
-      `SELECT DISTINCT d.*, ds.permission AS share_permission, ${totalCostExpr} FROM deals d
+      `SELECT DISTINCT d.*, ds.permission AS share_permission, ${totalCostExpr}, ${statsExprs} FROM deals d
        LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
        LEFT JOIN underwriting u ON u.deal_id = d.id
        WHERE d.owner_id = $1 OR ds.deal_id IS NOT NULL
