@@ -153,7 +153,7 @@ export default function HomePage() {
           </div>
         </header>
 
-        {/* Today strip — slim AI summary band */}
+        {/* Today strip — Upcoming · Pipeline · Market */}
         <TodayStrip />
 
         {/* Mobile search (header version is hidden on small viewports) */}
