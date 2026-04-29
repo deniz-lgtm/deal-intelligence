@@ -11,7 +11,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { regenerateSection } from "@/lib/ic-package-prose";
+import { devPhaseQueries } from "@/lib/db";
+import { summarizeSchedule } from "@/lib/schedule-summary";
 import type { DealContext } from "@/components/ic-package/types";
+import type { DevPhase } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -53,7 +56,23 @@ export async function POST(
       );
     }
 
-    const prose = await regenerateSection(context, section as SectionKey);
+    // Mirror the generate route: hydrate schedule summary server-side
+    // so per-section regenerations carry the same timeline context the
+    // initial generate had access to.
+    let scheduleSummary = context.scheduleSummary;
+    try {
+      const phases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
+      if (phases.length > 0) {
+        scheduleSummary = summarizeSchedule(phases);
+      }
+    } catch (e) {
+      console.warn("Schedule summary hydration failed; continuing without it:", e);
+    }
+
+    const prose = await regenerateSection(
+      { ...context, scheduleSummary },
+      section as SectionKey
+    );
     return NextResponse.json({ prose });
   } catch (err) {
     console.error("POST /api/deals/[id]/ic-package-prose/regenerate error:", err);

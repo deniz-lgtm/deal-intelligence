@@ -154,6 +154,35 @@ export interface DealContext {
   sellerContext?: string;
   businessPlanSummary?: string;
   customNotes?: string;
+  /**
+   * Compressed snapshot of the deal's development schedule
+   * (`deal_dev_phases`) so the prose generator can cite specific
+   * timeline + budget facts in the IC narrative. Server-side merged in
+   * the generate route — clients don't need to populate this.
+   */
+  scheduleSummary?: {
+    totalBudget: number;
+    earliestStart: string | null;
+    latestEnd: string | null;
+    tracks: Array<{
+      track: "acquisition" | "development" | "construction";
+      label: string;
+      phaseCount: number;
+      startDate: string | null;
+      endDate: string | null;
+      durationDays: number | null;
+      totalBudget: number;
+      pctComplete: number;
+      milestones: Array<{
+        label: string;
+        startDate: string | null;
+        endDate: string | null;
+        durationDays: number | null;
+        pctComplete: number;
+        budget: number | null;
+      }>;
+    }>;
+  };
 }
 
 /**
