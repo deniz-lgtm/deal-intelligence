@@ -1033,11 +1033,21 @@ export default function DevelopmentSchedule({
     loadAll();
   };
 
-  /** Download the schedule as CSV or ICS. */
-  const handleExportSchedule = (format: "csv" | "ics") => {
+  /**
+   * Download the schedule as CSV or ICS. `scope` chooses between the
+   * current page's track (matching what the analyst is looking at) and
+   * the full deal across all three tracks. Defaults to current track so
+   * a "Export schedule" click on the Acquisition page exports
+   * acquisition rows only.
+   */
+  const handleExportSchedule = (
+    format: "csv" | "ics",
+    scope: "track" | "all" = "track"
+  ) => {
     // Browser navigates to the export route with the proper Content-
     // Disposition header — simplest cross-client path to "download file".
-    const url = `/api/deals/${dealId}/dev-schedule/export?format=${format}`;
+    const trackParam = scope === "track" ? `&track=${track}` : "";
+    const url = `/api/deals/${dealId}/dev-schedule/export?format=${format}${trackParam}`;
     window.open(url, "_blank");
   };
 
@@ -1438,6 +1448,34 @@ export default function DevelopmentSchedule({
                 </Button>
               )}
               <ScheduleColumnsMenu visibility={columns} onChange={setColumns} />
+              {phases.length > 0 && (
+                <div className="inline-flex items-center gap-1">
+                  <Download className="h-3 w-3 text-muted-foreground" />
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      e.target.value = "";
+                      if (v === "csv") handleExportSchedule("csv", "track");
+                      else if (v === "ics") handleExportSchedule("ics", "track");
+                      else if (v === "csv-all") handleExportSchedule("csv", "all");
+                      else if (v === "ics-all") handleExportSchedule("ics", "all");
+                    }}
+                    className="text-xs h-8 bg-background border border-input rounded-md px-2 py-1 outline-none hover:border-primary/40"
+                    title="Download the schedule for spreadsheets / calendars"
+                  >
+                    <option value="">Export…</option>
+                    <optgroup label={`This track (${SCHEDULE_TRACK_LABELS[track]})`}>
+                      <option value="csv">CSV (Sheets / Excel)</option>
+                      <option value="ics">ICS (Calendar)</option>
+                    </optgroup>
+                    <optgroup label="All tracks">
+                      <option value="csv-all">CSV — all tracks</option>
+                      <option value="ics-all">ICS — all tracks</option>
+                    </optgroup>
+                  </select>
+                </div>
+              )}
               {sortBy !== null && (
                 <button
                   onClick={() => {
@@ -2136,25 +2174,9 @@ export default function DevelopmentSchedule({
                                   <BookmarkPlus className="h-2.5 w-2.5 mr-1" /> Save as template
                                 </Button>
                               )}
-                              {children.length > 0 && (
-                                <div className="flex items-center gap-1">
-                                  <Download className="h-2.5 w-2.5 text-muted-foreground" />
-                                  <select
-                                    value=""
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      e.target.value = "";
-                                      if (v === "csv" || v === "ics") handleExportSchedule(v);
-                                    }}
-                                    className="h-6 text-2xs bg-background border border-border/40 rounded px-1.5 outline-none hover:border-primary/40"
-                                    title="Export the full schedule for handoff to PM tools / calendars"
-                                  >
-                                    <option value="">Export…</option>
-                                    <option value="csv">CSV (Sheets / Excel)</option>
-                                    <option value="ics">ICS (Calendar)</option>
-                                  </select>
-                                </div>
-                              )}
+                              {/* Schedule-wide export moved to the section
+                                  header next to Columns so it's discoverable
+                                  on tracks without entitlement children. */}
                               {children.length > 0 && (
                                 <Button
                                   size="sm"

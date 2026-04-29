@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealQueries, devPhaseQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
-import type { DevPhase } from "@/lib/types";
+import {
+  SCHEDULE_TRACK_LABELS,
+  type DevPhase,
+  type ScheduleTrack,
+} from "@/lib/types";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -9,7 +13,7 @@ import type { DevPhase } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/deals/[id]/dev-schedule/export?format=csv|ics
+ * GET /api/deals/[id]/dev-schedule/export?format=csv|ics&track=acquisition|development|construction|all
  *
  * CSV — flat table of every phase + child task, useful for dropping
  * into Excel / Google Sheets.
@@ -18,6 +22,10 @@ export const dynamic = "force-dynamic";
  * the analyst can import the schedule into Outlook / Google Calendar /
  * Asana timeline views. Tasks without dates get skipped in ICS
  * (calendar clients won't render a no-date event).
+ *
+ * `track` is optional and defaults to "all" so existing callers keep
+ * working. When set to one of the three tracks, the export is scoped to
+ * that track only; passing "all" exports every phase across the deal.
  */
 
 const ICS_ESCAPE = (s: string) =>
@@ -61,6 +69,7 @@ function buildCsv(phases: DevPhase[], dealName: string): string {
   const rows = [
     [
       "Deal",
+      "Track",
       "Phase / Task",
       "Parent",
       "Predecessor",
@@ -71,6 +80,7 @@ function buildCsv(phases: DevPhase[], dealName: string): string {
       "% Complete",
       "Category",
       "Owner",
+      "Budget (USD)",
       "Notes",
     ].map(CSV_ESCAPE).join(","),
   ];
@@ -85,9 +95,13 @@ function buildCsv(phases: DevPhase[], dealName: string): string {
     return aKey.localeCompare(bKey);
   });
   for (const p of sorted) {
+    const trackLabel = p.track
+      ? SCHEDULE_TRACK_LABELS[p.track as ScheduleTrack] ?? p.track
+      : "";
     rows.push(
       [
         CSV_ESCAPE(dealName),
+        CSV_ESCAPE(trackLabel),
         CSV_ESCAPE(p.label),
         CSV_ESCAPE(p.parent_phase_id ? byId.get(p.parent_phase_id)?.label || "" : ""),
         CSV_ESCAPE(p.predecessor_id ? byId.get(p.predecessor_id)?.label || "" : ""),
@@ -98,6 +112,7 @@ function buildCsv(phases: DevPhase[], dealName: string): string {
         CSV_ESCAPE(String(p.pct_complete ?? 0)),
         CSV_ESCAPE(p.task_category || ""),
         CSV_ESCAPE(p.task_owner || ""),
+        CSV_ESCAPE(p.budget != null ? String(Number(p.budget)) : ""),
         CSV_ESCAPE(p.notes || ""),
       ].join(",")
     );
@@ -189,19 +204,42 @@ export async function GET(
     );
     if (accessError) return accessError;
 
-    const format = new URL(req.url).searchParams.get("format") || "csv";
+    const url = new URL(req.url);
+    const format = url.searchParams.get("format") || "csv";
     if (format !== "csv" && format !== "ics") {
       return NextResponse.json(
         { error: "format must be 'csv' or 'ics'" },
         { status: 400 }
       );
     }
-    const [deal, phases] = await Promise.all([
+    // Track scoping. Default = "all" so the export matches what an
+    // analyst expects from the section-header button on the page they're
+    // looking at, without forcing the URL to be track-aware. "all" + an
+    // unrecognized value both fall through to "no filter".
+    const trackParam = url.searchParams.get("track");
+    const validTracks: readonly ScheduleTrack[] = [
+      "acquisition",
+      "development",
+      "construction",
+    ];
+    const trackFilter: ScheduleTrack | null =
+      trackParam && (validTracks as readonly string[]).includes(trackParam)
+        ? (trackParam as ScheduleTrack)
+        : null;
+
+    const [deal, allPhases] = await Promise.all([
       dealQueries.getById(params.id),
       devPhaseQueries.getByDealId(params.id) as Promise<DevPhase[]>,
     ]);
+    // Filtering is post-fetch so cross-track predecessor and parent
+    // labels can still be looked up via byId in buildCsv. We only narrow
+    // the rows that *appear* in the output.
+    const phases = trackFilter
+      ? allPhases.filter((p) => (p.track ?? "development") === trackFilter)
+      : allPhases;
     const dealName = (deal as { name?: string })?.name || "Deal";
     const slug = slugify(dealName);
+    const trackSlug = trackFilter ? `-${trackFilter}` : "";
 
     if (format === "csv") {
       // Prepend UTF-8 BOM so Excel renders non-ASCII characters (em-dashes,
@@ -210,7 +248,7 @@ export async function GET(
       return new NextResponse(body, {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
-          "Content-Disposition": `attachment; filename="${slug}-schedule.csv"`,
+          "Content-Disposition": `attachment; filename="${slug}${trackSlug}-schedule.csv"`,
         },
       });
     }
@@ -218,7 +256,7 @@ export async function GET(
     return new NextResponse(body, {
       headers: {
         "Content-Type": "text/calendar; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${slug}-schedule.ics"`,
+        "Content-Disposition": `attachment; filename="${slug}${trackSlug}-schedule.ics"`,
       },
     });
   } catch (error) {

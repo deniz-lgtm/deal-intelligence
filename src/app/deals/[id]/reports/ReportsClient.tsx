@@ -146,18 +146,18 @@ export default function ReportsClient({
             artifacts are flagged stale until regenerated.
           </p>
         </div>
-        {/* Header CTA — opens the wizard modal right here in the
-            library. No navigation away; this IS the hub. */}
-        {artifacts.length > 0 && (
-          <Button
-            size="sm"
-            className="shrink-0"
-            onClick={() => setWizardOpen(true)}
-          >
-            <Plus className="h-4 w-4 mr-1.5" />
-            New Package
-          </Button>
-        )}
+        {/* Header CTAs — wizard for new packages plus a quick Schedule
+            export so analysts can grab the deal's timeline (CSV / ICS)
+            from the same place reports live. */}
+        <div className="flex items-center gap-2 shrink-0">
+          <ScheduleExportMenu dealId={dealId} />
+          {artifacts.length > 0 && (
+            <Button size="sm" onClick={() => setWizardOpen(true)}>
+              <Plus className="h-4 w-4 mr-1.5" />
+              New Package
+            </Button>
+          )}
+        </div>
       </header>
 
       {artifacts.length === 0 ? (
@@ -440,6 +440,39 @@ function EmptyState({
           </Link>
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Header-bar quick-export for the deal's development schedule. Streams
+ * the file from `/api/deals/[id]/dev-schedule/export` with the chosen
+ * format. CSV + ICS map to the same shapes the schedule page exports —
+ * users get the full timeline (all tracks) from the reports hub without
+ * navigating to each schedule page.
+ */
+function ScheduleExportMenu({ dealId }: { dealId: string }) {
+  const open = (format: "csv" | "ics") => {
+    const url = `/api/deals/${dealId}/dev-schedule/export?format=${format}`;
+    window.open(url, "_blank");
+  };
+  return (
+    <div className="inline-flex items-center gap-1">
+      <Download className="h-3.5 w-3.5 text-muted-foreground" />
+      <select
+        value=""
+        onChange={(e) => {
+          const v = e.target.value;
+          e.target.value = "";
+          if (v === "csv" || v === "ics") open(v);
+        }}
+        className="text-xs h-9 bg-background border border-input rounded-md px-2 py-1 outline-none hover:border-primary/40"
+        title="Download the deal schedule (all tracks) as CSV or ICS"
+      >
+        <option value="">Schedule…</option>
+        <option value="csv">CSV (Sheets / Excel)</option>
+        <option value="ics">ICS (Calendar)</option>
+      </select>
     </div>
   );
 }

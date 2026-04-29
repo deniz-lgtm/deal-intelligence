@@ -77,6 +77,11 @@ Generate the following sections for the deal context provided. Return JSON match
    - headlineHtml: bold lead-in like "Months 0–6 · Take Possession and Stabilize"
    - bodyHtml: detail paragraph (not wrapped in <p>; it flows inline)
    Follow structure: Acquire → Execute → Stabilize/Refinance → Operate/Exit.
+   When the deal context includes a "scheduleSummary", anchor each phase
+   to real dates and milestones from it (acquisition → development →
+   construction tracks). Reference specific milestone names and per-
+   track budgets when they substantiate the claim. If "scheduleSummary"
+   is null or empty, fall back to relative month ranges.
 
 6. **risks** — exactly 6 risks. Each with:
    - name: short risk title
@@ -139,6 +144,11 @@ function formatDealContext(ctx: DealContext): string {
       sellerContext: ctx.sellerContext ?? null,
       businessPlanSummary: ctx.businessPlanSummary ?? null,
       customNotes: ctx.customNotes ?? null,
+      // Schedule snapshot — track-level totals + a short milestone list
+      // per track. Use dates to anchor business-plan paragraphs (e.g.
+      // "Months 0–6 · Take Possession") and budgets to back specific
+      // claims about pursuit / pre-dev spend.
+      scheduleSummary: ctx.scheduleSummary ?? null,
     },
     null,
     2
