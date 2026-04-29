@@ -18,8 +18,6 @@ import {
   Activity,
   X,
   Compass,
-  Ruler,
-  Home,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import KanbanCard from "@/components/KanbanCard";
@@ -27,7 +25,7 @@ import { AppShell } from "@/components/AppShell";
 import type { Deal, DealStatus } from "@/lib/types";
 import { usePipeline } from "@/lib/usePipeline";
 import { toast } from "sonner";
-import { cn, formatCurrency, formatCompact } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
 import { classifyDealPhase, type PhaseSignals } from "@/lib/phase-classification";
 
@@ -241,8 +239,6 @@ export default function AcquisitionPage() {
     ["under_contract", "diligence", "closing", "closed"].includes(d.status),
   );
   const totalPipelineValue = pipelineDeals.reduce((sum, d) => sum + dealCost(d), 0);
-  const totalPipelineSf = pipelineDeals.reduce((sum, d) => sum + (d.square_footage ?? 0), 0);
-  const totalPipelineUnits = pipelineDeals.reduce((sum, d) => sum + (d.units ?? 0), 0);
   const avgScore = (() => {
     const scored = acqDeals.filter((d) => d.om_score != null);
     if (scored.length === 0) return null;
@@ -326,25 +322,7 @@ export default function AcquisitionPage() {
                     <p className="text-sm font-bold tabular-nums tracking-tight leading-tight">
                       {formatCurrency(totalPipelineValue)}
                     </p>
-                    <p className="text-[10px] text-muted-foreground leading-tight">Pipeline $</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Ruler className="h-3.5 w-3.5 text-cyan-400" />
-                  <div>
-                    <p className="text-sm font-bold tabular-nums tracking-tight leading-tight">
-                      {totalPipelineSf > 0 ? `${formatCompact(totalPipelineSf)} SF` : "—"}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground leading-tight">Pipeline SF</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Home className="h-3.5 w-3.5 text-amber-400" />
-                  <div>
-                    <p className="text-sm font-bold tabular-nums tracking-tight leading-tight">
-                      {totalPipelineUnits > 0 ? formatCompact(totalPipelineUnits) : "—"}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground leading-tight">Pipeline Units</p>
+                    <p className="text-[10px] text-muted-foreground leading-tight">Pipeline</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
