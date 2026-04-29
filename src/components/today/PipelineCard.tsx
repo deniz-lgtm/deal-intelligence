@@ -11,9 +11,9 @@ import { formatCompact, formatCompactCurrency } from "@/lib/utils";
 // every team member, not just the acquisitions lead, sees the portfolio's
 // $/SF/Units snapshot the moment they land on the home page.
 //
-// Three rows, one per metric. Each row shows the portfolio total and a
-// per-phase breakdown (Acq / Dev / Con) so readers can see how the value
-// distributes across the triptych below.
+// Three editorial tiles, one per metric. Each tile is a big display
+// number with a small uppercase label below, plus a phase-tinted chip
+// row showing how the metric distributes across Acq / Dev / Construction.
 
 interface DealLike extends Deal {
   total_project_cost?: number | null;
@@ -121,32 +121,36 @@ export function PipelineCard() {
             </p>
           </div>
         ) : (
-          <ul className="divide-y divide-border/15">
-            <MetricRow
-              label="$"
+          <div className="space-y-5">
+            <MetricTile
+              label="Pipeline $"
               value={totals.value > 0 ? formatCompactCurrency(totals.value) : "—"}
+              muted={totals.value === 0}
               acq={byPhase.acquisition.value}
               dev={byPhase.development.value}
               con={byPhase.construction.value}
               format={formatCompactCurrency}
             />
-            <MetricRow
-              label="SF"
+            <MetricTile
+              label="Pipeline SF"
               value={totals.sf > 0 ? formatCompact(totals.sf) : "—"}
+              suffix={totals.sf > 0 ? "SF" : undefined}
+              muted={totals.sf === 0}
               acq={byPhase.acquisition.sf}
               dev={byPhase.development.sf}
               con={byPhase.construction.sf}
               format={formatCompact}
             />
-            <MetricRow
-              label="Units"
+            <MetricTile
+              label="Pipeline Units"
               value={totals.units > 0 ? formatCompact(totals.units) : "—"}
+              muted={totals.units === 0}
               acq={byPhase.acquisition.units}
               dev={byPhase.development.units}
               con={byPhase.construction.units}
               format={formatCompact}
             />
-          </ul>
+          </div>
         )}
       </div>
 
@@ -165,32 +169,56 @@ export function PipelineCard() {
   );
 }
 
-interface MetricRowProps {
+interface MetricTileProps {
   label: string;
   value: string;
+  suffix?: string;
+  muted: boolean;
   acq: number;
   dev: number;
   con: number;
   format: (n: number) => string;
 }
 
-function MetricRow({ label, value, acq, dev, con, format }: MetricRowProps) {
+function MetricTile({ label, value, suffix, muted, acq, dev, con, format }: MetricTileProps) {
   return (
-    <li className="py-2.5 flex items-center justify-between gap-3">
-      <div className="min-w-0">
-        <div className="text-2xs uppercase tracking-[0.18em] text-muted-foreground/70">
-          {label}
-        </div>
-        <div className="mt-1 flex items-center gap-3 text-[10px] text-muted-foreground/70 tabular-nums">
-          <PhaseChip icon={Compass} accentVar="--phase-acq" value={acq > 0 ? format(acq) : "—"} />
-          <PhaseChip icon={Building} accentVar="--phase-dev" value={dev > 0 ? format(dev) : "—"} />
-          <PhaseChip icon={HardHat} accentVar="--phase-con" value={con > 0 ? format(con) : "—"} />
-        </div>
+    <div className="min-w-0">
+      <div className="flex items-baseline gap-1.5">
+        <span
+          className={`font-display text-4xl leading-none tabular-nums tracking-tight ${
+            muted ? "text-muted-foreground/40" : "text-foreground"
+          }`}
+        >
+          {value}
+        </span>
+        {suffix && (
+          <span className="text-sm text-muted-foreground/70 font-medium">{suffix}</span>
+        )}
       </div>
-      <div className="font-display text-3xl leading-none tabular-nums tracking-tight text-foreground shrink-0">
-        {value}
+      <div className="mt-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">
+        {label}
       </div>
-    </li>
+      <div className="mt-2 flex items-center gap-3 text-[10px] text-muted-foreground/70 tabular-nums">
+        <PhaseChip
+          icon={Compass}
+          accentVar="--phase-acq"
+          value={acq > 0 ? format(acq) : "—"}
+          dim={acq === 0}
+        />
+        <PhaseChip
+          icon={Building}
+          accentVar="--phase-dev"
+          value={dev > 0 ? format(dev) : "—"}
+          dim={dev === 0}
+        />
+        <PhaseChip
+          icon={HardHat}
+          accentVar="--phase-con"
+          value={con > 0 ? format(con) : "—"}
+          dim={con === 0}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -198,13 +226,15 @@ function PhaseChip({
   icon: Icon,
   accentVar,
   value,
+  dim,
 }: {
   icon: typeof Compass;
   accentVar: string;
   value: string;
+  dim: boolean;
 }) {
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className={`inline-flex items-center gap-1 ${dim ? "opacity-40" : ""}`}>
       <Icon
         className="h-2.5 w-2.5"
         style={{ color: `hsl(var(${accentVar}))` }}
