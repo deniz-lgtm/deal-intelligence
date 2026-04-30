@@ -28,6 +28,14 @@ export async function GET(
     );
     if (accessError) return accessError;
 
+    // Confirm the doc belongs to this deal before walking the version
+    // chain — getVersionChain follows parent_document_id ancestors and
+    // would happily return another deal's chain if we hand it any docId.
+    const doc = await documentQueries.getById(params.docId);
+    if (!doc || doc.deal_id !== params.id) {
+      return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    }
+
     const chain = await documentQueries.getVersionChain(params.docId);
     return NextResponse.json({ data: chain });
   } catch (error) {

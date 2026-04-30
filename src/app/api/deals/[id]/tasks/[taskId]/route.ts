@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { taskQueries } from "@/lib/db";
-import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { requireAuth, requireDealEditAccess } from "@/lib/auth";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -14,11 +14,11 @@ export async function PATCH(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
 
     const body = await req.json();
-    const task = await taskQueries.update(params.taskId, body);
+    const task = await taskQueries.updateInDeal(params.taskId, params.id, body);
 
     if (!task) {
       return NextResponse.json({ error: "Task not found or no updates" }, { status: 404 });
@@ -38,10 +38,13 @@ export async function DELETE(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
 
-    await taskQueries.delete(params.taskId);
+    const deleted = await taskQueries.deleteInDeal(params.taskId, params.id);
+    if (!deleted) {
+      return NextResponse.json({ error: "Task not found" }, { status: 404 });
+    }
     return NextResponse.json({ data: { success: true } });
   } catch (error) {
     console.error("DELETE /api/deals/[id]/tasks/[taskId] error:", error);

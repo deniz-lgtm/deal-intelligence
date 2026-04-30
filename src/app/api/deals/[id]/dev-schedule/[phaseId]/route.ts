@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { devPhaseQueries } from "@/lib/db";
-import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { requireAuth, requireDealEditAccess } from "@/lib/auth";
 import { computeSchedule, diffComputedDates, detectCycle } from "@/lib/dev-schedule-compute";
 import type { DevPhase } from "@/lib/types";
 
@@ -25,7 +25,7 @@ export async function PATCH(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
 
     const body = await req.json();
@@ -41,7 +41,7 @@ export async function PATCH(
       }
     }
 
-    const phase = await devPhaseQueries.update(params.phaseId, body);
+    const phase = await devPhaseQueries.updateInDeal(params.phaseId, params.id, body);
     if (!phase) {
       return NextResponse.json({ error: "Phase not found or no updates" }, { status: 404 });
     }
@@ -84,23 +84,27 @@ export async function DELETE(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
 
     // Clear predecessor links + parent links pointing to this phase
     // before deleting. Orphaned children float up to the top level so
     // the analyst can decide whether to keep or remove them.
     const phases = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
+    const target = phases.find((p) => p.id === params.phaseId);
+    if (!target) {
+      return NextResponse.json({ error: "Phase not found" }, { status: 404 });
+    }
     for (const p of phases) {
       if (p.predecessor_id === params.phaseId) {
-        await devPhaseQueries.update(p.id, { predecessor_id: null });
+        await devPhaseQueries.updateInDeal(p.id, params.id, { predecessor_id: null });
       }
       if (p.parent_phase_id === params.phaseId) {
-        await devPhaseQueries.update(p.id, { parent_phase_id: null });
+        await devPhaseQueries.updateInDeal(p.id, params.id, { parent_phase_id: null });
       }
     }
 
-    await devPhaseQueries.delete(params.phaseId);
+    await devPhaseQueries.deleteInDeal(params.phaseId, params.id);
 
     // Recompute after deletion since downstream phases may need to fall
     // back to anchors. Same isolation as the PATCH path — recompute
