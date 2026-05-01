@@ -4354,6 +4354,45 @@ export const milestoneQueries = {
     const pool = getPool();
     await pool.query("DELETE FROM deal_milestones WHERE id = $1", [id]);
   },
+
+  updateInDeal: async (
+    id: string,
+    dealId: string,
+    updates: Record<string, unknown>
+  ) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (["title", "stage", "target_date", "completed_at", "sort_order"].includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    values.push(dealId);
+
+    const res = await pool.query(
+      `UPDATE deal_milestones SET ${setClauses.join(", ")} WHERE id = $${idx} AND deal_id = $${idx + 1} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  deleteInDeal: async (id: string, dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "DELETE FROM deal_milestones WHERE id = $1 AND deal_id = $2",
+      [id, dealId]
+    );
+    return (res.rowCount ?? 0) > 0;
+  },
 };
 
 // ─── Task queries ─────────────────────────────────────────────────────────────
@@ -4418,6 +4457,45 @@ export const taskQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_tasks WHERE id = $1", [id]);
+  },
+
+  updateInDeal: async (
+    id: string,
+    dealId: string,
+    updates: Record<string, unknown>
+  ) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (["title", "description", "assignee", "due_date", "priority", "status", "milestone_id", "sort_order"].includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    values.push(dealId);
+
+    const res = await pool.query(
+      `UPDATE deal_tasks SET ${setClauses.join(", ")} WHERE id = $${idx} AND deal_id = $${idx + 1} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  deleteInDeal: async (id: string, dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "DELETE FROM deal_tasks WHERE id = $1 AND deal_id = $2",
+      [id, dealId]
+    );
+    return (res.rowCount ?? 0) > 0;
   },
 };
 
@@ -4846,6 +4924,83 @@ export const devPhaseQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_dev_phases WHERE id = $1", [id]);
+  },
+
+  // Deal-scoped variants for route handlers that accept a user-provided
+  // phase id from the URL. The unscoped methods above stay for internal
+  // callers (seed/import/reseed) that operate on rows they themselves
+  // fetched via getByDealId — those are deal-safe by construction.
+  updateInDeal: async (
+    id: string,
+    dealId: string,
+    updates: Record<string, unknown>
+  ) => {
+    const pool = getPool();
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    const normalized: Record<string, unknown> = { ...updates };
+    if (normalized.status === "complete" && normalized.pct_complete === undefined) {
+      normalized.pct_complete = 100;
+    }
+    if (normalized.pct_complete === 100 && normalized.status === undefined) {
+      normalized.status = "complete";
+    }
+
+    if (
+      normalized.end_date === undefined &&
+      (normalized.start_date !== undefined || normalized.duration_days !== undefined)
+    ) {
+      let startStr = normalizeDateInput(normalized.start_date);
+      let dur = typeof normalized.duration_days === "number" ? normalized.duration_days : null;
+      if (startStr == null || dur == null) {
+        const existing = await pool.query(
+          `SELECT start_date, duration_days FROM deal_dev_phases WHERE id = $1 AND deal_id = $2`,
+          [id, dealId]
+        );
+        const row = existing.rows[0] as { start_date: unknown; duration_days: number | null } | undefined;
+        if (row) {
+          if (startStr == null) startStr = normalizeDateInput(row.start_date);
+          if (dur == null && typeof row.duration_days === "number") dur = row.duration_days;
+        }
+      }
+      if (startStr && dur != null) {
+        normalized.end_date = addDaysIso(startStr, Math.max(0, dur - 1));
+      }
+    }
+
+    for (const [key, value] of Object.entries(normalized)) {
+      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order", "track", "is_milestone"].includes(key)) {
+        setClauses.push(`${key} = $${idx}`);
+        values.push(value);
+        idx++;
+      } else if (key === "linked_document_ids") {
+        setClauses.push(`linked_document_ids = $${idx}::jsonb`);
+        values.push(value == null ? null : JSON.stringify(value));
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    values.push(dealId);
+
+    const res = await pool.query(
+      `UPDATE deal_dev_phases SET ${setClauses.join(", ")} WHERE id = $${idx} AND deal_id = $${idx + 1} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  deleteInDeal: async (id: string, dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      "DELETE FROM deal_dev_phases WHERE id = $1 AND deal_id = $2",
+      [id, dealId]
+    );
+    return (res.rowCount ?? 0) > 0;
   },
 };
 
