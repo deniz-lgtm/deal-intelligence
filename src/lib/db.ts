@@ -330,6 +330,99 @@ export async function ensureColumns(): Promise<void> {
     `UPDATE deal_dev_phases
        SET kind = CASE WHEN is_milestone THEN 'milestone' ELSE 'phase' END
      WHERE kind IS NULL`,
+    // ── Migrate legacy deal_milestones into deal_dev_phases ──────────────
+    // Idempotent: skip rows already migrated (matched on
+    // source_legacy_type + source_legacy_id). Each migrated row gets a
+    // freshly generated id and keeps original timestamps so activity
+    // ordering is preserved. is_milestone=true is set for back-compat
+    // with readers that haven't switched to `kind` yet.
+    `INSERT INTO deal_dev_phases (
+       id, deal_id, track, kind, phase_key, label,
+       start_date, end_date, duration_days,
+       status, completed_at, is_milestone,
+       sort_order, source_legacy_type, source_legacy_id,
+       created_at, updated_at
+     )
+     SELECT
+       gen_random_uuid()::text,
+       m.deal_id,
+       'development',
+       'milestone',
+       'legacy_milestone_' || COALESCE(m.stage, 'unknown'),
+       m.title,
+       m.target_date,
+       m.target_date,
+       0,
+       CASE WHEN m.completed_at IS NOT NULL THEN 'complete' ELSE 'not_started' END,
+       m.completed_at,
+       true,
+       m.sort_order,
+       'milestone',
+       m.id,
+       m.created_at,
+       m.updated_at
+     FROM deal_milestones m
+     WHERE NOT EXISTS (
+       SELECT 1 FROM deal_dev_phases dp
+        WHERE dp.source_legacy_type = 'milestone'
+          AND dp.source_legacy_id = m.id
+     )`,
+    // ── Migrate legacy deal_tasks into deal_dev_phases ───────────────────
+    // Tasks may reference a milestone via milestone_id; we LEFT JOIN to
+    // the just-migrated milestone rows on (source_legacy_type='milestone'
+    // AND source_legacy_id = milestone_id AND deal_id matches) to set
+    // parent_phase_id. The deal_id constraint guards against any
+    // hypothetical cross-deal reference in the legacy data.
+    //
+    // Status mapping: 'done' → 'complete', 'in_progress' → 'in_progress',
+    // 'blocked' → 'delayed', anything else → 'not_started'. priority is
+    // not preserved (legacy tasks had a single priority chip; the
+    // unified model uses sort_order + critical-path for ordering).
+    //
+    // assignee → task_owner (free-text); legacy tasks didn't carry a
+    // user-id assignee. completed_at stays NULL for tasks since the
+    // legacy table didn't track when status flipped to 'done'.
+    `INSERT INTO deal_dev_phases (
+       id, deal_id, track, kind, phase_key, label, notes,
+       start_date, end_date, duration_days,
+       status, parent_phase_id, task_owner,
+       sort_order, source_legacy_type, source_legacy_id,
+       created_at, updated_at
+     )
+     SELECT
+       gen_random_uuid()::text,
+       t.deal_id,
+       'development',
+       'task',
+       'legacy_task',
+       t.title,
+       t.description,
+       t.due_date,
+       t.due_date,
+       1,
+       CASE
+         WHEN t.status = 'done'        THEN 'complete'
+         WHEN t.status = 'in_progress' THEN 'in_progress'
+         WHEN t.status = 'blocked'     THEN 'delayed'
+         ELSE 'not_started'
+       END,
+       parent.id,
+       t.assignee,
+       t.sort_order,
+       'task',
+       t.id,
+       t.created_at,
+       t.updated_at
+     FROM deal_tasks t
+     LEFT JOIN deal_dev_phases parent
+       ON parent.source_legacy_type = 'milestone'
+      AND parent.source_legacy_id   = t.milestone_id
+      AND parent.deal_id            = t.deal_id
+     WHERE NOT EXISTS (
+       SELECT 1 FROM deal_dev_phases dp
+        WHERE dp.source_legacy_type = 'task'
+          AND dp.source_legacy_id   = t.id
+     )`,
     // User-owned entitlement templates. Each row is a named list of
     // tasks the analyst can re-apply under any deal's entitlements
     // phase. Scoped to the creating user.
