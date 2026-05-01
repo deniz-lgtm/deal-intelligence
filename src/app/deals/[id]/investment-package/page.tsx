@@ -61,7 +61,7 @@ interface PackageSection {
   id: string; title: string; description: string;
   notes: NoteLine[]; expanded: boolean;
   generatedContent?: string; generating?: boolean;
-  editing?: boolean; generated_at?: string;
+  suggesting?: boolean; editing?: boolean; generated_at?: string;
 }
 
 interface PackageMeta {
@@ -173,6 +173,28 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
     setSections(prev => prev.map(s =>
       s.id === sectionId ? { ...s, notes: s.notes.filter(n => n.id !== noteId) } : s
     ));
+  };
+
+  const suggestNotes = async (sectionId: string) => {
+    setSections(prev => prev.map(s => s.id === sectionId ? { ...s, suggesting: true } : s));
+    try {
+      const res = await fetch(`/api/deals/${params.id}/investment-package/suggest-notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sectionId, audience: meta.audience, format: meta.format, ...(massingId ? { massing_id: massingId } : {}) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed");
+      const bullets: string[] = json.data;
+      setSections(prev => prev.map(s => s.id === sectionId
+        ? { ...s, notes: [...s.notes, ...bullets.map(text => ({ id: uuidv4(), text }))] }
+        : s));
+      toast.success(`${bullets.length} suggestions added`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Suggestion failed");
+    } finally {
+      setSections(prev => prev.map(s => s.id === sectionId ? { ...s, suggesting: false } : s));
+    }
   };
 
   const save = async () => {
@@ -563,6 +585,14 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
                   <div className="flex items-center gap-2 pt-1">
                     <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => addNote(section.id)}>
                       <Plus className="h-3.5 w-3.5 mr-1" /> Add Note
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs"
+                      onClick={() => suggestNotes(section.id)}
+                      disabled={section.suggesting}>
+                      {section.suggesting
+                        ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                        : <Sparkles className="h-3.5 w-3.5 mr-1" />}
+                      Suggest notes
                     </Button>
                     {section.notes.some(n => n.text.trim()) && !section.generatedContent && (
                       <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => generateSection(section.id)} disabled={section.generating}>
