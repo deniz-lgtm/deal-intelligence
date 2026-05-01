@@ -6,6 +6,7 @@ import { Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/AppShell";
 import { TodayStrip } from "@/components/today/TodayStrip";
+import { ScheduleHero } from "@/components/home/ScheduleHero";
 import { AcquisitionPanel } from "@/components/home/AcquisitionPanel";
 import { DevelopmentPanel } from "@/components/home/DevelopmentPanel";
 import { ConstructionPanel } from "@/components/home/ConstructionPanel";
@@ -153,8 +154,10 @@ export default function HomePage() {
           </div>
         </header>
 
-        {/* Today strip — Upcoming · Pipeline · Market */}
-        <TodayStrip />
+        {/* The Schedule — slick timeline hero, replaces the old top-strip
+            cards (Upcoming / Pipeline / Market). Each row is a live deal,
+            bars colored by track. The Today strip moves below the triptych. */}
+        <ScheduleHero />
 
         {/* Mobile search (header version is hidden on small viewports) */}
         <div className="md:hidden shrink-0 border-b border-border/30 bg-card/20 px-6 py-2.5">
@@ -212,6 +215,11 @@ export default function HomePage() {
                 );
               })}
             </div>
+
+            {/* Today strip — moved BELOW the triptych. Pipeline / Upcoming
+                / Market still live here as secondary context, with the
+                schedule hero as the home-page lede. */}
+            <TodayStrip />
           </div>
         )}
       </div>
