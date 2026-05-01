@@ -1,45 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { milestoneQueries, getPool } from "@/lib/db";
-import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { devPhaseQueries } from "@/lib/db";
+import { requireAuth, requireDealAccess, requireDealEditAccess } from "@/lib/auth";
+import {
+  phaseKeyForMilestone,
+  phaseToMilestoneShape,
+} from "@/lib/legacy-schedule-compat";
+import { recomputeSchedule } from "@/lib/schedule-recompute";
+import type { DevPhase } from "@/lib/types";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
 // generation phase unless the route is explicitly marked dynamic.
 export const dynamic = "force-dynamic";
 
-async function ensureProjectTables() {
-  const pool = getPool();
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS deal_milestones (
-      id TEXT PRIMARY KEY,
-      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      stage TEXT,
-      target_date DATE,
-      completed_at TIMESTAMPTZ,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS deal_tasks (
-      id TEXT PRIMARY KEY,
-      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      description TEXT,
-      assignee TEXT,
-      due_date DATE,
-      priority TEXT NOT NULL DEFAULT 'medium',
-      status TEXT NOT NULL DEFAULT 'todo',
-      milestone_id TEXT REFERENCES deal_milestones(id) ON DELETE SET NULL,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-}
+/**
+ * Compatibility wrapper around the unified schedule API. The legacy
+ * deal_milestones table is no longer the source of truth — this route
+ * reads/writes deal_dev_phases (kind='milestone') so new milestones
+ * created through the existing UI flow into the unified model and
+ * surface in the Today-strip "Upcoming" feed.
+ *
+ * Response shape stays the legacy DealMilestone so ProjectManagement.tsx
+ * keeps working without code changes. When the UI migrates to call
+ * /schedule directly, this whole route can be deleted.
+ */
 
 export async function GET(
   _req: NextRequest,
@@ -51,14 +36,11 @@ export async function GET(
     const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
     if (accessError) return accessError;
 
-    let milestones;
-    try {
-      milestones = await milestoneQueries.getByDealId(params.id);
-    } catch {
-      await ensureProjectTables();
-      milestones = await milestoneQueries.getByDealId(params.id);
-    }
-    return NextResponse.json({ data: milestones });
+    const phases = (await devPhaseQueries.getFiltered({
+      deal_id: params.id,
+      kind: "milestone",
+    })) as DevPhase[];
+    return NextResponse.json({ data: phases.map(phaseToMilestoneShape) });
   } catch (error) {
     console.error("GET /api/deals/[id]/milestones error:", error);
     return NextResponse.json({ error: "Failed to fetch milestones" }, { status: 500 });
@@ -72,7 +54,7 @@ export async function POST(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
 
     const body = await req.json();
@@ -82,29 +64,31 @@ export async function POST(
       return NextResponse.json({ error: "title is required" }, { status: 400 });
     }
 
-    let milestone;
+    const phase = await devPhaseQueries.create({
+      id: uuidv4(),
+      deal_id: params.id,
+      track: "development",
+      kind: "milestone",
+      phase_key: phaseKeyForMilestone(stage),
+      label: title.trim(),
+      // Milestones are point-in-time — start = end = the legacy
+      // target_date so the CPM compute treats it as a zero-duration
+      // event with a hard date.
+      start_date: target_date || null,
+      end_date: target_date || null,
+      duration_days: 0,
+      sort_order: sort_order ?? 0,
+      is_milestone: true,
+      status: "not_started",
+    });
+
     try {
-      milestone = await milestoneQueries.create({
-        id: uuidv4(),
-        deal_id: params.id,
-        title: title.trim(),
-        stage: stage || null,
-        target_date: target_date || null,
-        sort_order: sort_order ?? 0,
-      });
-    } catch {
-      await ensureProjectTables();
-      milestone = await milestoneQueries.create({
-        id: uuidv4(),
-        deal_id: params.id,
-        title: title.trim(),
-        stage: stage || null,
-        target_date: target_date || null,
-        sort_order: sort_order ?? 0,
-      });
+      await recomputeSchedule(params.id);
+    } catch (err) {
+      console.error("POST /api/deals/[id]/milestones recompute error:", err);
     }
 
-    return NextResponse.json({ data: milestone });
+    return NextResponse.json({ data: phaseToMilestoneShape(phase as DevPhase) });
   } catch (error) {
     console.error("POST /api/deals/[id]/milestones error:", error);
     return NextResponse.json({ error: "Failed to create milestone" }, { status: 500 });

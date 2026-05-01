@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { taskQueries, milestoneQueries, documentQueries, dealQueries } from "@/lib/db";
-import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { devPhaseQueries, documentQueries, dealQueries } from "@/lib/db";
+import { requireAuth, requireDealEditAccess } from "@/lib/auth";
 import Anthropic from "@anthropic-ai/sdk";
 import { CONCISE_STYLE } from "@/lib/ai-style";
+import {
+  phaseKeyForMilestone,
+  phaseToMilestoneShape,
+  phaseToTaskShape,
+} from "@/lib/legacy-schedule-compat";
+import { recomputeSchedule } from "@/lib/schedule-recompute";
+import type { DevPhase } from "@/lib/types";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -21,7 +28,7 @@ export async function POST(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
 
     const deal = await dealQueries.getById(params.id) as Record<string, unknown> | null;
@@ -42,8 +49,17 @@ export async function POST(
       return NextResponse.json({ error: "No documents uploaded yet. Upload documents first so AI can suggest tasks and milestones." }, { status: 400 });
     }
 
-    const existingTasks = await taskQueries.getByDealId(params.id) as Array<{ title: string }>;
-    const existingMilestones = await milestoneQueries.getByDealId(params.id) as Array<{ id: string; title: string }>;
+    // Read existing tasks/milestones from the unified table so the AI
+    // dedupe set covers rows added through both the legacy compat
+    // wrapper and the new /schedule endpoint.
+    const existingTasks = (await devPhaseQueries.getFiltered({
+      deal_id: params.id,
+      kind: "task",
+    })) as DevPhase[];
+    const existingMilestones = (await devPhaseQueries.getFiltered({
+      deal_id: params.id,
+      kind: "milestone",
+    })) as DevPhase[];
 
     // Build document context
     const docContext = documents.map((d) => {
@@ -53,8 +69,8 @@ export async function POST(
       return `[${name}] (${d.category})\n${summary}\n${content}`;
     }).join("\n---\n");
 
-    const existingTasksList = existingTasks.map((t) => t.title).join("\n");
-    const existingMilestonesList = existingMilestones.map((m) => m.title).join("\n");
+    const existingTasksList = existingTasks.map((t) => t.label).join("\n");
+    const existingMilestonesList = existingMilestones.map((m) => m.label).join("\n");
 
     const client = getClient();
     const response = await client.messages.create({
@@ -113,8 +129,8 @@ Keep suggestions specific and actionable based on what you found in the document
     };
 
     // Deduplicate against existing
-    const existingTaskTitles = new Set(existingTasks.map((t) => t.title.toLowerCase()));
-    const existingMilestoneTitles = new Set(existingMilestones.map((m) => m.title.toLowerCase()));
+    const existingTaskTitles = new Set(existingTasks.map((t) => t.label.toLowerCase()));
+    const existingMilestoneTitles = new Set(existingMilestones.map((m) => m.label.toLowerCase()));
 
     const newTasks = (suggestions.tasks || []).filter(
       (t) => !existingTaskTitles.has(t.title.toLowerCase())
@@ -123,37 +139,59 @@ Keep suggestions specific and actionable based on what you found in the document
       (m) => !existingMilestoneTitles.has(m.title.toLowerCase())
     );
 
-    // Create milestones first (tasks may reference them)
-    const createdMilestones = [];
+    // Create milestones first as deal_dev_phases (kind='milestone') so
+    // suggested tasks can reference them via parent_phase_id.
+    const createdMilestones: DevPhase[] = [];
     for (const m of newMilestones) {
-      const milestone = await milestoneQueries.create({
+      const milestone = await devPhaseQueries.create({
         id: uuidv4(),
         deal_id: params.id,
-        title: m.title,
-        stage: m.stage || null,
+        track: "development",
+        kind: "milestone",
+        phase_key: phaseKeyForMilestone(m.stage),
+        label: m.title,
+        is_milestone: true,
+        duration_days: 0,
+        status: "not_started",
       });
-      createdMilestones.push(milestone);
+      createdMilestones.push(milestone as DevPhase);
     }
 
-    // Create tasks
-    const createdTasks = [];
+    // Create tasks. priority isn't tracked on the unified model; the
+    // AI's suggestion still surfaces the priority so we drop it on the
+    // floor here (the task's sort_order + critical-path drives ordering
+    // in the new model).
+    const createdTasks: DevPhase[] = [];
     for (const t of newTasks) {
-      const task = await taskQueries.create({
+      const task = await devPhaseQueries.create({
         id: uuidv4(),
         deal_id: params.id,
-        title: t.title,
-        description: t.description || null,
-        priority: ["low", "medium", "high", "critical"].includes(t.priority) ? t.priority : "medium",
+        track: "development",
+        kind: "task",
+        phase_key: "legacy_task",
+        label: t.title,
+        notes: t.description || null,
+        is_milestone: false,
+        duration_days: 1,
+        status: "not_started",
       });
-      createdTasks.push(task);
+      createdTasks.push(task as DevPhase);
+    }
+
+    if (createdTasks.length > 0 || createdMilestones.length > 0) {
+      try {
+        await recomputeSchedule(params.id);
+      } catch (err) {
+        console.error("POST /api/deals/[id]/tasks/ai-suggest recompute error:", err);
+      }
     }
 
     return NextResponse.json({
       data: {
         tasks_added: createdTasks.length,
         milestones_added: createdMilestones.length,
-        tasks: createdTasks,
-        milestones: createdMilestones,
+        tasks: createdTasks.map(phaseToTaskShape),
+        milestones: createdMilestones.map(phaseToMilestoneShape),
       },
     });
   } catch (error) {
