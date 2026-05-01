@@ -64,6 +64,7 @@ interface DealTimelineRow {
   deal: DealRow;
   phases: PositionedPhase[];
   laneCount: number;
+  empty: boolean;
 }
 
 // Left rail width — deal name + meta + stage chip. Drives the timeline's
@@ -242,48 +243,82 @@ export function ScheduleHero() {
       if (arr) arr.push(p);
       else byDeal.set(p.deal_id, [p]);
     }
-    return data.deals
-      .map((deal) => {
-        const phases = byDeal.get(deal.id) ?? [];
-        const positioned = phases
-          .map((p) => {
-            const start = parseISODate(p.start_date);
-            const end = parseISODate(p.end_date) ?? start;
-            if (!start && !end) return null;
-            const sMs = (start ?? end ?? today).getTime();
-            const eMs = (end ?? start ?? today).getTime();
-            // Clip to window.
-            const clipS = Math.max(sMs, windowStart.getTime());
-            const clipE = Math.min(eMs, windowEnd.getTime());
-            if (clipE < clipS) return null;
-            const startPct = ((clipS - windowStart.getTime()) / windowMs) * 100;
-            const endPct = ((clipE - windowStart.getTime()) / windowMs) * 100;
-            return {
-              ...p,
-              startPct,
-              endPct,
-              widthPct: Math.max(0.6, endPct - startPct),
-              start: clipS,
-              end: clipE,
-              originalStartMs: sMs,
-            };
-          })
-          .filter((p): p is NonNullable<typeof p> => p !== null);
-        const lanes = assignLanes(positioned);
-        return {
-          deal,
-          phases: lanes,
-          laneCount: Math.max(1, lanes.reduce((m, x) => Math.max(m, x.lane + 1), 0)),
-        };
-      })
-      // Drop deals with no phases in this window — they'd just be empty rows.
-      .filter((row) => row.phases.length > 0);
+    return data.deals.map((deal) => {
+      const phases = byDeal.get(deal.id) ?? [];
+      const positioned = phases
+        .map((p) => {
+          const start = parseISODate(p.start_date);
+          const end = parseISODate(p.end_date) ?? start;
+          if (!start && !end) return null;
+          const sMs = (start ?? end ?? today).getTime();
+          const eMs = (end ?? start ?? today).getTime();
+          // Clip to window.
+          const clipS = Math.max(sMs, windowStart.getTime());
+          const clipE = Math.min(eMs, windowEnd.getTime());
+          if (clipE < clipS) return null;
+          const startPct = ((clipS - windowStart.getTime()) / windowMs) * 100;
+          const endPct = ((clipE - windowStart.getTime()) / windowMs) * 100;
+          return {
+            ...p,
+            startPct,
+            endPct,
+            widthPct: Math.max(0.6, endPct - startPct),
+            start: clipS,
+            end: clipE,
+            originalStartMs: sMs,
+          };
+        })
+        .filter((p): p is NonNullable<typeof p> => p !== null);
+      const lanes = assignLanes(positioned);
+      return {
+        deal,
+        phases: lanes,
+        laneCount: Math.max(1, lanes.reduce((m, x) => Math.max(m, x.lane + 1), 0)),
+        // Surface empty deals as "needs seeding" rows instead of dropping
+        // them. Without this, a brand-new deal — or one whose owner has
+        // entered LOI/PSA dates inline elsewhere but never explicitly
+        // seeded a schedule — vanishes from the schedule entirely, with
+        // no clear path back. The component renders a thin row with a
+        // one-click "Seed schedule" CTA in that case.
+        empty: positioned.length === 0,
+      };
+    });
   }, [data, today, windowStart, windowEnd, windowMs]);
 
-  // Pull-up CTA when we have deals but none have schedules yet — so the user
-  // knows the schedule is empty because nothing's been seeded, not because
-  // there are no deals.
-  const noSchedules = !loading && data && data.deals.length > 0 && dealRows.length === 0;
+  const populatedRows = useMemo(() => dealRows.filter((r) => !r.empty), [dealRows]);
+  const emptyRows = useMemo(() => dealRows.filter((r) => r.empty), [dealRows]);
+
+  // Seed handler — POSTs to the existing dev-schedule/seed endpoint, which
+  // accepts an optional track. We seed all three tracks at once on first
+  // request so the user gets full Acq → Dev → Construction phase chain
+  // without having to know which track is "primary" for their deal.
+  const [seedingDealId, setSeedingDealId] = useState<string | null>(null);
+  const seedSchedule = async (dealId: string) => {
+    setSeedingDealId(dealId);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/dev-schedule/seed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        console.error("Seed failed:", await res.text());
+        return;
+      }
+      // Refetch the timeline so the just-seeded phases appear.
+      const refreshed = await fetch(`/api/workspace/schedule-timeline?weeks=${weeks}`);
+      const j = await refreshed.json();
+      if (j.data) setData(j.data);
+    } catch (err) {
+      console.error("Seed schedule error:", err);
+    } finally {
+      setSeedingDealId(null);
+    }
+  };
+
+  // Pull-up CTA when there are no deals at all (vs. deals exist but
+  // none have schedules — the latter renders inline "Seed schedule"
+  // rows now instead of a single big empty state).
   const noDeals = !loading && data && data.deals.length === 0;
 
   // Today is always at offset 0 in this window since the SQL starts at
@@ -423,12 +458,6 @@ export function ScheduleHero() {
                 cta={{ href: "/deals/new", label: "Create a deal" }}
               />
             )}
-            {noSchedules && (
-              <EmptyState
-                title="No active schedules in this window"
-                body="Open a deal and seed a development or construction schedule template — bars will land here."
-              />
-            )}
 
             {!loading && dealRows.length > 0 && (
               <div className="relative mt-2">
@@ -447,13 +476,27 @@ export function ScheduleHero() {
                   aria-hidden="true"
                 />
 
+                {/* Populated deals first, then empty "needs seeding" rows.
+                    Splitting this way keeps the visual mass at the top of
+                    the timeline and the call-to-action rows clustered
+                    below — the user reads "active work" before "to-do
+                    setup" naturally. */}
                 <ul className="divide-y divide-border/25">
-                  {dealRows.map((row, i) => (
+                  {populatedRows.map((row, i) => (
                     <DealRowComponent
                       key={row.deal.id}
                       row={row}
                       index={i}
                       showLabels={showLabels}
+                    />
+                  ))}
+                  {emptyRows.map((row, i) => (
+                    <EmptyDealRow
+                      key={row.deal.id}
+                      deal={row.deal}
+                      index={populatedRows.length + i}
+                      seeding={seedingDealId === row.deal.id}
+                      onSeed={() => seedSchedule(row.deal.id)}
                     />
                   ))}
                 </ul>
@@ -612,6 +655,77 @@ function formatBarDate(ms: number) {
     day: "numeric",
     timeZone: "UTC",
   });
+}
+
+// ─── Empty (needs-seeding) row ───────────────────────────────────────────────
+//
+// Renders a deal that has zero phases in the timeline — typically a brand-new
+// deal that hasn't had any default phases seeded, or one whose owner has been
+// tracking dates inline elsewhere (LOI page, deal table fields) without
+// running the schedule seeder. The row stays compact so the populated rows
+// above keep the visual weight, but offers a one-click way to populate the
+// schedule from the default Acq → Dev → Construction template chain.
+
+function EmptyDealRow({
+  deal,
+  index,
+  seeding,
+  onSeed,
+}: {
+  deal: DealRow;
+  index: number;
+  seeding: boolean;
+  onSeed: () => void;
+}) {
+  const meta = [deal.city, deal.state].filter(Boolean).join(", ");
+  const stageLabel = DEAL_STAGE_LABELS[deal.status] ?? deal.status;
+  const dotClass = STAGE_DOT[deal.status] ?? "bg-muted-foreground/30";
+
+  return (
+    <li
+      className="relative grid grid-cols-[var(--rail-w)_1fr] items-stretch animate-fade-up"
+      style={{
+        animationDelay: `${Math.min(index * 30, 600)}ms`,
+        minHeight: 36,
+      }}
+    >
+      {/* Left rail — same shape as DealRowComponent's, just dimmer so the
+          eye reads "this row hasn't started yet". */}
+      <Link
+        href={`/deals/${deal.id}`}
+        className="relative pr-5 py-2.5 flex flex-col justify-center group/dealrow border-r border-border/30 opacity-70 hover:opacity-100 transition-opacity"
+      >
+        <span className="font-nameplate text-base leading-tight text-foreground/85 truncate">
+          {deal.name}
+        </span>
+        <div className="mt-0.5 flex items-center gap-2 min-w-0">
+          {meta && (
+            <span className="text-2xs tracking-[0.15em] uppercase text-muted-foreground/45 truncate">
+              {meta}
+            </span>
+          )}
+          <span className="ml-auto inline-flex items-center gap-1.5 shrink-0">
+            <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
+            <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground/55">
+              {stageLabel}
+            </span>
+          </span>
+        </div>
+      </Link>
+
+      {/* Right rail — inline CTA. Deliberately quiet so it sits below the
+          colored bars above without competing for attention. */}
+      <div className="relative py-2.5 px-3 flex items-center">
+        <button
+          onClick={onSeed}
+          disabled={seeding}
+          className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/65 hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {seeding ? "Seeding…" : "+ Seed default schedule →"}
+        </button>
+      </div>
+    </li>
+  );
 }
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
