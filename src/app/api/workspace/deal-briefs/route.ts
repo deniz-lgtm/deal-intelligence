@@ -48,22 +48,25 @@ export async function GET(req: NextRequest) {
 
     const dealIds = dealsRes.rows.map((r: { id: string }) => r.id);
 
-    // Top open task per deal (soonest due date, highest priority wins ties).
+    // Top open task per deal — soonest due date wins. Reads the
+    // unified deal_dev_phases (kind='task') now that legacy deal_tasks
+    // is no longer populated. The unified model doesn't carry priority
+    // anymore (sort_order + critical-path drives ordering), so the
+    // tiebreaker is sort_order; the brief still surfaces the legacy
+    // priority field as null.
     const tasksRes = await pool.query(
-      `SELECT DISTINCT ON (t.deal_id) t.deal_id, t.title, t.due_date, t.priority
-       FROM deal_tasks t
-       WHERE t.deal_id = ANY($1::text[])
-         AND t.status NOT IN ('done')
-       ORDER BY t.deal_id,
-                CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END,
-                t.due_date ASC,
-                CASE t.priority
-                  WHEN 'critical' THEN 0
-                  WHEN 'high' THEN 1
-                  WHEN 'medium' THEN 2
-                  WHEN 'low' THEN 3
-                  ELSE 4
-                END ASC`,
+      `SELECT DISTINCT ON (t.deal_id)
+              t.deal_id,
+              t.label AS title,
+              t.end_date AS due_date
+         FROM deal_dev_phases t
+        WHERE t.deal_id = ANY($1::text[])
+          AND t.kind = 'task'
+          AND COALESCE(t.status, 'not_started') <> 'complete'
+        ORDER BY t.deal_id,
+                 CASE WHEN t.end_date IS NULL THEN 1 ELSE 0 END,
+                 t.end_date ASC,
+                 t.sort_order ASC`,
       [dealIds]
     );
 
@@ -71,7 +74,7 @@ export async function GET(req: NextRequest) {
       deal_id: string;
       title: string;
       due_date: string | null;
-      priority: string | null;
+      priority?: string | null;
     };
     const topTaskByDeal: Record<string, TaskRow> = {};
     for (const row of tasksRes.rows as TaskRow[]) {
@@ -104,7 +107,10 @@ export async function GET(req: NextRequest) {
         ? {
             title: topTaskByDeal[d.id].title,
             due_date: topTaskByDeal[d.id].due_date,
-            priority: topTaskByDeal[d.id].priority,
+            // Priority is no longer stored on the unified schedule
+            // model. Surfaced as null so existing brief consumers
+            // don't crash — they fall back to a default chip.
+            priority: topTaskByDeal[d.id].priority ?? null,
           }
         : null,
     }));

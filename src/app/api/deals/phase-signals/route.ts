@@ -46,11 +46,17 @@ export async function GET() {
       EXISTS (SELECT 1 FROM progress_reports      x WHERE x.deal_id = d.id) AS has_progress_reports,
       (SELECT COUNT(*)::int FROM deal_draws dr
          WHERE dr.deal_id = d.id AND dr.status = 'submitted')          AS draws_pending,
-      (SELECT MIN(target_date)::text FROM deal_milestones m
+      -- Earliest uncomplete milestone date — sourced from the unified
+      -- deal_dev_phases table now that legacy deal_milestones has been
+      -- migrated. end_date carries the legacy target_date for
+      -- migrated rows (and for new rows created via /milestones POST,
+      -- which is now a compat wrapper).
+      (SELECT MIN(end_date)::text FROM deal_dev_phases m
          WHERE m.deal_id = d.id
+           AND m.kind = 'milestone'
            AND m.completed_at IS NULL
-           AND m.target_date IS NOT NULL
-           AND m.target_date >= CURRENT_DATE)                          AS next_milestone_at
+           AND m.end_date IS NOT NULL
+           AND m.end_date >= CURRENT_DATE)                             AS next_milestone_at
     FROM deals d
     LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
     WHERE d.owner_id = $1 OR ds.deal_id IS NOT NULL
