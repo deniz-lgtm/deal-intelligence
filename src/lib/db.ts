@@ -4953,9 +4953,37 @@ export const devPhaseQueries = {
     if (!endStr && startStr && dur != null) {
       endStr = addDaysIso(startStr, Math.max(0, dur - 1));
     }
+    // `kind` resolves from the explicit field, falling back to is_milestone
+    // for back-compat with callers that haven't migrated yet. The two
+    // stay aligned on insert so readers on either column see the same
+    // classification.
+    const isMilestone = phase.kind === "milestone" || phase.is_milestone === true;
+    const kind =
+      typeof phase.kind === "string"
+        ? phase.kind
+        : isMilestone
+          ? "milestone"
+          : "phase";
+    const status = (phase.status as string) ?? "not_started";
+    const completedAt =
+      phase.completed_at != null
+        ? phase.completed_at
+        : status === "complete"
+          ? new Date().toISOString()
+          : null;
     const res = await pool.query(
-      `INSERT INTO deal_dev_phases (id, deal_id, track, phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, linked_document_ids, pct_complete, budget, status, notes, sort_order, is_milestone, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16, $17, $18, $19, $20, NOW(), NOW())
+      `INSERT INTO deal_dev_phases (
+         id, deal_id, track, phase_key, label, start_date, end_date,
+         duration_days, predecessor_id, lag_days, parent_phase_id,
+         task_category, task_owner, linked_document_ids,
+         pct_complete, budget, status, notes, sort_order,
+         is_milestone, kind, assignee_user_id, completed_at,
+         source_legacy_type, source_legacy_id,
+         created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+               $14::jsonb, $15, $16, $17, $18, $19,
+               $20, $21, $22, $23, $24, $25, NOW(), NOW())
        RETURNING *`,
       [
         phase.id,
@@ -4976,10 +5004,15 @@ export const devPhaseQueries = {
           : null,
         phase.pct_complete ?? 0,
         phase.budget ?? null,
-        phase.status ?? "not_started",
+        status,
         phase.notes ?? null,
         phase.sort_order ?? 0,
-        phase.is_milestone ?? false,
+        isMilestone,
+        kind,
+        phase.assignee_user_id ?? null,
+        completedAt,
+        phase.source_legacy_type ?? null,
+        phase.source_legacy_id ?? null,
       ]
     );
     return res.rows[0];
@@ -5111,6 +5144,23 @@ export const devPhaseQueries = {
     if (normalized.pct_complete === 100 && normalized.status === undefined) {
       normalized.status = "complete";
     }
+    // First-completion stamp. We only set completed_at when transitioning
+    // to status='complete' AND the caller didn't pass an explicit value.
+    // Existing completions stay as-is — re-saving a row that's already
+    // complete shouldn't overwrite the original timestamp.
+    if (normalized.status === "complete" && normalized.completed_at === undefined) {
+      const existing = await pool.query(
+        `SELECT completed_at FROM deal_dev_phases WHERE id = $1 AND deal_id = $2`,
+        [id, dealId]
+      );
+      const prev = existing.rows[0]?.completed_at ?? null;
+      if (prev == null) normalized.completed_at = new Date().toISOString();
+    }
+    // Keep is_milestone synced when kind changes, so back-compat readers
+    // that branch on is_milestone don't drift after a kind update.
+    if (typeof normalized.kind === "string" && normalized.is_milestone === undefined) {
+      normalized.is_milestone = normalized.kind === "milestone";
+    }
 
     if (
       normalized.end_date === undefined &&
@@ -5135,7 +5185,7 @@ export const devPhaseQueries = {
     }
 
     for (const [key, value] of Object.entries(normalized)) {
-      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order", "track", "is_milestone"].includes(key)) {
+      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order", "track", "is_milestone", "kind", "assignee_user_id", "completed_at"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
         idx++;
