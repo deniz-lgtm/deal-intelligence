@@ -1429,6 +1429,36 @@ export interface DevPhase {
    * typically 0 for milestones, though the UI doesn't enforce it.
    */
   is_milestone: boolean;
+  /**
+   * Unified row classifier. `'phase'` — multi-day work bar (the existing
+   * default). `'milestone'` — point-in-time event, equivalent to
+   * is_milestone=true. `'task'` — child action item (think a row that
+   * used to live in `deal_tasks`). New code branches on `kind`; the
+   * legacy `is_milestone` flag is kept synced for back-compat. NULL on
+   * very old rows; the migration backfills based on is_milestone.
+   */
+  kind: "phase" | "milestone" | "task" | null;
+  /**
+   * Optional Clerk user id of the person responsible for this row.
+   * NULL means no one assigned. The free-text `task_owner` above stays
+   * around for stakeholders who aren't users in this system (outside
+   * counsel, broker, GC superintendent).
+   */
+  assignee_user_id: string | null;
+  /**
+   * Wall-clock timestamp captured the first time this row transitioned
+   * to status='complete'. Distinct from status because activity-feed
+   * and velocity reports need the *moment* of completion, not just the
+   * current state.
+   */
+  completed_at: string | null;
+  /**
+   * Set on rows migrated in from the legacy `deal_milestones` /
+   * `deal_tasks` tables. Lets us audit the migration and roll back if
+   * needed before the legacy tables are moved to the `_legacy` schema.
+   */
+  source_legacy_type: "milestone" | "task" | null;
+  source_legacy_id: string | null;
   // ─── CPM outputs ─────────────────────────────────────────────────────
   // Computed by dev-schedule-compute.ts on every mutation. Never
   // user-edited. Nullable until the first compute pass runs.
