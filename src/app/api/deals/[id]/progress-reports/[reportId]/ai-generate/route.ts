@@ -68,8 +68,23 @@ async function fetchDevPhases(dealId: string): Promise<Record<string, unknown>[]
 async function fetchMilestones(dealId: string): Promise<Record<string, unknown>[]> {
   try {
     const pool = getPool();
+    // Reads the unified deal_dev_phases table (kind='milestone') —
+    // the legacy deal_milestones is no longer populated. Aliases the
+    // unified columns to the legacy field names this route already
+    // consumes (label → title, end_date → target_date) so the
+    // existing AI prompt builder stays unchanged.
     const res = await pool.query(
-      "SELECT * FROM deal_milestones WHERE deal_id = $1 ORDER BY sort_order",
+      `SELECT id,
+              deal_id,
+              label AS title,
+              end_date AS target_date,
+              completed_at,
+              status,
+              sort_order
+         FROM deal_dev_phases
+        WHERE deal_id = $1
+          AND kind = 'milestone'
+        ORDER BY sort_order`,
       [dealId]
     );
     return res.rows;

@@ -200,34 +200,11 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_phone TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_address TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_disclaimer_text TEXT NOT NULL DEFAULT ''",
-    // Project management tables (must exist before any task/milestone queries)
-    `CREATE TABLE IF NOT EXISTS deal_milestones (
-      id TEXT PRIMARY KEY,
-      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      stage TEXT,
-      target_date DATE,
-      completed_at TIMESTAMPTZ,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_deal_milestones_deal_id ON deal_milestones(deal_id)`,
-    `CREATE TABLE IF NOT EXISTS deal_tasks (
-      id TEXT PRIMARY KEY,
-      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      description TEXT,
-      assignee TEXT,
-      due_date DATE,
-      priority TEXT NOT NULL DEFAULT 'medium',
-      status TEXT NOT NULL DEFAULT 'todo',
-      milestone_id TEXT REFERENCES deal_milestones(id) ON DELETE SET NULL,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_deal_tasks_deal_id ON deal_tasks(deal_id)`,
+    // Legacy schedule tables (deal_milestones, deal_tasks) are no
+    // longer created here. The data migration further down moves any
+    // existing rows into deal_dev_phases, and a separate migration
+    // moves the tables themselves to the `_legacy` schema. New
+    // deployments never get them in the public schema.
     `CREATE TABLE IF NOT EXISTS deal_dev_phases (
       id TEXT PRIMARY KEY,
       deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
@@ -336,37 +313,49 @@ export async function ensureColumns(): Promise<void> {
     // freshly generated id and keeps original timestamps so activity
     // ordering is preserved. is_milestone=true is set for back-compat
     // with readers that haven't switched to `kind` yet.
-    `INSERT INTO deal_dev_phases (
-       id, deal_id, track, kind, phase_key, label,
-       start_date, end_date, duration_days,
-       status, completed_at, is_milestone,
-       sort_order, source_legacy_type, source_legacy_id,
-       created_at, updated_at
-     )
-     SELECT
-       gen_random_uuid()::text,
-       m.deal_id,
-       'development',
-       'milestone',
-       'legacy_milestone_' || COALESCE(m.stage, 'unknown'),
-       m.title,
-       m.target_date,
-       m.target_date,
-       0,
-       CASE WHEN m.completed_at IS NOT NULL THEN 'complete' ELSE 'not_started' END,
-       m.completed_at,
-       true,
-       m.sort_order,
-       'milestone',
-       m.id,
-       m.created_at,
-       m.updated_at
-     FROM deal_milestones m
-     WHERE NOT EXISTS (
-       SELECT 1 FROM deal_dev_phases dp
-        WHERE dp.source_legacy_type = 'milestone'
-          AND dp.source_legacy_id = m.id
-     )`,
+    //
+    // Wrapped in a DO block with an EXISTS guard so it cleanly no-ops
+    // once the legacy table has been moved to the `_legacy` schema
+    // by the migration further down. Otherwise subsequent boots would
+    // log spurious "relation does not exist" warnings.
+    `DO $$
+     BEGIN
+       IF EXISTS (SELECT 1 FROM information_schema.tables
+                   WHERE table_schema = 'public'
+                     AND table_name = 'deal_milestones') THEN
+         INSERT INTO deal_dev_phases (
+           id, deal_id, track, kind, phase_key, label,
+           start_date, end_date, duration_days,
+           status, completed_at, is_milestone,
+           sort_order, source_legacy_type, source_legacy_id,
+           created_at, updated_at
+         )
+         SELECT
+           gen_random_uuid()::text,
+           m.deal_id,
+           'development',
+           'milestone',
+           'legacy_milestone_' || COALESCE(m.stage, 'unknown'),
+           m.title,
+           m.target_date,
+           m.target_date,
+           0,
+           CASE WHEN m.completed_at IS NOT NULL THEN 'complete' ELSE 'not_started' END,
+           m.completed_at,
+           true,
+           m.sort_order,
+           'milestone',
+           m.id,
+           m.created_at,
+           m.updated_at
+         FROM public.deal_milestones m
+         WHERE NOT EXISTS (
+           SELECT 1 FROM deal_dev_phases dp
+            WHERE dp.source_legacy_type = 'milestone'
+              AND dp.source_legacy_id = m.id
+         );
+       END IF;
+     END $$`,
     // ── Migrate legacy deal_tasks into deal_dev_phases ───────────────────
     // Tasks may reference a milestone via milestone_id; we LEFT JOIN to
     // the just-migrated milestone rows on (source_legacy_type='milestone'
@@ -382,47 +371,93 @@ export async function ensureColumns(): Promise<void> {
     // assignee → task_owner (free-text); legacy tasks didn't carry a
     // user-id assignee. completed_at stays NULL for tasks since the
     // legacy table didn't track when status flipped to 'done'.
-    `INSERT INTO deal_dev_phases (
-       id, deal_id, track, kind, phase_key, label, notes,
-       start_date, end_date, duration_days,
-       status, parent_phase_id, task_owner,
-       sort_order, source_legacy_type, source_legacy_id,
-       created_at, updated_at
-     )
-     SELECT
-       gen_random_uuid()::text,
-       t.deal_id,
-       'development',
-       'task',
-       'legacy_task',
-       t.title,
-       t.description,
-       t.due_date,
-       t.due_date,
-       1,
-       CASE
-         WHEN t.status = 'done'        THEN 'complete'
-         WHEN t.status = 'in_progress' THEN 'in_progress'
-         WHEN t.status = 'blocked'     THEN 'delayed'
-         ELSE 'not_started'
-       END,
-       parent.id,
-       t.assignee,
-       t.sort_order,
-       'task',
-       t.id,
-       t.created_at,
-       t.updated_at
-     FROM deal_tasks t
-     LEFT JOIN deal_dev_phases parent
-       ON parent.source_legacy_type = 'milestone'
-      AND parent.source_legacy_id   = t.milestone_id
-      AND parent.deal_id            = t.deal_id
-     WHERE NOT EXISTS (
-       SELECT 1 FROM deal_dev_phases dp
-        WHERE dp.source_legacy_type = 'task'
-          AND dp.source_legacy_id   = t.id
-     )`,
+    //
+    // Same EXISTS guard pattern as the milestone migration above so
+    // this no-ops cleanly once deal_tasks has been moved to _legacy.
+    `DO $$
+     BEGIN
+       IF EXISTS (SELECT 1 FROM information_schema.tables
+                   WHERE table_schema = 'public'
+                     AND table_name = 'deal_tasks') THEN
+         INSERT INTO deal_dev_phases (
+           id, deal_id, track, kind, phase_key, label, notes,
+           start_date, end_date, duration_days,
+           status, parent_phase_id, task_owner,
+           sort_order, source_legacy_type, source_legacy_id,
+           created_at, updated_at
+         )
+         SELECT
+           gen_random_uuid()::text,
+           t.deal_id,
+           'development',
+           'task',
+           'legacy_task',
+           t.title,
+           t.description,
+           t.due_date,
+           t.due_date,
+           1,
+           CASE
+             WHEN t.status = 'done'        THEN 'complete'
+             WHEN t.status = 'in_progress' THEN 'in_progress'
+             WHEN t.status = 'blocked'     THEN 'delayed'
+             ELSE 'not_started'
+           END,
+           parent.id,
+           t.assignee,
+           t.sort_order,
+           'task',
+           t.id,
+           t.created_at,
+           t.updated_at
+         FROM public.deal_tasks t
+         LEFT JOIN deal_dev_phases parent
+           ON parent.source_legacy_type = 'milestone'
+          AND parent.source_legacy_id   = t.milestone_id
+          AND parent.deal_id            = t.deal_id
+         WHERE NOT EXISTS (
+           SELECT 1 FROM deal_dev_phases dp
+            WHERE dp.source_legacy_type = 'task'
+              AND dp.source_legacy_id   = t.id
+         );
+       END IF;
+     END $$`,
+    // ── Move legacy schedule tables to the _legacy schema ───────────────
+    // After the data migration above runs once, the legacy tables are
+    // dormant — every new write goes through the compat wrappers in
+    // /api/deals/[id]/{milestones,tasks}, which write to deal_dev_phases.
+    // Move them out of the public schema so it's clear they shouldn't
+    // be referenced by any new code, and so accidental reads (raw SQL,
+    // ad-hoc queries) fail loudly with a clear "moved" message rather
+    // than silently returning stale data.
+    //
+    // Idempotent — does nothing if the tables don't exist or are
+    // already in `_legacy`. Wrapped in DO blocks so the migration
+    // array doesn't crash on rerun. Indexes and FKs follow their
+    // tables automatically when ALTER TABLE SET SCHEMA runs.
+    `CREATE SCHEMA IF NOT EXISTS _legacy`,
+    `DO $$
+     BEGIN
+       IF EXISTS (SELECT 1 FROM information_schema.tables
+                   WHERE table_schema = 'public'
+                     AND table_name = 'deal_milestones')
+          AND NOT EXISTS (SELECT 1 FROM information_schema.tables
+                           WHERE table_schema = '_legacy'
+                             AND table_name = 'deal_milestones') THEN
+         ALTER TABLE public.deal_milestones SET SCHEMA _legacy;
+       END IF;
+     END $$`,
+    `DO $$
+     BEGIN
+       IF EXISTS (SELECT 1 FROM information_schema.tables
+                   WHERE table_schema = 'public'
+                     AND table_name = 'deal_tasks')
+          AND NOT EXISTS (SELECT 1 FROM information_schema.tables
+                           WHERE table_schema = '_legacy'
+                             AND table_name = 'deal_tasks') THEN
+         ALTER TABLE public.deal_tasks SET SCHEMA _legacy;
+       END IF;
+     END $$`,
     // User-owned entitlement templates. Each row is a named list of
     // tasks the analyst can re-apply under any deal's entitlements
     // phase. Scoped to the creating user.
@@ -1232,34 +1267,9 @@ export async function initSchema(): Promise<void> {
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_phone TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_address TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_disclaimer_text TEXT NOT NULL DEFAULT ''`,
-    // Project management tables
-    `CREATE TABLE IF NOT EXISTS deal_milestones (
-      id TEXT PRIMARY KEY,
-      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      stage TEXT,
-      target_date DATE,
-      completed_at TIMESTAMPTZ,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_deal_milestones_deal_id ON deal_milestones(deal_id)`,
-    `CREATE TABLE IF NOT EXISTS deal_tasks (
-      id TEXT PRIMARY KEY,
-      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      description TEXT,
-      assignee TEXT,
-      due_date DATE,
-      priority TEXT NOT NULL DEFAULT 'medium',
-      status TEXT NOT NULL DEFAULT 'todo',
-      milestone_id TEXT REFERENCES deal_milestones(id) ON DELETE SET NULL,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_deal_tasks_deal_id ON deal_tasks(deal_id)`,
+    // Legacy schedule tables (deal_milestones, deal_tasks) are no
+    // longer created here. Theme 1 of the schedule unification moved
+    // them to the `_legacy` schema; data lives on deal_dev_phases.
     // Admin: generic key/value app settings
     `CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
@@ -4416,210 +4426,6 @@ export const dealShareQueries = {
   delete: async (dealId: string, userId: string): Promise<void> => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_shares WHERE deal_id = $1 AND user_id = $2", [dealId, userId]);
-  },
-};
-
-// ─── Milestone queries ────────────────────────────────────────────────────────
-
-export const milestoneQueries = {
-  getByDealId: async (dealId: string) => {
-    const pool = getPool();
-    const res = await pool.query(
-      "SELECT * FROM deal_milestones WHERE deal_id = $1 ORDER BY sort_order, target_date NULLS LAST, created_at",
-      [dealId]
-    );
-    return res.rows;
-  },
-
-  create: async (milestone: Record<string, unknown>) => {
-    const pool = getPool();
-    const res = await pool.query(
-      `INSERT INTO deal_milestones (id, deal_id, title, stage, target_date, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-       RETURNING *`,
-      [
-        milestone.id,
-        milestone.deal_id,
-        milestone.title,
-        milestone.stage ?? null,
-        milestone.target_date ?? null,
-        milestone.sort_order ?? 0,
-      ]
-    );
-    return res.rows[0];
-  },
-
-  update: async (id: string, updates: Record<string, unknown>) => {
-    const pool = getPool();
-    const setClauses: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    for (const [key, value] of Object.entries(updates)) {
-      if (["title", "stage", "target_date", "completed_at", "sort_order"].includes(key)) {
-        setClauses.push(`${key} = $${idx}`);
-        values.push(value);
-        idx++;
-      }
-    }
-    if (setClauses.length === 0) return null;
-
-    setClauses.push(`updated_at = NOW()`);
-    values.push(id);
-
-    const res = await pool.query(
-      `UPDATE deal_milestones SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
-      values
-    );
-    return res.rows[0] ?? null;
-  },
-
-  delete: async (id: string) => {
-    const pool = getPool();
-    await pool.query("DELETE FROM deal_milestones WHERE id = $1", [id]);
-  },
-
-  updateInDeal: async (
-    id: string,
-    dealId: string,
-    updates: Record<string, unknown>
-  ) => {
-    const pool = getPool();
-    const setClauses: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    for (const [key, value] of Object.entries(updates)) {
-      if (["title", "stage", "target_date", "completed_at", "sort_order"].includes(key)) {
-        setClauses.push(`${key} = $${idx}`);
-        values.push(value);
-        idx++;
-      }
-    }
-    if (setClauses.length === 0) return null;
-
-    setClauses.push(`updated_at = NOW()`);
-    values.push(id);
-    values.push(dealId);
-
-    const res = await pool.query(
-      `UPDATE deal_milestones SET ${setClauses.join(", ")} WHERE id = $${idx} AND deal_id = $${idx + 1} RETURNING *`,
-      values
-    );
-    return res.rows[0] ?? null;
-  },
-
-  deleteInDeal: async (id: string, dealId: string) => {
-    const pool = getPool();
-    const res = await pool.query(
-      "DELETE FROM deal_milestones WHERE id = $1 AND deal_id = $2",
-      [id, dealId]
-    );
-    return (res.rowCount ?? 0) > 0;
-  },
-};
-
-// ─── Task queries ─────────────────────────────────────────────────────────────
-
-export const taskQueries = {
-  getByDealId: async (dealId: string) => {
-    const pool = getPool();
-    const res = await pool.query(
-      "SELECT * FROM deal_tasks WHERE deal_id = $1 ORDER BY sort_order, created_at",
-      [dealId]
-    );
-    return res.rows;
-  },
-
-  create: async (task: Record<string, unknown>) => {
-    const pool = getPool();
-    const res = await pool.query(
-      `INSERT INTO deal_tasks (id, deal_id, title, description, assignee, due_date, priority, status, milestone_id, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-       RETURNING *`,
-      [
-        task.id,
-        task.deal_id,
-        task.title,
-        task.description ?? null,
-        task.assignee ?? null,
-        task.due_date ?? null,
-        task.priority ?? "medium",
-        task.status ?? "todo",
-        task.milestone_id ?? null,
-        task.sort_order ?? 0,
-      ]
-    );
-    return res.rows[0];
-  },
-
-  update: async (id: string, updates: Record<string, unknown>) => {
-    const pool = getPool();
-    const setClauses: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    for (const [key, value] of Object.entries(updates)) {
-      if (["title", "description", "assignee", "due_date", "priority", "status", "milestone_id", "sort_order"].includes(key)) {
-        setClauses.push(`${key} = $${idx}`);
-        values.push(value);
-        idx++;
-      }
-    }
-    if (setClauses.length === 0) return null;
-
-    setClauses.push(`updated_at = NOW()`);
-    values.push(id);
-
-    const res = await pool.query(
-      `UPDATE deal_tasks SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
-      values
-    );
-    return res.rows[0] ?? null;
-  },
-
-  delete: async (id: string) => {
-    const pool = getPool();
-    await pool.query("DELETE FROM deal_tasks WHERE id = $1", [id]);
-  },
-
-  updateInDeal: async (
-    id: string,
-    dealId: string,
-    updates: Record<string, unknown>
-  ) => {
-    const pool = getPool();
-    const setClauses: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    for (const [key, value] of Object.entries(updates)) {
-      if (["title", "description", "assignee", "due_date", "priority", "status", "milestone_id", "sort_order"].includes(key)) {
-        setClauses.push(`${key} = $${idx}`);
-        values.push(value);
-        idx++;
-      }
-    }
-    if (setClauses.length === 0) return null;
-
-    setClauses.push(`updated_at = NOW()`);
-    values.push(id);
-    values.push(dealId);
-
-    const res = await pool.query(
-      `UPDATE deal_tasks SET ${setClauses.join(", ")} WHERE id = $${idx} AND deal_id = $${idx + 1} RETURNING *`,
-      values
-    );
-    return res.rows[0] ?? null;
-  },
-
-  deleteInDeal: async (id: string, dealId: string) => {
-    const pool = getPool();
-    const res = await pool.query(
-      "DELETE FROM deal_tasks WHERE id = $1 AND deal_id = $2",
-      [id, dealId]
-    );
-    return (res.rowCount ?? 0) > 0;
   },
 };
 
