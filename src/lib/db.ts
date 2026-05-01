@@ -299,6 +299,37 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS total_slack_days INTEGER",
     "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS is_critical BOOLEAN NOT NULL DEFAULT false",
     "CREATE INDEX IF NOT EXISTS idx_deal_dev_phases_track ON deal_dev_phases(deal_id, track)",
+    // ── Schedule unification (Phase 1, Theme 1) ─────────────────────────
+    // The unified schedule model collapses the legacy `deal_milestones` and
+    // `deal_tasks` tables into rows on `deal_dev_phases`. `kind` distinguishes
+    // them so the existing per-track and per-parent filters keep working,
+    // and `is_milestone` continues to work (we backfill `kind` from it
+    // below). New code reads `kind`; old code reads `is_milestone`. Both
+    // converge in the unified `/api/deals/[id]/schedule` endpoint.
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS kind TEXT",
+    // Optional Clerk user id of the assignee. NULL means no one assigned
+    // (the existing `task_owner` free-text field still works for
+    // out-of-system stakeholders like outside counsel).
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS assignee_user_id TEXT",
+    // Wall-clock completion timestamp. Distinct from status='complete'
+    // because the latter can be set on any row at any time; this captures
+    // *when* the row first transitioned to complete for activity-feed and
+    // velocity reporting.
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ",
+    // Traceability for rows migrated in from `deal_milestones` /
+    // `deal_tasks`. Source row id stays around so we can audit the
+    // migration and roll back if needed before legacy tables are
+    // moved to the `_legacy` schema.
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS source_legacy_type TEXT",
+    "ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS source_legacy_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_deal_dev_phases_kind ON deal_dev_phases(deal_id, kind)",
+    "CREATE INDEX IF NOT EXISTS idx_deal_dev_phases_assignee ON deal_dev_phases(assignee_user_id) WHERE assignee_user_id IS NOT NULL",
+    // Backfill `kind` for rows that pre-date the column. is_milestone=true
+    // → 'milestone', everything else → 'phase'. Idempotent — only
+    // touches rows where kind IS NULL, so re-running is a no-op.
+    `UPDATE deal_dev_phases
+       SET kind = CASE WHEN is_milestone THEN 'milestone' ELSE 'phase' END
+     WHERE kind IS NULL`,
     // User-owned entitlement templates. Each row is a named list of
     // tasks the analyst can re-apply under any deal's entitlements
     // phase. Scoped to the creating user.
