@@ -15,6 +15,7 @@ import {
   requirePermission,
   syncCurrentUser,
 } from "@/lib/auth";
+import { rateLimit, CHAT_LIMIT } from "@/lib/rate-limit";
 import type { Document } from "@/lib/types";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
@@ -43,6 +44,12 @@ type PageContextBody = {
 export async function POST(req: NextRequest) {
   const { userId, errorResponse } = await requirePermission("ai.chat");
   if (errorResponse) return errorResponse;
+
+  // Per-user rate limit (shared scope with /api/chat — both surfaces
+  // call into Claude with expensive context, and a single user
+  // hammering either route deserves the same backoff).
+  const limited = rateLimit("chat", userId, CHAT_LIMIT);
+  if (limited) return limited;
 
   try {
     const body = (await req.json()) as {

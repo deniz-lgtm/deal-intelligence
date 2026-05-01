@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { chatQueries, documentQueries, dealQueries, dealNoteQueries, underwritingQueries, businessPlanQueries, omAnalysisQueries, loiQueries } from "@/lib/db";
 import { chatWithDealIntelligence } from "@/lib/claude";
 import { requireAuth, requireDealAccess, requirePermission, syncCurrentUser } from "@/lib/auth";
+import { rateLimit, CHAT_LIMIT } from "@/lib/rate-limit";
 import type { Document } from "@/lib/types";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
@@ -13,6 +14,12 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   const { userId, errorResponse } = await requirePermission("ai.chat");
   if (errorResponse) return errorResponse;
+
+  // Per-user rate limit on the chat surface. Each turn fans out into
+  // expensive Claude + DB work, and a runaway client (or abusive user)
+  // can rack up real $ in seconds. 429 returns Retry-After.
+  const limited = rateLimit("chat", userId, CHAT_LIMIT);
+  if (limited) return limited;
 
   try {
     const body = await req.json();
