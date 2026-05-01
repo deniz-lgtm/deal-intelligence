@@ -4901,6 +4901,46 @@ export const devPhaseQueries = {
     return res.rows;
   },
 
+  /**
+   * Read phases for one deal with optional `track`, `kind`, and
+   * `parent_phase_id` filters. Powers the unified
+   * `/api/deals/[id]/schedule` endpoint and (eventually) the per-track
+   * Dev / Construction views.
+   *
+   * Each filter is applied only when non-null/non-empty so callers can
+   * mix and match. Same ordering as `getByDealId` so the Gantt's row
+   * order is stable across read paths.
+   */
+  getFiltered: async (filters: {
+    deal_id: string;
+    track?: string | null;
+    kind?: string | null;
+    parent_phase_id?: string | null;
+  }) => {
+    const pool = getPool();
+    const clauses: string[] = ["deal_id = $1"];
+    const values: unknown[] = [filters.deal_id];
+    if (filters.track) {
+      values.push(filters.track);
+      clauses.push(`track = $${values.length}`);
+    }
+    if (filters.kind) {
+      values.push(filters.kind);
+      clauses.push(`kind = $${values.length}`);
+    }
+    if (filters.parent_phase_id) {
+      values.push(filters.parent_phase_id);
+      clauses.push(`parent_phase_id = $${values.length}`);
+    }
+    const res = await pool.query(
+      `SELECT * FROM deal_dev_phases
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY sort_order, start_date NULLS LAST`,
+      values
+    );
+    return res.rows;
+  },
+
   create: async (phase: Record<string, unknown>) => {
     const pool = getPool();
     // Belt-and-suspenders end_date: when a row arrives with a
