@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { documentQueries } from "@/lib/db";
 import { readFile, readFileStream } from "@/lib/blob-storage";
+import { requireAuth, requireDealAccess } from "@/lib/auth";
 import type { Document } from "@/lib/types";
 
 // Opt out of static analysis at `next build`. Reads auth / headers() / DB.
@@ -13,10 +14,20 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    // Auth first — this route streams document bytes and previously did
+    // no access check at all, so any authenticated user (and arguably
+    // unauthenticated callers depending on middleware) could fetch any
+    // document by id. Resolve the doc, then require access to its deal.
+    const { userId, errorResponse } = await requireAuth();
+    if (errorResponse) return errorResponse;
+
     const doc = (await documentQueries.getById(params.id)) as Document | undefined;
     if (!doc) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
+
+    const { errorResponse: accessError } = await requireDealAccess(doc.deal_id, userId);
+    if (accessError) return accessError;
 
     // Stream the bytes straight through the response without buffering.
     // Previously this route did readFile() and handed the whole thing
