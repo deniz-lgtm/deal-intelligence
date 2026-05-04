@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   UploadCloud,
   ArrowUpRight,
+  Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -253,6 +254,21 @@ export default function TrackSchedule({ dealId, track, description }: Props) {
             >
               <UploadCloud className="h-3.5 w-3.5" />
               Upload GC schedule
+            </Button>
+          )}
+          {/* Always-on seed-bundles button — lets the user add a new
+              bundle (e.g. "IC checkpoints") to a track that already
+              has phases, without recreating duplicates. EmptyState's
+              big seed button still appears when the track is empty. */}
+          {phases.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setWizardOpen(true)}
+              className="gap-1.5"
+            >
+              <Calendar className="h-3.5 w-3.5" />
+              Seed bundles
             </Button>
           )}
           <Button size="sm" onClick={openNew} className="gap-1.5">

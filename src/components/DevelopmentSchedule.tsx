@@ -1446,17 +1446,19 @@ export default function DevelopmentSchedule({
               <Button size="sm" variant="outline" className="text-xs" onClick={openCreatePhase}>
                 <Plus className="h-3 w-3 mr-1" /> Add Phase
               </Button>
-              {phases.length === 0 && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-xs"
-                  onClick={() => setWizardOpen(true)}
-                >
-                  <Calendar className="h-3 w-3 mr-1" />
-                  Seed Schedule
-                </Button>
-              )}
+              {/* Always available — the wizard dedupes by phase_key,
+                  so a user who seeded "Purchase" only can come back
+                  later and layer in "Diligence" or "IC" without
+                  creating duplicate rows. */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs"
+                onClick={() => setWizardOpen(true)}
+              >
+                <Calendar className="h-3 w-3 mr-1" />
+                {phases.length === 0 ? "Seed Schedule" : "Seed bundles"}
+              </Button>
               <ScheduleColumnsMenu visibility={columns} onChange={setColumns} />
               {phases.length > 0 && (
                 <div className="inline-flex items-center gap-1">
