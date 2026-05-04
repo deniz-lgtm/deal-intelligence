@@ -4,6 +4,8 @@ import { devPhaseQueries, getPool } from "@/lib/db";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import {
   DEFAULT_PHASES_BY_TRACK,
+  SCHEDULE_BUNDLES,
+  getSeedBundleIds,
   type DefaultPhaseSeed,
   type ScheduleTrack,
 } from "@/lib/types";
@@ -82,20 +84,47 @@ export async function POST(
 
     await ensureDevPhasesTable();
 
-    // Parse body once: anchor date + optional track scope.
+    // Parse body once: anchor date + optional track scope + optional
+    // bundle filter. Bundles let the seed wizard pick a subset of phases
+    // (e.g. "Purchase chain" + "Diligence" but skip "IC checkpoints"
+    // and the entire Dev/Construction default chain). Empty/absent
+    // bundles → preserve legacy "seed everything in the requested
+    // tracks" behavior so the in-deal Seed button keeps working.
     let anchorDate = new Date().toISOString().split("T")[0];
     let requestedTrack: ScheduleTrack | null = null;
+    let requestedBundles: Set<string> | null = null;
     try {
       const body = await req.json();
       if (body?.start_date) anchorDate = body.start_date;
       if (isValidTrack(body?.track)) requestedTrack = body.track;
+      if (Array.isArray(body?.bundles) && body.bundles.length > 0) {
+        const valid = getSeedBundleIds();
+        const filtered = body.bundles.filter(
+          (b: unknown): b is string => typeof b === "string" && valid.has(b)
+        );
+        if (filtered.length > 0) requestedBundles = new Set<string>(filtered);
+      }
     } catch {}
 
     // Track scope: if the caller passed a specific track, seed only that
-    // track and only if that track is currently empty. Without a track
-    // we preserve the legacy "seed all three when deal is empty" behavior
-    // so any older caller keeps working.
-    const tracksToSeed: ScheduleTrack[] = requestedTrack ? [requestedTrack] : ALL_TRACKS;
+    // track. If the caller passed bundles, derive the tracks from them
+    // (a bundle's track lives on each phase and on SCHEDULE_BUNDLES).
+    // Without either signal we preserve the legacy "seed all three when
+    // deal is empty" behavior so any older caller keeps working.
+    let tracksToSeed: ScheduleTrack[];
+    if (requestedTrack) {
+      tracksToSeed = [requestedTrack];
+    } else if (requestedBundles) {
+      // Derive tracks from the selected bundles via SCHEDULE_BUNDLES.
+      const tracks = new Set<ScheduleTrack>();
+      for (const b of SCHEDULE_BUNDLES) {
+        if (requestedBundles.has(b.id)) tracks.add(b.track);
+      }
+      tracksToSeed = Array.from(tracks);
+      if (tracksToSeed.length === 0) tracksToSeed = ALL_TRACKS;
+    } else {
+      tracksToSeed = ALL_TRACKS;
+    }
 
     const existingAll = (await devPhaseQueries.getByDealId(params.id)) as DevPhase[];
     const existingByTrack = new Map<ScheduleTrack, DevPhase[]>();
@@ -108,6 +137,14 @@ export async function POST(
     const skippedTracks: ScheduleTrack[] = [];
     const tracksActuallySeeded: ScheduleTrack[] = [];
     for (const t of tracksToSeed) {
+      // Bundle-scoped seed: allow seeding into a track that already
+      // has phases — the dedupe-by-phase_key check below prevents
+      // duplicate rows. A user can opt into "IC checkpoints" months
+      // after the rest of the acq chain went in.
+      if (requestedBundles) {
+        tracksActuallySeeded.push(t);
+        continue;
+      }
       if ((existingByTrack.get(t) ?? []).length > 0) skippedTracks.push(t);
       else tracksActuallySeeded.push(t);
     }
@@ -127,8 +164,20 @@ export async function POST(
     // track reseed slots in after existing phases on other tracks.
     let sort = existingAll.reduce((m, p) => Math.max(m, p.sort_order ?? 0), -1) + 1;
     const plan: SeedPlanRow[] = [];
+    // Phase keys already in the deal — used to skip duplicates on a
+    // bundle-scoped reseed where the user is opting in to a slice
+    // (e.g. "IC checkpoints") that lands on a track that already has
+    // some of its phases seeded.
+    const existingKeys = new Set(existingAll.map((p) => p.phase_key).filter(Boolean));
     for (const track of tracksActuallySeeded) {
       for (const seed of DEFAULT_PHASES_BY_TRACK[track]) {
+        // Bundle filter: when the wizard sent specific bundles, only
+        // include phases whose bundle id is in the selected set.
+        if (requestedBundles && !requestedBundles.has(seed.bundle)) continue;
+        // Skip phases that already exist on this deal — the user has
+        // either previously seeded this bundle or hand-edited a row
+        // with the same phase_key. Either way we shouldn't dupe.
+        if (existingKeys.has(seed.phase_key)) continue;
         plan.push({ seed, track, sort_order: sort++ });
       }
     }
