@@ -3844,6 +3844,12 @@ export const playbookQueries = {
     return res.rows;
   },
 
+  deleteDocument: async (id: string): Promise<boolean> => {
+    const pool = getPool();
+    const res = await pool.query("DELETE FROM playbook_documents WHERE id = $1", [id]);
+    return (res.rowCount ?? 0) > 0;
+  },
+
   createDocumentWithChunks: async (
     doc: Omit<PlaybookDocumentRow, "created_at" | "updated_at" | "chunk_count">,
     chunks: Array<{

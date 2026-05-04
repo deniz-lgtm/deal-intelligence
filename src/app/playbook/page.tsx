@@ -2,7 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { BookOpen, FileText, Loader2, Search, Upload } from "lucide-react";
+import {
+  BookOpen,
+  CalendarPlus,
+  CheckCircle2,
+  Clipboard,
+  FileText,
+  Loader2,
+  Search,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,11 +33,20 @@ type PlaybookDocument = {
 
 type PlaybookSource = {
   citation: number;
+  document_id: string;
   document_title: string;
   document_category: string;
   chunk_index: number;
   heading: string | null;
   excerpt: string;
+};
+
+type DealOption = {
+  id: string;
+  name: string;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
 };
 
 const CATEGORIES = [
@@ -43,16 +62,23 @@ const CATEGORIES = [
 
 export default function PlaybookPage() {
   const [documents, setDocuments] = useState<PlaybookDocument[]>([]);
+  const [deals, setDeals] = useState<DealOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [asking, setAsking] = useState(false);
+  const [creatingAction, setCreatingAction] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("handbook");
   const [file, setFile] = useState<File | null>(null);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<PlaybookSource[]>([]);
+  const [selectedDealId, setSelectedDealId] = useState("");
+  const [actionTitle, setActionTitle] = useState("");
+  const [actionTrack, setActionTrack] = useState("development");
 
   useSetPageContext(
     {
@@ -67,10 +93,19 @@ export default function PlaybookPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/playbook/documents");
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || "Failed to load playbook");
-        if (!cancelled) setDocuments(json.data ?? []);
+        const [docRes, dealRes] = await Promise.all([
+          fetch("/api/playbook/documents"),
+          fetch("/api/deals"),
+        ]);
+        const docJson = await docRes.json();
+        const dealJson = await dealRes.json().catch(() => ({ data: [] }));
+        if (!docRes.ok) throw new Error(docJson.error || "Failed to load playbook");
+        if (!cancelled) {
+          const loadedDeals = dealJson.data ?? [];
+          setDocuments(docJson.data ?? []);
+          setDeals(loadedDeals);
+          setSelectedDealId(loadedDeals[0]?.id ?? "");
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load playbook");
       } finally {
@@ -93,6 +128,7 @@ export default function PlaybookPage() {
     if (!file) return;
     setUploading(true);
     setError(null);
+    setNotice(null);
 
     try {
       const form = new FormData();
@@ -108,10 +144,31 @@ export default function PlaybookPage() {
       setFile(null);
       const input = document.getElementById("playbook-file") as HTMLInputElement | null;
       if (input) input.value = "";
+      setNotice("Source indexed into the Playbook.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const deleteDocument = async (document: PlaybookDocument) => {
+    if (!window.confirm(`Remove "${document.title}" from the Playbook?`)) return;
+    setDeletingId(document.id);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const res = await fetch(`/api/playbook/documents/${encodeURIComponent(document.id)}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Delete failed");
+      setDocuments((prev) => prev.filter((doc) => doc.id !== document.id));
+      setSources((prev) => prev.filter((source) => source.document_id !== document.id));
+      setNotice("Source removed from the Playbook.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -121,6 +178,7 @@ export default function PlaybookPage() {
     if (!trimmed) return;
     setAsking(true);
     setError(null);
+    setNotice(null);
 
     try {
       const res = await fetch("/api/playbook/ask", {
@@ -132,10 +190,55 @@ export default function PlaybookPage() {
       if (!res.ok) throw new Error(json.error || "Question failed");
       setAnswer(json.data?.answer ?? "");
       setSources(json.data?.sources ?? []);
+      setActionTitle(defaultActionTitle(trimmed));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Question failed");
     } finally {
       setAsking(false);
+    }
+  };
+
+  const createScheduleAction = async () => {
+    if (!selectedDealId || !actionTitle.trim() || !answer.trim()) return;
+    setCreatingAction(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const sourceLines = sources
+        .map((source) => `[${source.citation}] ${source.document_title}${source.heading ? ` - ${source.heading}` : ""}`)
+        .join("\n");
+      const res = await fetch(`/api/deals/${encodeURIComponent(selectedDealId)}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "task",
+          track: actionTrack,
+          label: actionTitle.trim(),
+          task_category: "playbook",
+          notes: `Playbook question:\n${question.trim()}\n\nGuidance:\n${answer.trim()}\n\nSources:\n${sourceLines || "No cited sources."}`,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to create schedule task");
+      setNotice("Created a schedule task from the Playbook answer.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create schedule task");
+    } finally {
+      setCreatingAction(false);
+    }
+  };
+
+  const copyAnswer = async () => {
+    if (!answer.trim()) return;
+    const sourceLines = sources
+      .map((source) => `[${source.citation}] ${source.document_title}${source.heading ? ` - ${source.heading}` : ""}`)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(`${answer.trim()}\n\nSources:\n${sourceLines}`);
+      setNotice("Answer copied.");
+    } catch {
+      setError("Could not copy to clipboard from this browser context.");
     }
   };
 
@@ -165,6 +268,12 @@ export default function PlaybookPage() {
           {error && (
             <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {error}
+            </div>
+          )}
+          {notice && (
+            <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-primary">
+              <CheckCircle2 className="h-4 w-4" />
+              {notice}
             </div>
           )}
 
@@ -232,7 +341,14 @@ export default function PlaybookPage() {
                       No playbook sources yet. Add your handbook to give the assistant a real house view.
                     </p>
                   ) : (
-                    documents.map((doc) => <DocumentRow key={doc.id} document={doc} />)
+                    documents.map((doc) => (
+                      <DocumentRow
+                        key={doc.id}
+                        document={doc}
+                        deleting={deletingId === doc.id}
+                        onDelete={() => deleteDocument(doc)}
+                      />
+                    ))
                   )}
                 </div>
               </section>
@@ -275,6 +391,70 @@ export default function PlaybookPage() {
                 ) : answer ? (
                   <div className="space-y-5">
                     <div className="whitespace-pre-wrap text-sm leading-6 text-foreground">{answer}</div>
+                    <div className="rounded-lg border border-border bg-card p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                        <label className="flex-1 space-y-1.5">
+                          <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                            Turn into schedule task
+                          </span>
+                          <input
+                            value={actionTitle}
+                            onChange={(e) => setActionTitle(e.target.value)}
+                            className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+                          />
+                        </label>
+                        <label className="space-y-1.5">
+                          <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">Deal</span>
+                          <select
+                            value={selectedDealId}
+                            onChange={(e) => setSelectedDealId(e.target.value)}
+                            className="h-10 w-full min-w-[220px] rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+                          >
+                            {deals.length === 0 ? (
+                              <option value="">No deals available</option>
+                            ) : (
+                              deals.map((deal) => (
+                                <option key={deal.id} value={deal.id}>
+                                  {deal.name}
+                                </option>
+                              ))
+                            )}
+                          </select>
+                        </label>
+                        <label className="space-y-1.5">
+                          <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">Track</span>
+                          <select
+                            value={actionTrack}
+                            onChange={(e) => setActionTrack(e.target.value)}
+                            className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+                          >
+                            <option value="acquisition">Acquisition</option>
+                            <option value="development">Development</option>
+                            <option value="construction">Construction</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={createScheduleAction}
+                          disabled={creatingAction || !selectedDealId || !actionTitle.trim()}
+                          className="gap-2"
+                        >
+                          {creatingAction ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <CalendarPlus className="h-4 w-4" />
+                          )}
+                          Create task
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={copyAnswer} className="gap-2">
+                          <Clipboard className="h-4 w-4" />
+                          Copy answer
+                        </Button>
+                      </div>
+                    </div>
                     {sources.length > 0 && (
                       <div className="border-t border-border pt-4">
                         <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">Sources</h3>
@@ -312,7 +492,15 @@ function Metric({ label, value }: { label: string; value: number }) {
   );
 }
 
-function DocumentRow({ document }: { document: PlaybookDocument }) {
+function DocumentRow({
+  document,
+  deleting,
+  onDelete,
+}: {
+  document: PlaybookDocument;
+  deleting: boolean;
+  onDelete: () => void;
+}) {
   return (
     <div className="rounded-lg border border-border/60 bg-background/60 p-3">
       <div className="flex items-start gap-3">
@@ -325,6 +513,17 @@ function DocumentRow({ document }: { document: PlaybookDocument }) {
             <span>{formatDate(document.created_at)}</span>
           </div>
         </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onDelete}
+          disabled={deleting}
+          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+          title="Remove source"
+        >
+          {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+        </Button>
       </div>
     </div>
   );
@@ -354,4 +553,11 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(
     new Date(value)
   );
+}
+
+function defaultActionTitle(question: string) {
+  const cleaned = question.replace(/\s+/g, " ").replace(/[?.!]\s*$/, "").trim();
+  if (!cleaned) return "Follow up on Playbook guidance";
+  const prefix = cleaned.length > 72 ? `${cleaned.slice(0, 72)}...` : cleaned;
+  return `Review: ${prefix}`;
 }
