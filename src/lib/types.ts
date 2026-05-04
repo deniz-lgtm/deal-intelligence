@@ -1491,6 +1491,14 @@ export interface DefaultPhaseSeed {
   /** phase_key of the predecessor; may reference any track. */
   predecessor_key: string | null;
   is_milestone?: boolean;
+  /**
+   * Which bundle this phase belongs to. The seed wizard groups phases
+   * by bundle so the user can opt in to slices ("Purchase chain",
+   * "Diligence items", "IC checkpoints") rather than seeding every
+   * phase on every track. SCHEDULE_BUNDLES below describes the
+   * metadata for each id.
+   */
+  bundle: string;
 }
 
 /**
@@ -1555,15 +1563,38 @@ export function workstreamForPhase(phaseKey: string): DevWorkstream {
   return PHASE_WORKSTREAM[phaseKey] ?? "other";
 }
 
-/** Acquisition: the deal-stage chain from first tour through close. */
+/** Acquisition: the deal-stage chain from first tour through close.
+ *
+ * Phases are grouped into three opt-in bundles for the seed wizard:
+ *  - acq.purchase   — contractual progression (LOI → PSA → Closing)
+ *  - acq.diligence  — DD work products (Phase I, inspection, title, survey)
+ *  - acq.ic         — Investment Committee checkpoints (pre-read + vote)
+ *
+ * A user seeding only the purchase bundle gets the high-level milestones
+ * without the inspection/IC clutter; a user seeding all three gets the
+ * full picture. Predecessor links across bundles still resolve when
+ * everything is seeded together — the CPM pass handles missing
+ * predecessors gracefully when a bundle is left out.
+ */
 export const DEFAULT_ACQ_PHASES: DefaultPhaseSeed[] = [
-  { phase_key: "acq_call_for_offers", label: "Call for Offers",      duration_days: 0,  predecessor_key: null,                    is_milestone: true },
-  { phase_key: "acq_site_walk",       label: "Site Walk",             duration_days: 0,  predecessor_key: "acq_call_for_offers",   is_milestone: true },
-  { phase_key: "acq_loi_signed",      label: "LOI Signed",            duration_days: 0,  predecessor_key: "acq_site_walk",         is_milestone: true },
-  { phase_key: "acq_psa_executed",    label: "PSA Executed",          duration_days: 14, predecessor_key: "acq_loi_signed" },
-  { phase_key: "acq_dd_period",       label: "Diligence Period",      duration_days: 45, predecessor_key: "acq_psa_executed" },
-  { phase_key: "acq_escrow",          label: "Escrow",                duration_days: 21, predecessor_key: "acq_dd_period" },
-  { phase_key: "acq_closing",         label: "Closing",               duration_days: 0,  predecessor_key: "acq_escrow",            is_milestone: true },
+  // ── Purchase chain ──
+  { phase_key: "acq_call_for_offers", label: "Call for Offers",      duration_days: 0,  predecessor_key: null,                    is_milestone: true, bundle: "acq.purchase" },
+  { phase_key: "acq_site_walk",       label: "Site Walk",             duration_days: 0,  predecessor_key: "acq_call_for_offers",   is_milestone: true, bundle: "acq.purchase" },
+  { phase_key: "acq_loi_signed",      label: "LOI Signed",            duration_days: 0,  predecessor_key: "acq_site_walk",         is_milestone: true, bundle: "acq.purchase" },
+  { phase_key: "acq_psa_executed",    label: "PSA Executed",          duration_days: 14, predecessor_key: "acq_loi_signed",                            bundle: "acq.purchase" },
+  { phase_key: "acq_escrow",          label: "Escrow",                duration_days: 21, predecessor_key: "acq_psa_executed",                          bundle: "acq.purchase" },
+  { phase_key: "acq_closing",         label: "Closing",               duration_days: 0,  predecessor_key: "acq_escrow",            is_milestone: true, bundle: "acq.purchase" },
+
+  // ── Diligence — runs concurrent off PSA execution ──
+  { phase_key: "acq_dd_period",       label: "Diligence Period",      duration_days: 45, predecessor_key: "acq_psa_executed",                          bundle: "acq.diligence" },
+  { phase_key: "acq_phase_i_esa",     label: "Phase I ESA",           duration_days: 21, predecessor_key: "acq_psa_executed",                          bundle: "acq.diligence" },
+  { phase_key: "acq_inspection",      label: "Property Inspection",   duration_days: 7,  predecessor_key: "acq_psa_executed",                          bundle: "acq.diligence" },
+  { phase_key: "acq_title_review",    label: "Title Review",          duration_days: 14, predecessor_key: "acq_psa_executed",                          bundle: "acq.diligence" },
+  { phase_key: "acq_survey",          label: "Survey & ALTA",         duration_days: 21, predecessor_key: "acq_psa_executed",                          bundle: "acq.diligence" },
+
+  // ── IC checkpoints — gated on diligence completion when both bundles seed ──
+  { phase_key: "acq_ic_preread",      label: "IC Pre-Read",           duration_days: 0,  predecessor_key: "acq_dd_period",         is_milestone: true, bundle: "acq.ic" },
+  { phase_key: "acq_ic_vote",         label: "IC Vote",               duration_days: 0,  predecessor_key: "acq_ic_preread",        is_milestone: true, bundle: "acq.ic" },
 ];
 
 /**
@@ -1578,52 +1609,137 @@ export const DEFAULT_ACQ_PHASES: DefaultPhaseSeed[] = [
  * construction loan close → NTP.
  */
 export const DEFAULT_DEV_PHASES: DefaultPhaseSeed[] = [
-  // ── Pre-Development diligence (parallel workstreams off closing) ──
-  { phase_key: "dev_feasibility_study",        label: "Feasibility Study & Market Analysis",     duration_days: 30,  predecessor_key: "acq_closing" },
-  { phase_key: "dev_financial_modeling",       label: "Financial Model Refresh",                 duration_days: 21,  predecessor_key: "acq_closing" },
-  { phase_key: "dev_consultant_onboarding",    label: "Consultant Team Onboarding",              duration_days: 30,  predecessor_key: "acq_closing" },
-  { phase_key: "dev_site_investigation",       label: "Survey, Geotech & Phase I ESA",           duration_days: 45,  predecessor_key: "acq_closing" },
+  // ── Pre-Development (bundle: dev.predev) ──
+  { phase_key: "dev_feasibility_study",        label: "Feasibility Study & Market Analysis",     duration_days: 30,  predecessor_key: "acq_closing",                                     bundle: "dev.predev" },
+  { phase_key: "dev_financial_modeling",       label: "Financial Model Refresh",                 duration_days: 21,  predecessor_key: "acq_closing",                                     bundle: "dev.predev" },
+  { phase_key: "dev_consultant_onboarding",    label: "Consultant Team Onboarding",              duration_days: 30,  predecessor_key: "acq_closing",                                     bundle: "dev.predev" },
+  { phase_key: "dev_site_investigation",       label: "Survey, Geotech & Phase I ESA",           duration_days: 45,  predecessor_key: "acq_closing",                                     bundle: "dev.predev" },
 
-  // ── Design (AIA phases) ──
-  { phase_key: "dev_schematic_design",         label: "Schematic Design (SD)",                   duration_days: 60,  predecessor_key: "dev_consultant_onboarding" },
-  { phase_key: "dev_design_development",       label: "Design Development (DD)",                 duration_days: 90,  predecessor_key: "dev_schematic_design" },
-  { phase_key: "dev_construction_docs",        label: "Construction Documents (CDs)",            duration_days: 120, predecessor_key: "dev_design_development" },
+  // ── Design (bundle: dev.design — AIA phases + utility coord) ──
+  { phase_key: "dev_schematic_design",         label: "Schematic Design (SD)",                   duration_days: 60,  predecessor_key: "dev_consultant_onboarding",                       bundle: "dev.design" },
+  { phase_key: "dev_design_development",       label: "Design Development (DD)",                 duration_days: 90,  predecessor_key: "dev_schematic_design",                            bundle: "dev.design" },
+  { phase_key: "dev_construction_docs",        label: "Construction Documents (CDs)",            duration_days: 120, predecessor_key: "dev_design_development",                          bundle: "dev.design" },
+  { phase_key: "dev_utility_coordination",     label: "Utility Coordination & Will-Serve",       duration_days: 120, predecessor_key: "dev_design_development",                          bundle: "dev.design" },
 
-  // ── Entitlements / environmental / outreach (run parallel off SD) ──
-  { phase_key: "dev_community_outreach",       label: "Community & Stakeholder Outreach",        duration_days: 90,  predecessor_key: "dev_schematic_design" },
-  { phase_key: "dev_entitlements",             label: "Entitlements",                            duration_days: 180, predecessor_key: "dev_schematic_design" },
-  { phase_key: "dev_ceqa",                     label: "CEQA / Environmental",                    duration_days: 120, predecessor_key: "dev_schematic_design" },
-  { phase_key: "dev_utility_coordination",     label: "Utility Coordination & Will-Serve",       duration_days: 120, predecessor_key: "dev_design_development" },
+  // ── Entitlement & CEQA (bundle: dev.entitle) ──
+  { phase_key: "dev_community_outreach",       label: "Community & Stakeholder Outreach",        duration_days: 90,  predecessor_key: "dev_schematic_design",                            bundle: "dev.entitle" },
+  { phase_key: "dev_entitlements",             label: "Entitlements",                            duration_days: 180, predecessor_key: "dev_schematic_design",                            bundle: "dev.entitle" },
+  { phase_key: "dev_ceqa",                     label: "CEQA / Environmental",                    duration_days: 120, predecessor_key: "dev_schematic_design",                            bundle: "dev.entitle" },
 
-  // ── Permitting ──
-  { phase_key: "dev_permitting",               label: "Building Permit Plan Check",              duration_days: 90,  predecessor_key: "dev_construction_docs" },
-  { phase_key: "dev_permit_issuance",          label: "Building Permit Issued",                  duration_days: 0,   predecessor_key: "dev_permitting", is_milestone: true },
+  // ── Permitting (bundle: dev.permit) ──
+  { phase_key: "dev_permitting",               label: "Building Permit Plan Check",              duration_days: 90,  predecessor_key: "dev_construction_docs",                           bundle: "dev.permit" },
+  { phase_key: "dev_permit_issuance",          label: "Building Permit Issued",                  duration_days: 0,   predecessor_key: "dev_permitting",          is_milestone: true,    bundle: "dev.permit" },
 
-  // ── Procurement / preconstruction ──
-  { phase_key: "dev_bid_package",              label: "Bid Package Prep",                        duration_days: 30,  predecessor_key: "dev_construction_docs" },
-  { phase_key: "dev_gc_selection",             label: "GC Selection",                            duration_days: 45,  predecessor_key: "dev_bid_package" },
-  { phase_key: "dev_precon_services",          label: "Preconstruction Services",                duration_days: 60,  predecessor_key: "dev_gc_selection" },
-  { phase_key: "dev_gmp_negotiation",          label: "GMP Negotiation",                         duration_days: 45,  predecessor_key: "dev_precon_services" },
-  { phase_key: "dev_subcontractor_buyout",     label: "Subcontractor Buyout",                    duration_days: 60,  predecessor_key: "dev_gmp_negotiation" },
-
-  // ── Financing & kickoff milestones ──
-  { phase_key: "dev_construction_loan_close",  label: "Construction Loan Close",                 duration_days: 0,   predecessor_key: "dev_permit_issuance", is_milestone: true },
-  { phase_key: "dev_ntp",                      label: "Notice to Proceed",                       duration_days: 0,   predecessor_key: "dev_construction_loan_close", is_milestone: true },
+  // ── Procurement & financing (bundle: dev.procure) ──
+  { phase_key: "dev_bid_package",              label: "Bid Package Prep",                        duration_days: 30,  predecessor_key: "dev_construction_docs",                           bundle: "dev.procure" },
+  { phase_key: "dev_gc_selection",             label: "GC Selection",                            duration_days: 45,  predecessor_key: "dev_bid_package",                                 bundle: "dev.procure" },
+  { phase_key: "dev_precon_services",          label: "Preconstruction Services",                duration_days: 60,  predecessor_key: "dev_gc_selection",                                bundle: "dev.procure" },
+  { phase_key: "dev_gmp_negotiation",          label: "GMP Negotiation",                         duration_days: 45,  predecessor_key: "dev_precon_services",                             bundle: "dev.procure" },
+  { phase_key: "dev_subcontractor_buyout",     label: "Subcontractor Buyout",                    duration_days: 60,  predecessor_key: "dev_gmp_negotiation",                             bundle: "dev.procure" },
+  { phase_key: "dev_construction_loan_close",  label: "Construction Loan Close",                 duration_days: 0,   predecessor_key: "dev_permit_issuance",     is_milestone: true,    bundle: "dev.procure" },
+  { phase_key: "dev_ntp",                      label: "Notice to Proceed",                       duration_days: 0,   predecessor_key: "dev_construction_loan_close", is_milestone: true, bundle: "dev.procure" },
 ];
 
 /** Construction: from GC mobilization through cert. of occupancy. */
 export const DEFAULT_CONSTRUCTION_PHASES: DefaultPhaseSeed[] = [
-  { phase_key: "con_mobilization",  label: "Mobilization",           duration_days: 14,  predecessor_key: "dev_ntp" },
-  { phase_key: "con_sitework",      label: "Sitework & Grading",     duration_days: 60,  predecessor_key: "con_mobilization" },
-  { phase_key: "con_foundation",    label: "Foundation",             duration_days: 60,  predecessor_key: "con_sitework" },
-  { phase_key: "con_superstruct",   label: "Superstructure",         duration_days: 180, predecessor_key: "con_foundation" },
-  { phase_key: "con_envelope",      label: "Envelope",               duration_days: 90,  predecessor_key: "con_superstruct" },
-  { phase_key: "con_mep_rough",     label: "MEP Rough-In",           duration_days: 90,  predecessor_key: "con_superstruct" },
-  { phase_key: "con_finishes",      label: "Interior Finishes",      duration_days: 120, predecessor_key: "con_envelope" },
-  { phase_key: "con_closeout",      label: "Closeout & Punch",       duration_days: 30,  predecessor_key: "con_finishes" },
-  { phase_key: "con_tco",           label: "TCO",                    duration_days: 0,   predecessor_key: "con_closeout",   is_milestone: true },
-  { phase_key: "con_cofo",          label: "Certificate of Occupancy", duration_days: 0, predecessor_key: "con_tco",        is_milestone: true },
+  // ── Vertical (bundle: con.vertical) ──
+  { phase_key: "con_mobilization",  label: "Mobilization",           duration_days: 14,  predecessor_key: "dev_ntp",                                          bundle: "con.vertical" },
+  { phase_key: "con_sitework",      label: "Sitework & Grading",     duration_days: 60,  predecessor_key: "con_mobilization",                                 bundle: "con.vertical" },
+  { phase_key: "con_foundation",    label: "Foundation",             duration_days: 60,  predecessor_key: "con_sitework",                                     bundle: "con.vertical" },
+  { phase_key: "con_superstruct",   label: "Superstructure",         duration_days: 180, predecessor_key: "con_foundation",                                   bundle: "con.vertical" },
+  { phase_key: "con_envelope",      label: "Envelope",               duration_days: 90,  predecessor_key: "con_superstruct",                                  bundle: "con.vertical" },
+  { phase_key: "con_mep_rough",     label: "MEP Rough-In",           duration_days: 90,  predecessor_key: "con_superstruct",                                  bundle: "con.vertical" },
+  { phase_key: "con_finishes",      label: "Interior Finishes",      duration_days: 120, predecessor_key: "con_envelope",                                     bundle: "con.vertical" },
+
+  // ── Closeout (bundle: con.closeout) ──
+  { phase_key: "con_closeout",      label: "Closeout & Punch",       duration_days: 30,  predecessor_key: "con_finishes",                                     bundle: "con.closeout" },
+  { phase_key: "con_tco",           label: "TCO",                    duration_days: 0,   predecessor_key: "con_closeout",   is_milestone: true,               bundle: "con.closeout" },
+  { phase_key: "con_cofo",          label: "Certificate of Occupancy", duration_days: 0, predecessor_key: "con_tco",        is_milestone: true,               bundle: "con.closeout" },
 ];
+
+// ── Bundle metadata for the seed wizard ────────────────────────────────────
+//
+// The wizard renders a checkbox per bundle, grouped by track. Each entry
+// describes one opt-in slice of the default schedule. Phases reference
+// their bundle id via DefaultPhaseSeed.bundle; the seed route filters
+// DEFAULT_PHASES_BY_TRACK by the user-selected bundle ids.
+
+export interface ScheduleBundle {
+  id: string;
+  track: ScheduleTrack;
+  label: string;
+  description: string;
+}
+
+export const SCHEDULE_BUNDLES: ScheduleBundle[] = [
+  // Acquisition
+  {
+    id: "acq.purchase",
+    track: "acquisition",
+    label: "Purchase chain",
+    description: "Call for Offers → Site Walk → LOI → PSA → Escrow → Closing",
+  },
+  {
+    id: "acq.diligence",
+    track: "acquisition",
+    label: "Diligence items",
+    description: "Phase I ESA, property inspection, title review, ALTA survey",
+  },
+  {
+    id: "acq.ic",
+    track: "acquisition",
+    label: "IC checkpoints",
+    description: "IC Pre-Read and IC Vote — gate before closing",
+  },
+  // Development
+  {
+    id: "dev.predev",
+    track: "development",
+    label: "Pre-development",
+    description: "Feasibility, financial refresh, consultants, geotech & ESA",
+  },
+  {
+    id: "dev.design",
+    track: "development",
+    label: "Design",
+    description: "SD → DD → CDs (AIA phases) plus utility coordination",
+  },
+  {
+    id: "dev.entitle",
+    track: "development",
+    label: "Entitlement & CEQA",
+    description: "Outreach, entitlements, environmental review",
+  },
+  {
+    id: "dev.permit",
+    track: "development",
+    label: "Permitting",
+    description: "Building permit plan check + permit issuance milestone",
+  },
+  {
+    id: "dev.procure",
+    track: "development",
+    label: "Procurement & financing",
+    description: "Bid → GC → precon → GMP → buyout, then loan close + NTP",
+  },
+  // Construction
+  {
+    id: "con.vertical",
+    track: "construction",
+    label: "Vertical",
+    description: "Mobilization → sitework → foundation → super → envelope → finishes",
+  },
+  {
+    id: "con.closeout",
+    track: "construction",
+    label: "Closeout",
+    description: "Punch list, TCO, Certificate of Occupancy",
+  },
+];
+
+export function getSeedBundleIds(): Set<string> {
+  return new Set(SCHEDULE_BUNDLES.map((b) => b.id));
+}
 
 export const DEFAULT_PHASES_BY_TRACK: Record<ScheduleTrack, DefaultPhaseSeed[]> = {
   acquisition: DEFAULT_ACQ_PHASES,

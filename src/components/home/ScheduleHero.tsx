@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CalendarDays, ChevronDown, ChevronUp } from "lucide-react";
 import { DEAL_STAGE_LABELS, type DealStatus } from "@/lib/types";
+import { ScheduleSeedWizard } from "./ScheduleSeedWizard";
 
 // ─── The Schedule hero — editorial broadsheet ────────────────────────────────
 //
@@ -288,31 +289,22 @@ export function ScheduleHero() {
   const populatedRows = useMemo(() => dealRows.filter((r) => !r.empty), [dealRows]);
   const emptyRows = useMemo(() => dealRows.filter((r) => r.empty), [dealRows]);
 
-  // Seed handler — POSTs to the existing dev-schedule/seed endpoint, which
-  // accepts an optional track. We seed all three tracks at once on first
-  // request so the user gets full Acq → Dev → Construction phase chain
-  // without having to know which track is "primary" for their deal.
-  const [seedingDealId, setSeedingDealId] = useState<string | null>(null);
-  const seedSchedule = async (dealId: string) => {
-    setSeedingDealId(dealId);
+  // Seed wizard — opened from an empty deal row. The wizard handles
+  // bundle selection + the POST itself; we just need to track which
+  // deal it's for and refresh the timeline when it finishes.
+  const [wizardDealId, setWizardDealId] = useState<string | null>(null);
+  const wizardDealName = useMemo(() => {
+    if (!wizardDealId || !data) return "";
+    return data.deals.find((d) => d.id === wizardDealId)?.name ?? "";
+  }, [wizardDealId, data]);
+
+  const refreshTimeline = async () => {
     try {
-      const res = await fetch(`/api/deals/${dealId}/dev-schedule/seed`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) {
-        console.error("Seed failed:", await res.text());
-        return;
-      }
-      // Refetch the timeline so the just-seeded phases appear.
-      const refreshed = await fetch(`/api/workspace/schedule-timeline?weeks=${weeks}`);
-      const j = await refreshed.json();
+      const r = await fetch(`/api/workspace/schedule-timeline?weeks=${weeks}`);
+      const j = await r.json();
       if (j.data) setData(j.data);
     } catch (err) {
-      console.error("Seed schedule error:", err);
-    } finally {
-      setSeedingDealId(null);
+      console.error("Refresh schedule error:", err);
     }
   };
 
@@ -495,8 +487,7 @@ export function ScheduleHero() {
                       key={row.deal.id}
                       deal={row.deal}
                       index={populatedRows.length + i}
-                      seeding={seedingDealId === row.deal.id}
-                      onSeed={() => seedSchedule(row.deal.id)}
+                      onSeed={() => setWizardDealId(row.deal.id)}
                     />
                   ))}
                 </ul>
@@ -505,6 +496,19 @@ export function ScheduleHero() {
           </>
         )}
       </div>
+
+      {/* Seed wizard — mounted once at the section level so opening it from
+          one row, closing, and opening from another doesn't unmount/remount
+          the modal. The wizard reads dealId/dealName from props each open. */}
+      <ScheduleSeedWizard
+        open={wizardDealId !== null}
+        dealId={wizardDealId ?? ""}
+        dealName={wizardDealName}
+        onClose={() => setWizardDealId(null)}
+        onSeeded={() => {
+          refreshTimeline();
+        }}
+      />
     </section>
   );
 }
@@ -669,12 +673,10 @@ function formatBarDate(ms: number) {
 function EmptyDealRow({
   deal,
   index,
-  seeding,
   onSeed,
 }: {
   deal: DealRow;
   index: number;
-  seeding: boolean;
   onSeed: () => void;
 }) {
   const meta = [deal.city, deal.state].filter(Boolean).join(", ");
@@ -718,10 +720,9 @@ function EmptyDealRow({
       <div className="relative py-2.5 px-3 flex items-center">
         <button
           onClick={onSeed}
-          disabled={seeding}
-          className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/65 hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/65 hover:text-primary transition-colors"
         >
-          {seeding ? "Seeding…" : "+ Seed default schedule →"}
+          + Seed schedule →
         </button>
       </div>
     </li>
