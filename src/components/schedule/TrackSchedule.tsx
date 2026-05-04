@@ -292,6 +292,7 @@ export default function TrackSchedule({ dealId, track, description }: Props) {
       ) : (
         <>
           <PhaseTable
+            dealId={dealId}
             phases={visiblePhases}
             allPhases={allPhases}
             onEdit={openEdit}
@@ -454,11 +455,13 @@ function EmptyState({
 }
 
 function PhaseTable({
+  dealId,
   phases,
   allPhases,
   onEdit,
   onDelete,
 }: {
+  dealId: string;
   phases: DevPhase[];
   allPhases: DevPhase[];
   onEdit: (p: DevPhase) => void;
@@ -496,6 +499,15 @@ function PhaseTable({
                   {p.is_milestone && <Flag className="inline h-3 w-3 mr-1 text-primary" />}
                   {p.label}
                 </button>
+                {!p.parent_phase_id && (
+                  <a
+                    href={`/deals/${dealId}/schedule/focus/${p.id}`}
+                    className="ml-2 inline-flex items-center gap-0.5 text-[10px] text-primary/80 hover:text-primary hover:underline"
+                  >
+                    Focus
+                    <ArrowUpRight className="h-2.5 w-2.5" />
+                  </a>
+                )}
                 {p.is_critical && (
                   <Badge variant="outline" className="ml-2 border-red-500/40 text-red-400 text-[10px]">
                     <AlertTriangle className="h-2.5 w-2.5 mr-1" /> Critical

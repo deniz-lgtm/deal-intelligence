@@ -1742,6 +1742,16 @@ export default function DevelopmentSchedule({
                               >
                                 {p.label}
                               </button>
+                              {!isChild && (
+                                <a
+                                  href={`/deals/${dealId}/schedule/focus/${p.id}`}
+                                  className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-0.5 text-2xs text-primary/80 hover:text-primary transition-opacity"
+                                  title="Open mini schedule"
+                                >
+                                  Focus
+                                  <ArrowUpRight className="h-2.5 w-2.5" />
+                                </a>
+                              )}
                               {Array.isArray(p.linked_document_ids) &&
                                 p.linked_document_ids.length > 0 && (
                                   <button
