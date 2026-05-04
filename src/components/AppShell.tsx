@@ -62,6 +62,7 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
       { href: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" },
       { href: "/contacts", label: "Contacts", icon: Users, permission: "contacts.access" },
       { href: "/business-plans", label: "Business Plans", icon: BookOpen, permission: "business_plans.access" },
+      { href: "/playbook", label: "Playbook", icon: BookOpen },
     ],
   },
   {

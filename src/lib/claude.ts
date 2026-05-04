@@ -1212,6 +1212,8 @@ export interface UniversalChatContext {
   screen?: string | null;
   // Which page the user is on. Helps the model craft relevant suggestions.
   route?: string | null;
+  // Retrieved company playbook excerpts relevant to the user's latest message.
+  playbook_context?: string | null;
 }
 
 export async function chatUniversal(
@@ -1248,6 +1250,11 @@ None — the user is on a workspace-level page. save_context, update_deal_fields
 ${ctx.screen.trim()}`
     : "";
 
+  const playbookBlock = ctx.playbook_context?.trim()
+    ? `## Development Playbook
+${ctx.playbook_context.trim()}`
+    : "";
+
   const promptTemplate = await getPrompt(
     "universal_chat",
     "Universal Chatbot",
@@ -1256,6 +1263,8 @@ ${ctx.screen.trim()}`
 {{deal_block}}
 
 {{screen_block}}
+
+{{playbook_block}}
 
 ## Uploaded Documents
 {{doc_context}}
@@ -1268,16 +1277,18 @@ ${ctx.screen.trim()}`
 5. Be page-aware — if the user says "the exit cap is too aggressive" and they're on the Underwriting page, patch that field. If they say "move this to LOI" from the deals list, update the status.
 
 Guidance:
+- When Development Playbook excerpts are relevant, use them as company memory and cite them like [1].
 - Always accompany a tool use with a short text confirmation so the user sees what you did.
 - Keep responses concise — this is a sidebar, not a full page.
 - If the user asks you to "stress-test" / "challenge" / "review" the underwriting model, point them to the UW Co-Pilot tab of this widget (Review / What-If / Benchmarks) rather than trying to do that analysis in chat.
 - Never fabricate financial facts. If you don't have enough data in the memory or documents to answer, say so and ask the user for the missing piece.`,
-    "System prompt for the universal (cross-page) chatbot. Supports {{deal_block}}, {{screen_block}}, {{doc_context}}."
+    "System prompt for the universal (cross-page) chatbot. Supports {{deal_block}}, {{screen_block}}, {{playbook_block}}, {{doc_context}}."
   );
 
   const systemPrompt = promptTemplate
     .replace(/\{\{deal_block\}\}/g, dealBlock)
     .replace(/\{\{screen_block\}\}/g, screenBlock)
+    .replace(/\{\{playbook_block\}\}/g, playbookBlock)
     .replace(/\{\{doc_context\}\}/g, docContext || "No documents uploaded yet.");
 
   // Filter out deal-scoped tools when no deal is active. Keeps the model

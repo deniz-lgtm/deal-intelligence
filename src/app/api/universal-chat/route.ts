@@ -5,10 +5,12 @@ import {
   documentQueries,
   dealQueries,
   dealNoteQueries,
+  playbookQueries,
   underwritingQueries,
 } from "@/lib/db";
 import { chatUniversal } from "@/lib/claude";
 import type { UniversalChatContext } from "@/lib/claude";
+import { formatPlaybookContext } from "@/lib/playbook";
 import {
   requireAuth,
   requireDealAccess,
@@ -101,6 +103,10 @@ export async function POST(req: NextRequest) {
       20
     )) as Array<{ role: "user" | "assistant"; content: string }>;
     const history = rawHistory.map((m) => ({ role: m.role, content: m.content }));
+    const playbookHits = await playbookQueries.search(message, 4).catch((error) => {
+      console.warn("universal-chat playbook search failed:", error);
+      return [];
+    });
 
     // Persist the user message with page context for later review
     await chatQueries.create({
@@ -117,6 +123,7 @@ export async function POST(req: NextRequest) {
         deal,
         screen: pageCtx.screen_summary || null,
         route: pageCtx.route || null,
+        playbook_context: playbookHits.length > 0 ? formatPlaybookContext(playbookHits) : null,
       },
       documents,
       history,

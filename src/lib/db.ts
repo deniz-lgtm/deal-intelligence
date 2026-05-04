@@ -988,6 +988,33 @@ export async function ensureColumns(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_ic_packages_deal_id ON ic_packages(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_ic_packages_latest ON ic_packages(deal_id, is_latest) WHERE is_latest = true`,
+    // Development Playbook: workspace-level institutional memory. This is
+    // intentionally deal-agnostic so a handbook / lessons-learned library can
+    // inform underwriting, design, entitlement, and construction decisions
+    // across every project.
+    `CREATE TABLE IF NOT EXISTS playbook_documents (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'handbook',
+      original_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      content_text TEXT NOT NULL,
+      uploaded_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS playbook_chunks (
+      id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL REFERENCES playbook_documents(id) ON DELETE CASCADE,
+      chunk_index INTEGER NOT NULL,
+      heading TEXT,
+      content TEXT NOT NULL,
+      token_estimate INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_playbook_chunks_document_id ON playbook_chunks(document_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_playbook_chunks_search ON playbook_chunks USING GIN (to_tsvector('english', content))`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -3772,6 +3799,169 @@ export const chatQueries = {
 };
 
 // ─── OM Analysis queries ──────────────────────────────────────────────────────
+
+// Development Playbook queries
+
+export interface PlaybookDocumentRow {
+  id: string;
+  title: string;
+  category: string;
+  original_name: string;
+  mime_type: string;
+  file_size: number;
+  content_text: string;
+  uploaded_by: string | null;
+  created_at: string;
+  updated_at: string;
+  chunk_count?: number;
+}
+
+export interface PlaybookChunkRow {
+  id: string;
+  document_id: string;
+  document_title: string;
+  document_category: string;
+  original_name: string;
+  chunk_index: number;
+  heading: string | null;
+  content: string;
+  token_estimate: number;
+  rank?: number;
+}
+
+export const playbookQueries = {
+  getDocuments: async (): Promise<PlaybookDocumentRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT
+        d.*,
+        COUNT(c.id)::int AS chunk_count
+       FROM playbook_documents d
+       LEFT JOIN playbook_chunks c ON c.document_id = d.id
+       GROUP BY d.id
+       ORDER BY d.updated_at DESC`
+    );
+    return res.rows;
+  },
+
+  createDocumentWithChunks: async (
+    doc: Omit<PlaybookDocumentRow, "created_at" | "updated_at" | "chunk_count">,
+    chunks: Array<{
+      id: string;
+      chunk_index: number;
+      heading?: string | null;
+      content: string;
+      token_estimate: number;
+    }>
+  ): Promise<PlaybookDocumentRow> => {
+    const pool = getPool();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const docRes = await client.query(
+        `INSERT INTO playbook_documents
+          (id, title, category, original_name, mime_type, file_size, content_text, uploaded_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         RETURNING *`,
+        [
+          doc.id,
+          doc.title,
+          doc.category,
+          doc.original_name,
+          doc.mime_type,
+          doc.file_size,
+          doc.content_text,
+          doc.uploaded_by,
+        ]
+      );
+
+      for (const chunk of chunks) {
+        await client.query(
+          `INSERT INTO playbook_chunks
+            (id, document_id, chunk_index, heading, content, token_estimate)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [
+            chunk.id,
+            doc.id,
+            chunk.chunk_index,
+            chunk.heading ?? null,
+            chunk.content,
+            chunk.token_estimate,
+          ]
+        );
+      }
+
+      await client.query("COMMIT");
+      return { ...docRes.rows[0], chunk_count: chunks.length };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  search: async (query: string, limit = 8): Promise<PlaybookChunkRow[]> => {
+    const normalized = query.trim();
+    if (!normalized) return [];
+
+    const pool = getPool();
+    const tsRes = await pool.query(
+      `WITH q AS (SELECT plainto_tsquery('english', $1) AS query)
+       SELECT
+        c.id,
+        c.document_id,
+        d.title AS document_title,
+        d.category AS document_category,
+        d.original_name,
+        c.chunk_index,
+        c.heading,
+        c.content,
+        c.token_estimate,
+        ts_rank(to_tsvector('english', c.content), q.query) AS rank
+       FROM playbook_chunks c
+       JOIN playbook_documents d ON d.id = c.document_id
+       CROSS JOIN q
+       WHERE to_tsvector('english', c.content) @@ q.query
+       ORDER BY rank DESC, d.updated_at DESC, c.chunk_index ASC
+       LIMIT $2`,
+      [normalized, limit]
+    );
+
+    if (tsRes.rows.length > 0) return tsRes.rows;
+
+    const likeTerms = normalized
+      .split(/\s+/)
+      .map((term) => term.replace(/[%_]/g, ""))
+      .filter(Boolean)
+      .slice(0, 4);
+
+    if (likeTerms.length === 0) return [];
+
+    const likeRes = await pool.query(
+      `SELECT
+        c.id,
+        c.document_id,
+        d.title AS document_title,
+        d.category AS document_category,
+        d.original_name,
+        c.chunk_index,
+        c.heading,
+        c.content,
+        c.token_estimate,
+        0::float AS rank
+       FROM playbook_chunks c
+       JOIN playbook_documents d ON d.id = c.document_id
+       WHERE ${likeTerms.map((_, i) => `c.content ILIKE $${i + 1}`).join(" OR ")}
+       ORDER BY d.updated_at DESC, c.chunk_index ASC
+       LIMIT $${likeTerms.length + 1}`,
+      [...likeTerms.map((term) => `%${term}%`), limit]
+    );
+    return likeRes.rows;
+  },
+};
+
+// OM Analysis queries
 
 export interface OmAnalysisRow {
   id: string;
