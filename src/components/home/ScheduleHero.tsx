@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CalendarDays, ChevronDown, ChevronUp } from "lucide-react";
 import { DEAL_STAGE_LABELS, type DealStatus } from "@/lib/types";
-import { ScheduleSeedWizard } from "./ScheduleSeedWizard";
 
 // ─── The Schedule hero — editorial broadsheet ────────────────────────────────
 //
@@ -289,24 +288,10 @@ export function ScheduleHero() {
   const populatedRows = useMemo(() => dealRows.filter((r) => !r.empty), [dealRows]);
   const emptyRows = useMemo(() => dealRows.filter((r) => r.empty), [dealRows]);
 
-  // Seed wizard — opened from an empty deal row. The wizard handles
-  // bundle selection + the POST itself; we just need to track which
-  // deal it's for and refresh the timeline when it finishes.
-  const [wizardDealId, setWizardDealId] = useState<string | null>(null);
-  const wizardDealName = useMemo(() => {
-    if (!wizardDealId || !data) return "";
-    return data.deals.find((d) => d.id === wizardDealId)?.name ?? "";
-  }, [wizardDealId, data]);
-
-  const refreshTimeline = async () => {
-    try {
-      const r = await fetch(`/api/workspace/schedule-timeline?weeks=${weeks}`);
-      const j = await r.json();
-      if (j.data) setData(j.data);
-    } catch (err) {
-      console.error("Refresh schedule error:", err);
-    }
-  };
+  // The seed wizard lives at the deal level — empty deal rows here
+  // route the user into the deal's schedule page where they can pick
+  // which bundles to seed. Keeping the wizard out of the home page
+  // avoids the "I clicked one button and got 30 phases" surprise.
 
   // Pull-up CTA when there are no deals at all (vs. deals exist but
   // none have schedules — the latter renders inline "Seed schedule"
@@ -487,7 +472,6 @@ export function ScheduleHero() {
                       key={row.deal.id}
                       deal={row.deal}
                       index={populatedRows.length + i}
-                      onSeed={() => setWizardDealId(row.deal.id)}
                     />
                   ))}
                 </ul>
@@ -496,19 +480,6 @@ export function ScheduleHero() {
           </>
         )}
       </div>
-
-      {/* Seed wizard — mounted once at the section level so opening it from
-          one row, closing, and opening from another doesn't unmount/remount
-          the modal. The wizard reads dealId/dealName from props each open. */}
-      <ScheduleSeedWizard
-        open={wizardDealId !== null}
-        dealId={wizardDealId ?? ""}
-        dealName={wizardDealName}
-        onClose={() => setWizardDealId(null)}
-        onSeeded={() => {
-          refreshTimeline();
-        }}
-      />
     </section>
   );
 }
@@ -673,11 +644,9 @@ function formatBarDate(ms: number) {
 function EmptyDealRow({
   deal,
   index,
-  onSeed,
 }: {
   deal: DealRow;
   index: number;
-  onSeed: () => void;
 }) {
   const meta = [deal.city, deal.state].filter(Boolean).join(", ");
   const stageLabel = DEAL_STAGE_LABELS[deal.status] ?? deal.status;
@@ -715,15 +684,17 @@ function EmptyDealRow({
         </div>
       </Link>
 
-      {/* Right rail — inline CTA. Deliberately quiet so it sits below the
-          colored bars above without competing for attention. */}
+      {/* Right rail — quiet "open the deal to seed" link. The wizard
+          itself lives on the deal page so the user picks bundles in
+          context (and can also look at any data already on the deal
+          before deciding what to schedule). */}
       <div className="relative py-2.5 px-3 flex items-center">
-        <button
-          onClick={onSeed}
+        <Link
+          href={`/deals/${deal.id}/project`}
           className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/65 hover:text-primary transition-colors"
         >
-          + Seed schedule →
-        </button>
+          Set up schedule →
+        </Link>
       </div>
     </li>
   );

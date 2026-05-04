@@ -28,6 +28,7 @@ import {
   type ScheduleTrack,
 } from "@/lib/types";
 import GcScheduleImportDialog from "./GcScheduleImportDialog";
+import { ScheduleSeedWizard } from "./ScheduleSeedWizard";
 
 interface Props {
   dealId: string;
@@ -63,6 +64,9 @@ export default function TrackSchedule({ dealId, track, description }: Props) {
   const [phases, setPhases] = useState<DevPhase[]>([]);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
+  // Wizard opened from EmptyState — replaces the legacy "seed
+  // everything in this track" flow with bundle-by-bundle opt-in.
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
   // Edit/new-phase dialog state
@@ -265,7 +269,7 @@ export default function TrackSchedule({ dealId, track, description }: Props) {
       ) : isEmpty ? (
         <EmptyState
           trackLabel={trackLabel}
-          onSeed={handleSeed}
+          onSeed={() => setWizardOpen(true)}
           seeding={seeding}
           onImport={track === "construction" ? () => setImportOpen(true) : undefined}
         />
@@ -375,6 +379,17 @@ export default function TrackSchedule({ dealId, track, description }: Props) {
           onCommitted={() => { void load(); }}
         />
       )}
+
+      {/* Bundle-pick wizard. Replaces the per-track "Seed defaults"
+          one-click that filled this track's chain with no choice; the
+          user can now seed Acq Purchase only, or Dev Design only, etc. */}
+      <ScheduleSeedWizard
+        dealId={dealId}
+        dealName=""
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onSeeded={() => { void load(); }}
+      />
     </div>
   );
 }

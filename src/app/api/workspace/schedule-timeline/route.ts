@@ -38,7 +38,8 @@ export async function GET(req: NextRequest) {
     // deals with many phases.
     const dealsRes = await pool.query(
       `SELECT DISTINCT d.id, d.name, d.status, d.city, d.state,
-              d.show_in_development, d.show_in_construction
+              d.show_in_development, d.show_in_construction,
+              d.updated_at
          FROM deals d
          LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $1
         WHERE (d.owner_id = $1 OR ds.deal_id IS NOT NULL)
