@@ -95,6 +95,7 @@ import {
   findBonusCard,
 } from "@/lib/bonus-catalog";
 import { toast } from "sonner";
+import { ScheduleSeedWizard } from "@/components/schedule/ScheduleSeedWizard";
 
 /**
  * Per-user custom entitlement templates (now DB-backed). Each template
@@ -198,6 +199,10 @@ export default function DevelopmentSchedule({
   });
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
+  // Wizard sits at the deal level — opens the bundle picker when the
+  // user clicks "Seed Default Phases" instead of dumping every track's
+  // default chain at once.
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const [scheduleExpanded, setScheduleExpanded] = useState(true);
   const [budgetExpanded, setBudgetExpanded] = useState(true);
@@ -1441,10 +1446,15 @@ export default function DevelopmentSchedule({
               <Button size="sm" variant="outline" className="text-xs" onClick={openCreatePhase}>
                 <Plus className="h-3 w-3 mr-1" /> Add Phase
               </Button>
-              {isDevTrack && phases.length === 0 && (
-                <Button size="sm" variant="outline" className="text-xs" onClick={handleSeedPhases} disabled={seeding}>
-                  {seeding ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Calendar className="h-3 w-3 mr-1" />}
-                  Seed Default Phases
+              {phases.length === 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs"
+                  onClick={() => setWizardOpen(true)}
+                >
+                  <Calendar className="h-3 w-3 mr-1" />
+                  Seed Schedule
                 </Button>
               )}
               <ScheduleColumnsMenu visibility={columns} onChange={setColumns} />
@@ -3019,6 +3029,20 @@ export default function DevelopmentSchedule({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Bundle-pick wizard. Opens from the inline "Seed Schedule" button
+          on each track when the schedule is empty. The wizard handles
+          its own POST + reload; we just refresh the local cache when it
+          completes. */}
+      <ScheduleSeedWizard
+        dealId={dealId}
+        dealName=""
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onSeeded={() => {
+          loadAll();
+        }}
+      />
     </div>
   );
 }
