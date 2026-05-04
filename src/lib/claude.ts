@@ -971,6 +971,50 @@ const DEAL_CHAT_TOOLS: Anthropic.Tool[] = [
       required: ["updates"],
     },
   },
+  {
+    name: "create_schedule_item",
+    description:
+      "Create a schedule phase, milestone, or task on the active deal. Use when the user asks you to add a task, follow-up, deadline, milestone, or schedule item. Requires edit access to the active deal.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        label: {
+          type: "string",
+          description: "Short action-oriented schedule item label.",
+        },
+        track: {
+          type: "string",
+          enum: ["acquisition", "development", "construction"],
+          description:
+            "Which lifecycle track owns the item. Default to development for design, entitlement, predevelopment, or coordination work.",
+        },
+        kind: {
+          type: "string",
+          enum: ["phase", "milestone", "task"],
+          description: "Use task for follow-ups, milestone for point-in-time deadlines, phase for larger work blocks.",
+        },
+        duration_days: {
+          type: "number",
+          description: "Expected duration in days. Use 0 for milestones.",
+        },
+        parent_phase_id: {
+          type: "string",
+          description:
+            "Optional existing parent schedule item id when the task belongs inside a mini schedule. Omit when unknown.",
+        },
+        task_owner: {
+          type: "string",
+          description: "Optional owner such as PM, architect, counsel, GC, acquisitions, or development manager.",
+        },
+        notes: {
+          type: "string",
+          description:
+            "Helpful context for the task: why it matters, what decision it supports, and any source/citation.",
+        },
+      },
+      required: ["label", "track", "kind"],
+    },
+  },
 ];
 
 export async function chatWithDealIntelligence(
@@ -1096,10 +1140,20 @@ export interface UniversalChatAction {
     | "context_saved"
     | "deal_updated"
     | "underwriting_updated"
-    | "note_created";
+    | "note_created"
+    | "schedule_item_created";
   note?: string;
   fields?: Record<string, unknown>;
   category?: string;
+  schedule_item?: {
+    label: string;
+    track: "acquisition" | "development" | "construction";
+    kind: "phase" | "milestone" | "task";
+    duration_days?: number | null;
+    parent_phase_id?: string | null;
+    task_owner?: string | null;
+    notes?: string | null;
+  };
   display: string;
 }
 
@@ -1212,6 +1266,8 @@ export interface UniversalChatContext {
   screen?: string | null;
   // Which page the user is on. Helps the model craft relevant suggestions.
   route?: string | null;
+  // Whether the current user can mutate this deal. Read-only shares still get answers.
+  can_edit_deal?: boolean;
   // Retrieved company playbook excerpts relevant to the user's latest message.
   playbook_context?: string | null;
 }
@@ -1278,6 +1334,7 @@ ${ctx.playbook_context.trim()}`
 
 Guidance:
 - When Development Playbook excerpts are relevant, use them as company memory and cite them like [1].
+- When the user asks to create a follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
 - Always accompany a tool use with a short text confirmation so the user sees what you did.
 - Keep responses concise — this is a sidebar, not a full page.
 - If the user asks you to "stress-test" / "challenge" / "review" the underwriting model, point them to the UW Co-Pilot tab of this widget (Review / What-If / Benchmarks) rather than trying to do that analysis in chat.
@@ -1291,11 +1348,18 @@ Guidance:
     .replace(/\{\{playbook_block\}\}/g, playbookBlock)
     .replace(/\{\{doc_context\}\}/g, docContext || "No documents uploaded yet.");
 
-  // Filter out deal-scoped tools when no deal is active. Keeps the model
-  // from hallucinating save_context calls with no place to save them.
-  const tools = ctx.deal
-    ? UNIVERSAL_CHAT_TOOLS
-    : UNIVERSAL_CHAT_TOOLS.filter((t) => t.name !== "save_context" && t.name !== "update_deal_fields" && t.name !== "update_underwriting");
+  // Filter out mutation tools when no editable deal is active. View-only
+  // shares still get answers, citations, and guidance, but no writes.
+  const dealMutationTools = new Set([
+    "save_context",
+    "update_deal_fields",
+    "update_underwriting",
+    "create_schedule_item",
+  ]);
+  const tools =
+    ctx.deal && ctx.can_edit_deal
+      ? UNIVERSAL_CHAT_TOOLS
+      : UNIVERSAL_CHAT_TOOLS.filter((t) => !dealMutationTools.has(t.name));
 
   const messages: Anthropic.MessageParam[] = [
     ...history.slice(-10).map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
@@ -1346,6 +1410,30 @@ Guidance:
         type: "underwriting_updated",
         fields: input.fields,
         display: `Updated underwriting: ${fieldNames}`,
+      });
+    } else if (tool.name === "create_schedule_item" && ctx.deal && ctx.can_edit_deal) {
+      const input = tool.input as {
+        label: string;
+        track?: "acquisition" | "development" | "construction";
+        kind?: "phase" | "milestone" | "task";
+        duration_days?: number | null;
+        parent_phase_id?: string | null;
+        task_owner?: string | null;
+        notes?: string | null;
+      };
+      const kind = input.kind || "task";
+      actions.push({
+        type: "schedule_item_created",
+        schedule_item: {
+          label: input.label,
+          track: input.track || "development",
+          kind,
+          duration_days: input.duration_days ?? (kind === "milestone" ? 0 : null),
+          parent_phase_id: input.parent_phase_id || null,
+          task_owner: input.task_owner || null,
+          notes: input.notes || null,
+        },
+        display: `Created schedule ${kind}: ${input.label}`,
       });
     }
   }

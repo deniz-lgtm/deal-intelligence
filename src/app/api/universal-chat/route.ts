@@ -5,15 +5,18 @@ import {
   documentQueries,
   dealQueries,
   dealNoteQueries,
+  devPhaseQueries,
   playbookQueries,
   underwritingQueries,
 } from "@/lib/db";
 import { chatUniversal } from "@/lib/claude";
 import type { UniversalChatContext } from "@/lib/claude";
 import { formatPlaybookContext } from "@/lib/playbook";
+import { recomputeSchedule } from "@/lib/schedule-recompute";
 import {
   requireAuth,
   requireDealAccess,
+  requireDealEditAccess,
   requirePermission,
   syncCurrentUser,
 } from "@/lib/auth";
@@ -69,11 +72,14 @@ export async function POST(req: NextRequest) {
 
     // If a deal is in scope, check access. Otherwise it's a workspace chat.
     let deal: UniversalChatContext["deal"] = null;
+    let canEditDeal = false;
     let documents: Document[] = [];
     if (dealId) {
       const { deal: accessDeal, errorResponse: accessError } =
         await requireDealAccess(dealId, userId);
       if (accessError) return accessError;
+      const { errorResponse: editError } = await requireDealEditAccess(dealId, userId);
+      canEditDeal = !editError;
 
       const d = accessDeal as {
         id: string;
@@ -123,6 +129,7 @@ export async function POST(req: NextRequest) {
         deal,
         screen: pageCtx.screen_summary || null,
         route: pageCtx.route || null,
+        can_edit_deal: canEditDeal,
         playbook_context: playbookHits.length > 0 ? formatPlaybookContext(playbookHits) : null,
       },
       documents,
@@ -135,7 +142,7 @@ export async function POST(req: NextRequest) {
     // double-check server-side for safety.
     if (dealId) {
       for (const action of actions) {
-        if (action.type === "context_saved" && action.note) {
+        if (action.type === "context_saved" && action.note && canEditDeal) {
           await dealNoteQueries.create({
             id: uuidv4(),
             deal_id: dealId,
@@ -143,9 +150,9 @@ export async function POST(req: NextRequest) {
             category: action.category || "context",
             source: "chat",
           });
-        } else if (action.type === "deal_updated" && action.fields) {
+        } else if (action.type === "deal_updated" && action.fields && canEditDeal) {
           await dealQueries.update(dealId, action.fields);
-        } else if (action.type === "underwriting_updated" && action.fields) {
+        } else if (action.type === "underwriting_updated" && action.fields && canEditDeal) {
           const existing = (await underwritingQueries.getByDealId(dealId)) as
             | { id: string; data: unknown }
             | null;
@@ -166,6 +173,48 @@ export async function POST(req: NextRequest) {
               uuidv4(),
               JSON.stringify(action.fields)
             );
+          }
+        } else if (
+          action.type === "schedule_item_created" &&
+          action.schedule_item &&
+          canEditDeal
+        ) {
+          const item = action.schedule_item;
+          let resolvedTrack = item.track || "development";
+          if (item.parent_phase_id) {
+            const phases = await devPhaseQueries.getByDealId(dealId);
+            const parent = phases.find((phase) => phase.id === item.parent_phase_id);
+            if (parent) {
+              resolvedTrack = parent.track || resolvedTrack;
+            } else {
+              item.parent_phase_id = null;
+            }
+          }
+          await devPhaseQueries.create({
+            id: uuidv4(),
+            deal_id: dealId,
+            track: resolvedTrack,
+            kind: item.kind || "task",
+            phase_key: `chat_${Date.now()}`,
+            label: item.label,
+            duration_days:
+              item.kind === "milestone"
+                ? 0
+                : typeof item.duration_days === "number"
+                  ? item.duration_days
+                  : null,
+            parent_phase_id: item.parent_phase_id ?? null,
+            task_owner: item.task_owner ?? null,
+            notes: item.notes ?? null,
+            status: "not_started",
+            pct_complete: 0,
+            sort_order: 0,
+            is_milestone: item.kind === "milestone",
+          });
+          try {
+            await recomputeSchedule(dealId);
+          } catch (err) {
+            console.error("universal-chat schedule recompute error:", err);
           }
         }
       }
