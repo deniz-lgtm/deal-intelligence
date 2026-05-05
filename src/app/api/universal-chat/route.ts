@@ -6,6 +6,9 @@ import {
   dealQueries,
   dealNoteQueries,
   devPhaseQueries,
+  businessPlanQueries,
+  loiQueries,
+  omAnalysisQueries,
   playbookQueries,
   underwritingQueries,
 } from "@/lib/db";
@@ -85,16 +88,22 @@ export async function POST(req: NextRequest) {
         id: string;
         name: string;
         context_notes?: string | null;
+        business_plan_id?: string | null;
         property_type?: string | null;
         status?: string | null;
         city?: string | null;
         state?: string | null;
       };
       const memoryText = await dealNoteQueries.getMemoryText(dealId);
+      const dealFacts = await buildDealFacts(dealId, d.business_plan_id ?? null).catch((error) => {
+        console.warn("universal-chat deal facts failed:", error);
+        return null;
+      });
       deal = {
         id: d.id,
         name: d.name,
         context_notes: memoryText || d.context_notes || null,
+        deal_facts: dealFacts,
         property_type: d.property_type ?? null,
         status: d.status ?? null,
         city: d.city ?? null,
@@ -263,6 +272,114 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+async function buildDealFacts(dealId: string, businessPlanId: string | null): Promise<string | null> {
+  const [uwRow, omAnalysis, loiRow, businessPlan] = await Promise.all([
+    underwritingQueries.getByDealId(dealId).catch(() => null),
+    omAnalysisQueries.getByDealId(dealId).catch(() => null),
+    loiQueries.getByDealId(dealId).catch(() => null),
+    businessPlanId ? businessPlanQueries.getById(businessPlanId).catch(() => null) : Promise.resolve(null),
+  ]);
+
+  const sections: string[] = [];
+  const uw = parseObject((uwRow as { data?: unknown } | null)?.data);
+  const uwLines: string[] = [];
+  const push = (lines: string[], label: string, value: string | null) => {
+    if (value) lines.push(`${label}: ${value}`);
+  };
+
+  push(uwLines, "Purchase Price", formatCurrency(uw.purchase_price));
+  push(uwLines, "Vacancy", formatPercent(uw.vacancy_rate));
+  push(uwLines, "Exit Cap", formatPercent(uw.exit_cap_rate));
+  push(uwLines, "Hold Period", formatNumber(uw.hold_period_years, " years"));
+  push(uwLines, "Acquisition LTC", formatPercent(uw.acq_ltc));
+  push(uwLines, "Acquisition Rate", formatPercent(uw.acq_interest_rate));
+  if (uwLines.length > 0) sections.push(`UNDERWRITING\n${uwLines.join("\n")}`);
+
+  const om = omAnalysis as Record<string, unknown> | null;
+  if (om && om.status === "complete") {
+    const omLines: string[] = [];
+    push(omLines, "Asking Price", formatCurrency(om.asking_price));
+    push(omLines, "Reported NOI", formatCurrency(om.noi));
+    push(omLines, "Reported Cap Rate", formatPercent(om.cap_rate));
+    push(omLines, "Reported Vacancy", formatPercent(om.vacancy_rate));
+    push(omLines, "OM Score", formatNumber(om.deal_score, "/10"));
+    if (typeof om.summary === "string" && om.summary.trim()) {
+      push(omLines, "Summary", om.summary.trim().slice(0, 500));
+    }
+    if (Array.isArray(om.red_flags) && om.red_flags.length > 0) {
+      const flags = om.red_flags
+        .slice(0, 5)
+        .map((flag) => {
+          const rf = flag as Record<string, unknown>;
+          return [rf.severity, rf.category, rf.description].filter(Boolean).join(" - ");
+        })
+        .filter(Boolean)
+        .join("; ");
+      push(omLines, "Red Flags", flags || null);
+    }
+    if (omLines.length > 0) sections.push(`OM ANALYSIS\n${omLines.join("\n")}`);
+  }
+
+  const loi = loiRow as { data?: unknown; executed?: boolean } | null;
+  if (loi) {
+    const loiData = parseObject(loi.data);
+    const loiLines: string[] = [`Status: ${loi.executed ? "executed" : "draft"}`];
+    push(loiLines, "Purchase Price", formatCurrency(loiData.purchase_price));
+    push(loiLines, "Earnest Money", formatCurrency(loiData.earnest_money));
+    push(loiLines, "DD Period", formatNumber(loiData.due_diligence_days, " days"));
+    push(loiLines, "Closing", formatNumber(loiData.closing_days, " days"));
+    sections.push(`LOI\n${loiLines.join("\n")}`);
+  }
+
+  const bp = businessPlan as Record<string, unknown> | null;
+  if (bp) {
+    const bpLines: string[] = [];
+    if (typeof bp.name === "string" && bp.name.trim()) push(bpLines, "Name", bp.name.trim());
+    if (Array.isArray(bp.investment_theses) && bp.investment_theses.length > 0) {
+      push(bpLines, "Investment Thesis", bp.investment_theses.join(", "));
+    }
+    if (Array.isArray(bp.target_markets) && bp.target_markets.length > 0) {
+      push(bpLines, "Target Markets", bp.target_markets.join(", "));
+    }
+    if (typeof bp.description === "string" && bp.description.trim()) {
+      push(bpLines, "Strategy", bp.description.trim().slice(0, 500));
+    }
+    if (bpLines.length > 0) sections.push(`BUSINESS PLAN\n${bpLines.join("\n")}`);
+  }
+
+  return sections.length > 0 ? sections.join("\n\n") : null;
+}
+
+function parseObject(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function formatCurrency(value: unknown): string | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? `$${Math.round(n).toLocaleString()}` : null;
+}
+
+function formatPercent(value: unknown): string | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? `${n.toFixed(2)}%` : null;
+}
+
+function formatNumber(value: unknown, suffix = ""): string | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? `${n.toLocaleString()}${suffix}` : null;
 }
 
 export async function DELETE(req: NextRequest) {

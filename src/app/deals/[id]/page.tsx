@@ -1397,7 +1397,7 @@ function DealCommandCenter({
   recentActivity: ActivityEvent[];
 }) {
   const hasSignal = nextItems.length > 0 || watchouts.length > 0 || recentActivity.length > 0;
-  const playbookHref = `/playbook?question=${encodeURIComponent(playbookQuestion)}`;
+  const playbookHref = `/deals/${dealId}/chat?prompt=${encodeURIComponent(playbookQuestion)}`;
 
   return (
     <section className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">

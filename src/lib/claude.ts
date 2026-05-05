@@ -1254,6 +1254,7 @@ export interface UniversalChatContext {
     id: string;
     name: string;
     context_notes?: string | null;
+    deal_facts?: string | null;
     property_type?: string | null;
     status?: string | null;
     city?: string | null;
@@ -1295,6 +1296,9 @@ Name: ${ctx.deal.name}
 ${ctx.deal.property_type ? `Type: ${ctx.deal.property_type}` : ""}
 ${ctx.deal.status ? `Status: ${ctx.deal.status}` : ""}
 ${ctx.deal.city || ctx.deal.state ? `Location: ${[ctx.deal.city, ctx.deal.state].filter(Boolean).join(", ")}` : ""}
+
+## Deal Facts
+${ctx.deal.deal_facts?.trim() || "No structured deal facts loaded."}
 
 ## Deal Memory
 ${ctx.deal.context_notes?.trim() || "No context saved yet."}`

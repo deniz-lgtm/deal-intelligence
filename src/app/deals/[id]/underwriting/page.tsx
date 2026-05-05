@@ -2574,7 +2574,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
             <Eye className="h-4 w-4 mr-2" />Docs
           </Button>
           <Link
-            href={`/playbook?question=${encodeURIComponent(`For this underwriting model on ${deal?.name || "this deal"}, what assumptions should I pressure-test, what risks should I document, and what schedule or decision item should come out of the review?`)}`}
+            href={`/deals/${params.id}/chat?prompt=${encodeURIComponent(`Use the Development Playbook for this underwriting model on ${deal?.name || "this deal"}. What assumptions should I pressure-test, what risks should I document, and what schedule or decision item should come out of the review?`)}`}
           >
             <Button variant="outline" size="sm">
               <BookOpen className="h-4 w-4 mr-2" />Playbook

@@ -36,7 +36,7 @@ export default function AcquisitionSchedulePage({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              href={`/playbook?question=${encodeURIComponent("For this acquisition schedule, what Playbook checkpoints, sequencing risks, and handoff items should we verify before the next milestone?")}`}
+              href={`/deals/${params.id}/chat?prompt=${encodeURIComponent("Use the Development Playbook for this acquisition schedule. What checkpoints, sequencing risks, and handoff items should we verify before the next milestone?")}`}
             >
               <Button variant="outline" size="sm" className="gap-1.5">
                 <BookOpen className="h-3.5 w-3.5" />

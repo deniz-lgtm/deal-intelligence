@@ -1,23 +1,43 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import ChatInterface from "@/components/ChatInterface";
+import UniversalChatbot from "@/components/UniversalChatbot";
+import { useSetPageContext } from "@/lib/page-context";
 
 export default function ChatPage({ params }: { params: { id: string } }) {
-  const [deal, setDeal] = useState<{ name: string; context_notes?: string | null } | null>(null);
+  const searchParams = useSearchParams();
+  const initialPrompt = searchParams.get("prompt");
+  const [dealName, setDealName] = useState("This Deal");
   const [loading, setLoading] = useState(true);
 
-  const loadDeal = useCallback(async () => {
-    const res = await fetch(`/api/deals/${params.id}`);
-    const json = await res.json();
-    if (json.data) setDeal(json.data);
-    setLoading(false);
-  }, [params.id]);
+  useSetPageContext(
+    {
+      dealId: params.id,
+      dealName,
+      route: "deal_chat",
+      screenSummary:
+        "Dedicated Deal Intelligence chat page. User is asking deal questions, saving context, creating follow-up work, and using the same assistant history as the floating chatbot.",
+    },
+    [params.id, dealName]
+  );
 
   useEffect(() => {
-    loadDeal();
-  }, [loadDeal]);
+    let cancelled = false;
+    fetch(`/api/deals/${params.id}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (!cancelled && json.data?.name) setDealName(json.data.name);
+      })
+      .catch(console.error)
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id]);
 
   if (loading) {
     return (
@@ -28,12 +48,14 @@ export default function ChatPage({ params }: { params: { id: string } }) {
   }
 
   return (
-    <div className="h-[calc(100vh-180px)] border rounded-xl overflow-hidden bg-card">
-      <ChatInterface
+    <div className="h-[calc(100vh-180px)] overflow-hidden rounded-xl border bg-card">
+      <UniversalChatbot
+        variant="embedded"
         dealId={params.id}
-        dealName={deal?.name ?? "This Deal"}
-        contextNotes={deal?.context_notes}
-        onContextUpdated={loadDeal}
+        dealName={dealName}
+        route="deal_chat"
+        screenSummary="Dedicated Deal Intelligence chat page. User is asking deal questions, saving context, creating follow-up work, and using the same assistant history as the floating chatbot."
+        initialPrompt={initialPrompt}
       />
     </div>
   );

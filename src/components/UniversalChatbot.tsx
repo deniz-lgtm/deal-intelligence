@@ -49,23 +49,45 @@ const STARTER_QUESTIONS = [
   "Summarize the documents",
 ];
 
-export default function UniversalChatbot() {
+type UniversalChatbotProps = {
+  variant?: "floating" | "embedded";
+  dealId?: string | null;
+  dealName?: string | null;
+  route?: string | null;
+  screenSummary?: string | null;
+  initialPrompt?: string | null;
+};
+
+export default function UniversalChatbot({
+  variant = "floating",
+  dealId,
+  dealName,
+  route,
+  screenSummary,
+  initialPrompt,
+}: UniversalChatbotProps = {}) {
   const { can } = usePermissions();
   const pageCtx = usePageContext();
-  const [open, setOpen] = useState(false);
+  const isEmbedded = variant === "embedded";
+  const activeDealId = dealId ?? pageCtx.dealId;
+  const activeDealName = dealName ?? pageCtx.dealName;
+  const activeRoute = route ?? pageCtx.route;
+  const activeScreenSummary = screenSummary ?? pageCtx.screenSummary;
+  const [open, setOpen] = useState(isEmbedded);
   const [uwMode, setUwMode] = useState<UWMode>("challenge");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const appliedInitialPromptRef = useRef<string | null>(null);
 
   // Load messages on mount or when deal changes
   const loadMessages = useCallback(async () => {
     if (!can("ai.chat")) return;
     try {
-      const url = pageCtx.dealId
-        ? `/api/universal-chat?deal_id=${pageCtx.dealId}`
+      const url = activeDealId
+        ? `/api/universal-chat?deal_id=${activeDealId}`
         : "/api/universal-chat";
       const res = await fetch(url);
       const json = await res.json();
@@ -73,13 +95,21 @@ export default function UniversalChatbot() {
     } catch (err) {
       console.error("Failed to load messages:", err);
     }
-  }, [can, pageCtx.dealId]);
+  }, [can, activeDealId]);
 
   useEffect(() => {
     loadMessages();
   }, [loadMessages]);
 
   useStickToBottom(messagesEndRef, [messages]);
+
+  useEffect(() => {
+    const prompt = initialPrompt?.trim();
+    if (!prompt || appliedInitialPromptRef.current === prompt) return;
+    appliedInitialPromptRef.current = prompt;
+    setInput((current) => current || prompt);
+    if (isEmbedded) setOpen(true);
+  }, [initialPrompt, isEmbedded]);
 
   const sendMessage = async (text?: string) => {
     const msg = (text || input).trim();
@@ -102,10 +132,10 @@ export default function UniversalChatbot() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: msg,
-          deal_id: pageCtx.dealId || null,
+          deal_id: activeDealId || null,
           page_context: {
-            route: pageCtx.route,
-            screen_summary: pageCtx.screenSummary,
+            route: activeRoute,
+            screen_summary: activeScreenSummary,
           },
         }),
       });
@@ -164,7 +194,7 @@ export default function UniversalChatbot() {
   return (
     <>
       {/* Floating launcher button */}
-      {!open && (
+      {!isEmbedded && !open && (
         <button
           onClick={() => setOpen(true)}
           className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full gradient-gold text-primary-foreground font-medium text-xs shadow-lifted-md hover:brightness-110 transition-all"
@@ -175,7 +205,7 @@ export default function UniversalChatbot() {
       )}
 
       {/* Backdrop */}
-      {open && (
+      {!isEmbedded && open && (
         <div
           className="fixed inset-0 z-30 bg-black/20"
           onClick={() => setOpen(false)}
@@ -183,8 +213,15 @@ export default function UniversalChatbot() {
       )}
 
       {/* Main panel */}
-      {open && (
-        <aside className="fixed top-0 right-0 z-40 h-screen w-full sm:w-[480px] bg-card border-l border-border/60 shadow-2xl flex flex-col">
+      {(isEmbedded || open) && (
+        <aside
+          className={cn(
+            "bg-card flex flex-col",
+            isEmbedded
+              ? "h-full w-full"
+              : "fixed top-0 right-0 z-40 h-screen w-full sm:w-[480px] border-l border-border/60 shadow-2xl"
+          )}
+        >
           {/* Header */}
           <header className="flex items-center justify-between px-4 py-3 border-b border-border/40 shrink-0">
             <div className="flex items-center gap-2">
@@ -194,16 +231,18 @@ export default function UniversalChatbot() {
               <div>
                 <div className="text-sm font-semibold">Deal Intelligence</div>
                 <div className="text-[10px] text-muted-foreground">
-                  {pageCtx.dealName || "Workspace"}
+                  {activeDealName || "Workspace"}
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            >
-              <PanelRightClose className="h-4 w-4" />
-            </button>
+            {!isEmbedded && (
+              <button
+                onClick={() => setOpen(false)}
+                className="flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              >
+                <PanelRightClose className="h-4 w-4" />
+              </button>
+            )}
           </header>
 
           {/* Tabs: Chat vs UW Co-Pilot */}
@@ -267,7 +306,7 @@ export default function UniversalChatbot() {
                         </p>
                         <p className="text-[10px] text-muted-foreground">
                           I can answer questions, save context, and
-                          {pageCtx.dealId && " update your underwriting"}
+                          {activeDealId && " update your underwriting"}
                         </p>
                       </div>
                       <div className="space-y-1.5">
@@ -344,8 +383,8 @@ export default function UniversalChatbot() {
                       variant="ghost"
                       size="sm"
                       onClick={async () => {
-                        const url = pageCtx.dealId
-                          ? `/api/universal-chat?deal_id=${pageCtx.dealId}`
+                        const url = activeDealId
+                          ? `/api/universal-chat?deal_id=${activeDealId}`
                           : "/api/universal-chat";
                         await fetch(url, { method: "DELETE" });
                         setMessages([]);
@@ -364,7 +403,7 @@ export default function UniversalChatbot() {
             {pageCtx.underwriting && uwMode !== "challenge" && (
               <UWCoPilotPane
                 mode={uwMode as "whatif" | "benchmarks"}
-                dealId={pageCtx.dealId}
+                dealId={activeDealId}
                 underwriting={pageCtx.underwriting}
               />
             )}

@@ -21,7 +21,7 @@ export default function DesignPage({ params }: { params: { id: string } }) {
             </p>
           </div>
           <Link
-            href={`/playbook?question=${encodeURIComponent("For this multifamily design workflow, what standards, common misses, and architect review comments should we check before the next design submission?")}`}
+            href={`/deals/${params.id}/chat?prompt=${encodeURIComponent("Use the Development Playbook for this multifamily design workflow. What standards, common misses, and architect review comments should we check before the next design submission?")}`}
           >
             <Button variant="outline" size="sm" className="gap-1.5 flex-shrink-0">
               <BookOpen className="h-3.5 w-3.5" />

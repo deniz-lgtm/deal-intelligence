@@ -34,7 +34,7 @@ export default function ConstructionSchedulePage({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              href={`/playbook?question=${encodeURIComponent("For this construction schedule, what owner decisions, inspection milestones, long-lead items, and GC coordination risks should we check next?")}`}
+              href={`/deals/${params.id}/chat?prompt=${encodeURIComponent("Use the Development Playbook for this construction schedule. What owner decisions, inspection milestones, long-lead items, and GC coordination risks should we check next?")}`}
             >
               <Button variant="outline" size="sm" className="gap-1.5">
                 <BookOpen className="h-3.5 w-3.5" />

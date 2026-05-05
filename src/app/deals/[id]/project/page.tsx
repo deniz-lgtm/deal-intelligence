@@ -139,7 +139,7 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
             </p>
           </div>
           <Link
-            href={`/playbook?question=${encodeURIComponent("For this development schedule, what sequencing risks, owner decisions, consultant handoffs, and Playbook checkpoints should we add or verify?")}`}
+            href={`/deals/${params.id}/chat?prompt=${encodeURIComponent("Use the Development Playbook for this development schedule. What sequencing risks, owner decisions, consultant handoffs, and checkpoints should we add or verify?")}`}
           >
             <Button variant="outline" size="sm" className="gap-1.5 flex-shrink-0">
               <BookOpen className="h-3.5 w-3.5" />
