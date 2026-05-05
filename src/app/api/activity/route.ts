@@ -30,7 +30,7 @@ export async function GET() {
   )`;
 
   try {
-    const [omRows, chatRows, uwRows, docRows, statusRows] = await Promise.all([
+    const [omRows, chatRows, uwRows, docRows, statusRows, scheduleRows] = await Promise.all([
       pool.query(
         `SELECT a.id, a.deal_id, d.name as deal_name, a.status, a.model_used, a.tokens_used, a.cost_estimate, a.created_at
          FROM om_analyses a JOIN deals d ON d.id = a.deal_id
@@ -64,6 +64,15 @@ export async function GET() {
          FROM deals d
          WHERE d.id IN ${accessibleDeals}
          ORDER BY d.updated_at DESC LIMIT 20`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT p.id, p.deal_id, d.name as deal_name, p.label, p.kind, p.track, p.status,
+                p.created_at, p.completed_at
+         FROM deal_dev_phases p
+         JOIN deals d ON d.id = p.deal_id
+         WHERE p.deal_id IN ${accessibleDeals}
+         ORDER BY COALESCE(p.completed_at, p.created_at) DESC LIMIT 40`,
         [userId]
       ),
     ]);
@@ -122,6 +131,26 @@ export async function GET() {
         deal_id: row.deal_id,
         deal_name: row.deal_name,
       });
+    }
+
+    for (const row of scheduleRows.rows) {
+      const label = row.kind === "milestone" ? "milestone" : row.kind === "task" ? "task" : "phase";
+      events.push({
+        type: "schedule",
+        description: `Schedule ${label} created: ${row.label}`,
+        timestamp: row.created_at,
+        deal_id: row.deal_id,
+        deal_name: row.deal_name,
+      });
+      if (row.completed_at) {
+        events.push({
+          type: "schedule",
+          description: `Schedule ${label} completed: ${row.label}`,
+          timestamp: row.completed_at,
+          deal_id: row.deal_id,
+          deal_name: row.deal_name,
+        });
+      }
     }
 
     events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());

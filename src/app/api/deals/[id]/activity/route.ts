@@ -40,7 +40,7 @@ export async function GET(
       }
     };
 
-    const [omRows, chatRows, uwRows, docRows, loiRows, photoRows, checklistRows, ddAbstractRows, ipRows] = await Promise.all([
+    const [omRows, chatRows, uwRows, docRows, loiRows, photoRows, checklistRows, ddAbstractRows, ipRows, scheduleRows] = await Promise.all([
       pool.query(
         `SELECT id, status, model_used, tokens_used, cost_estimate, created_at
          FROM om_analyses WHERE deal_id = $1 ORDER BY created_at DESC`,
@@ -81,6 +81,19 @@ export async function GET(
       ),
       safeQuery<{ data: Record<string, unknown> }>(
         `SELECT data FROM underwriting WHERE deal_id = $1`,
+        [dealId]
+      ),
+      safeQuery<{
+        label: string;
+        kind: string | null;
+        status: string | null;
+        created_at: string;
+        completed_at: string | null;
+      }>(
+        `SELECT label, kind, status, created_at, completed_at
+         FROM deal_dev_phases
+         WHERE deal_id = $1
+         ORDER BY COALESCE(completed_at, created_at) DESC LIMIT 50`,
         [dealId]
       ),
     ]);
@@ -175,6 +188,22 @@ export async function GET(
           type: "investment_package",
           description: "Investment Package generated",
           timestamp: generatedAt,
+        });
+      }
+    }
+
+    for (const row of scheduleRows.rows) {
+      const label = row.kind === "milestone" ? "milestone" : row.kind === "task" ? "task" : "phase";
+      events.push({
+        type: "schedule",
+        description: `Schedule ${label} created: ${row.label}`,
+        timestamp: row.created_at,
+      });
+      if (row.completed_at) {
+        events.push({
+          type: "schedule",
+          description: `Schedule ${label} completed: ${row.label}`,
+          timestamp: row.completed_at,
         });
       }
     }
