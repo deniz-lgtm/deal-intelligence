@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 // Leaflet needs access to `window` / `document` at import time, so the
@@ -74,6 +75,19 @@ const STATUS_BADGE_VARIANT: Record<DealStatus, "default" | "secondary" | "destru
   archived: "outline",
 };
 
+type ActivityEvent = {
+  type: string;
+  description: string;
+  timestamp: string;
+};
+
+type CommandCenterItem = {
+  title: string;
+  meta: string;
+  href: string;
+  tone?: "default" | "warning" | "danger" | "success";
+};
+
 export default function DealOverviewPage({
   params,
 }: {
@@ -110,6 +124,7 @@ export default function DealOverviewPage({
   const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null; deal_scope: DealScope | null }>({ year_built: null, land_acres: null, investment_strategy: null, deal_scope: null });
 
   const [lastActivity, setLastActivity] = useState<Record<string, string>>({});
+  const [recentActivity, setRecentActivity] = useState<ActivityEvent[]>([]);
   // Dev/Con schedule rows feed the per-phase progress strip. Fetched
   // separately so the overview can render ACQ progress immediately
   // without waiting on the schedule query.
@@ -166,6 +181,7 @@ export default function DealOverviewPage({
         }
       }
       setLastActivity(latestByType);
+      setRecentActivity(((activityRes.events || []) as ActivityEvent[]).slice(0, 5));
       const d = dealRes.data;
       setDeal(d);
       setDocuments(docsRes.data || []);
@@ -345,6 +361,77 @@ export default function DealOverviewPage({
 
   // Compute financial highlights from underwriting data
   const highlights = computeHighlights(underwriting, deal);
+  const upcomingScheduleItems = devPhases
+    .filter((p) => (p.pct_complete ?? 0) < 100)
+    .sort((a, b) => {
+      const aDate = a.earliest_start || a.start_date;
+      const bDate = b.earliest_start || b.start_date;
+      if (!aDate && !bDate) return 0;
+      if (!aDate) return 1;
+      if (!bDate) return -1;
+      return aDate.localeCompare(bDate);
+    })
+    .slice(0, 4);
+  const pendingChecklistItems = checklist
+    .filter((item) => item.status === "pending")
+    .slice(0, 4);
+  const issueChecklistItems = checklist
+    .filter((item) => item.status === "issue")
+    .slice(0, 4);
+  const nextFocusItems: CommandCenterItem[] = [
+    ...upcomingScheduleItems.map((item) => ({
+      title: item.label,
+      meta: `${titleCase(item.track || "development")} schedule${item.earliest_start || item.start_date ? ` - ${formatShortDate(item.earliest_start || item.start_date)}` : " - unscheduled"}`,
+      href: `/deals/${params.id}/schedule/focus/${item.id}`,
+      tone: item.is_critical ? "danger" as const : "default" as const,
+    })),
+    ...pendingChecklistItems.map((item) => ({
+      title: item.item,
+      meta: `${titleCase(item.category)} diligence`,
+      href: `/deals/${params.id}/checklist`,
+      tone: "default" as const,
+    })),
+  ].slice(0, 4);
+  const watchoutItems: CommandCenterItem[] = [
+    ...issueChecklistItems.map((item) => ({
+      title: item.item,
+      meta: `${titleCase(item.category)} flagged`,
+      href: `/deals/${params.id}/checklist`,
+      tone: "danger" as const,
+    })),
+    ...(!businessPlan
+      ? [{
+          title: "No business plan linked",
+          meta: "Tie the deal back to the investment thesis",
+          href: `/deals/${params.id}`,
+          tone: "warning" as const,
+        }]
+      : []),
+    ...(!highlights
+      ? [{
+          title: "Underwriting snapshot missing",
+          meta: "Add or refresh the model before IC work",
+          href: `/deals/${params.id}/underwriting`,
+          tone: "warning" as const,
+        }]
+      : []),
+    ...(documents.length === 0
+      ? [{
+          title: "No source documents uploaded",
+          meta: "Upload OM, rent roll, survey, plans, or reports",
+          href: `/deals/${params.id}/documents`,
+          tone: "warning" as const,
+        }]
+      : []),
+    ...(devPhases.length === 0
+      ? [{
+          title: "Schedule has not been seeded",
+          meta: "Create the deal timeline before handoffs start",
+          href: `/deals/${params.id}/schedule`,
+          tone: "warning" as const,
+        }]
+      : []),
+  ].slice(0, 4);
   const addressString = [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ");
   const hasAddress = !!(deal.address || deal.city);
   const streetViewEmbed = hasAddress
@@ -646,6 +733,13 @@ export default function DealOverviewPage({
           )}
         </div>
       </div>
+
+      <DealCommandCenter
+        dealId={params.id}
+        nextItems={nextFocusItems}
+        watchouts={watchoutItems}
+        recentActivity={recentActivity}
+      />
 
       {/* ═══ INVESTMENT MATERIALS (collapsible) ═══
           Surfaces the output artifacts (LOI, DD Abstract, Investment
@@ -1296,10 +1390,153 @@ export default function DealOverviewPage({
   );
 }
 
+function DealCommandCenter({
+  dealId,
+  nextItems,
+  watchouts,
+  recentActivity,
+}: {
+  dealId: string;
+  nextItems: CommandCenterItem[];
+  watchouts: CommandCenterItem[];
+  recentActivity: ActivityEvent[];
+}) {
+  const hasSignal = nextItems.length > 0 || watchouts.length > 0 || recentActivity.length > 0;
+
+  return (
+    <section className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-border/40 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <h2 className="font-display text-sm">Deal Command Center</h2>
+          </div>
+          <p className="mt-1 text-2xs text-muted-foreground">
+            The shortest path to what changed, what needs attention, and where to act next.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/deals/${dealId}/chat`}>
+            <Button size="sm" className="h-7 gap-1.5 text-2xs">
+              <MessageSquare className="h-3 w-3" />
+              Ask this deal
+            </Button>
+          </Link>
+          <Link href="/playbook">
+            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-2xs">
+              <BookOpen className="h-3 w-3" />
+              Ask playbook
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-px bg-border/60 lg:grid-cols-3">
+        <CommandCenterColumn
+          icon={<Calendar className="h-3.5 w-3.5 text-primary" />}
+          title="Next up"
+          emptyText={hasSignal ? "No immediate schedule or diligence items." : "Add a schedule or checklist to start focusing the deal."}
+          items={nextItems}
+        />
+        <CommandCenterColumn
+          icon={<AlertTriangle className="h-3.5 w-3.5 text-amber-400" />}
+          title="Watchouts"
+          emptyText="No obvious gaps from the current deal data."
+          items={watchouts}
+        />
+        <div className="bg-card p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <FileText className="h-3.5 w-3.5 text-blue-400" />
+            <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">Recent changes</h3>
+          </div>
+          {recentActivity.length === 0 ? (
+            <p className="text-xs leading-5 text-muted-foreground">No activity recorded yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {recentActivity.slice(0, 4).map((event, index) => (
+                <Link key={`${event.type}-${event.timestamp}-${index}`} href={`/deals/${dealId}/deal-log`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
+                  <p className="line-clamp-2 text-xs font-medium leading-5">{event.description}</p>
+                  <p className="mt-0.5 text-2xs text-muted-foreground">{relativeTime(event.timestamp)}</p>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CommandCenterColumn({
+  icon,
+  title,
+  emptyText,
+  items,
+}: {
+  icon: ReactNode;
+  title: string;
+  emptyText: string;
+  items: CommandCenterItem[];
+}) {
+  return (
+    <div className="bg-card p-4">
+      <div className="mb-3 flex items-center gap-2">
+        {icon}
+        <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{title}</h3>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-xs leading-5 text-muted-foreground">{emptyText}</p>
+      ) : (
+        <div className="space-y-2">
+          {items.map((item, index) => (
+            <Link key={`${item.href}-${index}`} href={item.href} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="line-clamp-2 text-xs font-medium leading-5">{item.title}</p>
+                  <p className={cn(
+                    "mt-0.5 text-2xs",
+                    item.tone === "danger" ? "text-red-300" : item.tone === "warning" ? "text-amber-300" : "text-muted-foreground"
+                  )}>
+                    {item.meta}
+                  </p>
+                </div>
+                <ArrowRight className="mt-1 h-3 w-3 shrink-0 text-muted-foreground/50" />
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const EFFICIENCY_DEFAULTS: Record<string, number> = {
   industrial: 98, multifamily: 80, student_housing: 78,
   office: 87, retail: 95, mixed_use: 85, other: 90,
 };
+
+function formatShortDate(value?: string | null) {
+  if (!value) return "TBD";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "TBD";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
+
+function relativeTime(value?: string | null) {
+  if (!value) return "Unknown time";
+  const date = new Date(value);
+  const time = date.getTime();
+  if (Number.isNaN(time)) return "Unknown time";
+  const diffMs = Date.now() - time;
+  const minutes = Math.floor(diffMs / (1000 * 60));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
 
 function SiteDevelopmentCard({ deal, underwriting, dealId, onUnderwritingUpdate }: {
   deal: Deal;
