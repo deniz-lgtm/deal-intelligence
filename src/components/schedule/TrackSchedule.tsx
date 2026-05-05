@@ -194,6 +194,47 @@ export default function TrackSchedule({ dealId, track, description }: Props) {
     }
   };
 
+  // ── Bulk selection ──
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const selectAll = (allIds: string[]) => {
+    setSelectedIds((prev) => {
+      // Toggle: if everything visible is already selected, clear; otherwise select all visible.
+      const allSelected = allIds.length > 0 && allIds.every((id) => prev.has(id));
+      return allSelected ? new Set() : new Set(allIds);
+    });
+  };
+  const clearSelection = () => setSelectedIds(new Set());
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} ${ids.length === 1 ? "phase" : "phases"}? This can't be undone.`)) return;
+    setBulkDeleting(true);
+    // Fire deletes in parallel — the server-side recompute runs once
+    // per request so on big batches there's some redundant CPM work,
+    // but it's correct (idempotent on no-op recomputes) and saves us
+    // building a new bulk endpoint.
+    const results = await Promise.allSettled(
+      ids.map((id) =>
+        fetch(`/api/deals/${dealId}/dev-schedule/${id}`, { method: "DELETE" }),
+      ),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    setBulkDeleting(false);
+    clearSelection();
+    await load();
+    if (failed > 0) toast.error(`${failed} delete${failed === 1 ? "" : "s"} failed`);
+    else toast.success(`Deleted ${ids.length} ${ids.length === 1 ? "phase" : "phases"}`);
+  };
+
   // Candidate predecessors for the dialog dropdown — include cross-track
   // phases too so analysts can chain, e.g., Construction mobilization off
   // of Dev GC selection.
@@ -291,12 +332,23 @@ export default function TrackSchedule({ dealId, track, description }: Props) {
         />
       ) : (
         <>
+          {selectedIds.size > 0 && (
+            <BulkActionBar
+              count={selectedIds.size}
+              onDelete={handleBulkDelete}
+              onCancel={clearSelection}
+              busy={bulkDeleting}
+            />
+          )}
           <PhaseTable
             dealId={dealId}
             phases={visiblePhases}
             allPhases={allPhases}
             onEdit={openEdit}
             onDelete={handleDelete}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onSelectAll={() => selectAll(visiblePhases.map((p) => p.id))}
           />
           {ganttRange && <GanttStrip phases={visiblePhases} range={ganttRange} />}
         </>
@@ -420,6 +472,52 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+function BulkActionBar({
+  count,
+  onDelete,
+  onCancel,
+  busy,
+}: {
+  count: number;
+  onDelete: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 rounded-md border border-primary/30 bg-primary/[0.06]">
+      <span className="text-xs tabular-nums">
+        <span className="font-medium text-foreground">{count}</span>{" "}
+        <span className="text-muted-foreground">
+          {count === 1 ? "phase" : "phases"} selected
+        </span>
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          className="text-xs text-muted-foreground/80 hover:text-foreground transition-colors disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <Button
+          size="sm"
+          variant="destructive"
+          onClick={onDelete}
+          disabled={busy}
+          className="gap-1.5 h-7"
+        >
+          {busy ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Trash2 className="h-3 w-3" />
+          )}
+          Delete {count}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({
   trackLabel,
   onSeed,
@@ -460,12 +558,18 @@ function PhaseTable({
   allPhases,
   onEdit,
   onDelete,
+  selectedIds,
+  onToggleSelect,
+  onSelectAll,
 }: {
   dealId: string;
   phases: DevPhase[];
   allPhases: DevPhase[];
   onEdit: (p: DevPhase) => void;
   onDelete: (id: string) => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onSelectAll: () => void;
 }) {
   const predecessorLabel = (id: string | null): string => {
     if (!id) return "—";
@@ -474,12 +578,29 @@ function PhaseTable({
     const cross = (p.track ?? "development");
     return cross ? `${SCHEDULE_TRACK_LABELS[cross]} · ${p.label}` : p.label;
   };
+  const allSelected = phases.length > 0 && phases.every((p) => selectedIds.has(p.id));
+  const someSelected = !allSelected && phases.some((p) => selectedIds.has(p.id));
 
   return (
     <div className="rounded-lg border overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-muted/40 text-xs text-muted-foreground">
           <tr>
+            <th className="px-3 py-2 w-9">
+              {/* Select-all — clicking toggles every visible row.
+                  indeterminate ≈ "some but not all" via JS-set property
+                  (HTML doesn't have an attribute for it). */}
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected;
+                }}
+                onChange={onSelectAll}
+                aria-label={allSelected ? "Clear selection" : "Select all phases"}
+                className="h-3.5 w-3.5 rounded border-border/60 cursor-pointer"
+              />
+            </th>
             <th className="text-left px-3 py-2 font-medium">Phase</th>
             <th className="text-left px-3 py-2 font-medium">Start</th>
             <th className="text-left px-3 py-2 font-medium">Finish</th>
@@ -490,7 +611,22 @@ function PhaseTable({
         </thead>
         <tbody>
           {phases.map((p) => (
-            <tr key={p.id} className="border-t hover:bg-muted/20">
+            <tr
+              key={p.id}
+              className={cn(
+                "border-t hover:bg-muted/20",
+                selectedIds.has(p.id) && "bg-primary/[0.04]",
+              )}
+            >
+              <td className="px-3 py-2 w-9">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(p.id)}
+                  onChange={() => onToggleSelect(p.id)}
+                  aria-label={`Select ${p.label}`}
+                  className="h-3.5 w-3.5 rounded border-border/60 cursor-pointer"
+                />
+              </td>
               <td className="px-3 py-2">
                 <button
                   className="font-medium hover:underline text-left"

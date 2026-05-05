@@ -204,6 +204,37 @@ export default function DevelopmentSchedule({
   // user clicks "Seed Default Phases" instead of dumping every track's
   // default chain at once.
   const [wizardOpen, setWizardOpen] = useState(false);
+  // Bulk selection — checkboxes inline on each row, action bar above
+  // the schedule once anything is selected.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const toggleRowSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedIds(new Set());
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} ${ids.length === 1 ? "row" : "rows"}? This can't be undone.`))
+      return;
+    setBulkDeleting(true);
+    const results = await Promise.allSettled(
+      ids.map((id) =>
+        fetch(`/api/deals/${dealId}/dev-schedule/${id}`, { method: "DELETE" }),
+      ),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    setBulkDeleting(false);
+    clearSelection();
+    await loadAll();
+    if (failed > 0) toast.error(`${failed} delete${failed === 1 ? "" : "s"} failed`);
+    else toast.success(`Deleted ${ids.length} ${ids.length === 1 ? "row" : "rows"}`);
+  };
 
   const [scheduleExpanded, setScheduleExpanded] = useState(true);
   const [budgetExpanded, setBudgetExpanded] = useState(true);
@@ -1443,6 +1474,43 @@ export default function DevelopmentSchedule({
 
         {scheduleExpanded && (
           <div className="px-4 pb-4 space-y-3">
+            {/* Bulk action bar — only renders when something is
+                selected. Sits at the top of the schedule body so it's
+                visible regardless of how far the user has scrolled
+                down the row list. */}
+            {selectedIds.size > 0 && (
+              <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-primary/30 bg-primary/[0.06]">
+                <span className="text-xs tabular-nums">
+                  <span className="font-medium text-foreground">{selectedIds.size}</span>{" "}
+                  <span className="text-muted-foreground">
+                    {selectedIds.size === 1 ? "row" : "rows"} selected
+                  </span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={clearSelection}
+                    disabled={bulkDeleting}
+                    className="text-xs text-muted-foreground/80 hover:text-foreground transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={handleBulkDelete}
+                    disabled={bulkDeleting}
+                    className="gap-1.5 h-7"
+                  >
+                    {bulkDeleting ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3 w-3" />
+                    )}
+                    Delete {selectedIds.size}
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="flex gap-2 items-center">
               <Button size="sm" variant="outline" className="text-xs" onClick={openCreatePhase}>
                 <Plus className="h-3 w-3 mr-1" /> Add Phase
@@ -1707,6 +1775,25 @@ export default function DevelopmentSchedule({
                                 isChild && "pl-4 text-muted-foreground"
                               )}
                             >
+                              {/* Selection checkbox — invisible until
+                                  the row is hovered or anything in the
+                                  schedule is already selected. Click
+                                  doesn't navigate or open the edit
+                                  modal; stopPropagation on the wrapper
+                                  isn't needed because the surrounding
+                                  area is non-interactive at this depth. */}
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(p.id)}
+                                onChange={() => toggleRowSelect(p.id)}
+                                aria-label={`Select ${p.label}`}
+                                className={cn(
+                                  "shrink-0 h-3 w-3 rounded border-border/60 cursor-pointer transition-opacity",
+                                  selectedIds.size > 0 || selectedIds.has(p.id)
+                                    ? "opacity-90"
+                                    : "opacity-0 group-hover:opacity-70 hover:opacity-100",
+                                )}
+                              />
                               {dragHandleProps && (
                                 <button
                                   ref={dragHandleProps.setActivatorNodeRef}
