@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { playbookQueries } from "@/lib/db";
+import { playbookQueries, type PlaybookDocumentRow } from "@/lib/db";
 import { requireAuth, requirePermission, syncCurrentUser } from "@/lib/auth";
 import {
   buildPlaybookChunks,
@@ -10,19 +10,6 @@ import {
 } from "@/lib/playbook";
 
 export const dynamic = "force-dynamic";
-
-const PUBLIC_DOC_FIELDS = [
-  "id",
-  "title",
-  "category",
-  "original_name",
-  "mime_type",
-  "file_size",
-  "uploaded_by",
-  "created_at",
-  "updated_at",
-  "chunk_count",
-] as const;
 
 export async function GET() {
   const { userId, errorResponse } = await requireAuth();
@@ -105,8 +92,17 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function toPublicDocument(document: Record<string, unknown>) {
-  return Object.fromEntries(
-    PUBLIC_DOC_FIELDS.map((field) => [field, document[field]])
-  );
+function toPublicDocument(document: PlaybookDocumentRow) {
+  return {
+    id: document.id,
+    title: document.title,
+    category: document.category,
+    original_name: document.original_name,
+    mime_type: document.mime_type,
+    file_size: document.file_size,
+    uploaded_by: document.uploaded_by,
+    created_at: document.created_at,
+    updated_at: document.updated_at,
+    chunk_count: document.chunk_count ?? 0,
+  };
 }
