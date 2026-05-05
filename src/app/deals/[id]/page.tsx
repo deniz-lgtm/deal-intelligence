@@ -460,6 +460,7 @@ export default function DealOverviewPage({
       href: `/deals/${params.id}/chat`,
       tone: "success" as const,
     });
+  const playbookQuestion = buildDealPlaybookQuestion(deal, businessPlan);
   const addressString = [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ");
   const hasAddress = !!(deal.address || deal.city);
   const streetViewEmbed = hasAddress
@@ -765,6 +766,7 @@ export default function DealOverviewPage({
       <DealCommandCenter
         dealId={params.id}
         recommendedAction={recommendedAction}
+        playbookQuestion={playbookQuestion}
         nextItems={nextFocusItems}
         watchouts={watchoutItems}
         recentActivity={recentActivity}
@@ -1422,17 +1424,20 @@ export default function DealOverviewPage({
 function DealCommandCenter({
   dealId,
   recommendedAction,
+  playbookQuestion,
   nextItems,
   watchouts,
   recentActivity,
 }: {
   dealId: string;
   recommendedAction: CommandCenterItem;
+  playbookQuestion: string;
   nextItems: CommandCenterItem[];
   watchouts: CommandCenterItem[];
   recentActivity: ActivityEvent[];
 }) {
   const hasSignal = nextItems.length > 0 || watchouts.length > 0 || recentActivity.length > 0;
+  const playbookHref = `/playbook?question=${encodeURIComponent(playbookQuestion)}`;
 
   return (
     <section className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
@@ -1453,7 +1458,7 @@ function DealCommandCenter({
               Ask this deal
             </Button>
           </Link>
-          <Link href="/playbook">
+          <Link href={playbookHref}>
             <Button variant="outline" size="sm" className="h-7 gap-1.5 text-2xs">
               <BookOpen className="h-3 w-3" />
               Ask playbook
@@ -1580,6 +1585,17 @@ function relativeTime(value?: string | null) {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
+
+function buildDealPlaybookQuestion(deal: Deal, businessPlan: BusinessPlan | null) {
+  const parts = [
+    deal.property_type ? `${titleCase(deal.property_type)} deal` : "Real estate deal",
+    deal.deal_scope ? `scope: ${DEAL_SCOPE_LABELS[deal.deal_scope]}` : null,
+    deal.status ? `stage: ${DEAL_STAGE_LABELS[deal.status]}` : null,
+    businessPlan?.name ? `business plan: ${businessPlan.name}` : null,
+  ].filter(Boolean);
+
+  return `For this ${parts.join(", ")}, what does our Development Playbook say we should check next, what risks should we watch, and what decision or schedule item should come out of it?`;
 }
 
 function SiteDevelopmentCard({ deal, underwriting, dealId, onUnderwritingUpdate }: {

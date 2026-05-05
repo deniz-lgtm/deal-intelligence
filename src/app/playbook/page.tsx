@@ -92,6 +92,11 @@ export default function PlaybookPage() {
   );
 
   useEffect(() => {
+    const initialQuestion = new URLSearchParams(window.location.search).get("question")?.trim();
+    if (initialQuestion) setQuestion((current) => current || initialQuestion);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
