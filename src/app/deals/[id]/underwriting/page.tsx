@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from "uuid";
 import {
   Plus, Trash2, Save, Loader2, TrendingUp, DollarSign,
   Calculator, ChevronDown, ChevronUp, RefreshCw, Hammer, Sparkles, X, Check, FileText, Eye, PanelRightClose, GripVertical, BarChart3, Target, Pencil, GitCompare,
-  Car, Building2, Layers, Construction, ArrowDownUp, Info,
+  Car, Building2, Layers, Construction, ArrowDownUp, Info, BookOpen,
 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
@@ -2573,6 +2573,13 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           <Button variant="outline" size="sm" onClick={openDocViewer}>
             <Eye className="h-4 w-4 mr-2" />Docs
           </Button>
+          <Link
+            href={`/playbook?question=${encodeURIComponent(`For this underwriting model on ${deal?.name || "this deal"}, what assumptions should I pressure-test, what risks should I document, and what schedule or decision item should come out of the review?`)}`}
+          >
+            <Button variant="outline" size="sm">
+              <BookOpen className="h-4 w-4 mr-2" />Playbook
+            </Button>
+          </Link>
           <GenerateToLibraryButton
             dealId={params.id}
             kind="proforma_pdf"

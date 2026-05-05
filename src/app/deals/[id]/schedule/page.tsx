@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { UploadCloud } from "lucide-react";
+import Link from "next/link";
+import { BookOpen, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OtherTrackLinks } from "@/components/schedule/TrackSchedule";
 import AcqScheduleImportDialog from "@/components/schedule/AcqScheduleImportDialog";
@@ -33,15 +34,25 @@ export default function AcquisitionSchedulePage({
               tracking.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setImportOpen(true)}
-            className="gap-1.5 flex-shrink-0"
-          >
-            <UploadCloud className="h-3.5 w-3.5" />
-            Upload acq doc
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/playbook?question=${encodeURIComponent("For this acquisition schedule, what Playbook checkpoints, sequencing risks, and handoff items should we verify before the next milestone?")}`}
+            >
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <BookOpen className="h-3.5 w-3.5" />
+                Playbook
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setImportOpen(true)}
+              className="gap-1.5 flex-shrink-0"
+            >
+              <UploadCloud className="h-3.5 w-3.5" />
+              Upload acq doc
+            </Button>
+          </div>
         </div>
         <DevelopmentSchedule
           key={scheduleKey}

@@ -113,7 +113,7 @@ export default function DealOverviewPage({
   // sidebar group so outputs (LOI / DD Abstract / Inv. Package / Deal
   // Room) are reachable in one click from the Overview without cluttering
   // the nav. Collapsed by default.
-  const [materialsOpen, setMaterialsOpen] = useState(false);
+  const [materialsOpen, setMaterialsOpen] = useState(true);
   const [photos, setPhotos] = useState<Photo[]>([]);
   // Cover source — persisted per deal in localStorage. "street_view"
   // and "satellite" use a Google Maps embed; "photo:<id>" uses one of
@@ -125,7 +125,6 @@ export default function DealOverviewPage({
   const [editingProperty, setEditingProperty] = useState(false);
   const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null; deal_scope: DealScope | null }>({ year_built: null, land_acres: null, investment_strategy: null, deal_scope: null });
 
-  const [lastActivity, setLastActivity] = useState<Record<string, string>>({});
   const [recentActivity, setRecentActivity] = useState<ActivityEvent[]>([]);
   // Dev/Con schedule rows feed the per-phase progress strip. Fetched
   // separately so the overview can render ACQ progress immediately
@@ -175,15 +174,6 @@ export default function DealOverviewPage({
       fetch(`/api/deals/${params.id}/activity`).then((r) => r.json()).catch(() => ({ events: [] })),
       fetch(`/api/deals/${params.id}/questions`).then((r) => r.json()).catch(() => ({ data: [] })),
     ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, activityRes, questionsRes]) => {
-      // Collapse activity events into most-recent-per-type for the "last
-      // updated" strip below the scores.
-      const latestByType: Record<string, string> = {};
-      for (const ev of (activityRes.events || []) as Array<{ type: string; timestamp: string }>) {
-        if (!latestByType[ev.type] || new Date(ev.timestamp) > new Date(latestByType[ev.type])) {
-          latestByType[ev.type] = ev.timestamp;
-        }
-      }
-      setLastActivity(latestByType);
       setRecentActivity(((activityRes.events || []) as ActivityEvent[]).slice(0, 5));
       const d = dealRes.data;
       setDeal(d);
@@ -884,36 +874,6 @@ export default function DealOverviewPage({
               </Link>
             );
           })}
-        </div>
-      )}
-
-      {/* ═══ LAST UPDATED STRIP ═══ */}
-      {Object.keys(lastActivity).length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-muted-foreground px-1">
-          {[
-            { type: "om_analysis", label: "OM" },
-            { type: "underwriting", label: "UW" },
-            { type: "investment_package", label: "Inv. Pkg" },
-            { type: "dd_abstract", label: "DD Abstract" },
-            { type: "loi", label: "LOI" },
-            { type: "checklist", label: "Checklist" },
-            { type: "document", label: "Docs" },
-            { type: "photo", label: "Photos" },
-            { type: "chat", label: "Chat" },
-          ]
-            .filter(({ type }) => lastActivity[type])
-            .map(({ type, label }) => {
-              const ts = new Date(lastActivity[type]);
-              const days = Math.floor((Date.now() - ts.getTime()) / (1000 * 60 * 60 * 24));
-              const rel =
-                days === 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
-              return (
-                <span key={type} className="inline-flex items-center gap-1">
-                  <span className="text-muted-foreground/60">{label}</span>
-                  <span className="tabular-nums">{rel}</span>
-                </span>
-              );
-            })}
         </div>
       )}
 

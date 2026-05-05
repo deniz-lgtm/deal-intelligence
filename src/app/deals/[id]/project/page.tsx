@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { HardHat, ArrowRight, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { BookOpen, HardHat, ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -128,13 +129,23 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
       )}
 
       <div>
-        <div className="mb-6">
-          <h2 className="text-xl font-bold">Development Schedule</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Unified CPM gantt across every development workstream. Use the sidebar
-            to drill into Pre-Dev, Design, Entitlements, CEQA, or Procurement for
-            focused views with their workstream-specific widgets.
-          </p>
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold">Development Schedule</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Unified CPM gantt across every development workstream. Use the sidebar
+              to drill into Pre-Dev, Design, Entitlements, CEQA, or Procurement for
+              focused views with their workstream-specific widgets.
+            </p>
+          </div>
+          <Link
+            href={`/playbook?question=${encodeURIComponent("For this development schedule, what sequencing risks, owner decisions, consultant handoffs, and Playbook checkpoints should we add or verify?")}`}
+          >
+            <Button variant="outline" size="sm" className="gap-1.5 flex-shrink-0">
+              <BookOpen className="h-3.5 w-3.5" />
+              Playbook
+            </Button>
+          </Link>
         </div>
         <DevelopmentSchedule dealId={params.id} hideBudget />
       </div>

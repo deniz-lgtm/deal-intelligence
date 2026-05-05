@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { UploadCloud } from "lucide-react";
+import Link from "next/link";
+import { BookOpen, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OtherTrackLinks } from "@/components/schedule/TrackSchedule";
 import GcScheduleImportDialog from "@/components/schedule/GcScheduleImportDialog";
@@ -31,15 +32,25 @@ export default function ConstructionSchedulePage({
               bulk.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setImportOpen(true)}
-            className="gap-1.5 flex-shrink-0"
-          >
-            <UploadCloud className="h-3.5 w-3.5" />
-            Upload GC schedule
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/playbook?question=${encodeURIComponent("For this construction schedule, what owner decisions, inspection milestones, long-lead items, and GC coordination risks should we check next?")}`}
+            >
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <BookOpen className="h-3.5 w-3.5" />
+                Playbook
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setImportOpen(true)}
+              className="gap-1.5 flex-shrink-0"
+            >
+              <UploadCloud className="h-3.5 w-3.5" />
+              Upload GC schedule
+            </Button>
+          </div>
         </div>
         <DevelopmentSchedule key={scheduleKey} dealId={params.id} track="construction" />
         <GcScheduleImportDialog
