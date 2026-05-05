@@ -50,7 +50,7 @@ import { formatCurrency, formatNumber, titleCase, cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import type { Deal, DealStatus, Document, ChecklistItem, BusinessPlan, InvestmentThesis, Photo, UnderwritingData, DevPhase } from "@/lib/types";
+import type { Deal, DealStatus, Document, ChecklistItem, BusinessPlan, InvestmentThesis, Photo, UnderwritingData, DevPhase, DealQuestion } from "@/lib/types";
 import {
   DEAL_PIPELINE,
   DEAL_STAGE_LABELS,
@@ -58,6 +58,7 @@ import {
   INVESTMENT_THESIS_LABELS,
   DEAL_SCOPE_LABELS,
   EXECUTION_PHASE_CONFIG,
+  STAKEHOLDER_LABELS,
 } from "@/lib/types";
 import type { DealScope } from "@/lib/types";
 import { calc, getDefaultsForPropertyType, type UWData } from "@/lib/underwriting-calc";
@@ -98,6 +99,7 @@ export default function DealOverviewPage({
   const [deal, setDeal] = useState<Deal | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+  const [questions, setQuestions] = useState<DealQuestion[]>([]);
   const [businessPlan, setBusinessPlan] = useState<BusinessPlan | null>(null);
   const [allPlans, setAllPlans] = useState<BusinessPlan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string>("");
@@ -171,7 +173,8 @@ export default function DealOverviewPage({
       fetch(`/api/deals/${params.id}/photos`).then((r) => r.json()),
       fetch(`/api/underwriting?deal_id=${params.id}`).then((r) => r.json()),
       fetch(`/api/deals/${params.id}/activity`).then((r) => r.json()).catch(() => ({ events: [] })),
-    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, activityRes]) => {
+      fetch(`/api/deals/${params.id}/questions`).then((r) => r.json()).catch(() => ({ data: [] })),
+    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, activityRes, questionsRes]) => {
       // Collapse activity events into most-recent-per-type for the "last
       // updated" strip below the scores.
       const latestByType: Record<string, string> = {};
@@ -186,6 +189,7 @@ export default function DealOverviewPage({
       setDeal(d);
       setDocuments(docsRes.data || []);
       setChecklist(checklistRes.data || []);
+      setQuestions(questionsRes.data || []);
       setPhotos(photosRes.data || []);
       if (uwRes.data?.data) {
         try {
@@ -378,12 +382,27 @@ export default function DealOverviewPage({
   const issueChecklistItems = checklist
     .filter((item) => item.status === "issue")
     .slice(0, 4);
+  const openQuestions = questions
+    .filter((question) => question.status === "open" || question.status === "asked")
+    .sort((a, b) => {
+      const statusA = a.status === "asked" ? 0 : 1;
+      const statusB = b.status === "asked" ? 0 : 1;
+      if (statusA !== statusB) return statusA - statusB;
+      return new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime();
+    })
+    .slice(0, 4);
   const nextFocusItems: CommandCenterItem[] = [
     ...upcomingScheduleItems.map((item) => ({
       title: item.label,
       meta: `${titleCase(item.track || "development")} schedule${item.earliest_start || item.start_date ? ` - ${formatShortDate(item.earliest_start || item.start_date)}` : " - unscheduled"}`,
       href: `/deals/${params.id}/schedule/focus/${item.id}`,
       tone: item.is_critical ? "danger" as const : "default" as const,
+    })),
+    ...openQuestions.map((question) => ({
+      title: question.question,
+      meta: `${question.status === "asked" ? "Awaiting answer from" : "Open question for"} ${STAKEHOLDER_LABELS[question.target_role] || titleCase(question.target_role)}`,
+      href: `/deals/${params.id}/communication`,
+      tone: question.status === "asked" ? "warning" as const : "default" as const,
     })),
     ...pendingChecklistItems.map((item) => ({
       title: item.item,
@@ -432,6 +451,15 @@ export default function DealOverviewPage({
         }]
       : []),
   ].slice(0, 4);
+  const recommendedAction =
+    watchoutItems[0] ||
+    nextFocusItems[0] ||
+    ({
+      title: "Ask the deal what needs attention",
+      meta: "Use the assistant to turn the current context into a next step",
+      href: `/deals/${params.id}/chat`,
+      tone: "success" as const,
+    });
   const addressString = [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ");
   const hasAddress = !!(deal.address || deal.city);
   const streetViewEmbed = hasAddress
@@ -736,6 +764,7 @@ export default function DealOverviewPage({
 
       <DealCommandCenter
         dealId={params.id}
+        recommendedAction={recommendedAction}
         nextItems={nextFocusItems}
         watchouts={watchoutItems}
         recentActivity={recentActivity}
@@ -1392,11 +1421,13 @@ export default function DealOverviewPage({
 
 function DealCommandCenter({
   dealId,
+  recommendedAction,
   nextItems,
   watchouts,
   recentActivity,
 }: {
   dealId: string;
+  recommendedAction: CommandCenterItem;
   nextItems: CommandCenterItem[];
   watchouts: CommandCenterItem[];
   recentActivity: ActivityEvent[];
@@ -1429,6 +1460,19 @@ function DealCommandCenter({
             </Button>
           </Link>
         </div>
+      </div>
+
+      <div className="border-b border-border/40 bg-background/35 p-4">
+        <Link href={recommendedAction.href} className="block rounded-lg border border-primary/20 bg-primary/10 p-3 transition-colors hover:bg-primary/15">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-primary">Recommended next action</p>
+              <p className="mt-1 text-sm font-semibold leading-5">{recommendedAction.title}</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{recommendedAction.meta}</p>
+            </div>
+            <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-primary" />
+          </div>
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 gap-px bg-border/60 lg:grid-cols-3">
