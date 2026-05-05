@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   BookOpen,
   CalendarPlus,
@@ -390,7 +392,39 @@ export default function PlaybookPage() {
                   </div>
                 ) : answer ? (
                   <div className="space-y-5">
-                    <div className="whitespace-pre-wrap text-sm leading-6 text-foreground">{answer}</div>
+                    <div className="text-sm leading-6 text-foreground">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          h1: ({ children }) => <h1 className="mb-3 text-lg font-semibold">{children}</h1>,
+                          h2: ({ children }) => <h2 className="mb-2 mt-5 text-base font-semibold">{children}</h2>,
+                          h3: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-semibold">{children}</h3>,
+                          p: ({ children }) => <p className="my-3 leading-6">{children}</p>,
+                          ul: ({ children }) => <ul className="my-3 list-disc space-y-1 pl-5">{children}</ul>,
+                          ol: ({ children }) => <ol className="my-3 list-decimal space-y-1 pl-5">{children}</ol>,
+                          li: ({ children }) => <li className="pl-1">{children}</li>,
+                          strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                          hr: () => <div className="my-5 border-t border-border" />,
+                          table: ({ children }) => (
+                            <div className="my-4 overflow-x-auto rounded-lg border border-border">
+                              <table className="w-full text-sm">{children}</table>
+                            </div>
+                          ),
+                          thead: ({ children }) => <thead className="bg-muted/40">{children}</thead>,
+                          th: ({ children }) => (
+                            <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                              {children}
+                            </th>
+                          ),
+                          td: ({ children }) => <td className="border-t border-border px-3 py-2 align-top">{children}</td>,
+                          code: ({ children }) => (
+                            <code className="rounded bg-muted px-1 py-0.5 text-xs text-foreground">{children}</code>
+                          ),
+                        }}
+                      >
+                        {answer}
+                      </ReactMarkdown>
+                    </div>
                     <div className="rounded-lg border border-border bg-card p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
                         <label className="flex-1 space-y-1.5">

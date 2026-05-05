@@ -3934,15 +3934,16 @@ export const playbookQueries = {
       [normalized, limit]
     );
 
-    if (tsRes.rows.length > 0) return tsRes.rows;
-
     const likeTerms = normalized
       .split(/\s+/)
       .map((term) => term.replace(/[%_]/g, ""))
-      .filter(Boolean)
-      .slice(0, 4);
+      .filter((term) => term.length > 2)
+      .slice(0, 6);
 
-    if (likeTerms.length === 0) return [];
+    const rowsById = new Map<string, PlaybookChunkRow>();
+    for (const row of tsRes.rows) rowsById.set(row.id, row);
+
+    if (likeTerms.length === 0) return Array.from(rowsById.values()).slice(0, limit);
 
     const likeRes = await pool.query(
       `SELECT
@@ -3958,12 +3959,23 @@ export const playbookQueries = {
         0::float AS rank
        FROM playbook_chunks c
        JOIN playbook_documents d ON d.id = c.document_id
-       WHERE ${likeTerms.map((_, i) => `c.content ILIKE $${i + 1}`).join(" OR ")}
+       WHERE ${likeTerms
+         .map(
+           (_, i) =>
+             `(c.content ILIKE $${i + 1} OR c.heading ILIKE $${i + 1} OR d.title ILIKE $${i + 1} OR d.original_name ILIKE $${
+               i + 1
+             })`
+         )
+         .join(" OR ")}
        ORDER BY d.updated_at DESC, c.chunk_index ASC
        LIMIT $${likeTerms.length + 1}`,
-      [...likeTerms.map((term) => `%${term}%`), limit]
+      [...likeTerms.map((term) => `%${term}%`), limit * 2]
     );
-    return likeRes.rows;
+    for (const row of likeRes.rows) {
+      if (!rowsById.has(row.id)) rowsById.set(row.id, row);
+    }
+
+    return Array.from(rowsById.values()).slice(0, limit);
   },
 };
 

@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "question is required" }, { status: 400 });
     }
 
-    const hits = await playbookQueries.search(question, 8);
+    const hits = await playbookQueries.search(question, 12);
     if (hits.length === 0) {
       return NextResponse.json({
         data: {
@@ -38,7 +38,9 @@ export async function POST(req: NextRequest) {
 
 Use only the Development Playbook excerpts provided by the user. Cite source numbers like [1] or [2] when giving guidance. If the excerpts do not contain enough support for a claim, say what is missing instead of guessing.
 
-Prefer crisp, practical guidance: what to check, what decision it supports, and what risk it reduces.`,
+Prefer crisp, practical guidance: what to check, what decision it supports, and what risk it reduces.
+
+Format the answer as clean GitHub-flavored Markdown. Use tables only when they make comparison easier, and keep them compact.`,
       messages: [
         {
           role: "user",
