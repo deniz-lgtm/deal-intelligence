@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import Link from "next/link";
 import {
   Send,
   Loader2,
@@ -16,6 +17,9 @@ import {
   AlertTriangle,
   MessageCircleQuestion,
   BarChart3,
+  CalendarPlus,
+  ExternalLink,
+  Undo2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -36,6 +40,14 @@ interface Message {
     type: string;
     display: string;
     fields?: Record<string, unknown>;
+    note_id?: string;
+    schedule_item?: {
+      id?: string;
+      parent_phase_id?: string | null;
+      kind?: string;
+      label?: string;
+      track?: string;
+    };
   }> | null;
   created_at: string;
 }
@@ -331,7 +343,11 @@ export default function UniversalChatbot({
                         msg.metadata.length > 0 && (
                           <div className="mt-1.5 ml-10 space-y-1">
                             {msg.metadata.map((action, i) => (
-                              <ActionCard key={i} action={action} />
+                              <ActionCard
+                                key={i}
+                                action={action}
+                                dealId={activeDealId}
+                              />
                             ))}
                           </div>
                         )}
@@ -457,26 +473,144 @@ function MessageBubble({
 
 function ActionCard({
   action,
+  dealId,
 }: {
-  action: { type: string; display: string };
+  action: {
+    type: string;
+    display: string;
+    note_id?: string;
+    schedule_item?: {
+      id?: string;
+      parent_phase_id?: string | null;
+      kind?: string;
+      label?: string;
+      track?: string;
+    };
+  };
+  dealId?: string | null;
 }) {
+  const [undone, setUndone] = useState(false);
+  const [undoing, setUndoing] = useState(false);
+  const config = getActionCardConfig(action, dealId);
+
+  const undo = async () => {
+    if (!dealId || !config.undoUrl || undoing) return;
+    setUndoing(true);
+    try {
+      const res = await fetch(config.undoUrl, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Undo failed");
+      setUndone(true);
+      toast.success("Action undone");
+    } catch (err) {
+      console.error("Undo action failed:", err);
+      toast.error(err instanceof Error ? err.message : "Undo failed");
+    } finally {
+      setUndoing(false);
+    }
+  };
+
   return (
     <div
       className={cn(
-        "flex items-start gap-2 text-xs px-3 py-2 rounded-lg border",
-        action.type === "context_saved"
-          ? "bg-primary/[0.05] border-primary/20 text-primary"
-          : "bg-blue-500/10 border-blue-500/20 text-blue-400"
+        "rounded-lg border px-3 py-2 text-xs",
+        config.className,
+        undone && "opacity-60"
       )}
     >
-      {action.type === "context_saved" ? (
-        <Brain className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-      ) : (
-        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-      )}
-      <span>{action.display}</span>
+      <div className="flex items-start gap-2">
+        <config.icon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="font-medium">
+            {undone ? "Undone" : config.title}
+          </div>
+          <div className="mt-0.5 leading-5 text-current/85">{action.display}</div>
+          {(config.href || config.undoUrl) && !undone && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {config.href && (
+                <Link
+                  href={config.href}
+                  className="inline-flex items-center gap-1 rounded-md border border-current/20 px-2 py-1 text-[10px] font-medium hover:bg-current/10"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  {config.hrefLabel}
+                </Link>
+              )}
+              {config.undoUrl && (
+                <button
+                  type="button"
+                  onClick={undo}
+                  disabled={undoing}
+                  className="inline-flex items-center gap-1 rounded-md border border-current/20 px-2 py-1 text-[10px] font-medium hover:bg-current/10 disabled:opacity-60"
+                >
+                  {undoing ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Undo2 className="h-3 w-3" />
+                  )}
+                  Undo
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
+}
+
+function getActionCardConfig(
+  action: {
+    type: string;
+    note_id?: string;
+    schedule_item?: {
+      id?: string;
+      parent_phase_id?: string | null;
+      kind?: string;
+    };
+  },
+  dealId?: string | null
+) {
+  if (action.type === "schedule_item_created") {
+    const itemId = action.schedule_item?.id;
+    const focusId = action.schedule_item?.parent_phase_id || itemId;
+    return {
+      title: "Created schedule item",
+      icon: CalendarPlus,
+      className: "bg-emerald-500/10 border-emerald-500/20 text-emerald-300",
+      href: dealId ? (focusId ? `/deals/${dealId}/schedule/focus/${focusId}` : `/deals/${dealId}/schedule`) : null,
+      hrefLabel: "Open schedule",
+      undoUrl: dealId && itemId ? `/api/deals/${dealId}/schedule/${itemId}` : null,
+    };
+  }
+  if (action.type === "underwriting_updated") {
+    return {
+      title: "Updated underwriting",
+      icon: BarChart3,
+      className: "bg-blue-500/10 border-blue-500/20 text-blue-300",
+      href: dealId ? `/deals/${dealId}/underwriting` : null,
+      hrefLabel: "Open underwriting",
+      undoUrl: null,
+    };
+  }
+  if (action.type === "deal_updated") {
+    return {
+      title: "Updated deal",
+      icon: CheckCircle2,
+      className: "bg-blue-500/10 border-blue-500/20 text-blue-300",
+      href: dealId ? `/deals/${dealId}` : null,
+      hrefLabel: "Open deal",
+      undoUrl: null,
+    };
+  }
+  return {
+    title: "Saved memory",
+    icon: Brain,
+    className: "bg-primary/[0.05] border-primary/20 text-primary",
+    href: dealId ? `/notes?deal=${dealId}` : "/notes",
+    hrefLabel: "Open notes",
+    undoUrl: dealId && action.note_id ? `/api/deals/${dealId}/notes?noteId=${action.note_id}` : null,
+  };
 }
 
 function UWCoPilotPane({

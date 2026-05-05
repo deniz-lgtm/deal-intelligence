@@ -37,6 +37,7 @@ import {
   Presentation,
   Share2,
   ScrollText,
+  CheckCircle2,
 } from "lucide-react";
 import { DocCoverageChip } from "@/components/ai";
 import { Button } from "@/components/ui/button";
@@ -89,6 +90,14 @@ type CommandCenterItem = {
   tone?: "default" | "warning" | "danger" | "success";
 };
 
+type DealNote = {
+  id: string;
+  text: string;
+  category: string;
+  source?: string | null;
+  created_at: string;
+};
+
 export default function DealOverviewPage({
   params,
 }: {
@@ -100,6 +109,7 @@ export default function DealOverviewPage({
   const [documents, setDocuments] = useState<Document[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [questions, setQuestions] = useState<DealQuestion[]>([]);
+  const [notes, setNotes] = useState<DealNote[]>([]);
   const [businessPlan, setBusinessPlan] = useState<BusinessPlan | null>(null);
   const [allPlans, setAllPlans] = useState<BusinessPlan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string>("");
@@ -173,13 +183,15 @@ export default function DealOverviewPage({
       fetch(`/api/underwriting?deal_id=${params.id}`).then((r) => r.json()),
       fetch(`/api/deals/${params.id}/activity`).then((r) => r.json()).catch(() => ({ events: [] })),
       fetch(`/api/deals/${params.id}/questions`).then((r) => r.json()).catch(() => ({ data: [] })),
-    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, activityRes, questionsRes]) => {
+      fetch(`/api/deals/${params.id}/notes`).then((r) => r.json()).catch(() => ({ data: [] })),
+    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, activityRes, questionsRes, notesRes]) => {
       setRecentActivity(((activityRes.events || []) as ActivityEvent[]).slice(0, 5));
       const d = dealRes.data;
       setDeal(d);
       setDocuments(docsRes.data || []);
       setChecklist(checklistRes.data || []);
       setQuestions(questionsRes.data || []);
+      setNotes(notesRes.data || []);
       setPhotos(photosRes.data || []);
       if (uwRes.data?.data) {
         try {
@@ -451,6 +463,15 @@ export default function DealOverviewPage({
       tone: "success" as const,
     });
   const playbookQuestion = buildDealPlaybookQuestion(deal, businessPlan);
+  const decisionNotes = notes
+    .filter((note) => {
+      const text = note.text.toLowerCase();
+      return note.category === "review" || /\b(decision|decide|approved|approval|selected|confirmed|open item|follow[- ]?up)\b/.test(text);
+    })
+    .slice(0, 4);
+  const openOwnerTasks = devPhases
+    .filter((phase) => phase.status !== "complete" && (phase.task_owner || phase.notes))
+    .slice(0, 4);
   const addressString = [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ");
   const hasAddress = !!(deal.address || deal.city);
   const streetViewEmbed = hasAddress
@@ -760,6 +781,13 @@ export default function DealOverviewPage({
         nextItems={nextFocusItems}
         watchouts={watchoutItems}
         recentActivity={recentActivity}
+      />
+
+      <DecisionsOpenItemsPanel
+        dealId={params.id}
+        decisionNotes={decisionNotes}
+        openQuestions={openQuestions}
+        ownerTasks={openOwnerTasks}
       />
 
       {/* ═══ INVESTMENT MATERIALS (collapsible) ═══
@@ -1473,6 +1501,106 @@ function DealCommandCenter({
         </div>
       </div>
     </section>
+  );
+}
+
+function DecisionsOpenItemsPanel({
+  dealId,
+  decisionNotes,
+  openQuestions,
+  ownerTasks,
+}: {
+  dealId: string;
+  decisionNotes: DealNote[];
+  openQuestions: DealQuestion[];
+  ownerTasks: DevPhase[];
+}) {
+  const assistantPrompt = "Review this deal's decisions, open questions, schedule owners, and playbook guidance. What should we decide next, who owns it, and what should become a schedule item?";
+  const hasItems = decisionNotes.length > 0 || openQuestions.length > 0 || ownerTasks.length > 0;
+
+  return (
+    <section className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-border/40 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            <h2 className="font-display text-sm">Decisions & Open Items</h2>
+          </div>
+          <p className="mt-1 text-2xs text-muted-foreground">
+            The lightweight handoff layer: what was decided, what is unresolved, and who owns the next move.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/deals/${dealId}/chat?prompt=${encodeURIComponent(assistantPrompt)}`}>
+            <Button size="sm" variant="outline" className="h-7 gap-1.5 text-2xs">
+              <MessageSquare className="h-3 w-3" />
+              Ask assistant
+            </Button>
+          </Link>
+          <Link href={`/notes?deal=${dealId}`}>
+            <Button size="sm" variant="ghost" className="h-7 gap-1.5 text-2xs">
+              <FileText className="h-3 w-3" />
+              Notes
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+      {!hasItems ? (
+        <div className="px-4 py-5 text-xs leading-5 text-muted-foreground">
+          No decisions or owner-tagged open items yet. Use the assistant to turn meeting notes, design comments, and underwriting concerns into tracked follow-ups.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-px bg-border/60 lg:grid-cols-3">
+          <DecisionColumn title="Decisions / Notes" emptyText="No decision notes yet.">
+            {decisionNotes.slice(0, 4).map((note) => (
+              <Link key={note.id} href={`/notes?deal=${dealId}`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
+                <p className="line-clamp-3 text-xs font-medium leading-5">{note.text}</p>
+                <p className="mt-1 text-2xs text-muted-foreground">{titleCase(note.category)} · {relativeTime(note.created_at)}</p>
+              </Link>
+            ))}
+          </DecisionColumn>
+          <DecisionColumn title="Questions" emptyText="No open questions.">
+            {openQuestions.slice(0, 4).map((question) => (
+              <Link key={question.id} href={`/deals/${dealId}/communication`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
+                <p className="line-clamp-2 text-xs font-medium leading-5">{question.question}</p>
+                <p className="mt-1 text-2xs text-muted-foreground">
+                  {STAKEHOLDER_LABELS[question.target_role] || titleCase(question.target_role)} · {titleCase(question.status)}
+                </p>
+              </Link>
+            ))}
+          </DecisionColumn>
+          <DecisionColumn title="Owned Schedule Items" emptyText="No owner-tagged schedule items.">
+            {ownerTasks.slice(0, 4).map((task) => (
+              <Link key={task.id} href={`/deals/${dealId}/schedule/focus/${task.parent_phase_id || task.id}`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
+                <p className="line-clamp-2 text-xs font-medium leading-5">{task.label}</p>
+                <p className="mt-1 text-2xs text-muted-foreground">
+                  {task.task_owner || "No owner"} · {titleCase(task.track || "development")}
+                </p>
+              </Link>
+            ))}
+          </DecisionColumn>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DecisionColumn({
+  title,
+  emptyText,
+  children,
+}: {
+  title: string;
+  emptyText: string;
+  children: ReactNode;
+}) {
+  const hasChildren = Array.isArray(children) ? children.length > 0 : Boolean(children);
+  return (
+    <div className="bg-card p-4">
+      <h3 className="mb-3 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{title}</h3>
+      {hasChildren ? <div className="space-y-2">{children}</div> : <p className="text-xs leading-5 text-muted-foreground">{emptyText}</p>}
+    </div>
   );
 }
 

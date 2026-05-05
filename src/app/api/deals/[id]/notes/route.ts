@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { dealNoteQueries, dealQueries, getPool } from "@/lib/db";
-import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { requireAuth, requireDealAccess, requireDealEditAccess } from "@/lib/auth";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -52,7 +52,7 @@ export async function POST(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
     const body = await req.json();
     const { text, category, source } = body;
@@ -96,7 +96,7 @@ export async function DELETE(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
     const { searchParams } = new URL(req.url);
     const noteId = searchParams.get("noteId");

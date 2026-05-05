@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   CalendarDays,
   CheckCircle2,
+  MessageSquare,
   Loader2,
   Plus,
   Trash2,
@@ -189,6 +190,14 @@ export default function ScheduleFocusPage({
 
   const completeCount = children.filter((child) => child.status === "complete").length;
   const progress = children.length > 0 ? Math.round((completeCount / children.length) * 100) : 0;
+  const blockedCount = children.filter((child) => child.status === "delayed").length;
+  const openDecisionCount = children.filter((child) => {
+    const text = `${child.label} ${child.notes ?? ""}`.toLowerCase();
+    return child.status !== "complete" && /\b(decide|decision|approve|approval|select|confirm|review)\b/.test(text);
+  }).length;
+  const assistantPrompt = parent
+    ? `Use the Development Playbook and this focused mini schedule for "${parent.label}". What decisions are open, what tasks should be added or clarified, and what is the next owner/action to keep this phase moving?`
+    : "Review this focused mini schedule and identify the next owner/action.";
 
   return (
     <div className="space-y-6">
@@ -212,16 +221,29 @@ export default function ScheduleFocusPage({
               ? `${SCHEDULE_TRACK_LABELS[parent.track ?? "development"]} focus view for the tasks inside this phase.`
               : "Loading the focused schedule."}
           </p>
+          {parent?.notes && (
+            <p className="mt-2 max-w-3xl text-xs leading-5 text-muted-foreground">
+              {parent.notes}
+            </p>
+          )}
         </div>
 
-        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm">
-          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Progress</div>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold tabular-nums">{progress}%</span>
-            <span className="text-xs text-muted-foreground">
-              {completeCount}/{children.length} complete
-            </span>
+        <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+          <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm">
+            <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Progress</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-2xl font-semibold tabular-nums">{progress}%</span>
+              <span className="text-xs text-muted-foreground">
+                {completeCount}/{children.length} complete
+              </span>
+            </div>
           </div>
+          <Link href={`/deals/${params.id}/chat?prompt=${encodeURIComponent(assistantPrompt)}`}>
+            <Button size="sm" className="w-full gap-2">
+              <MessageSquare className="h-4 w-4" />
+              Ask assistant
+            </Button>
+          </Link>
         </div>
       </div>
 
@@ -270,9 +292,34 @@ export default function ScheduleFocusPage({
             )}
           </section>
 
-          <aside className="rounded-lg border border-border bg-card p-4 h-fit">
-            <h2 className="text-sm font-semibold">Add task</h2>
-            <div className="mt-4 space-y-3">
+          <aside className="space-y-4 h-fit">
+            <section className="rounded-lg border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold">Open items</h2>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <MiniMetric label="Tasks" value={children.filter((child) => child.status !== "complete").length} />
+                <MiniMetric label="Decisions" value={openDecisionCount} />
+                <MiniMetric label="Delayed" value={blockedCount} tone={blockedCount > 0 ? "warning" : "default"} />
+              </div>
+              <div className="mt-4 space-y-2">
+                {children.filter((child) => child.status !== "complete").slice(0, 4).map((child) => (
+                  <div key={child.id} className="rounded-lg border border-border/60 bg-background/60 p-2.5">
+                    <div className="line-clamp-2 text-xs font-medium leading-5">{child.label}</div>
+                    <div className="mt-0.5 text-2xs text-muted-foreground">
+                      {child.task_owner || "No owner"} · {DEV_PHASE_STATUS_CONFIG[child.status].label}
+                    </div>
+                  </div>
+                ))}
+                {children.every((child) => child.status === "complete") && (
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Nothing open inside this phase right now.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-border bg-card p-4">
+              <h2 className="text-sm font-semibold">Add task</h2>
+              <div className="mt-4 space-y-3">
               <Field label="Task">
                 <input
                   value={form.label}
@@ -334,10 +381,28 @@ export default function ScheduleFocusPage({
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 Add to mini schedule
               </Button>
-            </div>
+              </div>
+            </section>
           </aside>
         </div>
       )}
+    </div>
+  );
+}
+
+function MiniMetric({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: number;
+  tone?: "default" | "warning";
+}) {
+  return (
+    <div className={cn("rounded-lg border p-2 text-center", tone === "warning" ? "border-amber-500/30 bg-amber-500/10" : "border-border/60 bg-background/60")}>
+      <div className="text-base font-semibold tabular-nums">{value}</div>
+      <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
     </div>
   );
 }

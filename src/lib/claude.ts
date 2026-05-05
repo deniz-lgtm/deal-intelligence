@@ -888,9 +888,11 @@ export interface UniversalChatAction {
     | "note_created"
     | "schedule_item_created";
   note?: string;
+  note_id?: string;
   fields?: Record<string, unknown>;
   category?: string;
   schedule_item?: {
+    id?: string;
     label: string;
     track: "acquisition" | "development" | "construction";
     kind: "phase" | "milestone" | "task";

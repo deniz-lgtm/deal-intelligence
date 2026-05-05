@@ -152,13 +152,25 @@ export async function POST(req: NextRequest) {
     if (dealId) {
       for (const action of actions) {
         if (action.type === "context_saved" && action.note && canEditDeal) {
+          const noteId = uuidv4();
           await dealNoteQueries.create({
-            id: uuidv4(),
+            id: noteId,
             deal_id: dealId,
             text: action.note,
             category: action.category || "context",
             source: "chat",
           });
+          action.note_id = noteId;
+        } else if (action.type === "note_created" && action.note && canEditDeal) {
+          const noteId = uuidv4();
+          await dealNoteQueries.create({
+            id: noteId,
+            deal_id: dealId,
+            text: action.note,
+            category: action.category || "context",
+            source: "chat",
+          });
+          action.note_id = noteId;
         } else if (action.type === "deal_updated" && action.fields && canEditDeal) {
           await dealQueries.update(dealId, action.fields);
         } else if (action.type === "underwriting_updated" && action.fields && canEditDeal) {
@@ -199,8 +211,9 @@ export async function POST(req: NextRequest) {
               item.parent_phase_id = null;
             }
           }
+          const itemId = uuidv4();
           await devPhaseQueries.create({
-            id: uuidv4(),
+            id: itemId,
             deal_id: dealId,
             track: resolvedTrack,
             kind: item.kind || "task",
@@ -220,6 +233,7 @@ export async function POST(req: NextRequest) {
             sort_order: 0,
             is_milestone: item.kind === "milestone",
           });
+          action.schedule_item.id = itemId;
           try {
             await recomputeSchedule(dealId);
           } catch (err) {
