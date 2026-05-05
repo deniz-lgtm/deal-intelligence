@@ -44,6 +44,7 @@ import {
   Check,
   X as XIcon,
   ArrowUpDown,
+  ArrowUpRight,
   ArrowUpAZ,
   ArrowDownAZ,
 } from "lucide-react";
