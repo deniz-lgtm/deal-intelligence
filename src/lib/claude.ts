@@ -886,11 +886,18 @@ export interface UniversalChatAction {
     | "deal_updated"
     | "underwriting_updated"
     | "note_created"
-    | "schedule_item_created";
+    | "schedule_item_created"
+    | "checklist_item_created";
   note?: string;
   note_id?: string;
   fields?: Record<string, unknown>;
   category?: string;
+  checklist_item?: {
+    id?: string;
+    category: string;
+    item: string;
+    notes?: string | null;
+  };
   schedule_item?: {
     id?: string;
     label: string;
@@ -992,6 +999,31 @@ const UNIVERSAL_CHAT_TOOLS: Anthropic.Tool[] = [
       required: ["updates"],
     },
   },
+  {
+    name: "create_checklist_item",
+    description:
+      "Create a diligence checklist item on the active deal. Use when playbook guidance, document review, or a user instruction should become something to verify, not a scheduled task. Requires edit access to the active deal.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        item: {
+          type: "string",
+          description: "Short verification item, written as an action or check.",
+        },
+        category: {
+          type: "string",
+          description:
+            "Checklist category such as Design, Underwriting, Entitlement, Legal, Environmental, Financial, Construction, Utilities, Market, or Other.",
+        },
+        notes: {
+          type: "string",
+          description:
+            "Why this check matters, source/playbook citation if any, and what evidence would close it.",
+        },
+      },
+      required: ["item", "category"],
+    },
+  },
 ];
 
 export interface UniversalChatContext {
@@ -1086,6 +1118,7 @@ ${ctx.playbook_context.trim()}`
 Guidance:
 - When Development Playbook excerpts are relevant, use them as company memory and cite them like [1].
 - When the user asks to create a follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
+- When the user asks to verify, check, diligence, document, or track a requirement without a date, use create_checklist_item if an editable deal is active.
 - Always accompany a tool use with a short text confirmation so the user sees what you did.
 - Keep responses concise — this is a sidebar, not a full page.
 - If the user asks you to "stress-test" / "challenge" / "review" the underwriting model, point them to the UW Co-Pilot tab of this widget (Review / What-If / Benchmarks) rather than trying to do that analysis in chat.
@@ -1106,6 +1139,7 @@ Guidance:
     "update_deal_fields",
     "update_underwriting",
     "create_schedule_item",
+    "create_checklist_item",
   ]);
   const tools =
     ctx.deal && ctx.can_edit_deal
@@ -1185,6 +1219,21 @@ Guidance:
           notes: input.notes || null,
         },
         display: `Created schedule ${kind}: ${input.label}`,
+      });
+    } else if (tool.name === "create_checklist_item" && ctx.deal && ctx.can_edit_deal) {
+      const input = tool.input as {
+        item: string;
+        category?: string;
+        notes?: string | null;
+      };
+      actions.push({
+        type: "checklist_item_created",
+        checklist_item: {
+          item: input.item,
+          category: input.category || "Other",
+          notes: input.notes || null,
+        },
+        display: `Created checklist item: ${input.item}`,
       });
     }
   }

@@ -7,6 +7,7 @@ import {
   dealNoteQueries,
   devPhaseQueries,
   businessPlanQueries,
+  checklistQueries,
   loiQueries,
   omAnalysisQueries,
   playbookQueries,
@@ -239,6 +240,23 @@ export async function POST(req: NextRequest) {
           } catch (err) {
             console.error("universal-chat schedule recompute error:", err);
           }
+        } else if (
+          action.type === "checklist_item_created" &&
+          action.checklist_item &&
+          canEditDeal
+        ) {
+          const checklistId = uuidv4();
+          await checklistQueries.upsert({
+            id: checklistId,
+            deal_id: dealId,
+            category: action.checklist_item.category || "Other",
+            item: action.checklist_item.item,
+            status: "pending",
+            notes: action.checklist_item.notes ?? null,
+            ai_filled: true,
+            source_document_ids: null,
+          });
+          action.checklist_item.id = checklistId;
         }
       }
     }

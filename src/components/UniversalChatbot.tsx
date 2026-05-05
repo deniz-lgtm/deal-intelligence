@@ -19,6 +19,7 @@ import {
   BarChart3,
   CalendarPlus,
   ExternalLink,
+  ListChecks,
   Undo2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -47,6 +48,11 @@ interface Message {
       kind?: string;
       label?: string;
       track?: string;
+    };
+    checklist_item?: {
+      id?: string;
+      category?: string;
+      item?: string;
     };
   }> | null;
   created_at: string;
@@ -486,6 +492,11 @@ function ActionCard({
       label?: string;
       track?: string;
     };
+    checklist_item?: {
+      id?: string;
+      category?: string;
+      item?: string;
+    };
   };
   dealId?: string | null;
 }) {
@@ -568,9 +579,23 @@ function getActionCardConfig(
       parent_phase_id?: string | null;
       kind?: string;
     };
+    checklist_item?: {
+      id?: string;
+    };
   },
   dealId?: string | null
 ) {
+  if (action.type === "checklist_item_created") {
+    const itemId = action.checklist_item?.id;
+    return {
+      title: "Created checklist item",
+      icon: ListChecks,
+      className: "bg-amber-500/10 border-amber-500/20 text-amber-300",
+      href: dealId ? `/deals/${dealId}/checklist` : null,
+      hrefLabel: "Open checklist",
+      undoUrl: itemId ? `/api/checklist?id=${itemId}` : null,
+    };
+  }
   if (action.type === "schedule_item_created") {
     const itemId = action.schedule_item?.id;
     const focusId = action.schedule_item?.parent_phase_id || itemId;

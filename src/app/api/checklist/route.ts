@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { checklistQueries, dealNoteQueries } from "@/lib/db";
-import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
+import { checklistQueries, dealNoteQueries, getPool } from "@/lib/db";
+import { requireAuth, requireDealAccess, requireDealEditAccess, syncCurrentUser } from "@/lib/auth";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -54,7 +54,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Checklist item not found" }, { status: 404 });
     }
 
-    const { errorResponse: accessError } = await requireDealAccess(item.deal_id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(item.deal_id, userId);
     if (accessError) return accessError;
 
     await checklistQueries.updateStatus(id, status, notes || null);
@@ -95,5 +95,34 @@ export async function PATCH(req: NextRequest) {
   } catch (error) {
     console.error("PATCH /api/checklist error:", error);
     return NextResponse.json({ error: "Failed to update checklist item" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+
+    const item = await checklistQueries.getById(id) as { deal_id: string } | null;
+    if (!item) {
+      return NextResponse.json({ error: "Checklist item not found" }, { status: 404 });
+    }
+
+    const { errorResponse: accessError } = await requireDealEditAccess(item.deal_id, userId);
+    if (accessError) return accessError;
+
+    const pool = getPool();
+    await pool.query("DELETE FROM checklist_items WHERE id = $1", [id]);
+    return NextResponse.json({ data: { success: true } });
+  } catch (error) {
+    console.error("DELETE /api/checklist error:", error);
+    return NextResponse.json({ error: "Failed to delete checklist item" }, { status: 500 });
   }
 }
