@@ -1741,6 +1741,46 @@ export function getSeedBundleIds(): Set<string> {
   return new Set(SCHEDULE_BUNDLES.map((b) => b.id));
 }
 
+// ── Phase-key → bundle lookup ───────────────────────────────────────────────
+// Powers the home-page schedule hero, where bars are aggregated by bundle so
+// each deal renders as a few clean blocks ("Pre-Development", "Design",
+// "Permitting") rather than a swarm of every individual phase. Built once at
+// module load from the static phase tables so it's a flat O(1) lookup.
+
+const _PHASE_KEY_TO_BUNDLE: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const p of DEFAULT_ACQ_PHASES) map[p.phase_key] = p.bundle;
+  for (const p of DEFAULT_DEV_PHASES) map[p.phase_key] = p.bundle;
+  for (const p of DEFAULT_CONSTRUCTION_PHASES) map[p.phase_key] = p.bundle;
+  return map;
+})();
+
+const _BUNDLE_BY_ID: Record<string, ScheduleBundle> = (() => {
+  const map: Record<string, ScheduleBundle> = {};
+  for (const b of SCHEDULE_BUNDLES) map[b.id] = b;
+  return map;
+})();
+
+/**
+ * Resolve a phase_key to its bundle id. Returns NULL when the row's
+ * phase_key isn't from a default seed (user-added phases, legacy
+ * migrated rows like `legacy_milestone_*`). Callers fall back to a
+ * track-default bucket in those cases.
+ */
+export function bundleIdForPhaseKey(phaseKey: string | null | undefined): string | null {
+  if (!phaseKey) return null;
+  return _PHASE_KEY_TO_BUNDLE[phaseKey] ?? null;
+}
+
+/**
+ * Resolve a bundle id to its display metadata (label, description, track).
+ * Returns null if the id doesn't match any known bundle.
+ */
+export function bundleById(bundleId: string | null | undefined): ScheduleBundle | null {
+  if (!bundleId) return null;
+  return _BUNDLE_BY_ID[bundleId] ?? null;
+}
+
 export const DEFAULT_PHASES_BY_TRACK: Record<ScheduleTrack, DefaultPhaseSeed[]> = {
   acquisition: DEFAULT_ACQ_PHASES,
   development: DEFAULT_DEV_PHASES,

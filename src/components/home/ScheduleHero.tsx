@@ -3,7 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CalendarDays, ChevronDown, ChevronUp } from "lucide-react";
-import { DEAL_STAGE_LABELS, type DealStatus } from "@/lib/types";
+import {
+  DEAL_STAGE_LABELS,
+  bundleIdForPhaseKey,
+  bundleById,
+  type DealStatus,
+  type ScheduleBundle,
+} from "@/lib/types";
 
 // ─── The Schedule hero — editorial broadsheet ────────────────────────────────
 //
@@ -60,9 +66,39 @@ interface PositionedPhase extends PhaseRow {
   originalStartMs: number;
 }
 
+/**
+ * One aggregated bundle bar — a single block on the timeline that
+ * represents a whole bundle of phases (e.g. "Pre-Development" covers
+ * Feasibility + Financial + Consultant + Geotech). Spans from min(start)
+ * to max(end) of its member phases. Milestones inside the bundle's
+ * window get rendered as small diamonds layered on top of the bar at
+ * their dates.
+ */
+interface BundleBar {
+  // Synthetic id — `${dealId}:${bundleId}`
+  id: string;
+  bundleId: string;
+  /** Display label — bundle's `label` for known bundles, "Other …" for fallback. */
+  label: string;
+  track: PhaseRow["track"];
+  startPct: number;
+  endPct: number;
+  widthPct: number;
+  start: number;
+  end: number;
+  /** Phases inside the bundle that are kind=milestone — drawn as diamonds. */
+  milestones: PositionedPhase[];
+  /** Number of phases rolled up into this bar (for tooltip / hover). */
+  phaseCount: number;
+  /** % complete averaged across the bundle's member phases. */
+  avgPct: number;
+  /** Lane assignment so overlapping bundles in the same deal stack cleanly. */
+  lane: number;
+}
+
 interface DealTimelineRow {
   deal: DealRow;
-  phases: PositionedPhase[];
+  bundles: BundleBar[];
   laneCount: number;
   empty: boolean;
 }
@@ -116,15 +152,11 @@ function formatRange(start: Date, end: Date) {
   return `${startStr} — ${endStr}${sameYear ? `, ${end.getUTCFullYear()}` : ""}`;
 }
 
-function classifyTrack(p: PhaseRow): "acquisition" | "development" | "construction" {
+function trackVar(track: "acquisition" | "development" | "construction" | string) {
   // Existing rows always carry a track; fall back via deal stage just in case.
-  if (p.track === "acquisition" || p.track === "development" || p.track === "construction") {
-    return p.track;
+  if (track !== "acquisition" && track !== "development" && track !== "construction") {
+    track = "development";
   }
-  return "development";
-}
-
-function trackVar(track: "acquisition" | "development" | "construction") {
   return track === "acquisition"
     ? "--phase-acq"
     : track === "development"
@@ -235,7 +267,14 @@ export function ScheduleHero() {
   }, [windowStart, windowEnd, windowMs, weeks]);
 
   // Group phases per deal, with computed % positions and lane assignments.
-  const dealRows = useMemo(() => {
+  // Roll phases into bundle bars per deal. Each bundle becomes a single
+  // bar spanning min(start_date) → max(end_date) of its member phases,
+  // with milestones drawn as diamonds layered on top at their dates.
+  // This collapses what used to be 15-20 bars per deal into 2-5 wide,
+  // legible bars labeled "Pre-Development" / "Design" / "Permitting"
+  // etc. The deal page is still the place for granular per-phase
+  // editing — the home schedule is the at-a-glance view.
+  const dealRows = useMemo<DealTimelineRow[]>(() => {
     if (!data) return [];
     const byDeal = new Map<string, PhaseRow[]>();
     for (const p of data.phases) {
@@ -245,6 +284,9 @@ export function ScheduleHero() {
     }
     return data.deals.map((deal) => {
       const phases = byDeal.get(deal.id) ?? [];
+      // Position each phase first — needed for milestone diamond
+      // placement and for fallback per-phase rendering when a phase's
+      // bundle id can't be resolved (user-added rows, legacy migrated).
       const positioned = phases
         .map((p) => {
           const start = parseISODate(p.start_date);
@@ -252,7 +294,6 @@ export function ScheduleHero() {
           if (!start && !end) return null;
           const sMs = (start ?? end ?? today).getTime();
           const eMs = (end ?? start ?? today).getTime();
-          // Clip to window.
           const clipS = Math.max(sMs, windowStart.getTime());
           const clipE = Math.min(eMs, windowEnd.getTime());
           if (clipE < clipS) return null;
@@ -268,25 +309,75 @@ export function ScheduleHero() {
             originalStartMs: sMs,
           };
         })
-        .filter((p): p is NonNullable<typeof p> => p !== null);
-      const lanes = assignLanes(positioned);
+        .filter((p): p is PositionedPhase => p !== null);
+
+      // Group by bundle id. Phases whose phase_key isn't in any default
+      // template (user-added, legacy-migrated) fall into a track-default
+      // bucket so they're not lost — the bar is labeled "Other <Track>".
+      const groups = new Map<string, PositionedPhase[]>();
+      for (const p of positioned) {
+        const bundleId = bundleIdForPhaseKey(p.phase_key) ?? `other.${p.track}`;
+        const arr = groups.get(bundleId);
+        if (arr) arr.push(p);
+        else groups.set(bundleId, [p]);
+      }
+
+      // Build a bundle bar per group. forEach instead of for…of so we
+      // don't need downlevelIteration on the existing tsconfig target.
+      const bundlesUnpositioned: Omit<BundleBar, "lane">[] = [];
+      groups.forEach((members: PositionedPhase[], bundleId: string) => {
+        const start = Math.min(...members.map((m) => m.start));
+        const end = Math.max(...members.map((m) => m.end));
+        const startPct = ((start - windowStart.getTime()) / windowMs) * 100;
+        const endPct = ((end - windowStart.getTime()) / windowMs) * 100;
+        const meta = bundleById(bundleId);
+        const fallbackLabel =
+          bundleId.startsWith("other.")
+            ? `Other ${bundleId.slice("other.".length)}`
+            : bundleId;
+        const label = meta?.label ?? fallbackLabel;
+        const milestones = members.filter(
+          (m) => m.kind === "milestone" || m.is_milestone === true,
+        );
+        const avgPct =
+          members.reduce(
+            (sum: number, m: PositionedPhase) => sum + (m.pct_complete ?? 0),
+            0,
+          ) / members.length;
+        bundlesUnpositioned.push({
+          id: `${deal.id}:${bundleId}`,
+          bundleId,
+          label,
+          track: meta?.track ?? members[0].track,
+          startPct,
+          endPct,
+          widthPct: Math.max(2, endPct - startPct),
+          start,
+          end,
+          milestones,
+          phaseCount: members.length,
+          avgPct,
+        });
+      });
+
+      // Lane-pack the bundle bars so overlapping bundles within a deal
+      // stack cleanly. Most deals end up at one or two lanes total —
+      // dramatically tighter than the per-phase laning we used to do.
+      const lanes = assignLanes(bundlesUnpositioned);
       return {
         deal,
-        phases: lanes,
+        bundles: lanes,
         laneCount: Math.max(1, lanes.reduce((m, x) => Math.max(m, x.lane + 1), 0)),
-        // Surface empty deals as "needs seeding" rows instead of dropping
-        // them. Without this, a brand-new deal — or one whose owner has
-        // entered LOI/PSA dates inline elsewhere but never explicitly
-        // seeded a schedule — vanishes from the schedule entirely, with
-        // no clear path back. The component renders a thin row with a
-        // one-click "Seed schedule" CTA in that case.
-        empty: positioned.length === 0,
+        // Per the user's note — only show deals with a schedule.
+        // Empty deals drop out of dealRows entirely.
+        empty: lanes.length === 0,
       };
     });
   }, [data, today, windowStart, windowEnd, windowMs]);
 
+  // Only render deals that have at least one bundle bar in the window.
+  // Empty deals are filtered out — the user said they were noisy.
   const populatedRows = useMemo(() => dealRows.filter((r) => !r.empty), [dealRows]);
-  const emptyRows = useMemo(() => dealRows.filter((r) => r.empty), [dealRows]);
 
   // The seed wizard lives at the deal level — empty deal rows here
   // route the user into the deal's schedule page where they can pick
@@ -467,13 +558,6 @@ export function ScheduleHero() {
                       showLabels={showLabels}
                     />
                   ))}
-                  {emptyRows.map((row, i) => (
-                    <EmptyDealRow
-                      key={row.deal.id}
-                      deal={row.deal}
-                      index={populatedRows.length + i}
-                    />
-                  ))}
                 </ul>
               </div>
             )}
@@ -493,13 +577,13 @@ interface DealRowProps {
 }
 
 function DealRowComponent({ row, index, showLabels }: DealRowProps) {
-  const { deal, phases, laneCount } = row;
+  const { deal, bundles, laneCount } = row;
   const meta = [deal.city, deal.state].filter(Boolean).join(", ");
   const stageLabel = DEAL_STAGE_LABELS[deal.status] ?? deal.status;
   const dotClass = STAGE_DOT[deal.status] ?? "bg-muted-foreground/30";
 
-  const ROW_BASE_PX = 36;
-  const LANE_PX = 24;
+  const ROW_BASE_PX = 40;
+  const LANE_PX = 26;
   const rowHeight = ROW_BASE_PX + Math.max(0, laneCount - 1) * LANE_PX;
 
   return (
@@ -535,75 +619,39 @@ function DealRowComponent({ row, index, showLabels }: DealRowProps) {
         </div>
       </Link>
 
-      {/* Right rail — bars */}
-      <div className="relative py-2.5">
-        {phases.map((p) => {
-          const track = classifyTrack(p);
-          const accentVar = trackVar(track);
-          const isMilestone = p.kind === "milestone" || p.is_milestone === true;
-          const isTask = p.kind === "task";
-          const top = 4 + p.lane * LANE_PX;
-          const height = isTask ? 14 : isMilestone ? 18 : 18;
-
-          if (isMilestone) {
-            // Diamond glyph at the start point. Use originalStartMs so a
-            // milestone whose date is before today still renders at the
-            // window edge with a tiny "past" indicator instead of vanishing.
-            return (
-              <div
-                key={p.id}
-                className="absolute z-[2] -translate-x-1/2 -translate-y-1/2 group/bar"
-                style={{
-                  left: `${p.startPct}%`,
-                  top: `${top + height / 2}px`,
-                }}
-                title={`${p.label} · ${formatBarDate(p.start)}`}
-              >
-                <span
-                  className="block h-3 w-3 rotate-45 rounded-[2px] border transition-transform group-hover/bar:scale-125"
-                  style={{
-                    background: `hsl(var(${accentVar}) / 0.85)`,
-                    borderColor: `hsl(var(${accentVar}))`,
-                    boxShadow: `0 0 0 2px hsl(var(${accentVar}) / 0.12)`,
-                  }}
-                />
-              </div>
-            );
-          }
-
+      {/* Right rail — bundle bars (one per bundle on the deal). */}
+      <div className="relative py-2">
+        {bundles.map((b) => {
+          const accentVar = trackVar(b.track);
+          const top = 4 + b.lane * LANE_PX;
+          const height = 20;
+          const phaseSummary =
+            b.phaseCount === 1
+              ? "1 phase"
+              : `${b.phaseCount} phases`;
           return (
             <div
-              key={p.id}
-              className="absolute group/bar overflow-hidden rounded-[3px] transition-transform hover:-translate-y-px hover:shadow-md"
+              key={b.id}
+              className="absolute group/bar overflow-hidden rounded-[4px] transition-transform hover:-translate-y-px hover:shadow-md"
               style={{
-                left: `${p.startPct}%`,
-                width: `${p.widthPct}%`,
+                left: `${b.startPct}%`,
+                width: `${b.widthPct}%`,
                 top: `${top}px`,
                 height: `${height}px`,
                 background: `hsl(var(${accentVar}) / 0.16)`,
                 border: `1px solid hsl(var(${accentVar}) / 0.42)`,
                 borderTop: `2px solid hsl(var(${accentVar}) / 0.85)`,
               }}
-              title={`${p.label} · ${formatBarDate(p.start)} → ${formatBarDate(p.end)}`}
+              title={`${b.label} · ${phaseSummary} · ${formatBarDate(b.start)} → ${formatBarDate(b.end)}`}
             >
-              {/* Tasks get a dashed treatment so they read as smaller
-                  intervention rather than a full-on phase block. */}
-              {isTask && (
-                <div
-                  className="absolute inset-0 rounded-[3px] pointer-events-none"
-                  style={{
-                    backgroundImage: `repeating-linear-gradient(45deg, transparent 0 4px, hsl(var(${accentVar}) / 0.10) 4px 6px)`,
-                  }}
-                  aria-hidden="true"
-                />
-              )}
-              {/* pct_complete fill — subtle inner darkened band underlining how far
-                  the bar has been driven. Only renders when complete > 0. */}
-              {(p.pct_complete ?? 0) > 0 && (
+              {/* Average pct_complete fill — single underline across the
+                  bundle so a half-finished bundle reads visually
+                  half-shaded. */}
+              {b.avgPct > 0 && (
                 <div
                   className="absolute left-0 top-0 bottom-0 pointer-events-none"
                   style={{
-                    width: `${Math.min(100, Math.max(0, p.pct_complete ?? 0))}%`,
+                    width: `${Math.min(100, Math.max(0, b.avgPct))}%`,
                     background: `hsl(var(${accentVar}) / 0.18)`,
                   }}
                   aria-hidden="true"
@@ -611,11 +659,40 @@ function DealRowComponent({ row, index, showLabels }: DealRowProps) {
               )}
               {showLabels && (
                 <span
-                  className="relative z-[1] block px-1.5 leading-[14px] sm:leading-[16px] text-[10px] tracking-[0.05em] truncate font-medium text-foreground/85"
+                  className="relative z-[1] flex items-center h-full px-2 text-[10px] tracking-[0.05em] truncate font-medium text-foreground/85"
                 >
-                  {p.label}
+                  {b.label}
                 </span>
               )}
+              {/* Milestone diamonds inside the bar. Drawn on top so the
+                  user sees the contractual checkpoints (LOI, PSA,
+                  closing, IC vote, permit issuance, TCO) as anchors
+                  inside the bundle rather than separate stacked bars. */}
+              {b.milestones.map((m) => {
+                // Diamond percent within the bundle bar — translate
+                // the milestone's window-relative startPct into a
+                // bar-relative offset.
+                const innerWidth = b.endPct - b.startPct;
+                const offsetPct = innerWidth > 0
+                  ? ((m.startPct - b.startPct) / innerWidth) * 100
+                  : 0;
+                return (
+                  <span
+                    key={m.id}
+                    className="absolute -translate-x-1/2 top-1/2 -translate-y-1/2 pointer-events-none"
+                    style={{ left: `${offsetPct}%` }}
+                    title={`${m.label} · ${formatBarDate(m.start)}`}
+                  >
+                    <span
+                      className="block h-2.5 w-2.5 rotate-45 rounded-[1px] border"
+                      style={{
+                        background: `hsl(var(${accentVar}) / 0.95)`,
+                        borderColor: `hsl(var(${accentVar}))`,
+                      }}
+                    />
+                  </span>
+                );
+              })}
             </div>
           );
         })}
@@ -639,66 +716,9 @@ function formatBarDate(ms: number) {
 // tracking dates inline elsewhere (LOI page, deal table fields) without
 // running the schedule seeder. The row stays compact so the populated rows
 // above keep the visual weight, but offers a one-click way to populate the
-// schedule from the default Acq → Dev → Construction template chain.
-
-function EmptyDealRow({
-  deal,
-  index,
-}: {
-  deal: DealRow;
-  index: number;
-}) {
-  const meta = [deal.city, deal.state].filter(Boolean).join(", ");
-  const stageLabel = DEAL_STAGE_LABELS[deal.status] ?? deal.status;
-  const dotClass = STAGE_DOT[deal.status] ?? "bg-muted-foreground/30";
-
-  return (
-    <li
-      className="relative grid grid-cols-[var(--rail-w)_1fr] items-stretch animate-fade-up"
-      style={{
-        animationDelay: `${Math.min(index * 30, 600)}ms`,
-        minHeight: 36,
-      }}
-    >
-      {/* Left rail — same shape as DealRowComponent's, just dimmer so the
-          eye reads "this row hasn't started yet". */}
-      <Link
-        href={`/deals/${deal.id}`}
-        className="relative pr-5 py-2.5 flex flex-col justify-center group/dealrow border-r border-border/30 opacity-70 hover:opacity-100 transition-opacity"
-      >
-        <span className="font-nameplate text-base leading-tight text-foreground/85 truncate">
-          {deal.name}
-        </span>
-        <div className="mt-0.5 flex items-center gap-2 min-w-0">
-          {meta && (
-            <span className="text-2xs tracking-[0.15em] uppercase text-muted-foreground/45 truncate">
-              {meta}
-            </span>
-          )}
-          <span className="ml-auto inline-flex items-center gap-1.5 shrink-0">
-            <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
-            <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground/55">
-              {stageLabel}
-            </span>
-          </span>
-        </div>
-      </Link>
-
-      {/* Right rail — quiet "open the deal to seed" link. The wizard
-          itself lives on the deal page so the user picks bundles in
-          context (and can also look at any data already on the deal
-          before deciding what to schedule). */}
-      <div className="relative py-2.5 px-3 flex items-center">
-        <Link
-          href={`/deals/${deal.id}/project`}
-          className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/65 hover:text-primary transition-colors"
-        >
-          Set up schedule →
-        </Link>
-      </div>
-    </li>
-  );
-}
+// (Empty deal rows are filtered out of dealRows entirely now — the
+// schedule shows only deals that have a populated schedule. Setting up
+// a new deal's schedule happens at the deal level.)
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
