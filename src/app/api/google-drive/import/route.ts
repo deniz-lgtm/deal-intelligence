@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPool, documentQueries } from "@/lib/db";
 import { downloadFile, refreshAccessToken, guessMimeType } from "@/lib/google-drive";
 import { classifyDocument } from "@/lib/claude";
-import { requireAuth } from "@/lib/auth";
+import { requireAuth, requireDealEditAccess } from "@/lib/auth";
+import { uploadBlob } from "@/lib/blob-storage";
 import { v4 as uuidv4 } from "uuid";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
@@ -11,12 +12,14 @@ import { v4 as uuidv4 } from "uuid";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const { errorResponse } = await requireAuth();
+  const { userId, errorResponse } = await requireAuth();
   if (errorResponse) return errorResponse;
 
   try {
     const { deal_id, file_ids } = await req.json();
     if (!deal_id || !file_ids?.length) return NextResponse.json({ error: "Missing deal_id or file_ids" }, { status: 400 });
+    const { errorResponse: accessError } = await requireDealEditAccess(deal_id, userId);
+    if (accessError) return accessError;
 
     const pool = getPool();
     const row = await pool.query("SELECT access_token, refresh_token FROM google_drive_accounts WHERE id = 'default'");
@@ -64,26 +67,28 @@ export async function POST(req: NextRequest) {
           tags = classified.tags || [];
         } catch { /* fallback */ }
 
-        // Upload to blob storage
+        // Upload to the shared app storage layer (R2 in production,
+        // local:// fallback in dev) so this route follows the same path
+        // as regular document upload and Dropbox import.
         const ext = name.includes(".") ? "." + name.split(".").pop() : "";
         const blobPath = `${deal_id}/${uuidv4()}${ext}`;
-        // Use the same upload pattern as the existing document upload
-        const { put } = require("@vercel/blob");
-        let fileUrl = blobPath;
-        try {
-          const blob = await put(blobPath, buffer, { access: "public", contentType: mimeType || guessMimeType(name) });
-          fileUrl = blob.url;
-        } catch {
-          // Fallback: store path only (blob not configured)
-          fileUrl = blobPath;
-        }
+        const resolvedMimeType = mimeType || guessMimeType(name);
+        const fileUrl = await uploadBlob(blobPath, buffer, resolvedMimeType);
 
         const docId = uuidv4();
-        await pool.query(
-          `INSERT INTO documents (id, deal_id, name, original_name, category, file_path, file_size, mime_type, content_text, ai_summary, ai_tags)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [docId, deal_id, name, name, category, fileUrl, buffer.length, mimeType || guessMimeType(name), contentText, summary, JSON.stringify(tags)]
-        );
+        await documentQueries.create({
+          id: docId,
+          deal_id,
+          name,
+          original_name: name,
+          category,
+          file_path: fileUrl,
+          file_size: buffer.length,
+          mime_type: resolvedMimeType,
+          content_text: contentText || null,
+          ai_summary: summary || null,
+          ai_tags: tags.length > 0 ? tags : null,
+        });
         results.push({ name, status: "imported" });
       } catch (err) {
         console.error(`Failed to import ${fileId}:`, err);
