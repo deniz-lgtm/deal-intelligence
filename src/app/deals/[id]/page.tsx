@@ -1390,12 +1390,12 @@ export default function DealOverviewPage({
       <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border/30">
         <span className="text-2xs uppercase tracking-wide text-muted-foreground/60 mr-1">Jump to</span>
         {[
-          { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3 w-3" />, label: "UW" },
-          { href: `/deals/${params.id}/loi`, icon: <FileSignature className="h-3 w-3" />, label: deal.loi_executed ? "LOI ✓" : "LOI" },
-          { href: `/deals/${params.id}/photos`, icon: <Camera className="h-3 w-3" />, label: `Photos${photos.length > 0 ? ` (${photos.length})` : ""}` },
-          { href: `/deals/${params.id}/dd-abstract`, icon: <Sparkles className="h-3 w-3" />, label: "Abstract" },
-          { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3 w-3" />, label: "Chat" },
-          { href: `/deals/${params.id}/deal-log`, icon: <FileText className="h-3 w-3" />, label: "Log" },
+          { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3 w-3" />, label: "Underwrite" },
+          { href: `/deals/${params.id}/schedule`, icon: <Calendar className="h-3 w-3" />, label: "Schedule" },
+          { href: `/deals/${params.id}/project/design`, icon: <Building2 className="h-3 w-3" />, label: "Design" },
+          { href: `/deals/${params.id}/documents`, icon: <FileText className="h-3 w-3" />, label: `Documents${documents.length > 0 ? ` (${documents.length})` : ""}` },
+          { href: "#decisions-open-items", icon: <CheckCircle2 className="h-3 w-3" />, label: "Decisions" },
+          { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3 w-3" />, label: "Assistant" },
         ].map(({ href, icon, label }) => (
           <Link key={href} href={href}>
             <span className="inline-flex items-center gap-1 text-2xs px-2 py-1 rounded-md border border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
@@ -1519,7 +1519,7 @@ function DecisionsOpenItemsPanel({
   const hasItems = decisionNotes.length > 0 || openQuestions.length > 0 || ownerTasks.length > 0;
 
   return (
-    <section className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
+    <section id="decisions-open-items" className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
       <div className="flex flex-col gap-3 border-b border-border/40 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-2">

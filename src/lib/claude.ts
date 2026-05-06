@@ -1024,6 +1024,22 @@ const UNIVERSAL_CHAT_TOOLS: Anthropic.Tool[] = [
       required: ["item", "category"],
     },
   },
+  {
+    name: "record_decision",
+    description:
+      "Record a decision, unresolved decision, or open item in deal memory. Use when the user says something was decided, needs approval, needs owner follow-up, or should be visible in handoffs. Requires an active editable deal.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        note: {
+          type: "string",
+          description:
+            "Clear handoff-ready note. Include the decision/open item, owner if known, and why it matters.",
+        },
+      },
+      required: ["note"],
+    },
+  },
 ];
 
 export interface UniversalChatContext {
@@ -1119,6 +1135,7 @@ Guidance:
 - When Development Playbook excerpts are relevant, use them as company memory and cite them like [1].
 - When the user asks to create a follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
 - When the user asks to verify, check, diligence, document, or track a requirement without a date, use create_checklist_item if an editable deal is active.
+- When the user says a decision was made, an approval is needed, or an open item should carry through a handoff, use record_decision if an editable deal is active.
 - Always accompany a tool use with a short text confirmation so the user sees what you did.
 - Keep responses concise — this is a sidebar, not a full page.
 - If the user asks you to "stress-test" / "challenge" / "review" the underwriting model, point them to the UW Co-Pilot tab of this widget (Review / What-If / Benchmarks) rather than trying to do that analysis in chat.
@@ -1140,6 +1157,7 @@ Guidance:
     "update_underwriting",
     "create_schedule_item",
     "create_checklist_item",
+    "record_decision",
   ]);
   const tools =
     ctx.deal && ctx.can_edit_deal
@@ -1234,6 +1252,14 @@ Guidance:
           notes: input.notes || null,
         },
         display: `Created checklist item: ${input.item}`,
+      });
+    } else if (tool.name === "record_decision" && ctx.deal && ctx.can_edit_deal) {
+      const input = tool.input as { note: string };
+      actions.push({
+        type: "note_created",
+        note: input.note,
+        category: "review",
+        display: `Recorded decision/open item: ${input.note.slice(0, 100)}${input.note.length > 100 ? "..." : ""}`,
       });
     }
   }

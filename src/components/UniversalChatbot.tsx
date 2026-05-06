@@ -125,7 +125,7 @@ export default function UniversalChatbot({
     const prompt = initialPrompt?.trim();
     if (!prompt || appliedInitialPromptRef.current === prompt) return;
     appliedInitialPromptRef.current = prompt;
-    setInput((current) => current || prompt);
+    setInput(prompt);
     if (isEmbedded) setOpen(true);
   }, [initialPrompt, isEmbedded]);
 
@@ -594,6 +594,16 @@ function getActionCardConfig(
       href: dealId ? `/deals/${dealId}/checklist` : null,
       hrefLabel: "Open checklist",
       undoUrl: itemId ? `/api/checklist?id=${itemId}` : null,
+    };
+  }
+  if (action.type === "note_created") {
+    return {
+      title: "Saved decision",
+      icon: CheckCircle2,
+      className: "bg-emerald-500/10 border-emerald-500/20 text-emerald-300",
+      href: dealId ? `/notes?deal=${dealId}` : "/notes",
+      hrefLabel: "Open notes",
+      undoUrl: dealId && action.note_id ? `/api/deals/${dealId}/notes?noteId=${action.note_id}` : null,
     };
   }
   if (action.type === "schedule_item_created") {
