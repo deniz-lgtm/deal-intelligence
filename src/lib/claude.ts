@@ -1208,6 +1208,15 @@ export interface UniversalChatContext {
   playbook_context?: string | null;
 }
 
+function cleanUniversalResponse(text: string): string {
+  return text
+    // Claude occasionally emits malformed headings like "##Title"; make
+    // them render properly if a custom prompt still asks for headings.
+    .replace(/^(#{1,6})([^\s#])/gm, "$1 $2")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function chatUniversal(
   ctx: UniversalChatContext,
   documents: Array<{ name: string; category: string; content_text: string | null; ai_summary: string | null }>,
@@ -1273,7 +1282,7 @@ ${ctx.playbook_context.trim()}`
 
 Guidance:
 - When Development Playbook excerpts are relevant, use them as company memory and cite them like [1].
-- For Playbook questions, answer in 2-5 bullets by default. Start with the answer. Avoid long explanations, headings, and tables unless the user asks.
+- For Playbook questions, answer in 2-5 bullets by default, under 120 words unless the user asks for detail. Start with the answer. Do not use headings or tables unless the user asks.
 - If the Playbook excerpts do not answer the question, say that plainly and give only the closest relevant guidance. Do not stretch weak citations.
 - When the user asks to create a single follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
 - For mini schedules, ask prep questions if needed, then use propose_mini_schedule_tasks to show an approval card. Do not stop with a plain text list when the user is trying to build a mini schedule.
@@ -1282,7 +1291,7 @@ Guidance:
 - When the user says a decision was made, an approval is needed, or an open item should carry through a handoff, use record_decision if an editable deal is active.
 - Before building a multi-step plan or schedule from thin context, ask 2-4 pointed prep questions about target date, deal scope, owner, approval path, and source documents. If enough context is present, act first and keep the confirmation short.
 - Always accompany a tool use with a short text confirmation so the user sees what you did.
-- Keep responses concise — this is a sidebar, not a full page.
+- Keep responses concise — this is a sidebar, not a full page. Prefer the shortest useful answer; if you do not know, say so plainly.
 - If the user asks you to "stress-test" / "challenge" / "review" the underwriting model, point them to the UW Co-Pilot tab of this widget (Review / What-If / Benchmarks) rather than trying to do that analysis in chat.
 - Never fabricate financial facts. If you don't have enough data in the memory or documents to answer, say so and ask the user for the missing piece.`,
     "System prompt for the universal (cross-page) chatbot. Supports {{deal_block}}, {{screen_block}}, {{playbook_block}}, {{doc_context}}."
@@ -1329,6 +1338,8 @@ Guidance:
     .map((b) => (b as Anthropic.TextBlock).text)
     .join("\n")
     .trim();
+
+  responseText = cleanUniversalResponse(responseText);
 
   if (!responseText) responseText = "Done.";
 

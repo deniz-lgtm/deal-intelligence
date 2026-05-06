@@ -127,7 +127,7 @@ export async function POST(req: NextRequest) {
       20
     )) as Array<{ role: "user" | "assistant"; content: string }>;
     const history = rawHistory.map((m) => ({ role: m.role, content: m.content }));
-    const playbookHits = await playbookQueries.search(message, 4).catch((error) => {
+    const playbookHits = await playbookQueries.search(message, 8).catch((error) => {
       console.warn("universal-chat playbook search failed:", error);
       return [];
     });
