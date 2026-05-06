@@ -8,9 +8,11 @@ import {
   CalendarDays,
   CheckCircle2,
   Download,
+  FileText,
   GitBranch,
   MessageSquare,
   Loader2,
+  Paperclip,
   Plus,
   SlidersHorizontal,
   Trash2,
@@ -40,12 +42,31 @@ const TRACK_BACK_HREF: Record<ScheduleTrack, (dealId: string) => string> = {
   construction: (dealId) => `/deals/${dealId}/construction/schedule`,
 };
 
+type DealDocumentLite = {
+  id: string;
+  name: string;
+  original_name?: string | null;
+  category?: string | null;
+};
+
+type ScheduleComment = {
+  id: string;
+  phase_id: string;
+  author_user_id?: string | null;
+  body: string;
+  resolved_at?: string | null;
+  created_at: string;
+};
+
 export default function ScheduleFocusPage({
   params,
 }: {
   params: { id: string; phaseId: string };
 }) {
   const [items, setItems] = useState<DevPhase[]>([]);
+  const [documents, setDocuments] = useState<DealDocumentLite[]>([]);
+  const [commentsByPhase, setCommentsByPhase] = useState<Record<string, ScheduleComment[]>>({});
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,10 +83,15 @@ export default function ScheduleFocusPage({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/deals/${encodeURIComponent(params.id)}/schedule`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Failed to load schedule");
-      setItems(Array.isArray(json.data) ? json.data : []);
+      const [scheduleRes, docsRes] = await Promise.all([
+        fetch(`/api/deals/${encodeURIComponent(params.id)}/schedule`),
+        fetch(`/api/deals/${encodeURIComponent(params.id)}/documents`),
+      ]);
+      const scheduleJson = await scheduleRes.json();
+      if (!scheduleRes.ok) throw new Error(scheduleJson.error || "Failed to load schedule");
+      setItems(Array.isArray(scheduleJson.data) ? scheduleJson.data : []);
+      const docsJson = await docsRes.json().catch(() => ({ data: [] }));
+      setDocuments(Array.isArray(docsJson.data) ? docsJson.data : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load schedule");
     } finally {
@@ -96,6 +122,33 @@ export default function ScheduleFocusPage({
     () => children.filter((child) => child.kind !== "milestone"),
     [children]
   );
+  const phaseIdsForComments = useMemo(
+    () => [parent?.id, ...children.map((child) => child.id)].filter(Boolean) as string[],
+    [parent?.id, children]
+  );
+
+  useEffect(() => {
+    if (phaseIdsForComments.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      phaseIdsForComments.map(async (phaseId) => {
+        const res = await fetch(
+          `/api/deals/${encodeURIComponent(params.id)}/schedule/${encodeURIComponent(phaseId)}/comments`
+        );
+        const json = await res.json().catch(() => ({ data: [] }));
+        return [phaseId, Array.isArray(json.data) ? json.data : []] as const;
+      })
+    )
+      .then((entries) => {
+        if (!cancelled) setCommentsByPhase(Object.fromEntries(entries));
+      })
+      .catch((err) => {
+        if (!cancelled) console.error("Failed to load schedule comments:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, phaseIdsForComments]);
 
   useSetPageContext(
     {
@@ -194,6 +247,63 @@ export default function ScheduleFocusPage({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete task");
     }
+  };
+
+  const addComment = async (phaseId: string) => {
+    const body = (commentDrafts[phaseId] || "").trim();
+    if (!body) return;
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/deals/${encodeURIComponent(params.id)}/schedule/${encodeURIComponent(phaseId)}/comments`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body }),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to add comment");
+      setCommentsByPhase((current) => ({
+        ...current,
+        [phaseId]: [...(current[phaseId] || []), json.data],
+      }));
+      setCommentDrafts((current) => ({ ...current, [phaseId]: "" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add comment");
+    }
+  };
+
+  const resolveComment = async (phaseId: string, commentId: string, resolved: boolean) => {
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/deals/${encodeURIComponent(params.id)}/schedule/${encodeURIComponent(phaseId)}/comments`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ comment_id: commentId, resolved }),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to update comment");
+      setCommentsByPhase((current) => ({
+        ...current,
+        [phaseId]: (current[phaseId] || []).map((comment) =>
+          comment.id === commentId ? json.data : comment
+        ),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update comment");
+    }
+  };
+
+  const toggleLinkedDocument = async (task: DevPhase, docId: string, linked: boolean) => {
+    const current = Array.isArray(task.linked_document_ids) ? task.linked_document_ids : [];
+    const next = linked
+      ? Array.from(new Set([...current, docId]))
+      : current.filter((id) => id !== docId);
+    await updateTask(task.id, { linked_document_ids: next.length > 0 ? next : null });
   };
 
   const exportFocusSchedule = () => {
@@ -394,6 +504,17 @@ export default function ScheduleFocusPage({
                       task={child}
                       predecessor={child.predecessor_id ? byId.get(child.predecessor_id) ?? null : null}
                       predecessorOptions={predecessorOptions.filter((option) => option.id !== child.id)}
+                      documents={documents}
+                      comments={commentsByPhase[child.id] || []}
+                      commentDraft={commentDrafts[child.id] || ""}
+                      onCommentDraftChange={(value) =>
+                        setCommentDrafts((current) => ({ ...current, [child.id]: value }))
+                      }
+                      onAddComment={() => addComment(child.id)}
+                      onResolveComment={(commentId, resolved) =>
+                        resolveComment(child.id, commentId, resolved)
+                      }
+                      onToggleDocument={(docId, linked) => toggleLinkedDocument(child, docId, linked)}
                       onUpdate={(updates) => updateTask(child.id, updates)}
                       onDelete={() => deleteTask(child.id)}
                     />
@@ -588,17 +709,35 @@ function TaskRow({
   task,
   predecessor,
   predecessorOptions,
+  documents,
+  comments,
+  commentDraft,
+  onCommentDraftChange,
+  onAddComment,
+  onResolveComment,
+  onToggleDocument,
   onUpdate,
   onDelete,
 }: {
   task: DevPhase;
   predecessor: DevPhase | null;
   predecessorOptions: DevPhase[];
+  documents: DealDocumentLite[];
+  comments: ScheduleComment[];
+  commentDraft: string;
+  onCommentDraftChange: (value: string) => void;
+  onAddComment: () => void;
+  onResolveComment: (commentId: string, resolved: boolean) => void;
+  onToggleDocument: (docId: string, linked: boolean) => void;
   onUpdate: (updates: Partial<DevPhase>) => void;
   onDelete: () => void;
 }) {
   const cfg = DEV_PHASE_STATUS_CONFIG[task.status];
   const pct = Math.max(0, Math.min(100, Number(task.pct_complete ?? 0)));
+  const linkedIds = Array.isArray(task.linked_document_ids) ? task.linked_document_ids : [];
+  const linkedDocs = documents.filter((doc) => linkedIds.includes(doc.id));
+  const unlinkedDocs = documents.filter((doc) => !linkedIds.includes(doc.id));
+  const openComments = comments.filter((comment) => !comment.resolved_at);
   return (
     <div className="grid grid-cols-1 gap-3 px-4 py-3 lg:grid-cols-[minmax(220px,1fr)_130px_150px_160px_32px] lg:items-start">
       <div className="min-w-0">
@@ -716,7 +855,7 @@ function TaskRow({
       >
         <Trash2 className="h-4 w-4" />
       </button>
-      <div className="lg:col-span-5">
+      <div className="space-y-3 lg:col-span-5">
         <Textarea
           defaultValue={task.notes ?? ""}
           onBlur={(e) => {
@@ -726,6 +865,120 @@ function TaskRow({
           className="min-h-[60px] text-xs"
           placeholder="Notes"
         />
+        <div className="grid gap-3 rounded-lg border border-border/60 bg-background/50 p-3 lg:grid-cols-[1fr_1.2fr]">
+          <div>
+            <div className="mb-2 flex items-center gap-1.5 text-2xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              <Paperclip className="h-3.5 w-3.5" />
+              Documents
+            </div>
+            {linkedDocs.length > 0 ? (
+              <div className="space-y-1.5">
+                {linkedDocs.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="flex items-center gap-2 rounded-md border border-border/60 bg-card px-2 py-1.5"
+                  >
+                    <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate text-2xs" title={doc.name}>
+                      {doc.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onToggleDocument(doc.id, false)}
+                      className="text-2xs text-muted-foreground hover:text-destructive"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-2xs leading-5 text-muted-foreground">
+                Link source files, drawings, approvals, or reports to this task.
+              </p>
+            )}
+            {unlinkedDocs.length > 0 && (
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) onToggleDocument(e.target.value, true);
+                }}
+                className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2 text-2xs outline-none focus:border-primary/50"
+              >
+                <option value="">Link document...</option>
+                {unlinkedDocs.slice(0, 30).map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    {doc.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-2xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                <MessageSquare className="h-3.5 w-3.5" />
+                Comments
+              </div>
+              <span className="text-2xs text-muted-foreground">
+                {openComments.length} open
+              </span>
+            </div>
+            <div className="space-y-2">
+              {comments.slice(-3).map((comment) => (
+                <div
+                  key={comment.id}
+                  className={cn(
+                    "rounded-md border border-border/60 bg-card px-2 py-1.5",
+                    comment.resolved_at && "opacity-60"
+                  )}
+                >
+                  <div className="whitespace-pre-wrap text-2xs leading-5">{comment.body}</div>
+                  <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                    <span>{formatShortDate(comment.created_at)}</span>
+                    <button
+                      type="button"
+                      onClick={() => onResolveComment(comment.id, !comment.resolved_at)}
+                      className="hover:text-primary"
+                    >
+                      {comment.resolved_at ? "Reopen" : "Resolve"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {comments.length === 0 && (
+                <p className="text-2xs leading-5 text-muted-foreground">
+                  Capture decisions, questions, or handoff notes here.
+                </p>
+              )}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input
+                value={commentDraft}
+                onChange={(e) => onCommentDraftChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    onAddComment();
+                  }
+                }}
+                className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-2xs outline-none focus:border-primary/50"
+                placeholder="Add comment..."
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onAddComment}
+                disabled={!commentDraft.trim()}
+                className="h-8 px-2 text-2xs"
+              >
+                Add
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

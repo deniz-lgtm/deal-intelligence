@@ -221,6 +221,17 @@ export async function ensureColumns(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_dev_phases_deal_id ON deal_dev_phases(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS schedule_comments (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      phase_id TEXT NOT NULL REFERENCES deal_dev_phases(id) ON DELETE CASCADE,
+      author_user_id TEXT,
+      body TEXT NOT NULL,
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_schedule_comments_phase ON schedule_comments(deal_id, phase_id, created_at)`,
     `CREATE TABLE IF NOT EXISTS deal_predev_costs (
       id TEXT PRIMARY KEY,
       deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
@@ -1361,6 +1372,17 @@ export async function initSchema(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_dev_phases_deal_id ON deal_dev_phases(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS schedule_comments (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      phase_id TEXT NOT NULL REFERENCES deal_dev_phases(id) ON DELETE CASCADE,
+      author_user_id TEXT,
+      body TEXT NOT NULL,
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_schedule_comments_phase ON schedule_comments(deal_id, phase_id, created_at)`,
     // Project management: pre-development costs
     `CREATE TABLE IF NOT EXISTS deal_predev_costs (
       id TEXT PRIMARY KEY,
@@ -4976,6 +4998,56 @@ function addDaysIso(dateStr: string, days: number): string {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().split("T")[0];
 }
+
+export const scheduleCommentQueries = {
+  listForPhase: async (dealId: string, phaseId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM schedule_comments
+       WHERE deal_id = $1 AND phase_id = $2
+       ORDER BY created_at ASC`,
+      [dealId, phaseId]
+    );
+    return res.rows;
+  },
+
+  create: async (input: {
+    id: string;
+    deal_id: string;
+    phase_id: string;
+    author_user_id?: string | null;
+    body: string;
+  }) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO schedule_comments
+         (id, deal_id, phase_id, author_user_id, body)
+       SELECT $1, $2, p.id, $4, $5
+       FROM deal_dev_phases p
+       WHERE p.id = $3 AND p.deal_id = $2
+       RETURNING *`,
+      [input.id, input.deal_id, input.phase_id, input.author_user_id ?? null, input.body]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  setResolved: async (
+    dealId: string,
+    phaseId: string,
+    commentId: string,
+    resolved: boolean
+  ) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `UPDATE schedule_comments
+          SET resolved_at = $1, updated_at = NOW()
+        WHERE id = $2 AND deal_id = $3 AND phase_id = $4
+        RETURNING *`,
+      [resolved ? new Date().toISOString() : null, commentId, dealId, phaseId]
+    );
+    return res.rows[0] ?? null;
+  },
+};
 
 export const devPhaseQueries = {
   getByDealId: async (dealId: string) => {
