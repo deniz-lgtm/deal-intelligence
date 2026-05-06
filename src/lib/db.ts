@@ -4030,7 +4030,58 @@ export const playbookQueries = {
       if (!rowsById.has(row.id)) rowsById.set(row.id, row);
     }
 
-    return Array.from(rowsById.values()).slice(0, limit);
+    const rankedRows = Array.from(rowsById.values());
+    const seeds = rankedRows.slice(0, Math.min(4, rankedRows.length));
+    if (seeds.length === 0) return rankedRows.slice(0, limit);
+
+    const neighborParams: Array<string | number> = [];
+    const neighborWhere = seeds
+      .map((row, index) => {
+        const base = index * 3;
+        neighborParams.push(row.document_id, Math.max(0, row.chunk_index - 1), row.chunk_index + 1);
+        return `(c.document_id = $${base + 1} AND c.chunk_index BETWEEN $${base + 2} AND $${base + 3})`;
+      })
+      .join(" OR ");
+    const neighborRes = await pool.query(
+      `SELECT
+        c.id,
+        c.document_id,
+        d.title AS document_title,
+        d.category AS document_category,
+        d.original_name,
+        c.chunk_index,
+        c.heading,
+        c.content,
+        c.token_estimate,
+        0.1::float AS rank
+       FROM playbook_chunks c
+       JOIN playbook_documents d ON d.id = c.document_id
+       WHERE ${neighborWhere}
+       ORDER BY d.updated_at DESC, c.chunk_index ASC`,
+      neighborParams
+    );
+
+    const neighborsByKey = new Map<string, PlaybookChunkRow>();
+    for (const row of neighborRes.rows) {
+      neighborsByKey.set(`${row.document_id}:${row.chunk_index}`, row);
+    }
+
+    const expanded: PlaybookChunkRow[] = [];
+    const emitted = new Set<string>();
+    const emit = (row: PlaybookChunkRow | undefined) => {
+      if (!row || emitted.has(row.id) || expanded.length >= limit) return;
+      emitted.add(row.id);
+      expanded.push(row);
+    };
+
+    for (const row of rankedRows) {
+      emit(row);
+      emit(neighborsByKey.get(`${row.document_id}:${row.chunk_index - 1}`));
+      emit(neighborsByKey.get(`${row.document_id}:${row.chunk_index + 1}`));
+      if (expanded.length >= limit) break;
+    }
+
+    return expanded;
   },
 };
 
