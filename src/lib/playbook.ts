@@ -46,6 +46,8 @@ export function buildPlaybookChunks(text: string): PlaybookBuiltChunk[] {
   if (!cleaned.trim()) return [];
 
   const paragraphs = cleaned
+    .replace(/\n(?=\|[^|\n]+\|)/g, "\n\n")
+    .replace(/\n(?=(?:[-*]|\d+\.)\s+)/g, "\n\n")
     .split(/\n{2,}/)
     .map((p) => p.trim())
     .filter(Boolean);
@@ -84,7 +86,7 @@ export function formatPlaybookContext(hits: PlaybookChunkRow[]): string {
       const citation = index + 1;
       const title = hit.document_title || hit.original_name;
       const heading = hit.heading ? ` - ${hit.heading}` : "";
-      return `[${citation}] ${title}${heading} (chunk ${hit.chunk_index + 1})\n${hit.content}`;
+      return `[${citation}] ${title}${heading} (chunk ${hit.chunk_index + 1})\n${trimExcerpt(hit.content)}`;
     })
     .join("\n\n---\n\n");
 }
@@ -110,6 +112,14 @@ function makeChunk(index: number, content: string, heading: string | null): Play
     content: trimmed,
     token_estimate: Math.ceil(trimmed.length / 4),
   };
+}
+
+function trimExcerpt(content: string): string {
+  const clean = content.trim();
+  if (clean.length <= 1400) return clean;
+  const clipped = clean.slice(0, 1400);
+  const lastBreak = Math.max(clipped.lastIndexOf("\n\n"), clipped.lastIndexOf(". "));
+  return `${clipped.slice(0, lastBreak > 700 ? lastBreak + 1 : 1400).trim()}...`;
 }
 
 function inferHeading(text: string): string | null {

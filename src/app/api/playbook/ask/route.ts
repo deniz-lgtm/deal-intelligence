@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "question is required" }, { status: 400 });
     }
 
-    const hits = await playbookQueries.search(question, 12);
+    const hits = await playbookQueries.search(question, 8);
     if (hits.length === 0) {
       return NextResponse.json({
         data: {
@@ -33,14 +33,14 @@ export async function POST(req: NextRequest) {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await client.messages.create({
       model: await getActiveModel(),
-      max_tokens: 1200,
+      max_tokens: 700,
       system: `You answer as a senior multifamily development, underwriting, and construction advisor.
 
 Use only the Development Playbook excerpts provided by the user. Cite source numbers like [1] or [2] when giving guidance. If the excerpts do not contain enough support for a claim, say what is missing instead of guessing.
 
-Prefer crisp, practical guidance: what to check, what decision it supports, and what risk it reduces.
+Be concise. Default to 2-5 bullets or a short paragraph. Start with the answer, not throat-clearing. Do not write long background sections.
 
-Format the answer as clean GitHub-flavored Markdown. Use tables only when they make comparison easier, and keep them compact.`,
+Avoid Markdown tables unless the user explicitly asks for a comparison table. If the answer is not in the excerpts, say "I couldn't find that in the Playbook" and give only the closest relevant citation, if one exists.`,
       messages: [
         {
           role: "user",

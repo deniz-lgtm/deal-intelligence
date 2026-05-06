@@ -1071,14 +1071,14 @@ export default function DevelopmentSchedule({
   };
 
   /**
-   * Download the schedule as CSV or ICS. `scope` chooses between the
+   * Download the schedule as Excel, CSV, or ICS. `scope` chooses between the
    * current page's track (matching what the analyst is looking at) and
    * the full deal across all three tracks. Defaults to current track so
    * a "Export schedule" click on the Acquisition page exports
    * acquisition rows only.
    */
   const handleExportSchedule = (
-    format: "csv" | "ics",
+    format: "csv" | "ics" | "xls",
     scope: "track" | "all" = "track"
   ) => {
     // Browser navigates to the export route with the proper Content-
@@ -1537,8 +1537,10 @@ export default function DevelopmentSchedule({
                     onChange={(e) => {
                       const v = e.target.value;
                       e.target.value = "";
-                      if (v === "csv") handleExportSchedule("csv", "track");
+                      if (v === "xls") handleExportSchedule("xls", "track");
+                      else if (v === "csv") handleExportSchedule("csv", "track");
                       else if (v === "ics") handleExportSchedule("ics", "track");
+                      else if (v === "xls-all") handleExportSchedule("xls", "all");
                       else if (v === "csv-all") handleExportSchedule("csv", "all");
                       else if (v === "ics-all") handleExportSchedule("ics", "all");
                     }}
@@ -1547,10 +1549,12 @@ export default function DevelopmentSchedule({
                   >
                     <option value="">Export…</option>
                     <optgroup label={`This track (${SCHEDULE_TRACK_LABELS[track]})`}>
-                      <option value="csv">CSV (Sheets / Excel)</option>
+                      <option value="xls">Excel schedule</option>
+                      <option value="csv">CSV data</option>
                       <option value="ics">ICS (Calendar)</option>
                     </optgroup>
                     <optgroup label="All tracks">
+                      <option value="xls-all">Excel - all tracks</option>
                       <option value="csv-all">CSV — all tracks</option>
                       <option value="ics-all">ICS — all tracks</option>
                     </optgroup>

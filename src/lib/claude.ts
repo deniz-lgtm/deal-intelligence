@@ -872,7 +872,7 @@ Answer questions accurately based on the documents. If information isn't in the 
 
   const response = await getClient().messages.create({
     model: await getActiveModel(),
-    max_tokens: 2048,
+    max_tokens: 900,
     system: systemPrompt,
     messages,
   });
@@ -1133,9 +1133,12 @@ ${ctx.playbook_context.trim()}`
 
 Guidance:
 - When Development Playbook excerpts are relevant, use them as company memory and cite them like [1].
+- For Playbook questions, answer in 2-5 bullets by default. Start with the answer. Avoid long explanations, headings, and tables unless the user asks.
+- If the Playbook excerpts do not answer the question, say that plainly and give only the closest relevant guidance. Do not stretch weak citations.
 - When the user asks to create a follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
 - When the user asks to verify, check, diligence, document, or track a requirement without a date, use create_checklist_item if an editable deal is active.
 - When the user says a decision was made, an approval is needed, or an open item should carry through a handoff, use record_decision if an editable deal is active.
+- Before building a multi-step plan or schedule from thin context, ask 2-4 pointed prep questions about target date, deal scope, owner, approval path, and source documents. If enough context is present, act first and keep the confirmation short.
 - Always accompany a tool use with a short text confirmation so the user sees what you did.
 - Keep responses concise — this is a sidebar, not a full page.
 - If the user asks you to "stress-test" / "challenge" / "review" the underwriting model, point them to the UW Co-Pilot tab of this widget (Review / What-If / Benchmarks) rather than trying to do that analysis in chat.
@@ -1171,7 +1174,7 @@ Guidance:
 
   const response = await getClient().messages.create({
     model: await getActiveModel(),
-    max_tokens: 2048,
+    max_tokens: 900,
     system: systemPrompt,
     tools,
     messages,

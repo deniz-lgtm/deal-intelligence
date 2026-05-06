@@ -3912,39 +3912,72 @@ export const playbookQueries = {
     if (!normalized) return [];
 
     const pool = getPool();
-    const tsRes = await pool.query(
-      `WITH q AS (SELECT plainto_tsquery('english', $1) AS query)
-       SELECT
-        c.id,
-        c.document_id,
-        d.title AS document_title,
-        d.category AS document_category,
-        d.original_name,
-        c.chunk_index,
-        c.heading,
-        c.content,
-        c.token_estimate,
-        ts_rank(to_tsvector('english', c.content), q.query) AS rank
-       FROM playbook_chunks c
-       JOIN playbook_documents d ON d.id = c.document_id
-       CROSS JOIN q
-       WHERE to_tsvector('english', c.content) @@ q.query
-       ORDER BY rank DESC, d.updated_at DESC, c.chunk_index ASC
-       LIMIT $2`,
-      [normalized, limit]
-    );
-
-    const likeTerms = normalized
-      .split(/\s+/)
-      .map((term) => term.replace(/[%_]/g, ""))
-      .filter((term) => term.length > 2)
-      .slice(0, 6);
+    const likeTerms = playbookSearchTerms(normalized).slice(0, 10);
+    const tsVector =
+      "setweight(to_tsvector('english', coalesce(c.heading,'')), 'A') || " +
+      "setweight(to_tsvector('english', d.title || ' ' || d.original_name), 'B') || " +
+      "setweight(to_tsvector('english', c.content), 'C')";
 
     const rowsById = new Map<string, PlaybookChunkRow>();
-    for (const row of tsRes.rows) rowsById.set(row.id, row);
+
+    try {
+      const tsRes = await pool.query(
+        `WITH q AS (SELECT websearch_to_tsquery('english', $1) AS query)
+         SELECT
+          c.id,
+          c.document_id,
+          d.title AS document_title,
+          d.category AS document_category,
+          d.original_name,
+          c.chunk_index,
+          c.heading,
+          c.content,
+          c.token_estimate,
+          ts_rank_cd(${tsVector}, q.query) AS rank
+         FROM playbook_chunks c
+         JOIN playbook_documents d ON d.id = c.document_id
+         CROSS JOIN q
+         WHERE ${tsVector} @@ q.query
+         ORDER BY rank DESC, d.updated_at DESC, c.chunk_index ASC
+         LIMIT $2`,
+        [normalized, limit]
+      );
+      for (const row of tsRes.rows) rowsById.set(row.id, row);
+    } catch {
+      const tsRes = await pool.query(
+        `WITH q AS (SELECT plainto_tsquery('english', $1) AS query)
+         SELECT
+          c.id,
+          c.document_id,
+          d.title AS document_title,
+          d.category AS document_category,
+          d.original_name,
+          c.chunk_index,
+          c.heading,
+          c.content,
+          c.token_estimate,
+          ts_rank_cd(${tsVector}, q.query) AS rank
+         FROM playbook_chunks c
+         JOIN playbook_documents d ON d.id = c.document_id
+         CROSS JOIN q
+         WHERE ${tsVector} @@ q.query
+         ORDER BY rank DESC, d.updated_at DESC, c.chunk_index ASC
+         LIMIT $2`,
+        [normalized, limit]
+      );
+      for (const row of tsRes.rows) rowsById.set(row.id, row);
+    }
 
     if (likeTerms.length === 0) return Array.from(rowsById.values()).slice(0, limit);
 
+    const scoreSql = likeTerms
+      .map(
+        (_, i) =>
+          `(CASE WHEN c.heading ILIKE $${i + 1} THEN 8 ELSE 0 END +
+            CASE WHEN d.title ILIKE $${i + 1} OR d.original_name ILIKE $${i + 1} THEN 5 ELSE 0 END +
+            CASE WHEN c.content ILIKE $${i + 1} THEN 1 ELSE 0 END)`
+      )
+      .join(" + ");
     const likeRes = await pool.query(
       `SELECT
         c.id,
@@ -3956,7 +3989,7 @@ export const playbookQueries = {
         c.heading,
         c.content,
         c.token_estimate,
-        0::float AS rank
+        (${scoreSql})::float AS rank
        FROM playbook_chunks c
        JOIN playbook_documents d ON d.id = c.document_id
        WHERE ${likeTerms
@@ -3967,7 +4000,7 @@ export const playbookQueries = {
              })`
          )
          .join(" OR ")}
-       ORDER BY d.updated_at DESC, c.chunk_index ASC
+       ORDER BY rank DESC, d.updated_at DESC, c.chunk_index ASC
        LIMIT $${likeTerms.length + 1}`,
       [...likeTerms.map((term) => `%${term}%`), limit * 2]
     );
@@ -3978,6 +4011,45 @@ export const playbookQueries = {
     return Array.from(rowsById.values()).slice(0, limit);
   },
 };
+
+function playbookSearchTerms(query: string): string[] {
+  const stop = new Set([
+    "about",
+    "after",
+    "answer",
+    "before",
+    "could",
+    "does",
+    "from",
+    "have",
+    "into",
+    "like",
+    "should",
+    "that",
+    "the",
+    "their",
+    "there",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+    "would",
+  ]);
+  const raw = query
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .map((term) => term.replace(/^-+|-+$/g, ""))
+    .filter((term) => term.length > 2 && !stop.has(term));
+  const terms = new Set<string>();
+  for (const term of raw) terms.add(term);
+  for (let i = 0; i < raw.length - 1; i += 1) {
+    terms.add(`${raw[i]} ${raw[i + 1]}`);
+  }
+  return Array.from(terms);
+}
 
 // OM Analysis queries
 

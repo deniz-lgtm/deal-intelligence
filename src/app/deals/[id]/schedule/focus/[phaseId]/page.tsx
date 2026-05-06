@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   CalendarDays,
   CheckCircle2,
+  Download,
   MessageSquare,
   Loader2,
   Plus,
@@ -188,6 +189,11 @@ export default function ScheduleFocusPage({
     }
   };
 
+  const exportFocusSchedule = () => {
+    const url = `/api/deals/${encodeURIComponent(params.id)}/dev-schedule/export?format=xls&focus=${encodeURIComponent(params.phaseId)}`;
+    window.open(url, "_blank");
+  };
+
   const completeCount = children.filter((child) => child.status === "complete").length;
   const progress = children.length > 0 ? Math.round((completeCount / children.length) * 100) : 0;
   const blockedCount = children.filter((child) => child.status === "delayed").length;
@@ -244,6 +250,10 @@ export default function ScheduleFocusPage({
               Ask assistant
             </Button>
           </Link>
+          <Button size="sm" variant="outline" className="w-full gap-2" onClick={exportFocusSchedule}>
+            <Download className="h-4 w-4" />
+            Export mini schedule
+          </Button>
         </div>
       </div>
 
