@@ -5011,6 +5011,25 @@ export const scheduleCommentQueries = {
     return res.rows;
   },
 
+  countByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT
+         phase_id,
+         COUNT(*)::int AS comment_count,
+         COUNT(*) FILTER (WHERE resolved_at IS NULL)::int AS open_comment_count
+       FROM schedule_comments
+       WHERE deal_id = $1
+       GROUP BY phase_id`,
+      [dealId]
+    );
+    return res.rows as Array<{
+      phase_id: string;
+      comment_count: number;
+      open_comment_count: number;
+    }>;
+  },
+
   create: async (input: {
     id: string;
     deal_id: string;

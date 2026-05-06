@@ -449,7 +449,7 @@ export default function ScheduleFocusPage({
           )}
           <Button size="sm" variant="outline" className="w-full gap-2" onClick={exportFocusSchedule}>
             <Download className="h-4 w-4" />
-            Export mini schedule
+            Export packet
           </Button>
         </div>
       </div>
@@ -487,7 +487,7 @@ export default function ScheduleFocusPage({
               </div>
               <Button size="sm" variant="outline" className="gap-2" onClick={exportFocusSchedule}>
                 <Download className="h-4 w-4" />
-                Export
+                Export packet
               </Button>
             </div>
             {children.length === 0 ? (

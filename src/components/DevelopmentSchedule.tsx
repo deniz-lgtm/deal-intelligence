@@ -1564,12 +1564,12 @@ export default function DevelopmentSchedule({
                   >
                     <option value="">Export…</option>
                     <optgroup label={`This track (${SCHEDULE_TRACK_LABELS[track]})`}>
-                      <option value="xls">Excel schedule</option>
+                      <option value="xls">Excel schedule packet</option>
                       <option value="csv">CSV data</option>
                       <option value="ics">ICS (Calendar)</option>
                     </optgroup>
                     <optgroup label="All tracks">
-                      <option value="xls-all">Excel - all tracks</option>
+                      <option value="xls-all">Excel packet - all tracks</option>
                       <option value="csv-all">CSV — all tracks</option>
                       <option value="ics-all">ICS — all tracks</option>
                     </optgroup>
