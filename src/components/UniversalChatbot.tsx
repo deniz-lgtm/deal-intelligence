@@ -615,7 +615,16 @@ function ActionCard({
       const created = Array.isArray(json.data?.tasks) ? json.data.tasks : [];
       const ids = created.map((task: { id?: string }) => task.id).filter(Boolean);
       setApprovedIds(ids);
-      toast.success("Mini schedule created");
+      const parentId =
+        typeof json.data?.parent?.id === "string"
+          ? json.data.parent.id
+          : action.mini_schedule.parent_phase_id;
+      toast.success("Mini schedule created. Opening it...");
+      if (parentId) {
+        window.setTimeout(() => {
+          window.location.assign(`/deals/${dealId}/schedule/focus/${parentId}`);
+        }, 450);
+      }
     } catch (err) {
       console.error("Approve mini schedule failed:", err);
       toast.error(err instanceof Error ? err.message : "Failed to create mini schedule");
