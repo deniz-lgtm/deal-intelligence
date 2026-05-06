@@ -489,7 +489,7 @@ export function ScheduleHero() {
         {/* Hairline under the title — staggered scale-in on mount, just like
             the existing nameplate underlines. */}
         <div
-          className="mt-6 h-px origin-left transition-transform duration-[700ms] ease-out scale-x-100"
+          className="mt-6 h-px origin-left transition-transform duration-700 ease-out scale-x-100"
           style={{ background: "hsl(var(--primary) / 0.5)" }}
         />
 

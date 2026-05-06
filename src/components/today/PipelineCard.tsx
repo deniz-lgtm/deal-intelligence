@@ -105,7 +105,7 @@ export function PipelineCard() {
         />
       </div>
       <div
-        className="mt-3 h-px origin-left transition-transform duration-[500ms] ease-out scale-x-[0.35] group-hover/panel:scale-x-100"
+        className="mt-3 h-px origin-left transition-transform duration-500 ease-out scale-x-[0.35] group-hover/panel:scale-x-100"
         style={{ background: "hsl(var(--primary))" }}
       />
 
