@@ -59,6 +59,7 @@ interface Message {
         label?: string;
         duration_days?: number | null;
         task_owner?: string | null;
+        notes?: string | null;
       }>;
     };
     checklist_item?: {
@@ -71,6 +72,14 @@ interface Message {
 }
 
 type UWMode = "challenge" | "whatif" | "benchmarks";
+
+type MiniScheduleTaskDraft = {
+  id?: string;
+  label?: string;
+  duration_days?: number | null;
+  task_owner?: string | null;
+  notes?: string | null;
+};
 
 const STARTER_QUESTIONS = [
   "What are the key assumptions in the model?",
@@ -514,6 +523,7 @@ function ActionCard({
         label?: string;
         duration_days?: number | null;
         task_owner?: string | null;
+        notes?: string | null;
       }>;
     };
     checklist_item?: {
@@ -526,14 +536,24 @@ function ActionCard({
 }) {
   const [undone, setUndone] = useState(false);
   const [undoing, setUndoing] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [approvedIds, setApprovedIds] = useState<string[]>([]);
+  const [draftTasks, setDraftTasks] = useState<MiniScheduleTaskDraft[]>(
+    () => action.mini_schedule?.tasks?.map((task) => ({ ...task })) ?? []
+  );
   const config = getActionCardConfig(action, dealId);
+  const isDraft = action.type === "mini_schedule_draft";
+  const activeTasks = isDraft ? draftTasks : action.mini_schedule?.tasks ?? [];
+  const effectiveUndoUrls =
+    approvedIds.length > 0 && dealId
+      ? approvedIds.map((id) => `/api/deals/${dealId}/schedule/${id}`)
+      : config.undoUrls || (config.undoUrl ? [config.undoUrl] : []);
 
   const undo = async () => {
-    const undoUrls = config.undoUrls || (config.undoUrl ? [config.undoUrl] : []);
-    if (!dealId || undoUrls.length === 0 || undoing) return;
+    if (!dealId || effectiveUndoUrls.length === 0 || undoing) return;
     setUndoing(true);
     try {
-      for (const undoUrl of undoUrls) {
+      for (const undoUrl of effectiveUndoUrls) {
         const res = await fetch(undoUrl, { method: "DELETE" });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error || "Undo failed");
@@ -545,6 +565,62 @@ function ActionCard({
       toast.error(err instanceof Error ? err.message : "Undo failed");
     } finally {
       setUndoing(false);
+    }
+  };
+
+  const updateDraftTask = (
+    index: number,
+    updates: Partial<MiniScheduleTaskDraft>
+  ) => {
+    setDraftTasks((current) =>
+      current.map((task, i) => (i === index ? { ...task, ...updates } : task))
+    );
+  };
+
+  const removeDraftTask = (index: number) => {
+    setDraftTasks((current) => current.filter((_, i) => i !== index));
+  };
+
+  const approveMiniSchedule = async () => {
+    if (!dealId || !action.mini_schedule || approving || approvedIds.length > 0) return;
+    const tasks = draftTasks
+      .map((task) => ({
+        label: task.label?.trim() || "",
+        duration_days:
+          typeof task.duration_days === "number" && Number.isFinite(task.duration_days)
+            ? task.duration_days
+            : null,
+        task_owner: task.task_owner?.trim() || null,
+        notes: task.notes?.trim() || null,
+      }))
+      .filter((task) => task.label);
+    if (tasks.length === 0) {
+      toast.error("Add at least one task name first");
+      return;
+    }
+    setApproving(true);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/schedule/mini`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parent_phase_id: action.mini_schedule.parent_phase_id ?? null,
+          parent_phase_label: action.mini_schedule.parent_phase_label ?? null,
+          track: action.mini_schedule.track || "development",
+          tasks,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Failed to create mini schedule");
+      const created = Array.isArray(json.data?.tasks) ? json.data.tasks : [];
+      const ids = created.map((task: { id?: string }) => task.id).filter(Boolean);
+      setApprovedIds(ids);
+      toast.success("Mini schedule created");
+    } catch (err) {
+      console.error("Approve mini schedule failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to create mini schedule");
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -560,31 +636,64 @@ function ActionCard({
         <config.icon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <div className="font-medium">
-            {undone ? "Undone" : config.title}
+            {undone ? "Undone" : approvedIds.length > 0 ? "Created mini schedule" : config.title}
           </div>
           <div className="mt-0.5 leading-5 text-current/85">{action.display}</div>
-          {action.mini_schedule?.tasks && action.mini_schedule.tasks.length > 0 && (
+          {activeTasks.length > 0 && (
             <ul className="mt-2 space-y-1 border-t border-current/10 pt-2">
-              {action.mini_schedule.tasks.slice(0, 6).map((task, index) => (
+              {activeTasks.map((task, index) => (
                 <li key={task.id || `${task.label}-${index}`} className="flex gap-1.5 text-[11px] leading-4 text-current/85">
                   <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-current/60" />
-                  <span>
-                    {task.label}
-                    {task.task_owner ? ` · ${task.task_owner}` : ""}
-                    {typeof task.duration_days === "number" ? ` · ${task.duration_days}d` : ""}
-                  </span>
+                  {isDraft && approvedIds.length === 0 ? (
+                    <div className="grid min-w-0 flex-1 grid-cols-[1fr_58px_24px] gap-1.5">
+                      <input
+                        value={task.label || ""}
+                        onChange={(e) => updateDraftTask(index, { label: e.target.value })}
+                        className="min-w-0 rounded border border-current/20 bg-background/50 px-1.5 py-1 text-[11px] outline-none"
+                        aria-label="Task label"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        value={task.duration_days ?? ""}
+                        onChange={(e) =>
+                          updateDraftTask(index, {
+                            duration_days: e.target.value === "" ? null : Number(e.target.value),
+                          })
+                        }
+                        className="rounded border border-current/20 bg-background/50 px-1.5 py-1 text-[11px] outline-none"
+                        aria-label="Duration days"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeDraftTask(index)}
+                        className="flex items-center justify-center rounded border border-current/20 hover:bg-current/10"
+                        aria-label="Remove task"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                      <input
+                        value={task.task_owner || ""}
+                        onChange={(e) => updateDraftTask(index, { task_owner: e.target.value })}
+                        className="col-span-3 rounded border border-current/20 bg-background/50 px-1.5 py-1 text-[11px] outline-none"
+                        placeholder="Owner"
+                        aria-label="Task owner"
+                      />
+                    </div>
+                  ) : (
+                    <span>
+                      {task.label}
+                      {task.task_owner ? ` - ${task.task_owner}` : ""}
+                      {typeof task.duration_days === "number" ? ` - ${task.duration_days}d` : ""}
+                    </span>
+                  )}
                 </li>
               ))}
-              {action.mini_schedule.tasks.length > 6 && (
-                <li className="text-[11px] text-current/65">
-                  +{action.mini_schedule.tasks.length - 6} more
-                </li>
-              )}
             </ul>
           )}
-          {(config.href || config.undoUrl || (config.undoUrls && config.undoUrls.length > 0)) && !undone && (
+          {(config.href || effectiveUndoUrls.length > 0 || isDraft) && !undone && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              {config.href && (
+              {config.href && (approvedIds.length > 0 || !isDraft) && (
                 <Link
                   href={config.href}
                   className="inline-flex items-center gap-1 rounded-md border border-current/20 px-2 py-1 text-[10px] font-medium hover:bg-current/10"
@@ -593,7 +702,22 @@ function ActionCard({
                   {config.hrefLabel}
                 </Link>
               )}
-              {config.undoUrl && (
+              {isDraft && approvedIds.length === 0 && (
+                <button
+                  type="button"
+                  onClick={approveMiniSchedule}
+                  disabled={approving || activeTasks.length === 0}
+                  className="inline-flex items-center gap-1 rounded-md border border-current/20 px-2 py-1 text-[10px] font-medium hover:bg-current/10 disabled:opacity-60"
+                >
+                  {approving ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3 w-3" />
+                  )}
+                  Create tasks
+                </button>
+              )}
+              {effectiveUndoUrls.length > 0 && (approvedIds.length > 0 || !isDraft) && (
                 <button
                   type="button"
                   onClick={undo}
@@ -687,6 +811,18 @@ function getActionCardConfig(
       hrefLabel: "Open mini schedule",
       undoUrl: null,
       undoUrls: dealId && ids ? ids.map((id) => `/api/deals/${dealId}/schedule/${id}`) : [],
+    };
+  }
+  if (action.type === "mini_schedule_draft") {
+    const parentId = action.mini_schedule?.parent_phase_id;
+    return {
+      title: "Ready to create mini schedule",
+      icon: CalendarPlus,
+      className: "bg-amber-500/10 border-amber-500/20 text-amber-300",
+      href: dealId && parentId ? `/deals/${dealId}/schedule/focus/${parentId}` : null,
+      hrefLabel: "Open mini schedule",
+      undoUrl: null,
+      undoUrls: [],
     };
   }
   if (action.type === "underwriting_updated") {

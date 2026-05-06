@@ -246,7 +246,7 @@ export default function ScheduleFocusPage({
         },
         {
           label: "Add child tasks",
-          prompt: `Help me create child tasks for the mini schedule "${parent.label}". Ask any needed prep questions first, then propose task names, owners, and durations.`,
+          prompt: `Help me create child tasks for the mini schedule "${parent.label}" (parent_phase_id: ${parent.id}). Ask any needed prep questions first, then use the mini-schedule proposal card with task names, owners, and durations so I can approve creation.`,
         },
       ]
     : [];

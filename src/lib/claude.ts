@@ -887,6 +887,7 @@ export interface UniversalChatAction {
     | "underwriting_updated"
     | "note_created"
     | "schedule_item_created"
+    | "mini_schedule_draft"
     | "mini_schedule_created"
     | "checklist_item_created";
   note?: string;
@@ -1099,6 +1100,46 @@ const UNIVERSAL_CHAT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "propose_mini_schedule_tasks",
+    description:
+      "Propose several child tasks under one existing schedule phase as an approval card, without creating them yet. Use this after asking prep questions and before writing a mini schedule. The user can approve the card to create the tasks deterministically.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        parent_phase_id: {
+          type: "string",
+          description: "Exact parent phase id from schedule context. Prefer this when available.",
+        },
+        parent_phase_label: {
+          type: "string",
+          description: "Parent phase label to resolve if id is not available.",
+        },
+        track: {
+          type: "string",
+          enum: ["acquisition", "development", "construction"],
+          description: "Fallback track if the parent phase cannot provide one.",
+        },
+        tasks: {
+          type: "array",
+          description: "Child tasks to propose under the parent phase.",
+          minItems: 1,
+          maxItems: 12,
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: "Short task name." },
+              duration_days: { type: "number", description: "Duration in days." },
+              task_owner: { type: "string", description: "Owner or role." },
+              notes: { type: "string", description: "Brief acceptance criteria, source, or why it matters." },
+            },
+            required: ["label"],
+          },
+        },
+      },
+      required: ["tasks"],
+    },
+  },
+  {
     name: "create_checklist_item",
     description:
       "Create a diligence checklist item on the active deal. Use when playbook guidance, document review, or a user instruction should become something to verify, not a scheduled task. Requires edit access to the active deal.",
@@ -1235,7 +1276,8 @@ Guidance:
 - For Playbook questions, answer in 2-5 bullets by default. Start with the answer. Avoid long explanations, headings, and tables unless the user asks.
 - If the Playbook excerpts do not answer the question, say that plainly and give only the closest relevant guidance. Do not stretch weak citations.
 - When the user asks to create a single follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
-- When the user confirms a proposed mini schedule or asks to add several child tasks under a phase, use create_mini_schedule_tasks. Prefer parent_phase_id from Schedule Context; if unavailable, use parent_phase_label exactly.
+- For mini schedules, ask prep questions if needed, then use propose_mini_schedule_tasks to show an approval card. Do not stop with a plain text list when the user is trying to build a mini schedule.
+- When the user explicitly says create/add it now, use create_mini_schedule_tasks. Prefer parent_phase_id from Schedule Context; if unavailable, use parent_phase_label exactly.
 - When the user asks to verify, check, diligence, document, or track a requirement without a date, use create_checklist_item if an editable deal is active.
 - When the user says a decision was made, an approval is needed, or an open item should carry through a handoff, use record_decision if an editable deal is active.
 - Before building a multi-step plan or schedule from thin context, ask 2-4 pointed prep questions about target date, deal scope, owner, approval path, and source documents. If enough context is present, act first and keep the confirmation short.
@@ -1260,6 +1302,7 @@ Guidance:
     "update_underwriting",
     "create_schedule_item",
     "create_mini_schedule_tasks",
+    "propose_mini_schedule_tasks",
     "create_checklist_item",
     "record_decision",
   ]);
@@ -1344,7 +1387,11 @@ Guidance:
         },
         display: `Created schedule ${kind}: ${input.label}`,
       });
-    } else if (tool.name === "create_mini_schedule_tasks" && ctx.deal && ctx.can_edit_deal) {
+    } else if (
+      (tool.name === "create_mini_schedule_tasks" || tool.name === "propose_mini_schedule_tasks") &&
+      ctx.deal &&
+      ctx.can_edit_deal
+    ) {
       const input = tool.input as {
         parent_phase_id?: string | null;
         parent_phase_label?: string | null;
@@ -1366,15 +1413,16 @@ Guidance:
           notes: task.notes || null,
         }));
       if (tasks.length > 0) {
+        const isDraft = tool.name === "propose_mini_schedule_tasks";
         actions.push({
-          type: "mini_schedule_created",
+          type: isDraft ? "mini_schedule_draft" : "mini_schedule_created",
           mini_schedule: {
             parent_phase_id: input.parent_phase_id || null,
             parent_phase_label: input.parent_phase_label || null,
             track: input.track || "development",
             tasks,
           },
-          display: `Created mini schedule${input.parent_phase_label ? ` for ${input.parent_phase_label}` : ""}: ${tasks.length} task${tasks.length === 1 ? "" : "s"}`,
+          display: `${isDraft ? "Proposed" : "Created"} mini schedule${input.parent_phase_label ? ` for ${input.parent_phase_label}` : ""}: ${tasks.length} task${tasks.length === 1 ? "" : "s"}`,
         });
       }
     } else if (tool.name === "create_checklist_item" && ctx.deal && ctx.can_edit_deal) {

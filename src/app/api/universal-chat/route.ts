@@ -259,6 +259,28 @@ export async function POST(req: NextRequest) {
             console.error("universal-chat schedule recompute error:", err);
           }
         } else if (
+          action.type === "mini_schedule_draft" &&
+          action.mini_schedule &&
+          canEditDeal
+        ) {
+          const phases = await devPhaseQueries.getByDealId(dealId);
+          const parent = resolveScheduleParent(
+            phases,
+            action.mini_schedule.parent_phase_id ?? null,
+            action.mini_schedule.parent_phase_label ?? null
+          );
+          if (!parent) {
+            action.display = action.mini_schedule.parent_phase_label
+              ? `I couldn't find "${action.mini_schedule.parent_phase_label}" in this deal's schedule. Pick the parent phase and I can try again.`
+              : "I couldn't identify the parent phase for this mini schedule.";
+            action.mini_schedule.tasks = [];
+          } else {
+            action.mini_schedule.parent_phase_id = parent.id;
+            action.mini_schedule.parent_phase_label = parent.label;
+            action.mini_schedule.track = parent.track || action.mini_schedule.track || "development";
+            action.display = `Ready to create mini schedule for ${parent.label}: ${action.mini_schedule.tasks.length} task${action.mini_schedule.tasks.length === 1 ? "" : "s"}`;
+          }
+        } else if (
           action.type === "mini_schedule_created" &&
           action.mini_schedule &&
           canEditDeal
