@@ -204,6 +204,22 @@ export default function ScheduleFocusPage({
   const assistantPrompt = parent
     ? `Use the Development Playbook and this focused mini schedule for "${parent.label}". What decisions are open, what tasks should be added or clarified, and what is the next owner/action to keep this phase moving?`
     : "Review this focused mini schedule and identify the next owner/action.";
+  const assistantStarters = parent
+    ? [
+        {
+          label: "Prep questions",
+          prompt: `Ask me the key prep questions needed before changing the mini schedule for "${parent.label}". Focus on target date, owner, approvals, source documents, and handoff risk.`,
+        },
+        {
+          label: "Missing tasks",
+          prompt: `Review the mini schedule for "${parent.label}". What tasks, decisions, or owner follow-ups are missing? Keep it concise and do not create anything yet.`,
+        },
+        {
+          label: "Add child tasks",
+          prompt: `Help me create child tasks for the mini schedule "${parent.label}". Ask any needed prep questions first, then propose task names, owners, and durations.`,
+        },
+      ]
+    : [];
 
   return (
     <div className="space-y-6">
@@ -250,6 +266,19 @@ export default function ScheduleFocusPage({
               Ask assistant
             </Button>
           </Link>
+          {assistantStarters.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {assistantStarters.map((starter) => (
+                <Link
+                  key={starter.label}
+                  href={`/deals/${params.id}/chat?prompt=${encodeURIComponent(starter.prompt)}`}
+                  className="rounded-md border border-border/60 bg-card px-2.5 py-1 text-2xs text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
+                >
+                  {starter.label}
+                </Link>
+              ))}
+            </div>
+          )}
           <Button size="sm" variant="outline" className="w-full gap-2" onClick={exportFocusSchedule}>
             <Download className="h-4 w-4" />
             Export mini schedule

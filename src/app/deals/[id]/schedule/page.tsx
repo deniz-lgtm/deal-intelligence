@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { BookOpen, UploadCloud } from "lucide-react";
+import { MessageSquare, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OtherTrackLinks } from "@/components/schedule/TrackSchedule";
 import AcqScheduleImportDialog from "@/components/schedule/AcqScheduleImportDialog";
@@ -36,11 +36,11 @@ export default function AcquisitionSchedulePage({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              href={`/deals/${params.id}/chat?prompt=${encodeURIComponent("Use the Development Playbook for this acquisition schedule. What checkpoints, sequencing risks, and handoff items should we verify before the next milestone?")}`}
+              href={`/deals/${params.id}/chat?prompt=${encodeURIComponent("Ask me the key prep questions you need before changing this acquisition schedule. Then identify missing checkpoints, sequencing risks, and handoff items.")}`}
             >
               <Button variant="outline" size="sm" className="gap-1.5">
-                <BookOpen className="h-3.5 w-3.5" />
-                Playbook
+                <MessageSquare className="h-3.5 w-3.5" />
+                Prep with assistant
               </Button>
             </Link>
             <Button

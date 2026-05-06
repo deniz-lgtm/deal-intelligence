@@ -28,7 +28,6 @@ import {
   Camera,
   FileSignature,
   Sparkles,
-  BookOpen,
   Archive,
   TrendingUp,
   Percent,
@@ -38,6 +37,7 @@ import {
   Share2,
   ScrollText,
   CheckCircle2,
+  Compass,
 } from "lucide-react";
 import { DocCoverageChip } from "@/components/ai";
 import { Button } from "@/components/ui/button";
@@ -118,7 +118,6 @@ export default function DealOverviewPage({
   const [deleting, setDeleting] = useState(false);
   const [advancingTo, setAdvancingTo] = useState<DealStatus | null>(null);
   const [showGateWarning, setShowGateWarning] = useState<{ status: DealStatus; message: string } | null>(null);
-  const [autoFilling, setAutoFilling] = useState(false);
   // Investment Materials collapsible bar: separate from the Execution
   // sidebar group so outputs (LOI / DD Abstract / Inv. Package / Deal
   // Room) are reachable in one click from the Overview without cluttering
@@ -262,25 +261,6 @@ export default function DealOverviewPage({
     }
     setAdvancingTo(null);
     setShowGateWarning(null);
-  };
-
-  const autoFillFromDocs = async () => {
-    if (!deal || documents.length === 0) return;
-    setAutoFilling(true);
-    try {
-      const res = await fetch(`/api/deals/${params.id}/autofill`, { method: "POST" });
-      const json = await res.json();
-      if (res.ok && json.data) {
-        setDeal(json.data as Deal);
-        toast.success(`Auto-filled ${json.filled_count} field${json.filled_count !== 1 ? "s" : ""} from documents`);
-      } else {
-        toast.error(json.error || "Auto-fill failed");
-      }
-    } catch {
-      toast.error("Auto-fill failed");
-    } finally {
-      setAutoFilling(false);
-    }
   };
 
   if (loading) {
@@ -719,9 +699,13 @@ export default function DealOverviewPage({
               </Button>
               {documents.length > 0 && (
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" className="text-xs gap-1.5 h-7" onClick={autoFillFromDocs} disabled={autoFilling}>
-                    {autoFilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} AI Auto-fill
-                  </Button>
+                  <Link
+                    href={`/deals/${params.id}/chat?prompt=${encodeURIComponent("Review the uploaded documents for this deal. What key deal fields, underwriting inputs, and follow-up questions should we extract or confirm before updating anything?")}`}
+                  >
+                    <Button variant="outline" size="sm" className="text-xs gap-1.5 h-7">
+                      <MessageSquare className="h-3 w-3" /> Ask assistant
+                    </Button>
+                  </Link>
                   <DocCoverageChip documents={documents} section="deal_intake" />
                 </div>
               )}
@@ -1384,27 +1368,83 @@ export default function DealOverviewPage({
         </div>
       </div>
 
-      {/* Quick Links — moved out of the right column to a subtle footer
-          row so the two-column body stays focused on financial +
-          diligence cards. Still just deep-links into existing pages. */}
-      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border/30">
-        <span className="text-2xs uppercase tracking-wide text-muted-foreground/60 mr-1">Jump to</span>
-        {[
-          { href: `/deals/${params.id}/underwriting`, icon: <Calculator className="h-3 w-3" />, label: "Underwrite" },
-          { href: `/deals/${params.id}/schedule`, icon: <Calendar className="h-3 w-3" />, label: "Schedule" },
-          { href: `/deals/${params.id}/project/design`, icon: <Building2 className="h-3 w-3" />, label: "Design" },
-          { href: `/deals/${params.id}/documents`, icon: <FileText className="h-3 w-3" />, label: `Documents${documents.length > 0 ? ` (${documents.length})` : ""}` },
-          { href: "#decisions-open-items", icon: <CheckCircle2 className="h-3 w-3" />, label: "Decisions" },
-          { href: `/deals/${params.id}/chat`, icon: <MessageSquare className="h-3 w-3" />, label: "Assistant" },
-        ].map(({ href, icon, label }) => (
-          <Link key={href} href={href}>
-            <span className="inline-flex items-center gap-1 text-2xs px-2 py-1 rounded-md border border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
-              {icon}
-              {label}
-            </span>
-          </Link>
-        ))}
-      </div>
+      {/* Core work areas: keep the overview oriented around the few places
+          a deal team actually needs to go every day. */}
+      <section className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-border/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Compass className="h-4 w-4 text-primary" />
+              <h2 className="font-display text-sm">Work Areas</h2>
+            </div>
+            <p className="mt-1 text-2xs text-muted-foreground">
+              Four places to do the work. The assistant ties them together.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="#decisions-open-items">
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-2xs">
+                <CheckCircle2 className="h-3 w-3" />
+                Decisions
+              </Button>
+            </Link>
+            <Link href={`/deals/${params.id}/chat`}>
+              <Button size="sm" className="h-7 gap-1.5 text-2xs">
+                <MessageSquare className="h-3 w-3" />
+                Assistant
+              </Button>
+            </Link>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-px bg-border/60 md:grid-cols-2 xl:grid-cols-4">
+          {[
+            {
+              href: `/deals/${params.id}/underwriting`,
+              icon: <Calculator className="h-4 w-4 text-emerald-400" />,
+              label: "Underwrite",
+              description: "Returns, rents, financing, sensitivities.",
+              meta: deal.asking_price ? formatCurrency(deal.asking_price) : "Model inputs",
+            },
+            {
+              href: `/deals/${params.id}/schedule`,
+              icon: <Calendar className="h-4 w-4 text-primary" />,
+              label: "Schedule",
+              description: "Source of truth for deadlines and handoffs.",
+              meta: `${devPhases.filter((p) => p.status !== "complete").length} open items`,
+            },
+            {
+              href: `/deals/${params.id}/project/design`,
+              icon: <Building2 className="h-4 w-4 text-sky-400" />,
+              label: "Design",
+              description: "Programming, plan checks, design coordination.",
+              meta: deal.deal_scope ? DEAL_SCOPE_LABELS[deal.deal_scope] : "Project scope",
+            },
+            {
+              href: `/deals/${params.id}/documents`,
+              icon: <FileText className="h-4 w-4 text-amber-400" />,
+              label: "Documents",
+              description: "Source files, diligence, reports, rooms.",
+              meta: `${documents.length} file${documents.length === 1 ? "" : "s"}`,
+            },
+          ].map((area) => (
+            <Link key={area.href} href={area.href} className="group bg-card p-4 transition-colors hover:bg-muted/25">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {area.icon}
+                    <h3 className="text-sm font-semibold">{area.label}</h3>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">{area.description}</p>
+                  <p className="mt-3 text-2xs font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
+                    {area.meta}
+                  </p>
+                </div>
+                <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
@@ -1425,7 +1465,7 @@ function DealCommandCenter({
   recentActivity: ActivityEvent[];
 }) {
   const hasSignal = nextItems.length > 0 || watchouts.length > 0 || recentActivity.length > 0;
-  const playbookHref = `/deals/${dealId}/chat?prompt=${encodeURIComponent(playbookQuestion)}`;
+  const prepHref = `/deals/${dealId}/chat?prompt=${encodeURIComponent("Ask me the few key prep questions you need before creating or changing this deal plan. Focus on schedule, owner, documents, approvals, and underwriting assumptions.")}`;
 
   return (
     <section className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
@@ -1440,16 +1480,16 @@ function DealCommandCenter({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href={`/deals/${dealId}/chat`}>
+          <Link href={`/deals/${dealId}/chat?prompt=${encodeURIComponent(playbookQuestion)}`}>
             <Button size="sm" className="h-7 gap-1.5 text-2xs">
               <MessageSquare className="h-3 w-3" />
-              Ask this deal
+              Ask assistant
             </Button>
           </Link>
-          <Link href={playbookHref}>
+          <Link href={prepHref}>
             <Button variant="outline" size="sm" className="h-7 gap-1.5 text-2xs">
-              <BookOpen className="h-3 w-3" />
-              Ask playbook
+              <Sparkles className="h-3 w-3" />
+              Prep questions
             </Button>
           </Link>
         </div>

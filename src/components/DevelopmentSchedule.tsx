@@ -26,6 +26,7 @@ import {
   ChevronRight,
   Calendar,
   GanttChart,
+  MessageSquare,
   DollarSign,
   AlertTriangle,
   CheckCircle2,
@@ -38,7 +39,6 @@ import {
   BookmarkPlus,
   GripVertical,
   Paperclip,
-  Wand2,
   Download,
   Sparkles,
   Check,
@@ -1391,6 +1391,21 @@ export default function DevelopmentSchedule({
     return cols.join(" ");
   })();
 
+  const scheduleAssistantPrompts = [
+    {
+      label: "Ask prep questions",
+      prompt: `Ask me the key prep questions you need before changing the ${SCHEDULE_TRACK_LABELS[track]} schedule. Focus on target dates, approvals, owners, missing documents, and handoff risks.`,
+    },
+    {
+      label: "Find missing tasks",
+      prompt: `Review this ${SCHEDULE_TRACK_LABELS[track]} schedule and the Development Playbook. What important tasks, decisions, or owner follow-ups appear to be missing? Keep it concise before creating anything.`,
+    },
+    {
+      label: "Create mini schedule",
+      prompt: `Help me choose which phase should become a mini schedule. Ask any needed prep questions, then suggest the child tasks and owners before creating them.`,
+    },
+  ];
+
   // Sort comparator. Null values sort to the bottom regardless of
   // direction so empties don't pollute the top of the list.
   const compare = (a: DevPhase, b: DevPhase): number => {
@@ -1573,6 +1588,22 @@ export default function DevelopmentSchedule({
                   <ArrowUpDown className="h-3 w-3" /> Sorted by {sortBy} · clear
                 </button>
               )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/50 bg-background/45 px-3 py-2">
+              <span className="flex items-center gap-1.5 text-2xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                <MessageSquare className="h-3 w-3" />
+                Assistant
+              </span>
+              {scheduleAssistantPrompts.map((starter) => (
+                <a
+                  key={starter.label}
+                  href={`/deals/${dealId}/chat?prompt=${encodeURIComponent(starter.prompt)}`}
+                  className="rounded-md border border-border/60 bg-card px-2.5 py-1 text-2xs text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
+                >
+                  {starter.label}
+                </a>
+              ))}
             </div>
 
             {phases.length === 0 ? (
@@ -1837,10 +1868,10 @@ export default function DevelopmentSchedule({
                               {!isChild && (
                                 <a
                                   href={`/deals/${dealId}/schedule/focus/${p.id}`}
-                                  className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-0.5 text-2xs text-primary/80 hover:text-primary transition-opacity"
-                                  title="Open mini schedule"
+                                  className="inline-flex items-center gap-0.5 rounded border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-2xs text-primary/90 transition-colors hover:bg-primary/15 hover:text-primary"
+                                  title="Open or create the mini schedule for this phase"
                                 >
-                                  Focus
+                                  Mini schedule
                                   <ArrowUpRight className="h-2.5 w-2.5" />
                                 </a>
                               )}
@@ -2261,21 +2292,14 @@ export default function DevelopmentSchedule({
                                   <Loader2 className="h-2.5 w-2.5 animate-spin text-muted-foreground" />
                                 )}
                               </div>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 text-2xs"
-                                onClick={() => handleAiSuggest(p.id)}
-                                disabled={suggesting || seedingEntitlements}
-                                title="Ask Claude for entitlement tasks specific to this jurisdiction, zoning, and any spotted programs. You pick which ones to add."
+                              <a
+                                href={`/deals/${dealId}/chat?prompt=${encodeURIComponent(`Review the "${p.label}" mini schedule. Ask any prep questions you need, then suggest entitlement tasks, owners, durations, and missing approvals before creating anything.`)}`}
+                                className="inline-flex h-6 items-center rounded-md px-2 text-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                                title="Use the assistant to review and create entitlement tasks"
                               >
-                                {suggesting ? (
-                                  <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
-                                ) : (
-                                  <Wand2 className="h-2.5 w-2.5 mr-1" />
-                                )}
-                                AI Suggest
-                              </Button>
+                                <MessageSquare className="h-2.5 w-2.5 mr-1" />
+                                Ask assistant
+                              </a>
                               {children.length > 0 && (
                                 <Button
                                   size="sm"
