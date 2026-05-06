@@ -50,6 +50,14 @@ type PageContextBody = {
   screen_summary?: string;
 };
 
+type ScheduleTrack = "acquisition" | "development" | "construction";
+
+type ResolvedScheduleParent = {
+  id: string;
+  label: string;
+  track: ScheduleTrack;
+};
+
 export async function POST(req: NextRequest) {
   const { userId, errorResponse } = await requirePermission("ai.chat");
   if (errorResponse) return errorResponse;
@@ -203,13 +211,22 @@ export async function POST(req: NextRequest) {
         ) {
           const item = action.schedule_item;
           let resolvedTrack = item.track || "development";
+          let resolvedParentId = item.parent_phase_id ?? null;
           if (item.parent_phase_id) {
             const phases = await devPhaseQueries.getByDealId(dealId);
-            const parent = phases.find((phase) => phase.id === item.parent_phase_id);
+            const parent = resolveScheduleParent(phases, item.parent_phase_id, item.parent_phase_label);
             if (parent) {
               resolvedTrack = parent.track || resolvedTrack;
+              resolvedParentId = parent.id;
             } else {
-              item.parent_phase_id = null;
+              resolvedParentId = null;
+            }
+          } else if (item.parent_phase_label) {
+            const phases = await devPhaseQueries.getByDealId(dealId);
+            const parent = resolveScheduleParent(phases, null, item.parent_phase_label);
+            if (parent) {
+              resolvedTrack = parent.track || resolvedTrack;
+              resolvedParentId = parent.id;
             }
           }
           const itemId = uuidv4();
@@ -226,7 +243,7 @@ export async function POST(req: NextRequest) {
                 : typeof item.duration_days === "number"
                   ? item.duration_days
                   : null,
-            parent_phase_id: item.parent_phase_id ?? null,
+            parent_phase_id: resolvedParentId,
             task_owner: item.task_owner ?? null,
             notes: item.notes ?? null,
             status: "not_started",
@@ -235,10 +252,66 @@ export async function POST(req: NextRequest) {
             is_milestone: item.kind === "milestone",
           });
           action.schedule_item.id = itemId;
+          action.schedule_item.parent_phase_id = resolvedParentId;
           try {
             await recomputeSchedule(dealId);
           } catch (err) {
             console.error("universal-chat schedule recompute error:", err);
+          }
+        } else if (
+          action.type === "mini_schedule_created" &&
+          action.mini_schedule &&
+          canEditDeal
+        ) {
+          const phases = await devPhaseQueries.getByDealId(dealId);
+          const parent = resolveScheduleParent(
+            phases,
+            action.mini_schedule.parent_phase_id ?? null,
+            action.mini_schedule.parent_phase_label ?? null
+          );
+          if (!parent) {
+            action.display = action.mini_schedule.parent_phase_label
+              ? `I couldn't find "${action.mini_schedule.parent_phase_label}" in this deal's schedule, so I did not create the mini schedule.`
+              : "I couldn't identify the parent phase, so I did not create the mini schedule.";
+            action.mini_schedule.tasks = [];
+          } else {
+            const existingChildren = phases.filter((phase) => phase.parent_phase_id === parent.id);
+            const baseSort = existingChildren.reduce(
+              (max, phase) => Math.max(max, Number(phase.sort_order ?? 0)),
+              existingChildren.length
+            );
+            const resolvedTrack = parent.track || action.mini_schedule.track || "development";
+            action.mini_schedule.parent_phase_id = parent.id;
+            action.mini_schedule.parent_phase_label = parent.label;
+            action.mini_schedule.track = resolvedTrack;
+
+            for (let index = 0; index < action.mini_schedule.tasks.length; index += 1) {
+              const task = action.mini_schedule.tasks[index];
+              const taskId = uuidv4();
+              await devPhaseQueries.create({
+                id: taskId,
+                deal_id: dealId,
+                track: resolvedTrack,
+                kind: "task",
+                phase_key: `chat_mini_${Date.now()}_${index}`,
+                label: task.label,
+                duration_days: typeof task.duration_days === "number" ? task.duration_days : null,
+                parent_phase_id: parent.id,
+                task_owner: task.task_owner ?? null,
+                notes: task.notes ?? null,
+                status: "not_started",
+                pct_complete: 0,
+                sort_order: baseSort + index + 1,
+                is_milestone: false,
+              });
+              task.id = taskId;
+            }
+            action.display = `Created mini schedule for ${parent.label}: ${action.mini_schedule.tasks.length} task${action.mini_schedule.tasks.length === 1 ? "" : "s"}`;
+            try {
+              await recomputeSchedule(dealId);
+            } catch (err) {
+              console.error("universal-chat mini schedule recompute error:", err);
+            }
           }
         } else if (
           action.type === "checklist_item_created" &&
@@ -307,11 +380,12 @@ export async function GET(req: NextRequest) {
 }
 
 async function buildDealFacts(dealId: string, businessPlanId: string | null): Promise<string | null> {
-  const [uwRow, omAnalysis, loiRow, businessPlan] = await Promise.all([
+  const [uwRow, omAnalysis, loiRow, businessPlan, scheduleRows] = await Promise.all([
     underwritingQueries.getByDealId(dealId).catch(() => null),
     omAnalysisQueries.getByDealId(dealId).catch(() => null),
     loiQueries.getByDealId(dealId).catch(() => null),
     businessPlanId ? businessPlanQueries.getById(businessPlanId).catch(() => null) : Promise.resolve(null),
+    devPhaseQueries.getByDealId(dealId).catch(() => []),
   ]);
 
   const sections: string[] = [];
@@ -381,7 +455,72 @@ async function buildDealFacts(dealId: string, businessPlanId: string | null): Pr
     if (bpLines.length > 0) sections.push(`BUSINESS PLAN\n${bpLines.join("\n")}`);
   }
 
+  const schedule = Array.isArray(scheduleRows) ? scheduleRows : [];
+  if (schedule.length > 0) {
+    const scheduleLines = schedule
+      .slice(0, 45)
+      .map((phase) => {
+        const p = phase as Record<string, unknown>;
+        const label = typeof p.label === "string" ? p.label : "Untitled";
+        const id = typeof p.id === "string" ? p.id : "";
+        const track = typeof p.track === "string" ? p.track : "development";
+        const kind = typeof p.kind === "string" ? p.kind : p.parent_phase_id ? "task" : "phase";
+        const parent = typeof p.parent_phase_id === "string" ? p.parent_phase_id : null;
+        const owner = typeof p.task_owner === "string" && p.task_owner.trim() ? ` owner=${p.task_owner}` : "";
+        const status = typeof p.status === "string" ? ` status=${p.status}` : "";
+        return `- ${label} [id=${id}; track=${track}; kind=${kind}${parent ? `; parent=${parent}` : ""}${owner}${status}]`;
+      })
+      .join("\n");
+    sections.push(`SCHEDULE CONTEXT\nUse these exact ids when creating child tasks or mini schedules.\n${scheduleLines}`);
+  }
+
   return sections.length > 0 ? sections.join("\n\n") : null;
+}
+
+function resolveScheduleParent(
+  phases: Array<Record<string, unknown>>,
+  parentId?: string | null,
+  parentLabel?: string | null
+): ResolvedScheduleParent | null {
+  if (parentId) {
+    const exact = phases.find((phase) => phase.id === parentId);
+    if (exact) {
+      return {
+        id: String(exact.id),
+        label: String(exact.label || "Untitled"),
+        track: normalizeScheduleTrack(exact.track),
+      };
+    }
+  }
+  const normalizedLabel = normalizeScheduleLabel(parentLabel);
+  if (!normalizedLabel) return null;
+  const exactLabel = phases.find(
+    (phase) => normalizeScheduleLabel(String(phase.label || "")) === normalizedLabel
+  );
+  const phase = exactLabel ?? phases.find((candidate) => {
+    const candidateLabel = normalizeScheduleLabel(String(candidate.label || ""));
+    return candidateLabel.includes(normalizedLabel) || normalizedLabel.includes(candidateLabel);
+  });
+  if (!phase) return null;
+  return {
+    id: String(phase.id),
+    label: String(phase.label || "Untitled"),
+    track: normalizeScheduleTrack(phase.track),
+  };
+}
+
+function normalizeScheduleTrack(value: unknown): ScheduleTrack {
+  return value === "acquisition" || value === "construction" || value === "development"
+    ? value
+    : "development";
+}
+
+function normalizeScheduleLabel(value?: string | null): string {
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 function parseObject(value: unknown): Record<string, unknown> {

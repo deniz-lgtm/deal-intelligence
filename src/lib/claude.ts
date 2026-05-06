@@ -887,6 +887,7 @@ export interface UniversalChatAction {
     | "underwriting_updated"
     | "note_created"
     | "schedule_item_created"
+    | "mini_schedule_created"
     | "checklist_item_created";
   note?: string;
   note_id?: string;
@@ -905,8 +906,21 @@ export interface UniversalChatAction {
     kind: "phase" | "milestone" | "task";
     duration_days?: number | null;
     parent_phase_id?: string | null;
+    parent_phase_label?: string | null;
     task_owner?: string | null;
     notes?: string | null;
+  };
+  mini_schedule?: {
+    parent_phase_id?: string | null;
+    parent_phase_label?: string | null;
+    track: "acquisition" | "development" | "construction";
+    tasks: Array<{
+      id?: string;
+      label: string;
+      duration_days?: number | null;
+      task_owner?: string | null;
+      notes?: string | null;
+    }>;
   };
   display: string;
 }
@@ -997,6 +1011,91 @@ const UNIVERSAL_CHAT_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["updates"],
+    },
+  },
+  {
+    name: "create_schedule_item",
+    description:
+      "Create one schedule phase, milestone, or task on the active deal. Use for a single dated follow-up or one task. For several child tasks under one phase, prefer create_mini_schedule_tasks. Requires edit access to the active deal.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        label: {
+          type: "string",
+          description: "Short schedule item name.",
+        },
+        track: {
+          type: "string",
+          enum: ["acquisition", "development", "construction"],
+          description: "Schedule track. Defaults to development.",
+        },
+        kind: {
+          type: "string",
+          enum: ["phase", "milestone", "task"],
+          description: "Use task for child work, milestone for zero-duration key dates, phase for parent schedule rows.",
+        },
+        duration_days: {
+          type: "number",
+          description: "Duration in days. Use 0 for milestones.",
+        },
+        parent_phase_id: {
+          type: "string",
+          description: "Exact parent phase id when creating a child task. Use ids shown in schedule context when available.",
+        },
+        parent_phase_label: {
+          type: "string",
+          description: "Parent phase label when id is not known. The server will resolve it within this deal.",
+        },
+        task_owner: {
+          type: "string",
+          description: "Owner such as PM, architect, counsel, GC, lender, or a named person.",
+        },
+        notes: {
+          type: "string",
+          description: "Brief why/acceptance criteria/source note.",
+        },
+      },
+      required: ["label"],
+    },
+  },
+  {
+    name: "create_mini_schedule_tasks",
+    description:
+      "Create several child tasks under one existing schedule phase as a mini schedule. Use after the user answers prep questions or explicitly asks to add the proposed mini schedule. Requires edit access to the active deal.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        parent_phase_id: {
+          type: "string",
+          description: "Exact parent phase id from schedule context. Prefer this when available.",
+        },
+        parent_phase_label: {
+          type: "string",
+          description: "Parent phase label to resolve if id is not available.",
+        },
+        track: {
+          type: "string",
+          enum: ["acquisition", "development", "construction"],
+          description: "Fallback track if the parent phase cannot provide one.",
+        },
+        tasks: {
+          type: "array",
+          description: "Child tasks to create under the parent phase.",
+          minItems: 1,
+          maxItems: 12,
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: "Short task name." },
+              duration_days: { type: "number", description: "Duration in days." },
+              task_owner: { type: "string", description: "Owner or role." },
+              notes: { type: "string", description: "Brief acceptance criteria, source, or why it matters." },
+            },
+            required: ["label"],
+          },
+        },
+      },
+      required: ["tasks"],
     },
   },
   {
@@ -1135,7 +1234,8 @@ Guidance:
 - When Development Playbook excerpts are relevant, use them as company memory and cite them like [1].
 - For Playbook questions, answer in 2-5 bullets by default. Start with the answer. Avoid long explanations, headings, and tables unless the user asks.
 - If the Playbook excerpts do not answer the question, say that plainly and give only the closest relevant guidance. Do not stretch weak citations.
-- When the user asks to create a follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
+- When the user asks to create a single follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
+- When the user confirms a proposed mini schedule or asks to add several child tasks under a phase, use create_mini_schedule_tasks. Prefer parent_phase_id from Schedule Context; if unavailable, use parent_phase_label exactly.
 - When the user asks to verify, check, diligence, document, or track a requirement without a date, use create_checklist_item if an editable deal is active.
 - When the user says a decision was made, an approval is needed, or an open item should carry through a handoff, use record_decision if an editable deal is active.
 - Before building a multi-step plan or schedule from thin context, ask 2-4 pointed prep questions about target date, deal scope, owner, approval path, and source documents. If enough context is present, act first and keep the confirmation short.
@@ -1159,6 +1259,7 @@ Guidance:
     "update_deal_fields",
     "update_underwriting",
     "create_schedule_item",
+    "create_mini_schedule_tasks",
     "create_checklist_item",
     "record_decision",
   ]);
@@ -1224,6 +1325,7 @@ Guidance:
         kind?: "phase" | "milestone" | "task";
         duration_days?: number | null;
         parent_phase_id?: string | null;
+        parent_phase_label?: string | null;
         task_owner?: string | null;
         notes?: string | null;
       };
@@ -1236,11 +1338,45 @@ Guidance:
           kind,
           duration_days: input.duration_days ?? (kind === "milestone" ? 0 : null),
           parent_phase_id: input.parent_phase_id || null,
+          parent_phase_label: input.parent_phase_label || null,
           task_owner: input.task_owner || null,
           notes: input.notes || null,
         },
         display: `Created schedule ${kind}: ${input.label}`,
       });
+    } else if (tool.name === "create_mini_schedule_tasks" && ctx.deal && ctx.can_edit_deal) {
+      const input = tool.input as {
+        parent_phase_id?: string | null;
+        parent_phase_label?: string | null;
+        track?: "acquisition" | "development" | "construction";
+        tasks?: Array<{
+          label: string;
+          duration_days?: number | null;
+          task_owner?: string | null;
+          notes?: string | null;
+        }>;
+      };
+      const tasks = (input.tasks || [])
+        .filter((task) => task.label?.trim())
+        .slice(0, 12)
+        .map((task) => ({
+          label: task.label.trim(),
+          duration_days: typeof task.duration_days === "number" ? task.duration_days : null,
+          task_owner: task.task_owner || null,
+          notes: task.notes || null,
+        }));
+      if (tasks.length > 0) {
+        actions.push({
+          type: "mini_schedule_created",
+          mini_schedule: {
+            parent_phase_id: input.parent_phase_id || null,
+            parent_phase_label: input.parent_phase_label || null,
+            track: input.track || "development",
+            tasks,
+          },
+          display: `Created mini schedule${input.parent_phase_label ? ` for ${input.parent_phase_label}` : ""}: ${tasks.length} task${tasks.length === 1 ? "" : "s"}`,
+        });
+      }
     } else if (tool.name === "create_checklist_item" && ctx.deal && ctx.can_edit_deal) {
       const input = tool.input as {
         item: string;

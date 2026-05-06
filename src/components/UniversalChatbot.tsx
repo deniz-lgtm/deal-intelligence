@@ -45,9 +45,21 @@ interface Message {
     schedule_item?: {
       id?: string;
       parent_phase_id?: string | null;
+      parent_phase_label?: string | null;
       kind?: string;
       label?: string;
       track?: string;
+    };
+    mini_schedule?: {
+      parent_phase_id?: string | null;
+      parent_phase_label?: string | null;
+      track?: string;
+      tasks?: Array<{
+        id?: string;
+        label?: string;
+        duration_days?: number | null;
+        task_owner?: string | null;
+      }>;
     };
     checklist_item?: {
       id?: string;
@@ -488,9 +500,21 @@ function ActionCard({
     schedule_item?: {
       id?: string;
       parent_phase_id?: string | null;
+      parent_phase_label?: string | null;
       kind?: string;
       label?: string;
       track?: string;
+    };
+    mini_schedule?: {
+      parent_phase_id?: string | null;
+      parent_phase_label?: string | null;
+      track?: string;
+      tasks?: Array<{
+        id?: string;
+        label?: string;
+        duration_days?: number | null;
+        task_owner?: string | null;
+      }>;
     };
     checklist_item?: {
       id?: string;
@@ -505,12 +529,15 @@ function ActionCard({
   const config = getActionCardConfig(action, dealId);
 
   const undo = async () => {
-    if (!dealId || !config.undoUrl || undoing) return;
+    const undoUrls = config.undoUrls || (config.undoUrl ? [config.undoUrl] : []);
+    if (!dealId || undoUrls.length === 0 || undoing) return;
     setUndoing(true);
     try {
-      const res = await fetch(config.undoUrl, { method: "DELETE" });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || "Undo failed");
+      for (const undoUrl of undoUrls) {
+        const res = await fetch(undoUrl, { method: "DELETE" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error || "Undo failed");
+      }
       setUndone(true);
       toast.success("Action undone");
     } catch (err) {
@@ -536,7 +563,26 @@ function ActionCard({
             {undone ? "Undone" : config.title}
           </div>
           <div className="mt-0.5 leading-5 text-current/85">{action.display}</div>
-          {(config.href || config.undoUrl) && !undone && (
+          {action.mini_schedule?.tasks && action.mini_schedule.tasks.length > 0 && (
+            <ul className="mt-2 space-y-1 border-t border-current/10 pt-2">
+              {action.mini_schedule.tasks.slice(0, 6).map((task, index) => (
+                <li key={task.id || `${task.label}-${index}`} className="flex gap-1.5 text-[11px] leading-4 text-current/85">
+                  <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-current/60" />
+                  <span>
+                    {task.label}
+                    {task.task_owner ? ` · ${task.task_owner}` : ""}
+                    {typeof task.duration_days === "number" ? ` · ${task.duration_days}d` : ""}
+                  </span>
+                </li>
+              ))}
+              {action.mini_schedule.tasks.length > 6 && (
+                <li className="text-[11px] text-current/65">
+                  +{action.mini_schedule.tasks.length - 6} more
+                </li>
+              )}
+            </ul>
+          )}
+          {(config.href || config.undoUrl || (config.undoUrls && config.undoUrls.length > 0)) && !undone && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {config.href && (
                 <Link
@@ -579,12 +625,24 @@ function getActionCardConfig(
       parent_phase_id?: string | null;
       kind?: string;
     };
+    mini_schedule?: {
+      parent_phase_id?: string | null;
+      tasks?: Array<{ id?: string }>;
+    };
     checklist_item?: {
       id?: string;
     };
   },
   dealId?: string | null
-) {
+): {
+  title: string;
+  icon: typeof CheckCircle2;
+  className: string;
+  href: string | null;
+  hrefLabel: string;
+  undoUrl: string | null;
+  undoUrls?: string[];
+} {
   if (action.type === "checklist_item_created") {
     const itemId = action.checklist_item?.id;
     return {
@@ -616,6 +674,19 @@ function getActionCardConfig(
       href: dealId ? (focusId ? `/deals/${dealId}/schedule/focus/${focusId}` : `/deals/${dealId}/schedule`) : null,
       hrefLabel: "Open schedule",
       undoUrl: dealId && itemId ? `/api/deals/${dealId}/schedule/${itemId}` : null,
+    };
+  }
+  if (action.type === "mini_schedule_created") {
+    const parentId = action.mini_schedule?.parent_phase_id;
+    const ids = action.mini_schedule?.tasks?.map((task) => task.id).filter(Boolean) as string[] | undefined;
+    return {
+      title: "Created mini schedule",
+      icon: CalendarPlus,
+      className: "bg-emerald-500/10 border-emerald-500/20 text-emerald-300",
+      href: dealId ? (parentId ? `/deals/${dealId}/schedule/focus/${parentId}` : `/deals/${dealId}/schedule`) : null,
+      hrefLabel: "Open mini schedule",
+      undoUrl: null,
+      undoUrls: dealId && ids ? ids.map((id) => `/api/deals/${dealId}/schedule/${id}`) : [],
     };
   }
   if (action.type === "underwriting_updated") {
