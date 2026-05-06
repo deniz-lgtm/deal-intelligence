@@ -8,9 +8,11 @@ import {
   CalendarDays,
   CheckCircle2,
   Download,
+  GitBranch,
   MessageSquare,
   Loader2,
   Plus,
+  SlidersHorizontal,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -88,6 +90,11 @@ export default function ScheduleFocusPage({
           return (a.start_date ?? "9999").localeCompare(b.start_date ?? "9999");
         }),
     [items, params.phaseId]
+  );
+  const byId = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const predecessorOptions = useMemo(
+    () => children.filter((child) => child.kind !== "milestone"),
+    [children]
   );
 
   useSetPageContext(
@@ -195,8 +202,31 @@ export default function ScheduleFocusPage({
   };
 
   const completeCount = children.filter((child) => child.status === "complete").length;
-  const progress = children.length > 0 ? Math.round((completeCount / children.length) * 100) : 0;
+  const progress =
+    children.length > 0
+      ? Math.round(
+          children.reduce((sum, child) => sum + Number(child.pct_complete ?? 0), 0) /
+            children.length
+        )
+      : Number(parent?.pct_complete ?? 0);
   const blockedCount = children.filter((child) => child.status === "delayed").length;
+  const totalDuration = children.reduce((sum, child) => sum + Number(child.duration_days ?? 0), 0);
+  const datedChildren = children.filter((child) => child.start_date || child.end_date);
+  const firstStart =
+    datedChildren
+      .map((child) => child.start_date)
+      .filter(Boolean)
+      .sort()[0] ?? parent?.start_date ?? null;
+  const sortedFinishes = datedChildren
+    .map((child) => child.end_date)
+    .filter(Boolean)
+    .sort();
+  const lastFinish = sortedFinishes[sortedFinishes.length - 1] ?? parent?.end_date ?? null;
+  const nextOpenTask =
+    children.find((child) => child.status === "delayed") ??
+    children.find((child) => child.status === "in_progress") ??
+    children.find((child) => child.status !== "complete") ??
+    null;
   const openDecisionCount = children.filter((child) => {
     const text = `${child.label} ${child.notes ?? ""}`.toLowerCase();
     return child.status !== "complete" && /\b(decide|decision|approve|approval|select|confirm|review)\b/.test(text);
@@ -250,15 +280,43 @@ export default function ScheduleFocusPage({
           )}
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
-          <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm">
-            <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Progress</div>
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className="text-2xl font-semibold tabular-nums">{progress}%</span>
-              <span className="text-xs text-muted-foreground">
-                {completeCount}/{children.length} complete
-              </span>
+        <div className="flex flex-col gap-2 sm:flex-row lg:w-[420px] lg:flex-col">
+          <div className="rounded-lg border border-border bg-card p-4 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Progress</div>
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="text-2xl font-semibold tabular-nums">{progress}%</span>
+                  <span className="text-xs text-muted-foreground">
+                    {completeCount}/{children.length} complete
+                  </span>
+                </div>
+              </div>
+              <div className="text-right text-xs text-muted-foreground">
+                <div>{firstStart || "No start"}</div>
+                <div>{lastFinish || "No finish"}</div>
+              </div>
             </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+              />
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <MiniMetric label="Workdays" value={totalDuration} />
+              <MiniMetric label="Delayed" value={blockedCount} tone={blockedCount > 0 ? "warning" : "default"} />
+              <MiniMetric label="Open" value={children.length - completeCount} />
+            </div>
+            {nextOpenTask && (
+              <div className="mt-3 rounded-md border border-border/60 bg-background/70 p-2.5">
+                <div className="text-2xs uppercase tracking-[0.12em] text-muted-foreground">Next action</div>
+                <div className="mt-1 line-clamp-2 text-xs font-medium">{nextOpenTask.label}</div>
+                <div className="mt-0.5 text-2xs text-muted-foreground">
+                  {nextOpenTask.task_owner || "No owner"} - {DEV_PHASE_STATUS_CONFIG[nextOpenTask.status].label}
+                </div>
+              </div>
+            )}
           </div>
           <Link href={`/deals/${params.id}/chat?prompt=${encodeURIComponent(assistantPrompt)}`}>
             <Button size="sm" className="w-full gap-2">
@@ -310,23 +368,37 @@ export default function ScheduleFocusPage({
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-5">
           <section className="rounded-lg border border-border bg-card">
-            <div className="border-b border-border px-4 py-3">
-              <h2 className="text-sm font-semibold">Tasks</h2>
+            <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold">Tasks</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Edit owners, dates, dependencies, and progress without leaving this phase.
+                </p>
+              </div>
+              <Button size="sm" variant="outline" className="gap-2" onClick={exportFocusSchedule}>
+                <Download className="h-4 w-4" />
+                Export
+              </Button>
             </div>
             {children.length === 0 ? (
               <div className="p-6 text-sm text-muted-foreground">
                 No child tasks yet. Add the first task to break this phase into a working mini schedule.
               </div>
             ) : (
-              <div className="divide-y divide-border">
-                {children.map((child) => (
-                  <TaskRow
-                    key={child.id}
-                    task={child}
-                    onUpdate={(updates) => updateTask(child.id, updates)}
-                    onDelete={() => deleteTask(child.id)}
-                  />
-                ))}
+              <div>
+                <MiniTimeline tasks={children} />
+                <div className="divide-y divide-border">
+                  {children.map((child) => (
+                    <TaskRow
+                      key={child.id}
+                      task={child}
+                      predecessor={child.predecessor_id ? byId.get(child.predecessor_id) ?? null : null}
+                      predecessorOptions={predecessorOptions.filter((option) => option.id !== child.id)}
+                      onUpdate={(updates) => updateTask(child.id, updates)}
+                      onDelete={() => deleteTask(child.id)}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </section>
@@ -344,7 +416,7 @@ export default function ScheduleFocusPage({
                   <div key={child.id} className="rounded-lg border border-border/60 bg-background/60 p-2.5">
                     <div className="line-clamp-2 text-xs font-medium leading-5">{child.label}</div>
                     <div className="mt-0.5 text-2xs text-muted-foreground">
-                      {child.task_owner || "No owner"} · {DEV_PHASE_STATUS_CONFIG[child.status].label}
+                      {child.task_owner || "No owner"} - {DEV_PHASE_STATUS_CONFIG[child.status].label}
                     </div>
                   </div>
                 ))}
@@ -446,18 +518,89 @@ function MiniMetric({
   );
 }
 
+function MiniTimeline({ tasks }: { tasks: DevPhase[] }) {
+  const dated = tasks.filter((task) => task.start_date && task.end_date);
+  if (dated.length === 0) {
+    return (
+      <div className="border-b border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+        Add dates to show a compact timeline for this mini schedule.
+      </div>
+    );
+  }
+
+  const starts = dated
+    .map((task) => new Date(task.start_date || "").getTime())
+    .filter((time) => !Number.isNaN(time));
+  const finishes = dated
+    .map((task) => new Date(task.end_date || "").getTime())
+    .filter((time) => !Number.isNaN(time));
+  const min = Math.min(...starts);
+  const max = Math.max(...finishes);
+  const span = Math.max(1, max - min);
+
+  return (
+    <div className="border-b border-border bg-muted/20 px-4 py-3">
+      <div className="mb-3 flex items-center justify-between text-2xs uppercase tracking-[0.12em] text-muted-foreground">
+        <span>{formatShortDate(new Date(min).toISOString())}</span>
+        <span>Mini timeline</span>
+        <span>{formatShortDate(new Date(max).toISOString())}</span>
+      </div>
+      <div className="space-y-2">
+        {dated.slice(0, 8).map((task) => {
+          const start = new Date(task.start_date || "").getTime();
+          const end = new Date(task.end_date || "").getTime();
+          const left = Math.max(0, Math.min(92, ((start - min) / span) * 92));
+          const width = Math.max(8, Math.min(100 - left, ((end - start) / span) * 92 || 8));
+          return (
+            <div key={task.id} className="grid grid-cols-[140px_1fr] items-center gap-3">
+              <div className="truncate text-2xs text-muted-foreground" title={task.label}>
+                {task.label}
+              </div>
+              <div className="relative h-5 rounded bg-background">
+                <div
+                  className={cn(
+                    "absolute top-1 h-3 rounded",
+                    task.status === "complete"
+                      ? "bg-emerald-500"
+                      : task.status === "delayed"
+                        ? "bg-red-500"
+                        : task.status === "in_progress"
+                          ? "bg-blue-500"
+                          : "bg-zinc-500"
+                  )}
+                  style={{ left: `${left}%`, width: `${width}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {dated.length > 8 && (
+        <div className="mt-2 text-2xs text-muted-foreground">
+          Showing first 8 dated tasks. Export includes all tasks.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TaskRow({
   task,
+  predecessor,
+  predecessorOptions,
   onUpdate,
   onDelete,
 }: {
   task: DevPhase;
+  predecessor: DevPhase | null;
+  predecessorOptions: DevPhase[];
   onUpdate: (updates: Partial<DevPhase>) => void;
   onDelete: () => void;
 }) {
   const cfg = DEV_PHASE_STATUS_CONFIG[task.status];
+  const pct = Math.max(0, Math.min(100, Number(task.pct_complete ?? 0)));
   return (
-    <div className="grid grid-cols-1 gap-3 px-4 py-3 lg:grid-cols-[minmax(220px,1fr)_130px_140px_120px_32px] lg:items-center">
+    <div className="grid grid-cols-1 gap-3 px-4 py-3 lg:grid-cols-[minmax(220px,1fr)_130px_150px_160px_32px] lg:items-start">
       <div className="min-w-0">
         <input
           defaultValue={task.label}
@@ -476,6 +619,12 @@ function TaskRow({
           className="mt-1 w-full bg-transparent text-xs text-muted-foreground outline-none"
           placeholder="Owner"
         />
+        <div className="mt-2 flex items-center gap-2">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="w-9 text-right text-2xs tabular-nums text-muted-foreground">{pct}%</span>
+        </div>
       </div>
       <select
         value={task.status}
@@ -492,22 +641,72 @@ function TaskRow({
           </option>
         ))}
       </select>
-      <div className="flex items-center gap-2">
-        <input
-          type="number"
-          min={0}
-          defaultValue={task.duration_days ?? 0}
-          onBlur={(e) => {
-            const next = Number(e.target.value) || 0;
-            if (next !== (task.duration_days ?? 0)) onUpdate({ duration_days: next });
-          }}
-          className="h-9 w-20 rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
-        />
-        <span className="text-xs text-muted-foreground">days</span>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            defaultValue={task.duration_days ?? 0}
+            onBlur={(e) => {
+              const next = Number(e.target.value) || 0;
+              if (next !== (task.duration_days ?? 0)) onUpdate({ duration_days: next });
+            }}
+            className="h-9 w-20 rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+          />
+          <span className="text-xs text-muted-foreground">days</span>
+        </div>
+        <label className="flex items-center gap-2">
+          <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            defaultValue={pct}
+            onMouseUp={(e) => {
+              const next = Number((e.currentTarget as HTMLInputElement).value);
+              if (next !== pct) onUpdate({ pct_complete: next });
+            }}
+            onTouchEnd={(e) => {
+              const next = Number((e.currentTarget as HTMLInputElement).value);
+              if (next !== pct) onUpdate({ pct_complete: next });
+            }}
+            className="w-full accent-primary"
+            aria-label="Progress percent"
+          />
+        </label>
       </div>
-      <div className="text-xs text-muted-foreground">
-        <div>{task.start_date ?? "No start"}</div>
-        <div>{task.end_date ?? "No finish"}</div>
+      <div className="space-y-2">
+        <input
+          type="date"
+          value={task.start_date ?? ""}
+          onChange={(e) => onUpdate({ start_date: e.target.value || null })}
+          className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+          aria-label="Start date"
+        />
+        <input
+          type="date"
+          value={task.end_date ?? ""}
+          onChange={(e) => onUpdate({ end_date: e.target.value || null })}
+          className="h-9 w-full rounded-lg border border-border bg-background px-2 text-xs outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+          aria-label="Finish date"
+        />
+        <label className="flex items-center gap-1.5">
+          <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+          <select
+            value={task.predecessor_id ?? ""}
+            onChange={(e) => onUpdate({ predecessor_id: e.target.value || null })}
+            className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-2xs outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+            title={predecessor?.label || "No dependency"}
+          >
+            <option value="">No dependency</option>
+            {predecessorOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       <button
         type="button"
@@ -541,4 +740,11 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       {children}
     </label>
   );
+}
+
+function formatShortDate(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }

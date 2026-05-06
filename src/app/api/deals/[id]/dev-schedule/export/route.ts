@@ -15,10 +15,10 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/deals/[id]/dev-schedule/export?format=csv|ics&track=acquisition|development|construction|all
  *
- * CSV — flat table of every phase + child task, useful for dropping
+ * CSV - flat table of every phase + child task, useful for dropping
  * into Excel / Google Sheets.
  *
- * ICS — standard iCalendar feed. Each phase / task becomes a VEVENT so
+ * ICS - standard iCalendar feed. Each phase / task becomes a VEVENT so
  * the analyst can import the schedule into Outlook / Google Calendar /
  * Asana timeline views. Tasks without dates get skipped in ICS
  * (calendar clients won't render a no-date event).
@@ -37,11 +37,11 @@ const ICS_ESCAPE = (s: string) =>
 
 const CSV_ESCAPE = (s: string | null | undefined) => {
   if (s == null) return "";
-  // Collapse embedded newlines to " · ". Excel, Numbers, and Google Sheets
+  // Collapse embedded newlines to " - ". Excel, Numbers, and Google Sheets
   // all handle CR/LF inside quoted cells, but many analyst workflows pipe
   // the CSV through tools (Airtable import, pandas, Snowflake COPY) that
   // choke on multi-line cells. Collapsing is safer and still readable.
-  const flat = String(s).replace(/\r\n|\r|\n/g, " · ");
+  const flat = String(s).replace(/\r\n|\r|\n/g, " - ");
   const needsQuote = /[",]/.test(flat);
   const body = flat.replace(/"/g, '""');
   return needsQuote ? `"${body}"` : body;
@@ -146,7 +146,7 @@ function excelColor(value: unknown, fallback: string): string {
 function progressBar(value: number | null | undefined): string {
   const pct = Math.max(0, Math.min(100, Math.round(Number(value ?? 0))));
   const filled = Math.round(pct / 10);
-  return `${"█".repeat(filled)}${"░".repeat(10 - filled)} ${pct}%`;
+  return `[${"#".repeat(filled)}${"-".repeat(10 - filled)}] ${pct}%`;
 }
 
 function excelDate(value: string | null | undefined): string {
@@ -160,7 +160,8 @@ function buildExcelXml(
   phases: DevPhase[],
   dealName: string,
   trackLabel: string,
-  branding: ScheduleBranding | null
+  branding: ScheduleBranding | null,
+  focusPhase: DevPhase | null = null
 ): string {
   const primary = excelColor(branding?.primary_color, "#1F4E78").replace("#", "");
   const secondary = excelColor(branding?.secondary_color, "#2F3B52").replace("#", "");
@@ -168,8 +169,7 @@ function buildExcelXml(
   const company = branding?.company_name?.trim() || "Deal Intelligence";
   const footer = branding?.footer_text?.trim() || "CONFIDENTIAL";
   const byId = new Map(phases.map((p) => [p.id, p]));
-  const roots = phases
-    .filter((p) => !p.parent_phase_id)
+  const roots = (focusPhase ? [focusPhase] : phases.filter((p) => !p.parent_phase_id))
     .sort((a, b) => {
       if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
       return (a.start_date ?? "9999").localeCompare(b.start_date ?? "9999");
@@ -183,6 +183,7 @@ function buildExcelXml(
       });
   const statusLabel = (status: string | null | undefined) =>
     (status || "not_started").replace(/_/g, " ");
+  const reportTitle = focusPhase ? `${dealName} - ${focusPhase.label}` : `${dealName} Schedule`;
   const cell = (
     value: string | number | null | undefined,
     style = "Body",
@@ -193,8 +194,8 @@ function buildExcelXml(
   const rowFor = (p: DevPhase, isChild: boolean) => {
     const style = isChild ? "Child" : "Phase";
     return `<Row ss:AutoFitHeight="1">
-      ${cell(`${isChild ? "  - " : ""}${p.label}`, style)}
-      ${cell(isChild ? "Task" : "Phase", style)}
+      ${cell(`${isChild ? "  " : ""}${p.label}`, style)}
+      ${cell(isChild ? "Task" : focusPhase ? "Mini Schedule" : "Phase", style)}
       ${cell(excelDate(p.start_date), style)}
       ${cell(excelDate(p.end_date), style)}
       ${cell(p.duration_days ?? "", style, p.duration_days == null ? "String" : "Number")}
@@ -229,7 +230,7 @@ function buildExcelXml(
  <Worksheet ss:Name="Schedule">
   <Table ss:ExpandedColumnCount="10" ss:DefaultRowHeight="18">
    <Column ss:Width="260"/><Column ss:Width="70"/><Column ss:Width="85"/><Column ss:Width="85"/><Column ss:Width="70"/><Column ss:Width="115"/><Column ss:Width="90"/><Column ss:Width="120"/><Column ss:Width="170"/><Column ss:Width="300"/>
-   <Row ss:Height="30">${cell(`${dealName} Schedule`, "Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}</Row>
+   <Row ss:Height="30">${cell(reportTitle, "Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}${blank("Title")}</Row>
    <Row>${cell(`${company}${trackLabel ? ` - ${trackLabel}` : ""}`, "Subtitle")}${blank("Subtitle")}${blank("Subtitle")}${blank("Subtitle")}${blank("Subtitle")}${blank("Subtitle")}${blank("Subtitle")}${blank("Subtitle")}${blank("Subtitle")}${blank("Subtitle")}</Row>
    <Row>${cell(`Exported ${new Date().toLocaleDateString("en-US")}`, "Meta")}${blank("Meta")}${blank("Meta")}${blank("Meta")}${blank("Meta")}${blank("Meta")}${blank("Meta")}${blank("Meta")}${blank("Meta")}${blank("Meta")}</Row>
    <Row>${cell("Phase / Task", "Header")}${cell("Type", "Header")}${cell("Start", "Header")}${cell("Finish", "Header")}${cell("Days", "Header")}${cell("Progress", "Header")}${cell("Status", "Header")}${cell("Owner", "Header")}${cell("Predecessor", "Header")}${cell("Notes", "Header")}</Row>
@@ -251,13 +252,13 @@ function buildIcs(phases: DevPhase[], dealName: string): string {
     "PRODID:-//deal-intelligence//dev-schedule//EN",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
-    `X-WR-CALNAME:${ICS_ESCAPE(dealName + " — Development Schedule")}`,
+    `X-WR-CALNAME:${ICS_ESCAPE(dealName + " - Development Schedule")}`,
   ];
   const nowStamp = asDateStamp(new Date().toISOString()) || "";
   for (const p of phases) {
     const start = asDateStamp(p.start_date);
     const end = asDateStamp(p.end_date);
-    // Skip phases without either bound — calendar clients would render
+    // Skip phases without either bound - calendar clients would render
     // them as a zero-width blob or drop them silently.
     if (!start && !end) continue;
     // iCalendar DTEND on a DATE value is *exclusive*, so we shift end
@@ -273,7 +274,7 @@ function buildIcs(phases: DevPhase[], dealName: string): string {
       `DTSTART;VALUE=DATE:${effectiveStart}`,
       `DTEND;VALUE=DATE:${effectiveEnd}`,
       `SUMMARY:${ICS_ESCAPE(
-        `${p.parent_phase_id ? "↳ " : ""}${p.label}${
+        `${p.parent_phase_id ? "Child: " : ""}${p.label}${
           p.task_owner ? ` (${p.task_owner})` : ""
         }`
       )}`,
@@ -371,8 +372,9 @@ export async function GET(
       phases = phases.filter((p) => focusRows.has(p.id));
     }
     const dealName = (deal as { name?: string })?.name || "Deal";
+    const focusPhase = focusId ? allPhases.find((p) => p.id === focusId) ?? null : null;
     const slug = slugify(dealName);
-    const focusSlug = focusId ? "-focus" : "";
+    const focusSlug = focusPhase ? `-${slugify(focusPhase.label)}` : focusId ? "-focus" : "";
     const trackSlug = trackFilter ? `-${trackFilter}` : "";
 
     if (format === "csv") {
@@ -390,9 +392,9 @@ export async function GET(
       const trackLabel = trackFilter
         ? SCHEDULE_TRACK_LABELS[trackFilter] ?? trackFilter
         : focusId
-          ? "Mini Schedule"
+          ? focusPhase?.label || "Mini Schedule"
           : "All Tracks";
-      const body = buildExcelXml(phases, dealName, trackLabel, branding);
+      const body = buildExcelXml(phases, dealName, trackLabel, branding, focusPhase);
       return new NextResponse(body, {
         headers: {
           "Content-Type": "application/vnd.ms-excel; charset=utf-8",
