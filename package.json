@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start -p ${PORT:-3004}",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:init": "node scripts/init-db.js"
   },
   "dependencies": {
@@ -75,6 +77,7 @@
     "eslint-config-next": "14.2.35",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.0"
   }
 }

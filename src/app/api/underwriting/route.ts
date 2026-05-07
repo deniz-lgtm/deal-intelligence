@@ -2,6 +2,18 @@ import { NextResponse } from "next/server";
 import { underwritingQueries, underwritingPerMassingQueries } from "@/lib/db";
 import { v4 as uuidv4 } from "uuid";
 import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
+import { recomputeQuantScore } from "@/lib/quant-score/recompute";
+
+// Fire-and-forget quant score recompute after a UW save. We deliberately do
+// not await this — score generation can take a few seconds (Claude narrative
+// + Monte Carlo) and analysts shouldn't wait on it. Errors are swallowed
+// because the deterministic save itself is the contract; the score row is
+// regenerable on demand via POST /api/deals/[id]/quant-score.
+function triggerQuantScoreRecompute(dealId: string): void {
+  void recomputeQuantScore(dealId, { stage: "uw", runMc: true }).catch((err) => {
+    console.warn(`UW save: quant-score recompute failed for ${dealId}: ${(err as Error).message}`);
+  });
+}
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -204,6 +216,7 @@ export async function PUT(req: Request) {
         const legacyId = legacy?.id || uuidv4();
         await underwritingQueries.upsert(deal_id, legacyId, sanitizedStr);
       }
+      triggerQuantScoreRecompute(deal_id);
       return NextResponse.json({ data: result });
     }
 
@@ -225,6 +238,7 @@ export async function PUT(req: Request) {
     if (parsedLegacy.site_plan !== undefined) {
       await underwritingPerMassingQueries.patchAll(deal_id, { site_plan: parsedLegacy.site_plan });
     }
+    triggerQuantScoreRecompute(deal_id);
     return NextResponse.json({ data: result });
   } catch (err) {
     console.error("Error saving underwriting:", err);

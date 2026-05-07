@@ -87,6 +87,13 @@ export interface Deal {
   uw_score_reasoning: string | null;
   final_score: number | null;
   final_score_reasoning: string | null;
+  // Quant score (denormalized snapshot of the latest deal_scores row).
+  // Source of truth lives in deal_scores.
+  quant_composite: number | null;
+  quant_band: string | null;
+  quant_confidence: number | null;
+  quant_stage: "om" | "uw" | "final" | null;
+  quant_computed_at: string | null;
   // Inbox / AI Deal Sourcing
   auto_ingested: boolean;
   inbox_reviewed_at: string | null;
@@ -222,6 +229,9 @@ export interface BusinessPlan {
   target_equity_multiple_min: number | null;
   target_equity_multiple_max: number | null;
   is_default: boolean;
+  // Quant deal score: per-strategy scoring profile + override weights.
+  strategy: "ground_up_dev" | "value_add" | "core" | "student_housing" | null;
+  factor_weights: Record<string, number> | null;
   // Branding fields (per-plan)
   branding_company_name: string;
   branding_tagline: string;
