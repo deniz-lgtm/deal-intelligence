@@ -848,14 +848,16 @@ export default function SitePlanGenerator({
   // parcel and every other building vertex.
   const existingVertices = useMemo<SitePlanPoint[]>(() => {
     const all: SitePlanPoint[] = [];
+    const scenParcel = activeScen?.parcel_points;
+    const scenBuildings = activeScen?.buildings;
     if (tool === "parcel") {
-      for (const b of buildings) all.push(...b.points);
+      if (scenBuildings) for (const b of scenBuildings) all.push(...b.points);
     } else if (tool === "building") {
-      all.push(...parcelPoints);
-      for (const b of buildings) all.push(...b.points);
+      if (scenParcel) all.push(...scenParcel);
+      if (scenBuildings) for (const b of scenBuildings) all.push(...b.points);
     }
     return all;
-  }, [tool, parcelPoints, buildings]);
+  }, [tool, activeScen?.parcel_points, activeScen?.buildings]);
 
   // Live ghost polyline from last draft vertex → snapped cursor.
   const ghostLine = useMemo<SitePlanPoint[] | null>(() => {
@@ -1632,7 +1634,7 @@ export default function SitePlanGenerator({
                 key={`col-${b.id}-${c.id}`}
                 center={[cx, cy]}
                 radius={0.1}
-                pathOptions={{ color: "transparent", weight: 0, opacity: 0 }}
+                pathOptions={{ color: "transparent", weight: 0, opacity: 0, interactive: false }}
               >
                 <Tooltip permanent direction="center" className="site-plan-dim-label">
                   {c.label} · {c.area_sf.toLocaleString()} SF
@@ -1687,7 +1689,7 @@ export default function SitePlanGenerator({
               key={`ms-${i}`}
               center={[midLat, midLng]}
               radius={0.1}
-              pathOptions={{ color: "transparent", weight: 0, opacity: 0 }}
+              pathOptions={{ color: "transparent", weight: 0, opacity: 0, interactive: false }}
             >
               <Tooltip permanent direction="top" offset={[0, -4]} className="site-plan-dim-label">
                 {Math.round(lenFt)} ft
@@ -1714,12 +1716,12 @@ export default function SitePlanGenerator({
           <>
             <Polyline
               positions={ghostLine.map(toLatLng)}
-              pathOptions={{ color: DRAFT_COLOR, weight: 1.5, opacity: 0.6, dashArray: "2 4" }}
+              pathOptions={{ color: DRAFT_COLOR, weight: 1.5, opacity: 0.6, dashArray: "2 4", interactive: false }}
             />
             <CircleMarker
               center={toLatLng(ghostLine[1])}
               radius={5}
-              pathOptions={{ color: DRAFT_COLOR, fillColor: DRAFT_COLOR, fillOpacity: 0.5, weight: 2 }}
+              pathOptions={{ color: DRAFT_COLOR, fillColor: DRAFT_COLOR, fillOpacity: 0.5, weight: 2, interactive: false }}
             >
               <Tooltip permanent direction="top" offset={[0, -8]} className="site-plan-dim-label">
                 {Math.round(ghostLenFt)} ft
