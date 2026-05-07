@@ -491,8 +491,21 @@ export default function ScheduleFocusPage({
               </Button>
             </div>
             {children.length === 0 ? (
-              <div className="p-6 text-sm text-muted-foreground">
-                No child tasks yet. Add the first task to break this phase into a working mini schedule.
+              <div className="space-y-3 p-6 text-sm text-muted-foreground">
+                <div>
+                  <p className="font-medium text-foreground">This phase does not have a mini schedule yet.</p>
+                  <p className="mt-1 max-w-2xl text-xs leading-5">
+                    Use this view when a schedule row needs its own working plan. Add the first task here, or have the assistant draft a short task list for you to approve.
+                  </p>
+                </div>
+                <Link
+                  href={`/deals/${params.id}/chat?prompt=${encodeURIComponent(`Help me create a concise mini schedule for "${parent.label}" (parent_phase_id: ${parent.id}). Ask only the prep questions you need, then show a proposal card I can approve.`)}`}
+                >
+                  <Button size="sm" variant="outline" className="gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    Draft with assistant
+                  </Button>
+                </Link>
               </div>
             ) : (
               <div>

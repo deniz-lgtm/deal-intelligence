@@ -72,8 +72,6 @@ type NavItem = {
   href: string;
   label: string;
   icon: typeof LayoutDashboard;
-  muted?: boolean;
-  mutedReason?: string;
 };
 
 type NavGroup = {
@@ -81,10 +79,10 @@ type NavGroup = {
   items: NavItem[];
 };
 
-// Deal-level navigation mirrors the three-phase triptych used by the app
-// shell: Acquisition / Development / Construction each own the items
-// that serve that phase's workflow. Analysis, Files, and Activity stay
-// phase-agnostic because they serve every role.
+// Deal-level navigation is organized by what someone is trying to do,
+// not by every internal module the app has accumulated. Role-specific
+// execution work still has its own sections, but diligence, analysis,
+// documents, and team coordination stay in stable places.
 const BASE_NAV_GROUPS: NavGroup[] = [
   {
     label: null,
@@ -97,19 +95,23 @@ const BASE_NAV_GROUPS: NavGroup[] = [
       // Ground-up deals need the site plan & program locked before
       // underwriting can price a pro forma — unit mix, parking, FAR feed
       // directly into rents and costs. Sits above Underwriting for that
-      // reason. Muted for acquisition-scope deals via
-      // ACQUISITION_MUTED_HREFS.
-      { href: "/programming", label: "Site Plan & Program", icon: Layers },
+      // reason. It stays in Analysis because it feeds both design and
+      // underwriting.
+      { href: "/programming", label: "Site Plan", icon: Layers },
       { href: "/underwriting", label: "Underwriting", icon: Calculator },
       { href: "/comps", label: "Comps", icon: BarChart3 },
-      { href: "/location", label: "Location Intel", icon: Globe },
+      { href: "/location", label: "Location", icon: Globe },
     ],
   },
   {
-    label: "Files",
+    label: "Documents",
     items: [
-      { href: "/documents", label: "Documents", icon: FileText },
-      { href: "/om-analysis", label: "OM Analysis", icon: FileSearch },
+      { href: "/documents", label: "All Documents", icon: FileText },
+      { href: "/om-analysis", label: "OM Review", icon: FileSearch },
+      { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
+      { href: "/investment-package", label: "Inv. Package", icon: Presentation },
+      { href: "/reports", label: "Reports", icon: FolderArchive },
+      { href: "/room", label: "Deal Room", icon: Share2 },
       { href: "/photos", label: "Photos", icon: Camera },
     ],
   },
@@ -118,19 +120,12 @@ const BASE_NAV_GROUPS: NavGroup[] = [
     // while running a deal from site walk to signed PSA. The Schedule
     // row here is the Acquisition-track CPM view (milestones like call
     // for offers, LOI, PSA, DD end, close).
-    label: "Acquisition",
+    label: "Work Plan",
     items: [
       { href: "/schedule", label: "Schedule", icon: Flag },
       { href: "/checklist", label: "Checklist", icon: CheckSquare },
       { href: "/site-walk", label: "Site Walk", icon: Footprints },
       { href: "/loi", label: "LOI", icon: FileSignature },
-      { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
-      // Investment Package is the single authoring surface for every
-      // format — pitch deck, investment memo, one-pager, IC package.
-      // Exports land in Reports & Packages instead of one-shot downloads.
-      { href: "/investment-package", label: "Inv. Package", icon: Presentation },
-      { href: "/reports", label: "Reports", icon: FolderArchive },
-      { href: "/room", label: "Deal Room", icon: Share2 },
     ],
   },
   {
@@ -151,7 +146,7 @@ const BASE_NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Activity",
+    label: "Team",
     items: [
       { href: "/chat", label: "Chat", icon: MessageSquare },
       { href: "/communication", label: "Communication", icon: Mailbox },
@@ -175,21 +170,14 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
   ],
 };
 
-// Acquisition-scope deals (buy-and-hold, no development) never run a
-// Development schedule or build a site program — mute those items so
-// they stay visually out of the way on the sidebar. Construction-track
-// items are already hidden via the execution_phase gate below so they
-// don't need muting.
-const ACQUISITION_MUTED_HREFS = new Set([
-  "/programming",
-  "/project",
-  "/project/pre-dev",
-  "/project/design",
-  "/project/entitlements",
-  "/project/ceqa",
-  "/project/procurement",
+const NAV_GROUP_ORDER = new Map<string, number>([
+  ["Work Plan", 1],
+  ["Analysis", 2],
+  ["Documents", 3],
+  ["Development", 4],
+  ["Construction", 5],
+  ["Team", 6],
 ]);
-const MUTED_REASON_ACQUISITION = "Not typically used for acquisition deals.";
 
 // Massing-aware routes read the active project from `?massing=<id>`.
 // The sidebar preserves the param when navigating between them so an
@@ -214,14 +202,7 @@ function applyScopeGating(
   // items become first-class even on an acquisition-scope deal — clicking
   // the Dev badge is the signal that the dev team is now involved.
   if (dealScope !== "acquisition" || showInDevelopment) return groups;
-  return groups.map((group) => ({
-    ...group,
-    items: group.items.map((item) =>
-      ACQUISITION_MUTED_HREFS.has(item.href)
-        ? { ...item, muted: true, mutedReason: MUTED_REASON_ACQUISITION }
-        : item
-    ),
-  }));
+  return groups.filter((group) => group.label !== "Development");
 }
 
 function getNavGroups(
@@ -238,14 +219,17 @@ function getNavGroups(
   const base = showConstructionGroup
     ? (() => {
         const groups = [...BASE_NAV_GROUPS];
-        // Insert Construction between Development (index 4) and Activity
-        // so the sidebar reads Acquisition → Development → Construction
-        // → Activity — mirroring the app-level triptych order.
+        // Insert Construction between Development and Team once that role
+        // is active on the deal.
         groups.splice(5, 0, CONSTRUCTION_NAV_GROUP);
         return groups;
       })()
     : BASE_NAV_GROUPS;
-  return applyScopeGating(base, dealScope, showInDevelopment);
+  return applyScopeGating(base, dealScope, showInDevelopment).sort((a, b) => {
+    const aOrder = a.label ? NAV_GROUP_ORDER.get(a.label) ?? 99 : 0;
+    const bOrder = b.label ? NAV_GROUP_ORDER.get(b.label) ?? 99 : 0;
+    return aOrder - bOrder;
+  });
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -313,14 +297,12 @@ export default function DealLayout({
   // toggle drives both desktop collapse and mobile open/close.
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   // Per-group collapse state keyed by group label. Overview (no label) is
-  // never collapsible. Defaults: Analysis and Acquisition open (the two
-  // groups the sourcing-through-close workflow touches most); Files,
-  // Development, Construction, and Activity closed by default so the
-  // sidebar reads as a lean nav with optional disclosure.
+  // never collapsible. Work Plan and Analysis stay open; deeper document,
+  // execution, and team surfaces start tucked away.
   const [navGroupsCollapsed, setNavGroupsCollapsed] = useState<Record<string, boolean>>({
-    Files: true,
+    Documents: true,
     Development: true,
-    Activity: true,
+    Team: true,
     Construction: true,
   });
   const pathname = usePathname();
@@ -538,10 +520,10 @@ export default function DealLayout({
                       // Phase groups pick up their accent tint (same
                       // mechanism used by AppShell); all other labels
                       // stay on the neutral muted scale.
-                      group.label === "Acquisition" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
+                      group.label === "Work Plan" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
                       group.label === "Development" && "text-[hsl(var(--phase-dev))]/80 hover:text-[hsl(var(--phase-dev))]",
                       group.label === "Construction" && "text-[hsl(var(--phase-con))]/80 hover:text-[hsl(var(--phase-con))]",
-                      !["Acquisition", "Development", "Construction"].includes(group.label) &&
+                      !["Work Plan", "Development", "Construction"].includes(group.label) &&
                         "text-muted-foreground/60 hover:text-muted-foreground",
                       sidebarCollapsed && "md:hidden"
                     )}
@@ -571,11 +553,7 @@ export default function DealLayout({
                       : pathname.startsWith(baseHref);
                   const Icon = item.icon;
 
-                  const linkTitle = item.muted
-                    ? `${item.label} — ${item.mutedReason ?? ""}`.trim()
-                    : sidebarCollapsed
-                    ? item.label
-                    : undefined;
+                  const linkTitle = sidebarCollapsed ? item.label : undefined;
 
                   return (
                     <Link key={item.href} href={fullPath} title={linkTitle}>
@@ -587,8 +565,6 @@ export default function DealLayout({
                           sidebarCollapsed && "md:justify-center",
                           isActive
                             ? "gradient-gold text-primary-foreground shadow-sm"
-                            : item.muted
-                            ? "text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/30"
                             : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                         )}
                       >

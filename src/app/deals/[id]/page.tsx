@@ -359,6 +359,17 @@ export default function DealOverviewPage({
       return aDate.localeCompare(bDate);
     })
     .slice(0, 4);
+  const scheduleHrefForItem = (item: DevPhase) => {
+    const track = item.track ?? "development";
+    const focusId = item.parent_phase_id || item.id;
+    const hasMiniSchedule = devPhases.some((phase) => phase.parent_phase_id === focusId);
+    if (item.parent_phase_id || hasMiniSchedule) {
+      return `/deals/${params.id}/schedule/focus/${focusId}`;
+    }
+    if (track === "acquisition") return `/deals/${params.id}/schedule`;
+    if (track === "construction") return `/deals/${params.id}/construction/schedule`;
+    return `/deals/${params.id}/project`;
+  };
   const pendingChecklistItems = checklist
     .filter((item) => item.status === "pending")
     .slice(0, 4);
@@ -378,7 +389,7 @@ export default function DealOverviewPage({
     ...upcomingScheduleItems.map((item) => ({
       title: item.label,
       meta: `${titleCase(item.track || "development")} schedule${item.earliest_start || item.start_date ? ` - ${formatShortDate(item.earliest_start || item.start_date)}` : " - unscheduled"}`,
-      href: `/deals/${params.id}/schedule/focus/${item.id}`,
+      href: scheduleHrefForItem(item),
       tone: item.is_critical ? "danger" as const : "default" as const,
     })),
     ...openQuestions.map((question) => ({
