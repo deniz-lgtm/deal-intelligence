@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/AppShell";
 import { TodayStrip } from "@/components/today/TodayStrip";
@@ -140,6 +140,14 @@ export default function HomePage() {
                     className="w-60 pl-7 pr-3 py-1.5 text-xs border border-border/40 rounded-full bg-background/40 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/40 transition-all placeholder:text-muted-foreground/30"
                   />
                 </div>
+                <Link
+                  href="/floor-plans"
+                  className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+                  title="Floor plan sketchpad"
+                >
+                  <LayoutDashboard className="h-3.5 w-3.5" />
+                  <span>Floor Plans</span>
+                </Link>
                 <div className="w-px h-5 bg-border/40 mx-1 hidden sm:block" />
                 {can("deals.create") && (
                   <Link href="/deals/new">
