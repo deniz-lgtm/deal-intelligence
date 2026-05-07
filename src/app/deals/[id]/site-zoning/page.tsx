@@ -201,7 +201,7 @@ function migrateHeightLimit(h: any): HeightLimit {
   };
 }
 
-function Section({ title, icon, children, defaultOpen = false, headerRight }: {
+function Section({ title, icon, children, defaultOpen = true, headerRight }: {
   title: string;
   icon: React.ReactNode;
   children: React.ReactNode;
