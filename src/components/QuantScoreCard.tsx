@@ -20,6 +20,8 @@ import {
   Info,
   ShieldAlert,
   ChevronRight,
+  SlidersHorizontal,
+  Flag,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -126,18 +128,56 @@ const BAND_STYLES: Record<string, { label: string; cls: string }> = {
   pass: { label: "Pass", cls: "bg-rose-500/15 text-rose-300 border-rose-500/30" },
 };
 
+// Mirror of DEFAULT_WEIGHTS in src/lib/quant-score/weights.ts. Kept in sync
+// here so the client editor can reset to a strategy's defaults without
+// importing server-only modules.
+type Strategy = "ground_up_dev" | "value_add" | "core" | "student_housing";
+
+const STRATEGY_LABELS: Record<Strategy, string> = {
+  ground_up_dev: "Ground-Up Development",
+  value_add: "Value-Add",
+  core: "Core",
+  student_housing: "Student Housing",
+};
+
+const CATEGORY_ORDER = [
+  "return",
+  "capstack",
+  "construction",
+  "leaseup",
+  "market",
+  "physical",
+  "exit",
+  "sponsor",
+  "macro",
+  "regulatory",
+] as const;
+
+const DEFAULT_WEIGHTS: Record<Strategy, Record<string, number>> = {
+  ground_up_dev: { return: 15, capstack: 18, construction: 18, leaseup: 13, market: 10, physical: 4, exit: 8, sponsor: 3, macro: 6, regulatory: 5 },
+  value_add:     { return: 20, capstack: 16, construction: 4,  leaseup: 16, market: 11, physical: 9, exit: 9, sponsor: 5, macro: 5, regulatory: 5 },
+  core:          { return: 23, capstack: 14, construction: 0,  leaseup: 14, market: 13, physical: 11, exit: 12, sponsor: 5, macro: 5, regulatory: 3 },
+  student_housing: { return: 18, capstack: 16, construction: 9,  leaseup: 20, market: 13, physical: 4, exit: 6, sponsor: 3, macro: 6, regulatory: 5 },
+};
+
 interface Props {
   dealId: string;
+  /** Optional — when provided, an "Edit weights" button appears that opens
+   *  the per-business-plan weight editor. */
+  businessPlanId?: string | null;
+  /** Optional — display name for the BP, surfaced in the editor copy. */
+  businessPlanName?: string | null;
   initialStage?: "om" | "uw" | "final";
 }
 
-export function QuantScoreCard({ dealId, initialStage = "uw" }: Props) {
+export function QuantScoreCard({ dealId, businessPlanId, businessPlanName, initialStage = "uw" }: Props) {
   const [stage, setStage] = useState<"om" | "uw" | "final">(initialStage);
   const [row, setRow] = useState<QuantScoreRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [recomputing, setRecomputing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drillDown, setDrillDown] = useState<CategoryResult | null>(null);
+  const [weightsOpen, setWeightsOpen] = useState(false);
 
   const fetchLatest = useCallback(
     async (s: "om" | "uw" | "final") => {
@@ -204,6 +244,17 @@ export function QuantScoreCard({ dealId, initialStage = "uw" }: Props) {
           )}
         </div>
         <div className="flex items-center gap-1.5">
+          {businessPlanId && row && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setWeightsOpen(true)}
+              title="Edit category weights for this business plan"
+              className="text-2xs gap-1.5"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" /> Weights
+            </Button>
+          )}
           <StageSelector stage={stage} onChange={setStage} />
           <Button size="sm" variant="ghost" onClick={recompute} disabled={recomputing} title="Recompute">
             {recomputing ? (
@@ -248,6 +299,20 @@ export function QuantScoreCard({ dealId, initialStage = "uw" }: Props) {
       </CardContent>
 
       <BreakdownSheet category={drillDown} onClose={() => setDrillDown(null)} />
+      {businessPlanId && row && (
+        <WeightsEditor
+          open={weightsOpen}
+          onClose={() => setWeightsOpen(false)}
+          businessPlanId={businessPlanId}
+          businessPlanName={businessPlanName ?? null}
+          currentWeights={row.factor_breakdown.weights}
+          currentStrategy={row.factor_breakdown.strategy as Strategy | null}
+          onSaved={async () => {
+            setWeightsOpen(false);
+            await recompute();
+          }}
+        />
+      )}
     </Card>
   );
 }
@@ -315,7 +380,7 @@ function Hero({
 function buildHeadline(breakdown: FactorBreakdown, mc: McDistribution | null): string {
   const notched = breakdown.categories.filter((c) => c.notched).map((c) => CATEGORY_LABELS[c.category] ?? c.category);
   if (notched.length > 0) {
-    return `Fatal flaw notched in ${notched.slice(0, 2).join(", ")}${notched.length > 2 ? `, +${notched.length - 2} more` : ""}.`;
+    return `Red flag in ${notched.slice(0, 2).join(", ")}${notched.length > 2 ? `, +${notched.length - 2} more` : ""}.`;
   }
   if (mc) {
     const parts: string[] = [];
@@ -386,8 +451,8 @@ function ScoreInfoButton({
             <p className="text-muted-foreground">
               Weighted average of 10 risk categories. Each category rolls up from individual inputs
               mapped to 0–100 via piecewise thresholds. Category weights come from the business
-              plan's strategy. A single fatal flaw (DSCR &lt; 1.0, breakeven occupancy &gt; 95%, or a
-              critical environmental flag) notches the category by 15.
+              plan's strategy. A single red-flag input (DSCR &lt; 1.0, breakeven occupancy &gt; 95%, or
+              a critical environmental flag) drops the whole category by 15.
             </p>
           </div>
           <div>
@@ -499,10 +564,10 @@ function CategoryRow({
           <span className="text-muted-foreground/50">{weight.toFixed(0)}%</span>
           {cat.notched && (
             <span
-              title="Fatal flaw notched: a single 0-score input dropped this category 15 points"
+              title="Red flag: a single 0-score input dropped this category 15 points"
               className="inline-flex items-center gap-0.5 text-rose-300 bg-rose-500/15 border border-rose-500/30 rounded px-1 py-0 text-[9px] uppercase tracking-wider"
             >
-              <ShieldAlert className="h-2.5 w-2.5" /> Notch
+              <Flag className="h-2.5 w-2.5" /> Red Flag
             </span>
           )}
         </span>
@@ -858,7 +923,7 @@ function BreakdownSheet({
                 {CATEGORY_LABELS[category.category] || category.category}
                 {category.notched && (
                   <Badge variant="outline" className="text-2xs border-rose-500/30 text-rose-300 bg-rose-500/10">
-                    <ShieldAlert className="h-3 w-3 mr-1" /> Fatal flaw notched
+                    <Flag className="h-3 w-3 mr-1" /> Red Flag
                   </Badge>
                 )}
               </DialogTitle>
@@ -929,8 +994,8 @@ function BreakdownRow({ input }: { input: CategoryInput }) {
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-foreground/90">{input.label}</span>
           {input.fatalFlaw && (
-            <span title="Fatal-flaw input: a 0 here notches the category by 15">
-              <ShieldAlert className="h-3 w-3 text-rose-400/80" />
+            <span title="Red-flag input: a 0 here drops the whole category by 15">
+              <Flag className="h-3 w-3 text-rose-400/80" />
             </span>
           )}
         </div>
@@ -955,4 +1020,188 @@ function formatNumber(n: number): string {
   if (abs >= 10) return n.toFixed(1);
   if (abs >= 1) return n.toFixed(2);
   return n.toFixed(3);
+}
+
+// ─── Weights editor (modify category weights for the business plan) ─────────
+
+function WeightsEditor({
+  open,
+  onClose,
+  businessPlanId,
+  businessPlanName,
+  currentWeights,
+  currentStrategy,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  businessPlanId: string;
+  businessPlanName: string | null;
+  currentWeights: Record<string, number>;
+  currentStrategy: Strategy | null;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [strategy, setStrategy] = useState<Strategy>(currentStrategy ?? "value_add");
+  const [weights, setWeights] = useState<Record<string, number>>(currentWeights);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Re-seed local state whenever the modal opens with fresh data — covers
+  // the case where the analyst edits weights, recomputes, then reopens.
+  useEffect(() => {
+    if (open) {
+      setStrategy(currentStrategy ?? "value_add");
+      setWeights({ ...currentWeights });
+      setError(null);
+    }
+  }, [open, currentStrategy, currentWeights]);
+
+  const total = CATEGORY_ORDER.reduce((s, c) => s + (weights[c] || 0), 0);
+  const totalRounded = Math.round(total * 10) / 10;
+
+  const setWeight = (cat: string, v: number) => {
+    setWeights((w) => ({ ...w, [cat]: Math.max(0, Math.min(50, isFinite(v) ? v : 0)) }));
+  };
+
+  const loadStrategyDefaults = (s: Strategy) => {
+    setStrategy(s);
+    setWeights({ ...DEFAULT_WEIGHTS[s] });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      // Normalize to exactly 100 on save so the engine receives a clean
+      // distribution regardless of how the user tweaked the sliders.
+      const sum = total;
+      const normalized: Record<string, number> = {};
+      for (const c of CATEGORY_ORDER) {
+        normalized[c] = sum > 0 ? Math.round(((weights[c] || 0) / sum) * 1000) / 10 : 0;
+      }
+      const res = await fetch(`/api/business-plans/${businessPlanId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ strategy, factor_weights: normalized }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "save failed");
+      await onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const totalOk = Math.abs(totalRounded - 100) < 0.5;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <SlidersHorizontal className="h-4 w-4" />
+            Edit Scoring Weights
+          </DialogTitle>
+          <DialogDescription>
+            These weights control how much each factor category contributes to the composite score.
+            Changes apply to <span className="text-foreground/80">all deals on the {businessPlanName ?? "selected"} business plan</span>.
+            Pick a strategy preset to populate the sliders, then tune individual categories. Weights
+            are normalized to 100 on save.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Strategy preset</span>
+            <select
+              value={strategy}
+              onChange={(e) => loadStrategyDefaults(e.target.value as Strategy)}
+              className="bg-card border border-border/60 rounded px-2 py-1 text-xs"
+            >
+              {(Object.keys(STRATEGY_LABELS) as Strategy[]).map((s) => (
+                <option key={s} value={s}>
+                  {STRATEGY_LABELS[s]}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => loadStrategyDefaults(strategy)}
+              className="text-2xs text-primary hover:underline"
+            >
+              Reset to {STRATEGY_LABELS[strategy]} defaults
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
+            {CATEGORY_ORDER.map((cat) => (
+              <WeightSlider
+                key={cat}
+                category={cat}
+                value={weights[cat] || 0}
+                onChange={(v) => setWeight(cat, v)}
+              />
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between text-xs border-t border-border/40 pt-3">
+            <span className="text-muted-foreground">
+              Total{" "}
+              <span className={cn("tabular-nums font-semibold", totalOk ? "text-emerald-400" : "text-amber-400")}>
+                {totalRounded.toFixed(1)}
+              </span>
+              <span className="text-muted-foreground/60"> / 100</span>
+              {!totalOk && <span className="text-muted-foreground/70 ml-2">(will be normalized on save)</span>}
+            </span>
+            {error && <span className="text-rose-400 text-2xs">{error}</span>}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save} disabled={saving || total <= 0}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save & recompute"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function WeightSlider({
+  category,
+  value,
+  onChange,
+}: {
+  category: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-xs">
+      <span className="w-[110px] text-muted-foreground">{CATEGORY_LABELS[category] || category}</span>
+      <input
+        type="range"
+        min={0}
+        max={50}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="flex-1 accent-primary"
+      />
+      <input
+        type="number"
+        min={0}
+        max={50}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-12 bg-card border border-border/60 rounded px-1.5 py-0.5 text-right tabular-nums text-2xs"
+      />
+    </label>
+  );
 }
