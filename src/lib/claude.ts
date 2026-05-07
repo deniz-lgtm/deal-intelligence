@@ -1062,7 +1062,7 @@ const UNIVERSAL_CHAT_TOOLS: Anthropic.Tool[] = [
   {
     name: "create_mini_schedule_tasks",
     description:
-      "Create several child tasks under one existing schedule phase as a mini schedule. Use after the user answers prep questions or explicitly asks to add the proposed mini schedule. Requires edit access to the active deal.",
+      "Create several child tasks under one existing schedule phase as a focused task plan. Use after the user answers prep questions or explicitly asks to add the proposed task plan. Requires edit access to the active deal.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -1102,7 +1102,7 @@ const UNIVERSAL_CHAT_TOOLS: Anthropic.Tool[] = [
   {
     name: "propose_mini_schedule_tasks",
     description:
-      "Propose several child tasks under one existing schedule phase as an approval card, without creating them yet. Use this after asking prep questions and before writing a mini schedule. The user can approve the card to create the tasks deterministically.",
+      "Propose several child tasks under one existing schedule phase as an approval card, without creating them yet. Use this after asking prep questions and before writing a focused task plan. The user can approve the card to create the tasks deterministically.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -1285,7 +1285,7 @@ Guidance:
 - For Playbook questions, answer in 2-5 bullets by default, under 120 words unless the user asks for detail. Start with the answer. Do not use headings or tables unless the user asks.
 - If the Playbook excerpts do not answer the question, say that plainly and give only the closest relevant guidance. Do not stretch weak citations.
 - When the user asks to create a single follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
-- For mini schedules, ask prep questions if needed, then use propose_mini_schedule_tasks to show an approval card. Do not stop with a plain text list when the user is trying to build a mini schedule.
+- For focused task plans, ask prep questions if needed, then use propose_mini_schedule_tasks to show an approval card. Do not stop with a plain text list when the user is trying to build a focused task plan.
 - When the user explicitly says create/add it now, use create_mini_schedule_tasks. Prefer parent_phase_id from Schedule Context; if unavailable, use parent_phase_label exactly.
 - When the user asks to verify, check, diligence, document, or track a requirement without a date, use create_checklist_item if an editable deal is active.
 - When the user says a decision was made, an approval is needed, or an open item should carry through a handoff, use record_decision if an editable deal is active.
@@ -1433,7 +1433,7 @@ Guidance:
             track: input.track || "development",
             tasks,
           },
-          display: `${isDraft ? "Proposed" : "Created"} mini schedule${input.parent_phase_label ? ` for ${input.parent_phase_label}` : ""}: ${tasks.length} task${tasks.length === 1 ? "" : "s"}`,
+          display: `${isDraft ? "Proposed" : "Created"} task plan${input.parent_phase_label ? ` for ${input.parent_phase_label}` : ""}: ${tasks.length} task${tasks.length === 1 ? "" : "s"}`,
         });
       }
     } else if (tool.name === "create_checklist_item" && ctx.deal && ctx.can_edit_deal) {

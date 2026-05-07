@@ -1401,8 +1401,8 @@ export default function DevelopmentSchedule({
       prompt: `Review this ${SCHEDULE_TRACK_LABELS[track]} schedule and the Development Playbook. What important tasks, decisions, or owner follow-ups appear to be missing? Keep it concise before creating anything.`,
     },
     {
-      label: "Create mini schedule",
-      prompt: `Help me choose which phase should become a mini schedule. Ask any needed prep questions, then suggest the child tasks and owners before creating them.`,
+      label: "Create task plan",
+      prompt: `Help me choose which phase should become a focused task plan. Ask any needed prep questions, then suggest the child tasks and owners before creating them.`,
     },
   ];
 
@@ -1869,9 +1869,9 @@ export default function DevelopmentSchedule({
                                 <a
                                   href={`/deals/${dealId}/schedule/focus/${p.id}`}
                                   className="inline-flex items-center gap-0.5 rounded border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-2xs text-primary/90 transition-colors hover:bg-primary/15 hover:text-primary"
-                                  title="Open or create the mini schedule for this phase"
+                                  title="Open focused task plan"
+                                  aria-label={`Open focused task plan for ${p.label}`}
                                 >
-                                  Mini schedule
                                   <ArrowUpRight className="h-2.5 w-2.5" />
                                 </a>
                               )}
@@ -2293,7 +2293,7 @@ export default function DevelopmentSchedule({
                                 )}
                               </div>
                               <a
-                                href={`/deals/${dealId}/chat?prompt=${encodeURIComponent(`Review the "${p.label}" mini schedule. Ask any prep questions you need, then suggest entitlement tasks, owners, durations, and missing approvals before creating anything.`)}`}
+                                href={`/deals/${dealId}/chat?prompt=${encodeURIComponent(`Review the focused task plan for "${p.label}". Ask any prep questions you need, then suggest entitlement tasks, owners, durations, and missing approvals before creating anything.`)}`}
                                 className="inline-flex h-6 items-center rounded-md px-2 text-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                                 title="Use the assistant to review and create entitlement tasks"
                               >

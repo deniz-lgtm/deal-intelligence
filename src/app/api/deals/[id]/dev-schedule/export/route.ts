@@ -225,7 +225,7 @@ function buildExcelXml(
   const kindLabel = (p: DevPhase, isChild: boolean) => {
     if (p.kind === "milestone" || p.is_milestone) return "Milestone";
     if (isChild || p.kind === "task") return "Task";
-    return focusPhase ? "Mini Schedule" : "Phase";
+    return focusPhase ? "Focused Plan" : "Phase";
   };
   const statusStyle = (status: string | null | undefined) => {
     if (status === "complete") return "StatusComplete";
@@ -334,7 +334,7 @@ function buildExcelXml(
         ${cell(commentLabel(root), "Body")}
       </Row>`;
     })
-    .join("\n") || `<Row>${cell("No mini schedules in this export.", "Body", "String", 7)}</Row>`;
+    .join("\n") || `<Row>${cell("No focused plans in this export.", "Body", "String", 7)}</Row>`;
 
   return `<?xml version="1.0"?>
 <?mso-application progid="Excel.Sheet"?>
@@ -396,13 +396,13 @@ function buildExcelXml(
   </WorksheetOptions>
  </Worksheet>
 
- <Worksheet ss:Name="Mini Schedules">
+ <Worksheet ss:Name="Focused Plans">
   <Table ss:DefaultRowHeight="18">
    <Column ss:Width="45"/><Column ss:Width="95"/><Column ss:Width="260"/><Column ss:Width="85"/><Column ss:Width="100"/><Column ss:Width="90"/><Column ss:Width="240"/><Column ss:Width="120"/>
-   <Row ss:Height="30">${cell("Mini Schedule Overview", "Title", "String", 7)}</Row>
+   <Row ss:Height="30">${cell("Focused Plan Overview", "Title", "String", 7)}</Row>
    <Row>${cell(`${dealName} | ${company}`, "Subtitle", "String", 7)}</Row>
-   <Row>${cell("Use this tab to spot which phases have been broken into actionable mini schedules.", "Meta", "String", 7)}</Row>
-   <Row>${cell("#", "Header")}${cell("Track", "Header")}${cell("Mini Schedule", "Header")}${cell("Tasks", "Header")}${cell("Progress", "Header")}${cell("Delayed", "Header")}${cell("Next Open Task", "Header")}${cell("Comments", "Header")}</Row>
+   <Row>${cell("Use this tab to spot which phases have been broken into actionable focused plans.", "Meta", "String", 7)}</Row>
+   <Row>${cell("#", "Header")}${cell("Track", "Header")}${cell("Focused Plan", "Header")}${cell("Tasks", "Header")}${cell("Progress", "Header")}${cell("Delayed", "Header")}${cell("Next Open Task", "Header")}${cell("Comments", "Header")}</Row>
    ${miniRows}
   </Table>
   <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
@@ -570,7 +570,7 @@ export async function GET(
       const trackLabel = trackFilter
         ? SCHEDULE_TRACK_LABELS[trackFilter] ?? trackFilter
         : focusId
-          ? focusPhase?.label || "Mini Schedule"
+          ? focusPhase?.label || "Focused Plan"
           : "All Tracks";
       const body = buildExcelXml(phases, dealName, trackLabel, branding, commentCounts, focusPhase);
       return new NextResponse(body, {

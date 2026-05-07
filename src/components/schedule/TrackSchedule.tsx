@@ -638,9 +638,10 @@ function PhaseTable({
                 {!p.parent_phase_id && (
                   <a
                     href={`/deals/${dealId}/schedule/focus/${p.id}`}
-                    className="ml-2 inline-flex items-center gap-0.5 text-[10px] text-primary/80 hover:text-primary hover:underline"
+                    className="ml-2 inline-flex items-center gap-0.5 rounded border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary/80 transition-colors hover:bg-primary/15 hover:text-primary"
+                    title="Open focused task plan"
+                    aria-label={`Open focused task plan for ${p.label}`}
                   >
-                    Focus
                     <ArrowUpRight className="h-2.5 w-2.5" />
                   </a>
                 )}

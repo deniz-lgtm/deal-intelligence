@@ -272,13 +272,13 @@ export async function POST(req: NextRequest) {
           if (!parent) {
             action.display = action.mini_schedule.parent_phase_label
               ? `I couldn't find "${action.mini_schedule.parent_phase_label}" in this deal's schedule. Pick the parent phase and I can try again.`
-              : "I couldn't identify the parent phase for this mini schedule.";
+              : "I couldn't identify the parent phase for this task plan.";
             action.mini_schedule.tasks = [];
           } else {
             action.mini_schedule.parent_phase_id = parent.id;
             action.mini_schedule.parent_phase_label = parent.label;
             action.mini_schedule.track = parent.track || action.mini_schedule.track || "development";
-            action.display = `Ready to create mini schedule for ${parent.label}: ${action.mini_schedule.tasks.length} task${action.mini_schedule.tasks.length === 1 ? "" : "s"}`;
+            action.display = `Ready to create task plan for ${parent.label}: ${action.mini_schedule.tasks.length} task${action.mini_schedule.tasks.length === 1 ? "" : "s"}`;
           }
         } else if (
           action.type === "mini_schedule_created" &&
@@ -293,8 +293,8 @@ export async function POST(req: NextRequest) {
           );
           if (!parent) {
             action.display = action.mini_schedule.parent_phase_label
-              ? `I couldn't find "${action.mini_schedule.parent_phase_label}" in this deal's schedule, so I did not create the mini schedule.`
-              : "I couldn't identify the parent phase, so I did not create the mini schedule.";
+              ? `I couldn't find "${action.mini_schedule.parent_phase_label}" in this deal's schedule, so I did not create the task plan.`
+              : "I couldn't identify the parent phase, so I did not create the task plan.";
             action.mini_schedule.tasks = [];
           } else {
             const existingChildren = phases.filter((phase) => phase.parent_phase_id === parent.id);
@@ -328,11 +328,11 @@ export async function POST(req: NextRequest) {
               });
               task.id = taskId;
             }
-            action.display = `Created mini schedule for ${parent.label}: ${action.mini_schedule.tasks.length} task${action.mini_schedule.tasks.length === 1 ? "" : "s"}`;
+            action.display = `Created task plan for ${parent.label}: ${action.mini_schedule.tasks.length} task${action.mini_schedule.tasks.length === 1 ? "" : "s"}`;
             try {
               await recomputeSchedule(dealId);
             } catch (err) {
-              console.error("universal-chat mini schedule recompute error:", err);
+              console.error("universal-chat task plan recompute error:", err);
             }
           }
         } else if (
@@ -493,7 +493,7 @@ async function buildDealFacts(dealId: string, businessPlanId: string | null): Pr
         return `- ${label} [id=${id}; track=${track}; kind=${kind}${parent ? `; parent=${parent}` : ""}${owner}${status}]`;
       })
       .join("\n");
-    sections.push(`SCHEDULE CONTEXT\nUse these exact ids when creating child tasks or mini schedules.\n${scheduleLines}`);
+    sections.push(`SCHEDULE CONTEXT\nUse these exact ids when creating child tasks or focused task plans.\n${scheduleLines}`);
   }
 
   return sections.length > 0 ? sections.join("\n\n") : null;

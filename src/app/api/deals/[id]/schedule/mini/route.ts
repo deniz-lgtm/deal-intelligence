@@ -119,7 +119,7 @@ export async function POST(
     console.error("POST /api/deals/[id]/schedule/mini error:", error);
     const detail = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Failed to create mini schedule", detail: detail.slice(0, 240) },
+      { error: "Failed to create task plan", detail: detail.slice(0, 240) },
       { status: 500 }
     );
   }

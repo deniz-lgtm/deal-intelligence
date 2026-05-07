@@ -611,7 +611,7 @@ function ActionCard({
         }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || "Failed to create mini schedule");
+      if (!res.ok) throw new Error(json.error || "Failed to create task plan");
       const created = Array.isArray(json.data?.tasks) ? json.data.tasks : [];
       const ids = created.map((task: { id?: string }) => task.id).filter(Boolean);
       setApprovedIds(ids);
@@ -619,15 +619,15 @@ function ActionCard({
         typeof json.data?.parent?.id === "string"
           ? json.data.parent.id
           : action.mini_schedule.parent_phase_id;
-      toast.success("Mini schedule created. Opening it...");
+      toast.success("Task plan created. Opening it...");
       if (parentId) {
         window.setTimeout(() => {
           window.location.assign(`/deals/${dealId}/schedule/focus/${parentId}`);
         }, 450);
       }
     } catch (err) {
-      console.error("Approve mini schedule failed:", err);
-      toast.error(err instanceof Error ? err.message : "Failed to create mini schedule");
+      console.error("Approve task plan failed:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to create task plan");
     } finally {
       setApproving(false);
     }
@@ -645,7 +645,7 @@ function ActionCard({
         <config.icon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <div className="font-medium">
-            {undone ? "Undone" : approvedIds.length > 0 ? "Created mini schedule" : config.title}
+            {undone ? "Undone" : approvedIds.length > 0 ? "Created task plan" : config.title}
           </div>
           <div className="mt-0.5 leading-5 text-current/85">{action.display}</div>
           {activeTasks.length > 0 && (
@@ -813,11 +813,11 @@ function getActionCardConfig(
     const parentId = action.mini_schedule?.parent_phase_id;
     const ids = action.mini_schedule?.tasks?.map((task) => task.id).filter(Boolean) as string[] | undefined;
     return {
-      title: "Created mini schedule",
+      title: "Created task plan",
       icon: CalendarPlus,
       className: "bg-emerald-500/10 border-emerald-500/20 text-emerald-300",
       href: dealId ? (parentId ? `/deals/${dealId}/schedule/focus/${parentId}` : `/deals/${dealId}/schedule`) : null,
-      hrefLabel: "Open mini schedule",
+      hrefLabel: "Open task plan",
       undoUrl: null,
       undoUrls: dealId && ids ? ids.map((id) => `/api/deals/${dealId}/schedule/${id}`) : [],
     };
@@ -825,11 +825,11 @@ function getActionCardConfig(
   if (action.type === "mini_schedule_draft") {
     const parentId = action.mini_schedule?.parent_phase_id;
     return {
-      title: "Ready to create mini schedule",
+      title: "Ready to create task plan",
       icon: CalendarPlus,
       className: "bg-amber-500/10 border-amber-500/20 text-amber-300",
       href: dealId && parentId ? `/deals/${dealId}/schedule/focus/${parentId}` : null,
-      hrefLabel: "Open mini schedule",
+      hrefLabel: "Open task plan",
       undoUrl: null,
       undoUrls: [],
     };

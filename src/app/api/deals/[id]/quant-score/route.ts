@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dealScoreQueries } from "@/lib/db";
-import { requireAuth, requireDealAccess } from "@/lib/auth";
+import { requireAuth, requireDealAccess, requireDealEditAccess } from "@/lib/auth";
 import { recomputeQuantScore } from "@/lib/quant-score/recompute";
 import type { Stage } from "@/lib/quant-score/types";
 
@@ -22,7 +22,7 @@ export async function POST(
   try {
     const { userId, errorResponse } = await requireAuth();
     if (errorResponse) return errorResponse;
-    const { errorResponse: accessError } = await requireDealAccess(params.id, userId);
+    const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
 
     const body = (await req.json().catch(() => ({}))) as {

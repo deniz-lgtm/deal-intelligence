@@ -195,7 +195,7 @@ export default function ScheduleFocusPage({
         status: "not_started",
         notes: "",
       });
-      setNotice("Task added to this mini schedule.");
+      setNotice("Task added to this focused plan.");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create task");
@@ -232,7 +232,7 @@ export default function ScheduleFocusPage({
   };
 
   const deleteTask = async (taskId: string) => {
-    if (!window.confirm("Remove this task from the mini schedule?")) return;
+    if (!window.confirm("Remove this task from the focused plan?")) return;
     setError(null);
     setNotice(null);
     try {
@@ -342,21 +342,21 @@ export default function ScheduleFocusPage({
     return child.status !== "complete" && /\b(decide|decision|approve|approval|select|confirm|review)\b/.test(text);
   }).length;
   const assistantPrompt = parent
-    ? `Use the Development Playbook and this focused mini schedule for "${parent.label}". What decisions are open, what tasks should be added or clarified, and what is the next owner/action to keep this phase moving?`
-    : "Review this focused mini schedule and identify the next owner/action.";
+    ? `Use the Development Playbook and this focused task plan for "${parent.label}". What decisions are open, what tasks should be added or clarified, and what is the next owner/action to keep this phase moving?`
+    : "Review this focused task plan and identify the next owner/action.";
   const assistantStarters = parent
     ? [
         {
           label: "Prep questions",
-          prompt: `Ask me the key prep questions needed before changing the mini schedule for "${parent.label}". Focus on target date, owner, approvals, source documents, and handoff risk.`,
+          prompt: `Ask me the key prep questions needed before changing the focused task plan for "${parent.label}". Focus on target date, owner, approvals, source documents, and handoff risk.`,
         },
         {
           label: "Missing tasks",
-          prompt: `Review the mini schedule for "${parent.label}". What tasks, decisions, or owner follow-ups are missing? Keep it concise and do not create anything yet.`,
+          prompt: `Review the focused task plan for "${parent.label}". What tasks, decisions, or owner follow-ups are missing? Keep it concise and do not create anything yet.`,
         },
         {
           label: "Add child tasks",
-          prompt: `Help me create child tasks for the mini schedule "${parent.label}" (parent_phase_id: ${parent.id}). Ask any needed prep questions first, then use the mini-schedule proposal card with task names, owners, and durations so I can approve creation.`,
+          prompt: `Help me create child tasks for the focused task plan "${parent.label}" (parent_phase_id: ${parent.id}). Ask any needed prep questions first, then show a proposal card with task names, owners, and durations so I can approve creation.`,
         },
       ]
     : [];
@@ -375,7 +375,7 @@ export default function ScheduleFocusPage({
           <div className="mt-3 flex items-center gap-2">
             <CalendarDays className="h-5 w-5 text-primary" />
             <h1 className="text-2xl font-semibold tracking-tight">
-              {parent?.label ?? "Mini schedule"}
+              {parent?.label ?? "Focused task plan"}
             </h1>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -469,7 +469,7 @@ export default function ScheduleFocusPage({
       {loading ? (
         <div className="flex items-center gap-2 rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Loading mini schedule
+          Loading focused task plan
         </div>
       ) : !parent ? (
         <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
@@ -493,13 +493,13 @@ export default function ScheduleFocusPage({
             {children.length === 0 ? (
               <div className="space-y-3 p-6 text-sm text-muted-foreground">
                 <div>
-                  <p className="font-medium text-foreground">This phase does not have a mini schedule yet.</p>
+                  <p className="font-medium text-foreground">This phase does not have a focused task plan yet.</p>
                   <p className="mt-1 max-w-2xl text-xs leading-5">
                     Use this view when a schedule row needs its own working plan. Add the first task here, or have the assistant draft a short task list for you to approve.
                   </p>
                 </div>
                 <Link
-                  href={`/deals/${params.id}/chat?prompt=${encodeURIComponent(`Help me create a concise mini schedule for "${parent.label}" (parent_phase_id: ${parent.id}). Ask only the prep questions you need, then show a proposal card I can approve.`)}`}
+                  href={`/deals/${params.id}/chat?prompt=${encodeURIComponent(`Help me create a concise focused task plan for "${parent.label}" (parent_phase_id: ${parent.id}). Ask only the prep questions you need, then show a proposal card I can approve.`)}`}
                 >
                   <Button size="sm" variant="outline" className="gap-2">
                     <MessageSquare className="h-4 w-4" />
@@ -624,7 +624,7 @@ export default function ScheduleFocusPage({
                 className="w-full gap-2"
               >
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Add to mini schedule
+                Add to focused plan
               </Button>
               </div>
             </section>
@@ -657,7 +657,7 @@ function MiniTimeline({ tasks }: { tasks: DevPhase[] }) {
   if (dated.length === 0) {
     return (
       <div className="border-b border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-        Add dates to show a compact timeline for this mini schedule.
+        Add dates to show a compact timeline for this focused plan.
       </div>
     );
   }
