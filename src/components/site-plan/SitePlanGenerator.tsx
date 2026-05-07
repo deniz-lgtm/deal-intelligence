@@ -32,6 +32,7 @@ import {
 import { toPng } from "html-to-image";
 import { toast } from "sonner";
 import type { SitePlan, SitePlanPoint, SitePlanBuilding, SitePlanScenario, SitePlanCutout } from "@/lib/types";
+import { newSitePlanScenario } from "@/lib/types";
 import { getTileConfig } from "@/lib/map-config";
 import SupplyPipelineLayer, { type PipelineData } from "@/components/site-plan/SupplyPipelineLayer";
 import {
@@ -484,11 +485,20 @@ export default function SitePlanGenerator({
   const updateActiveScenario = useCallback(
     (mutator: (scen: SitePlanScenario) => SitePlanScenario, commit = true) => {
       const scenarios = value.scenarios || [];
-      const activeId = value.active_scenario_id;
-      if (!activeId) return;
-      const nextScenarios = scenarios.map((s) => (s.id === activeId ? mutator(s) : s));
+      let activeId = value.active_scenario_id;
+      let workingScenarios = scenarios;
+      // Fresh deal: nobody has created a scenario yet. Spin one up on
+      // the first write so the analyst can just start drawing without
+      // a separate "create scenario" step.
+      if (!activeId || !scenarios.some((s) => s.id === activeId)) {
+        const fresh = newSitePlanScenario("Massing 1");
+        workingScenarios = [...scenarios, fresh];
+        activeId = fresh.id;
+      }
+      const nextScenarios = workingScenarios.map((s) => (s.id === activeId ? mutator(s) : s));
       onChange({
         ...value,
+        active_scenario_id: activeId,
         scenarios: nextScenarios,
         ...(commit ? { updated_at: new Date().toISOString() } : {}),
       });
