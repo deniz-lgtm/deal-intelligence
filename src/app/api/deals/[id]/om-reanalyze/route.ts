@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import fs from "fs/promises";
 import { dealQueries, documentQueries, omAnalysisQueries } from "@/lib/db";
 import { extractOmMetrics } from "@/lib/om-extraction";
+import { recomputeQuantScore } from "@/lib/quant-score/recompute";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
@@ -143,8 +144,6 @@ async function runReanalysisBackground({
       hold_period: full.assumptions.hold_period,
       leverage: full.assumptions.leverage,
       exit_cap_rate: full.assumptions.exit_cap_rate,
-      deal_score: full.deal_score,
-      score_reasoning: full.score_reasoning,
       summary: full.summary,
       recommendations: full.recommendations,
       red_flags: full.red_flags,
@@ -156,7 +155,6 @@ async function runReanalysisBackground({
 
     // Update deal fields
     const dealUpdates: Record<string, unknown> = {
-      om_score: extraction.om_score,
       om_extracted: extraction.om_extracted,
     };
     if (extraction.om_extracted.asking_price)
@@ -168,6 +166,11 @@ async function runReanalysisBackground({
     if (extraction.om_extracted.year_built)
       dealUpdates.year_built = extraction.om_extracted.year_built;
     await dealQueries.update(dealId, dealUpdates);
+
+    // Fire-and-forget quant-score recompute for stage="om" — see om-init for rationale.
+    void recomputeQuantScore(dealId, { stage: "om", runMc: false }).catch((err) => {
+      console.warn(`om-reanalyze: quant-score recompute failed for ${dealId}: ${(err as Error).message}`);
+    });
   } catch (err) {
     console.error("runReanalysisBackground failed:", err);
     await omAnalysisQueries.updateStatus(

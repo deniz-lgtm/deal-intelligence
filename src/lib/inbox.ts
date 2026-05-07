@@ -48,6 +48,7 @@ import {
 } from "./dropbox";
 import { uploadBlob, readFile as readBlob } from "./blob-storage";
 import { extractMetrics, extractOmFull } from "./om-extraction";
+import { recomputeQuantScore } from "./quant-score/recompute";
 
 export interface IngestedItem {
   id: string;
@@ -539,8 +540,6 @@ async function runBackgroundFullAnalysis(args: {
       hold_period: full.assumptions.hold_period,
       leverage: full.assumptions.leverage,
       exit_cap_rate: full.assumptions.exit_cap_rate,
-      deal_score: full.deal_score,
-      score_reasoning: full.score_reasoning,
       summary: full.summary,
       recommendations: full.recommendations,
       red_flags: full.red_flags,
@@ -554,7 +553,6 @@ async function runBackgroundFullAnalysis(args: {
     // only overwrite missing values — the user may have touched the deal
     // between creation and BG completion.
     const dealUpdates: Record<string, unknown> = {
-      om_score: full.deal_score,
       om_extracted: {
         asking_price: full.financial_metrics.asking_price ?? undefined,
         sf: full.property_details.sf ?? undefined,
@@ -576,7 +574,7 @@ async function runBackgroundFullAnalysis(args: {
     const criticalCount = full.red_flags.filter(
       (f) => f.severity === "critical"
     ).length;
-    const aiSummary = `Offering Memorandum — Deal Score: ${full.deal_score}/10. ${
+    const aiSummary = `Offering Memorandum — ${
       redFlagCount > 0
         ? `${redFlagCount} red flag(s)${criticalCount > 0 ? `, ${criticalCount} critical` : ""}.`
         : "No red flags detected."
@@ -590,6 +588,11 @@ async function runBackgroundFullAnalysis(args: {
     } catch (err) {
       console.warn("Inbox: failed to update document ai_summary:", err);
     }
+
+    // Fire-and-forget quant-score recompute for stage="om" — see om-init for rationale.
+    void recomputeQuantScore(dealId, { stage: "om", runMc: false }).catch((err) => {
+      console.warn(`Inbox: quant-score recompute failed for ${dealId}: ${(err as Error).message}`);
+    });
   } catch (err) {
     console.error("Inbox: runBackgroundFullAnalysis failed:", err);
     await omAnalysisQueries
