@@ -16,6 +16,7 @@ import {
   PanelLeftOpen,
   Compass,
   Building,
+  LayoutDashboard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
@@ -63,6 +64,7 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
       { href: "/contacts", label: "Contacts", icon: Users, permission: "contacts.access" },
       { href: "/business-plans", label: "Business Plans", icon: BookOpen, permission: "business_plans.access" },
       { href: "/playbook", label: "Playbook", icon: BookOpen },
+      { href: "/floor-plans", label: "Floor Plans", icon: LayoutDashboard },
     ],
   },
   {
