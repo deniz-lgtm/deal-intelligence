@@ -43,6 +43,13 @@ import { DocCoverageChip } from "@/components/ai";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { QuantScoreCard } from "@/components/QuantScoreCard";
 import DealNotes from "@/components/DealNotes";
 import { PhasePinControl } from "@/components/deals/PhasePinControl";
@@ -250,18 +257,27 @@ export default function DealOverviewPage({
     }
 
     setAdvancingTo(newStatus);
-    const res = await fetch(`/api/deals/${params.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    const json = await res.json();
-    if (json.data) {
-      setDeal(json.data as Deal);
-      toast.success(`Moved to ${DEAL_STAGE_LABELS[newStatus]}`);
+    try {
+      const res = await fetch(`/api/deals/${params.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      const json = await res.json();
+      if (json.data) {
+        setDeal(json.data as Deal);
+        toast.success(`Moved to ${DEAL_STAGE_LABELS[newStatus]}`);
+      } else {
+        toast.error(json.error || "Could not update deal status");
+      }
+    } catch (err) {
+      toast.error((err as Error).message || "Could not update deal status");
+    } finally {
+      // Always clear the modal + spinner — without finally, a thrown fetch
+      // leaves the page behind a stuck overlay (the bug the new modal fixes).
+      setAdvancingTo(null);
+      setShowGateWarning(null);
     }
-    setAdvancingTo(null);
-    setShowGateWarning(null);
   };
 
   if (loading) {
@@ -525,26 +541,52 @@ export default function DealOverviewPage({
 
   return (
     <div className="space-y-4 animate-fade-up">
-      {/* Gate warning modal */}
-      {showGateWarning && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-card border border-border rounded-2xl p-6 max-w-md w-full shadow-lifted animate-slide-up">
-            <div className="flex items-start gap-3 mb-4">
-              <div className="h-9 w-9 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
-                <AlertTriangle className="h-4.5 w-4.5 text-amber-400" />
+      {/* Stage-gate warning. Uses the shared Radix Dialog (matches the
+          drill-down + weights modals on this page) so animation + focus +
+          z-index behave consistently. The previous hand-rolled fixed
+          overlay would occasionally render the backdrop without its
+          content, leaving the page stuck behind a blur. */}
+      <Dialog
+        open={!!showGateWarning}
+        onOpenChange={(o) => {
+          if (!o) setShowGateWarning(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          {showGateWarning && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <span className="h-7 w-7 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0">
+                    <AlertTriangle className="h-4 w-4 text-amber-400" />
+                  </span>
+                  Stage Gate Warning
+                </DialogTitle>
+                <DialogDescription className="leading-relaxed">
+                  {showGateWarning.message}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" size="sm" onClick={() => setShowGateWarning(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => changeStatus(showGateWarning.status, true)}
+                  disabled={advancingTo !== null}
+                >
+                  {advancingTo === showGateWarning.status ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    "Move Anyway"
+                  )}
+                </Button>
               </div>
-              <div>
-                <h3 className="font-display font-semibold mb-1">Stage Gate Warning</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{showGateWarning.message}</p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowGateWarning(null)}>Cancel</Button>
-              <Button variant="destructive" size="sm" onClick={() => changeStatus(showGateWarning.status, true)}>Move Anyway</Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ═══ HERO: Photo + Deal Info + Pipeline ═══ */}
       <div className="relative rounded-2xl overflow-hidden border border-border/60 shadow-card z-0">
