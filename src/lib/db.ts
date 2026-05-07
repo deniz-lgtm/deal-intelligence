@@ -4537,7 +4537,7 @@ export const businessPlanQueries = {
     const keys = Object.keys(updates);
     if (keys.length === 0) return businessPlanQueries.getById(id);
 
-    const jsonbFields = new Set(["investment_theses", "target_markets", "property_types"]);
+    const jsonbFields = new Set(["investment_theses", "target_markets", "property_types", "factor_weights"]);
     const setClauses = keys.map((k, i) => {
       if (jsonbFields.has(k)) return `"${k}" = $${i + 1}::jsonb`;
       return `"${k}" = $${i + 1}`;
