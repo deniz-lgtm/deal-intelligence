@@ -108,9 +108,23 @@ export interface DistributionSummary {
   kind: "normal" | "beta" | "ar1";
 }
 
+export interface McHistogramBin {
+  low: number;
+  high: number;
+  count: number;
+}
+
+export interface McHistogram {
+  bins: McHistogramBin[];
+  range: [number, number];
+  bin_count: number;
+}
+
 export interface McDistribution {
   trials: number;
   irr: { p10: number; p25: number; p50: number; p75: number; p90: number; mean: number; std: number };
+  /** Pre-computed 30-bin density histogram of IRR samples for the UI. */
+  irr_histogram: McHistogram;
   em: { p10: number; p50: number; p90: number; mean: number };
   prob_hit_target_irr: number | null;
   prob_capital_loss: number;
@@ -124,6 +138,8 @@ export interface McDistribution {
   risk_free_pct: number;
   /** Target return used as the Sortino hurdle (BP target_irr_min, falls back to risk-free). */
   sortino_target_pct: number;
+  /** BP target IRR (%) if one is set on the linked business plan; null otherwise. Used by the UI to draw the target marker on the IRR distribution. */
+  target_irr_pct: number | null;
   inputs_distribution_summary: {
     rent_growth: DistributionSummary;
     vacancy: DistributionSummary;
