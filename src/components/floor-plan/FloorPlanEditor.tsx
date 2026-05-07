@@ -16,6 +16,8 @@ import {
   Bed,
   Bath,
   ChevronDown,
+  Ruler,
+  ArrowUpRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +28,7 @@ import { cn } from "@/lib/utils";
 
 const PX_PER_FT = 12;
 const GRID = PX_PER_FT;
+const SNAP_TOLERANCE = 10; // px — within this, prefer element snap over grid
 
 type ToolId =
   | "select"
@@ -34,7 +37,9 @@ type ToolId =
   | "door"
   | "window"
   | "label"
-  | "object";
+  | "object"
+  | "dimension"
+  | "leader";
 
 type ObjectKind =
   // Furniture
@@ -64,7 +69,15 @@ type ObjectKind =
 
 interface BaseEl {
   id: string;
-  type: "room" | "wall" | "door" | "window" | "label" | "object";
+  type:
+    | "room"
+    | "wall"
+    | "door"
+    | "window"
+    | "label"
+    | "object"
+    | "dimension"
+    | "leader";
 }
 interface RoomEl extends BaseEl {
   type: "room";
@@ -108,7 +121,31 @@ interface ObjectEl extends BaseEl {
   h: number;
   rotation: number;
 }
-type El = RoomEl | WallEl | DoorEl | WindowEl | LabelEl | ObjectEl;
+interface DimensionEl extends BaseEl {
+  type: "dimension";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  offset: number; // perpendicular px offset from baseline to dimension line
+}
+interface LeaderEl extends BaseEl {
+  type: "leader";
+  x1: number; // arrow tip
+  y1: number;
+  x2: number; // text anchor
+  y2: number;
+  text: string;
+}
+type El =
+  | RoomEl
+  | WallEl
+  | DoorEl
+  | WindowEl
+  | LabelEl
+  | ObjectEl
+  | DimensionEl
+  | LeaderEl;
 
 interface State {
   els: El[];
@@ -116,7 +153,7 @@ interface State {
 }
 
 const EMPTY_STATE: State = { els: [], title: "Untitled Plan" };
-const STORAGE_KEY = "floorPlanEditor.v2";
+const STORAGE_KEY = "floorPlanEditor.v3";
 
 function snap(v: number): number {
   return Math.round(v / GRID) * GRID;
@@ -124,6 +161,70 @@ function snap(v: number): number {
 
 function newId(): string {
   return Math.random().toString(36).slice(2, 10);
+}
+
+interface SnapPoint {
+  x: number;
+  y: number;
+  kind: "corner" | "endpoint" | "midpoint";
+}
+
+// Collect snap candidates from all existing elements (room corners + edge
+// midpoints, wall endpoints + midpoints). The cursor snaps to the nearest of
+// these inside SNAP_TOLERANCE; otherwise falls back to the grid.
+function collectSnapPoints(els: El[], excludeId?: string | null): SnapPoint[] {
+  const pts: SnapPoint[] = [];
+  for (const el of els) {
+    if (el.id === excludeId) continue;
+    if (el.type === "room") {
+      const { x, y, w, h } = el;
+      pts.push(
+        { x, y, kind: "corner" },
+        { x: x + w, y, kind: "corner" },
+        { x, y: y + h, kind: "corner" },
+        { x: x + w, y: y + h, kind: "corner" },
+        { x: x + w / 2, y, kind: "midpoint" },
+        { x: x + w / 2, y: y + h, kind: "midpoint" },
+        { x, y: y + h / 2, kind: "midpoint" },
+        { x: x + w, y: y + h / 2, kind: "midpoint" },
+      );
+    } else if (el.type === "wall") {
+      pts.push(
+        { x: el.x1, y: el.y1, kind: "endpoint" },
+        { x: el.x2, y: el.y2, kind: "endpoint" },
+        {
+          x: (el.x1 + el.x2) / 2,
+          y: (el.y1 + el.y2) / 2,
+          kind: "midpoint",
+        },
+      );
+    }
+  }
+  return pts;
+}
+
+function smartSnap(
+  rawX: number,
+  rawY: number,
+  els: El[],
+  enabled = true,
+  excludeId?: string | null,
+): { x: number; y: number; hint: SnapPoint | null } {
+  if (!enabled) {
+    return { x: snap(rawX), y: snap(rawY), hint: null };
+  }
+  const pts = collectSnapPoints(els, excludeId);
+  let best: SnapPoint | null = null;
+  let bestDist = SNAP_TOLERANCE;
+  for (const p of pts) {
+    const d = Math.hypot(p.x - rawX, p.y - rawY);
+    if (d < bestDist) {
+      bestDist = d;
+      best = p;
+    }
+  }
+  if (best) return { x: best.x, y: best.y, hint: best };
+  return { x: snap(rawX), y: snap(rawY), hint: null };
 }
 
 // Default footprints in feet for each object kind. Sized so each fits the
@@ -188,6 +289,8 @@ const BASE_TOOLS: { id: ToolId; label: string; icon: typeof MousePointer2 }[] = 
   { id: "door", label: "Door", icon: DoorOpen },
   { id: "window", label: "Window", icon: RectangleHorizontal },
   { id: "label", label: "Label", icon: Type },
+  { id: "dimension", label: "Dim", icon: Ruler },
+  { id: "leader", label: "Leader", icon: ArrowUpRight },
 ];
 
 export function FloorPlanEditor() {
@@ -204,6 +307,12 @@ export function FloorPlanEditor() {
   >(null);
   const [history, setHistory] = useState<State[]>([]);
   const [future, setFuture] = useState<State[]>([]);
+  // For two-click tools (dimension, leader): the first click sets pendingPoint;
+  // the second click commits the element using both points.
+  const [pendingPoint, setPendingPoint] = useState<{ x: number; y: number } | null>(null);
+  const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
+  const [snapHint, setSnapHint] = useState<SnapPoint | null>(null);
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const exportRef = useRef<HTMLDivElement | null>(null);
 
@@ -269,6 +378,7 @@ export function FloorPlanEditor() {
         setSelectedId(null);
         setTool("select");
         setPendingKind(null);
+        setPendingPoint(null);
         setPalette(null);
       } else if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
@@ -311,11 +421,58 @@ export function FloorPlanEditor() {
 
   const onCanvasMouseDown = (e: React.MouseEvent) => {
     const { x, y } = svgPoint(e);
-    const sx = snap(x);
-    const sy = snap(y);
+    const snapped = smartSnap(x, y, state.els, snapEnabled);
+    const sx = snapped.x;
+    const sy = snapped.y;
 
     if (tool === "select") {
       if (e.target === svgRef.current) setSelectedId(null);
+      return;
+    }
+    if (tool === "dimension" || tool === "leader") {
+      // Two-click flow handled on mouse up below; we just register the click.
+      if (!pendingPoint) {
+        setPendingPoint({ x: sx, y: sy });
+      } else {
+        if (tool === "dimension") {
+          commit((s) => ({
+            ...s,
+            els: [
+              ...s.els,
+              {
+                id: newId(),
+                type: "dimension",
+                x1: pendingPoint.x,
+                y1: pendingPoint.y,
+                x2: sx,
+                y2: sy,
+                offset: 24,
+              },
+            ],
+          }));
+        } else {
+          const text = window.prompt("Leader text", "Note");
+          if (text) {
+            commit((s) => ({
+              ...s,
+              els: [
+                ...s.els,
+                {
+                  id: newId(),
+                  type: "leader",
+                  x1: pendingPoint.x,
+                  y1: pendingPoint.y,
+                  x2: sx,
+                  y2: sy,
+                  text,
+                },
+              ],
+            }));
+          }
+        }
+        setPendingPoint(null);
+        setTool("select");
+      }
       return;
     }
     if (tool === "room") {
@@ -369,10 +526,14 @@ export function FloorPlanEditor() {
   };
 
   const onCanvasMouseMove = (e: React.MouseEvent) => {
-    if (!drag) return;
     const { x, y } = svgPoint(e);
-    const cx = snap(x);
-    const cy = snap(y);
+    const excludeId = drag?.kind === "move-el" ? drag.id : null;
+    const snapped = smartSnap(x, y, state.els, snapEnabled, excludeId);
+    const cx = snapped.x;
+    const cy = snapped.y;
+    setHoverPoint({ x: cx, y: cy });
+    setSnapHint(snapped.hint);
+    if (!drag) return;
     if (drag.kind === "draw-room" || drag.kind === "draw-wall") {
       setDrag({ ...drag, cx, cy });
     } else if (drag.kind === "move-el") {
@@ -385,7 +546,7 @@ export function FloorPlanEditor() {
           if (el.type === "room" || el.type === "object") {
             return { ...el, x: drag.ox + dx, y: drag.oy + dy };
           }
-          if (el.type === "wall") {
+          if (el.type === "wall" || el.type === "dimension" || el.type === "leader") {
             const ddx = drag.ox + dx - el.x1;
             const ddy = drag.oy + dy - el.y1;
             return {
@@ -447,8 +608,9 @@ export function FloorPlanEditor() {
     e.stopPropagation();
     setSelectedId(el.id);
     const { x, y } = svgPoint(e);
-    const sx = snap(x);
-    const sy = snap(y);
+    const snapped = smartSnap(x, y, state.els, snapEnabled, el.id);
+    const sx = snapped.x;
+    const sy = snapped.y;
     let ox = 0;
     let oy = 0;
     if (
@@ -460,7 +622,7 @@ export function FloorPlanEditor() {
     ) {
       ox = el.x;
       oy = el.y;
-    } else if (el.type === "wall") {
+    } else if (el.type === "wall" || el.type === "dimension" || el.type === "leader") {
       ox = el.x1;
       oy = el.y1;
     }
@@ -575,6 +737,7 @@ export function FloorPlanEditor() {
                 onClick={() => {
                   setTool(t.id);
                   setPendingKind(null);
+                  setPendingPoint(null);
                 }}
                 title={t.label}
                 className={cn(
@@ -612,6 +775,18 @@ export function FloorPlanEditor() {
         />
 
         <div className="flex-1" />
+        <button
+          onClick={() => setSnapEnabled((v) => !v)}
+          title={snapEnabled ? "Snap on (toggle)" : "Snap off (toggle)"}
+          className={cn(
+            "px-2 py-1 rounded text-[10px] uppercase tracking-wider border transition-colors",
+            snapEnabled
+              ? "border-orange-500/40 text-orange-500 bg-orange-500/10"
+              : "border-border/50 text-muted-foreground hover:bg-muted/50",
+          )}
+        >
+          Snap {snapEnabled ? "On" : "Off"}
+        </button>
         <div className="text-xs text-muted-foreground hidden sm:block">
           Total: <span className="font-medium text-foreground">{totalArea} ft²</span>
         </div>
@@ -699,6 +874,28 @@ export function FloorPlanEditor() {
                     strokeWidth={1}
                   />
                 </pattern>
+                <marker
+                  id="fp-arrow"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="8"
+                  markerHeight="8"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#18181b" />
+                </marker>
+                <marker
+                  id="fp-tick"
+                  viewBox="-1 -5 2 10"
+                  refX="0"
+                  refY="0"
+                  markerWidth="6"
+                  markerHeight="10"
+                  orient="auto"
+                >
+                  <line x1="0" y1="-4" x2="0" y2="4" stroke="#18181b" strokeWidth="1" />
+                </marker>
               </defs>
               <rect width="100%" height="100%" fill="url(#fp-grid-major)" />
 
@@ -879,6 +1076,26 @@ export function FloorPlanEditor() {
                     </g>
                   );
                 }
+                if (el.type === "dimension") {
+                  return (
+                    <DimensionGlyph
+                      key={el.id}
+                      el={el}
+                      selected={isSel}
+                      onMouseDown={(e) => startMove(e, el)}
+                    />
+                  );
+                }
+                if (el.type === "leader") {
+                  return (
+                    <LeaderGlyph
+                      key={el.id}
+                      el={el}
+                      selected={isSel}
+                      onMouseDown={(e) => startMove(e, el)}
+                    />
+                  );
+                }
                 return null;
               })}
 
@@ -940,6 +1157,61 @@ export function FloorPlanEditor() {
                   </text>
                 </>
               )}
+
+              {/* Pending first-click point for two-step tools (dim, leader). */}
+              {pendingPoint && (
+                <>
+                  <circle
+                    cx={pendingPoint.x}
+                    cy={pendingPoint.y}
+                    r={4}
+                    fill="#3b82f6"
+                    pointerEvents="none"
+                  />
+                  {hoverPoint && (
+                    <line
+                      x1={pendingPoint.x}
+                      y1={pendingPoint.y}
+                      x2={hoverPoint.x}
+                      y2={hoverPoint.y}
+                      stroke="#3b82f6"
+                      strokeWidth={1.5}
+                      strokeDasharray="3 3"
+                      pointerEvents="none"
+                    />
+                  )}
+                </>
+              )}
+
+              {/* Snap target indicator (rendered on top of everything). */}
+              {snapHint && (
+                <g pointerEvents="none">
+                  <circle
+                    cx={snapHint.x}
+                    cy={snapHint.y}
+                    r={5}
+                    fill="none"
+                    stroke="#f97316"
+                    strokeWidth={1.5}
+                  />
+                  <line
+                    x1={snapHint.x - 7}
+                    y1={snapHint.y}
+                    x2={snapHint.x + 7}
+                    y2={snapHint.y}
+                    stroke="#f97316"
+                    strokeWidth={1}
+                  />
+                  <line
+                    x1={snapHint.x}
+                    y1={snapHint.y - 7}
+                    x2={snapHint.x}
+                    y2={snapHint.y + 7}
+                    stroke="#f97316"
+                    strokeWidth={1}
+                  />
+                </g>
+              )}
             </svg>
           </div>
         </div>
@@ -947,7 +1219,8 @@ export function FloorPlanEditor() {
         {/* Right inspector */}
         <aside className="w-64 border-l border-border/40 bg-card/30 p-4 shrink-0 overflow-y-auto">
           {!selectedEl ? (
-            <div className="text-xs text-muted-foreground space-y-3">
+            <div className="text-xs text-muted-foreground space-y-4">
+              <TotalsPanel els={state.els} />
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1.5">
                   How to use
@@ -955,10 +1228,9 @@ export function FloorPlanEditor() {
                 <ul className="space-y-1.5 leading-relaxed">
                   <li>• Pick a tool, then drag (room/wall) or click (door/window/label) on the canvas.</li>
                   <li>• Furniture / Fixtures menus open palettes — click an item, then click on the canvas to drop it.</li>
-                  <li>• Walls auto-straighten and show length live while drawing.</li>
-                  <li>• Select anything to edit dimensions in feet, length, or rotation.</li>
-                  <li>• <kbd className="px-1 rounded bg-muted text-[10px]">R</kbd> rotates the selection 90°.</li>
-                  <li>• Delete / Backspace removes selection. ⌘Z / ⌘⇧Z for undo / redo.</li>
+                  <li>• <kbd className="px-1 rounded bg-muted text-[10px]">Dim</kbd> + <kbd className="px-1 rounded bg-muted text-[10px]">Leader</kbd> are two-click tools — click start, then end.</li>
+                  <li>• Cursor snaps to nearby room corners and wall endpoints (orange marker). Toggle Snap in the toolbar.</li>
+                  <li>• <kbd className="px-1 rounded bg-muted text-[10px]">R</kbd> rotates selection 90°. Delete / Backspace removes. ⌘Z / ⌘⇧Z for undo / redo.</li>
                   <li>• Plan auto-saves to your browser.</li>
                 </ul>
               </div>
@@ -1081,6 +1353,43 @@ export function FloorPlanEditor() {
               )}
 
               {selectedEl.type === "label" && (
+                <Field label="Text">
+                  <input
+                    value={selectedEl.text}
+                    onChange={(e) => updateSelected({ text: e.target.value })}
+                    className="w-full text-xs px-2 py-1 rounded border border-border/50 bg-background"
+                  />
+                </Field>
+              )}
+
+              {selectedEl.type === "dimension" && (
+                <>
+                  <div className="text-[11px] text-muted-foreground">
+                    Measured length:{" "}
+                    <span className="font-medium text-foreground">
+                      {Math.round(
+                        Math.hypot(
+                          selectedEl.x2 - selectedEl.x1,
+                          selectedEl.y2 - selectedEl.y1,
+                        ) / PX_PER_FT,
+                      )}{" "}
+                      ft
+                    </span>
+                  </div>
+                  <Field label="Offset (px)">
+                    <input
+                      type="number"
+                      value={selectedEl.offset}
+                      onChange={(e) =>
+                        updateSelected({ offset: Number(e.target.value) })
+                      }
+                      className="w-full text-xs px-2 py-1 rounded border border-border/50 bg-background"
+                    />
+                  </Field>
+                </>
+              )}
+
+              {selectedEl.type === "leader" && (
                 <Field label="Text">
                   <input
                     value={selectedEl.text}
@@ -1489,4 +1798,188 @@ function ObjectGlyph({ el, selected }: { el: ObjectEl; selected: boolean }) {
   }
 
   return outline;
+}
+
+// Linear dimension drawn parallel to (x1,y1)→(x2,y2), offset perpendicularly
+// by `offset` px. Renders the two extension lines, the dimension line with
+// tick markers, and the measured value in feet at the midpoint.
+function DimensionGlyph({
+  el,
+  selected,
+  onMouseDown,
+}: {
+  el: DimensionEl;
+  selected: boolean;
+  onMouseDown: (e: React.MouseEvent) => void;
+}) {
+  const stroke = selected ? "#3b82f6" : "#18181b";
+  const dx = el.x2 - el.x1;
+  const dy = el.y2 - el.y1;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return null;
+  const nx = -dy / len; // unit normal
+  const ny = dx / len;
+  const ax = el.x1 + nx * el.offset;
+  const ay = el.y1 + ny * el.offset;
+  const bx = el.x2 + nx * el.offset;
+  const by = el.y2 + ny * el.offset;
+  const mx = (ax + bx) / 2;
+  const my = (ay + by) / 2;
+  const ft = Math.round(len / PX_PER_FT);
+  // Text rotation along the dimension line (keep upright).
+  let angle = (Math.atan2(by - ay, bx - ax) * 180) / Math.PI;
+  if (angle > 90 || angle < -90) angle += 180;
+  return (
+    <g onMouseDown={onMouseDown} className="cursor-move">
+      {/* Extension lines */}
+      <line x1={el.x1} y1={el.y1} x2={ax} y2={ay} stroke={stroke} strokeWidth={0.8} />
+      <line x1={el.x2} y1={el.y2} x2={bx} y2={by} stroke={stroke} strokeWidth={0.8} />
+      {/* Dimension line with end ticks */}
+      <line
+        x1={ax}
+        y1={ay}
+        x2={bx}
+        y2={by}
+        stroke={stroke}
+        strokeWidth={1}
+        markerStart="url(#fp-tick)"
+        markerEnd="url(#fp-tick)"
+      />
+      {/* Bigger invisible hit area */}
+      <line
+        x1={ax}
+        y1={ay}
+        x2={bx}
+        y2={by}
+        stroke="transparent"
+        strokeWidth={14}
+      />
+      <g transform={`translate(${mx} ${my}) rotate(${angle})`}>
+        <rect
+          x={-18}
+          y={-9}
+          width={36}
+          height={14}
+          rx={2}
+          fill="white"
+          stroke={stroke}
+          strokeWidth={0.5}
+        />
+        <text
+          x={0}
+          y={1}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fontSize={10}
+          fontWeight={600}
+          fill={stroke}
+        >
+          {ft} ft
+        </text>
+      </g>
+    </g>
+  );
+}
+
+// Arrow-and-text annotation. Arrow tip is at (x1,y1); text sits at (x2,y2).
+function LeaderGlyph({
+  el,
+  selected,
+  onMouseDown,
+}: {
+  el: LeaderEl;
+  selected: boolean;
+  onMouseDown: (e: React.MouseEvent) => void;
+}) {
+  const stroke = selected ? "#3b82f6" : "#18181b";
+  return (
+    <g onMouseDown={onMouseDown} className="cursor-move">
+      <line
+        x1={el.x2}
+        y1={el.y2}
+        x2={el.x1}
+        y2={el.y1}
+        stroke={stroke}
+        strokeWidth={1}
+        markerEnd="url(#fp-arrow)"
+      />
+      <line
+        x1={el.x2}
+        y1={el.y2}
+        x2={el.x1}
+        y2={el.y1}
+        stroke="transparent"
+        strokeWidth={14}
+      />
+      <text
+        x={el.x2 + (el.x2 >= el.x1 ? 4 : -4)}
+        y={el.y2 - 3}
+        textAnchor={el.x2 >= el.x1 ? "start" : "end"}
+        fontSize={11}
+        fontWeight={500}
+        fill={stroke}
+      >
+        {el.text}
+      </text>
+    </g>
+  );
+}
+
+// SF totals breakdown shown in the inspector when nothing is selected.
+// Lists each room with its area, plus subtotals grouped by label so multiple
+// "Bedroom" rooms collapse into one summed line.
+function TotalsPanel({ els }: { els: El[] }) {
+  const rooms = els.filter((e): e is RoomEl => e.type === "room");
+  if (rooms.length === 0) {
+    return (
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1.5">
+          SF totals
+        </div>
+        <div className="text-[11px] text-muted-foreground/70">
+          No rooms yet. Draw a room to start counting.
+        </div>
+      </div>
+    );
+  }
+  const groups = new Map<string, { count: number; ft2: number }>();
+  let total = 0;
+  for (const r of rooms) {
+    const ft2 = (r.w / PX_PER_FT) * (r.h / PX_PER_FT);
+    total += ft2;
+    const cur = groups.get(r.label) || { count: 0, ft2: 0 };
+    cur.count += 1;
+    cur.ft2 += ft2;
+    groups.set(r.label, cur);
+  }
+  const rows = Array.from(groups.entries()).sort((a, b) => b[1].ft2 - a[1].ft2);
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1.5">
+        SF totals
+      </div>
+      <div className="rounded-md border border-border/40 bg-background/40 divide-y divide-border/30">
+        {rows.map(([label, { count, ft2 }]) => (
+          <div
+            key={label}
+            className="flex items-baseline justify-between px-2 py-1.5 text-xs"
+          >
+            <span className="text-foreground truncate">
+              {label}
+              {count > 1 && (
+                <span className="text-muted-foreground/60"> ×{count}</span>
+              )}
+            </span>
+            <span className="font-medium tabular-nums">{Math.round(ft2)} ft²</span>
+          </div>
+        ))}
+        <div className="flex items-baseline justify-between px-2 py-1.5 text-xs bg-muted/30">
+          <span className="font-semibold uppercase tracking-wider text-[10px]">
+            Total
+          </span>
+          <span className="font-bold tabular-nums">{Math.round(total)} ft²</span>
+        </div>
+      </div>
+    </div>
+  );
 }
