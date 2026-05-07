@@ -116,6 +116,14 @@ export interface McDistribution {
   prob_capital_loss: number;
   prob_refi_failure: number | null;
   expected_shortfall_5pct: number;
+  /** Sharpe ratio: (mean IRR − risk-free) / σ(IRR). Null if σ ≈ 0. */
+  sharpe_ratio: number | null;
+  /** Sortino ratio: (mean IRR − target) / σ_downside. Null if no downside samples. */
+  sortino_ratio: number | null;
+  /** Risk-free hurdle used for Sharpe (default: 10yr Treasury proxy, 4.0%). */
+  risk_free_pct: number;
+  /** Target return used as the Sortino hurdle (BP target_irr_min, falls back to risk-free). */
+  sortino_target_pct: number;
   inputs_distribution_summary: {
     rent_growth: DistributionSummary;
     vacancy: DistributionSummary;

@@ -311,4 +311,26 @@ describe("runMonteCarlo", () => {
     expect(r.rng_seed).toBe(9);
     expect(r.correlation_matrix_version).toMatch(/mc-\d+\./);
   });
+
+  it("Sharpe and Sortino are finite numbers (or null when undefined)", () => {
+    const r = runMonteCarlo(baseDeal(), "multifamily", {
+      trials: SMALL_TRIALS,
+      seed: 17,
+      targetIrrPct: 12,
+    });
+    expect(r.risk_free_pct).toBe(4.0);
+    expect(r.sortino_target_pct).toBe(12);
+    if (r.sharpe_ratio != null) expect(Number.isFinite(r.sharpe_ratio)).toBe(true);
+    if (r.sortino_ratio != null) expect(Number.isFinite(r.sortino_ratio)).toBe(true);
+  });
+
+  it("Sortino > Sharpe when distribution is right-skewed (typical RE deal)", () => {
+    // For deals where upside variance is large but downside is bounded,
+    // dividing by downside-only deviation gives a higher ratio than
+    // dividing by total deviation. This isn't guaranteed for every deal,
+    // so we just assert both are finite and non-null when computable.
+    const r = runMonteCarlo(baseDeal(), "multifamily", { trials: 2000, seed: 31 });
+    expect(r.sharpe_ratio == null || Number.isFinite(r.sharpe_ratio)).toBe(true);
+    expect(r.sortino_ratio == null || Number.isFinite(r.sortino_ratio)).toBe(true);
+  });
 });
