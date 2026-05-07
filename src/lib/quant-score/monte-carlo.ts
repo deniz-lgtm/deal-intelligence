@@ -113,6 +113,33 @@ export function runMonteCarlo(
   const cvarCount = Math.max(1, Math.floor(0.05 * irrSorted.length));
   const cvar = irrSorted.slice(0, cvarCount).reduce((s, v) => s + v, 0) / cvarCount;
 
+  // Risk-adjusted returns. Sharpe uses the 10yr Treasury proxy (4.0%) as
+  // the risk-free hurdle and divides excess return by total volatility.
+  // Sortino uses the BP target IRR (or risk-free fallback) and divides by
+  // downside-only volatility — a more honest measure for asymmetric
+  // distributions where right-tail variance shouldn't be penalised.
+  const RISK_FREE_PCT = 4.0;
+  const sortinoTarget = opts.targetIrrPct ?? RISK_FREE_PCT;
+  const sharpe = irrSamples.length > 1 && irrStats.std > 1e-6
+    ? (irrStats.mean - RISK_FREE_PCT) / irrStats.std
+    : null;
+  const downside = irrSamples.filter((r) => r < sortinoTarget);
+  let downsideStd: number | null = null;
+  if (downside.length >= 2) {
+    let sq = 0;
+    for (const r of downside) sq += (r - sortinoTarget) ** 2;
+    downsideStd = Math.sqrt(sq / downside.length);
+  }
+  const sortino = downsideStd != null && downsideStd > 1e-6
+    ? (irrStats.mean - sortinoTarget) / downsideStd
+    : null;
+
+  // Build a binned histogram of the IRR distribution for the UI to render
+  // a density chart without re-deriving bins from the raw samples (which
+  // we don't persist). 30 bins spanning [P5, P95] padded by ~10% on each
+  // tail so all but the most extreme outliers are visible.
+  const histogram = buildIrrHistogram(irrSamples, irrSorted);
+
   return {
     trials,
     irr: {
@@ -124,6 +151,7 @@ export function runMonteCarlo(
       mean: round2(irrStats.mean),
       std: round2(irrStats.std),
     },
+    irr_histogram: histogram,
     em: {
       p10: round2(quantileSorted(emSorted, 0.1)),
       p50: round2(quantileSorted(emSorted, 0.5)),
@@ -135,6 +163,11 @@ export function runMonteCarlo(
     prob_capital_loss: round3(capitalLosses / Math.max(1, emSamples.length)),
     prob_refi_failure: refiTrials > 0 ? round3(refiFailures / refiTrials) : null,
     expected_shortfall_5pct: round2(cvar),
+    sharpe_ratio: sharpe == null ? null : round2(sharpe),
+    sortino_ratio: sortino == null ? null : round2(sortino),
+    risk_free_pct: RISK_FREE_PCT,
+    sortino_target_pct: round2(sortinoTarget),
+    target_irr_pct: opts.targetIrrPct == null ? null : round2(opts.targetIrrPct),
     inputs_distribution_summary: {
       rent_growth: {
         mu: cal.rentGrowth.mu,
@@ -174,4 +207,40 @@ function round2(n: number): number {
 function round3(n: number): number {
   if (!isFinite(n)) return 0;
   return Math.round(n * 1000) / 1000;
+}
+
+/**
+ * Build a 30-bin histogram from IRR samples. Range is [P5, P95] padded
+ * 10% on each side so the bulk of the distribution renders cleanly with
+ * tails still visible. Persisted on `mc_distribution.irr_histogram` so
+ * the UI can draw a density chart without re-storing 5,000 raw samples.
+ */
+const HISTOGRAM_BINS = 30;
+function buildIrrHistogram(samples: number[], sorted: number[]) {
+  if (samples.length === 0) {
+    return { bins: [], range: [0, 0] as [number, number], bin_count: 0 };
+  }
+  const p5 = quantileSorted(sorted, 0.05);
+  const p95 = quantileSorted(sorted, 0.95);
+  const span = Math.max(1, p95 - p5);
+  const lo = p5 - 0.1 * span;
+  const hi = p95 + 0.1 * span;
+  const binWidth = (hi - lo) / HISTOGRAM_BINS;
+  const counts = new Array<number>(HISTOGRAM_BINS).fill(0);
+  for (const v of samples) {
+    if (v < lo) {
+      counts[0]++;
+    } else if (v >= hi) {
+      counts[HISTOGRAM_BINS - 1]++;
+    } else {
+      const idx = Math.min(HISTOGRAM_BINS - 1, Math.floor((v - lo) / binWidth));
+      counts[idx]++;
+    }
+  }
+  const bins = counts.map((count, i) => ({
+    low: round2(lo + i * binWidth),
+    high: round2(lo + (i + 1) * binWidth),
+    count,
+  }));
+  return { bins, range: [round2(lo), round2(hi)] as [number, number], bin_count: HISTOGRAM_BINS };
 }

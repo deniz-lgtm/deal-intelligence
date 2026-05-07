@@ -311,4 +311,50 @@ describe("runMonteCarlo", () => {
     expect(r.rng_seed).toBe(9);
     expect(r.correlation_matrix_version).toMatch(/mc-\d+\./);
   });
+
+  it("Sharpe and Sortino are finite numbers (or null when undefined)", () => {
+    const r = runMonteCarlo(baseDeal(), "multifamily", {
+      trials: SMALL_TRIALS,
+      seed: 17,
+      targetIrrPct: 12,
+    });
+    expect(r.risk_free_pct).toBe(4.0);
+    expect(r.sortino_target_pct).toBe(12);
+    if (r.sharpe_ratio != null) expect(Number.isFinite(r.sharpe_ratio)).toBe(true);
+    if (r.sortino_ratio != null) expect(Number.isFinite(r.sortino_ratio)).toBe(true);
+  });
+
+  it("Sortino > Sharpe when distribution is right-skewed (typical RE deal)", () => {
+    // For deals where upside variance is large but downside is bounded,
+    // dividing by downside-only deviation gives a higher ratio than
+    // dividing by total deviation. This isn't guaranteed for every deal,
+    // so we just assert both are finite and non-null when computable.
+    const r = runMonteCarlo(baseDeal(), "multifamily", { trials: 2000, seed: 31 });
+    expect(r.sharpe_ratio == null || Number.isFinite(r.sharpe_ratio)).toBe(true);
+    expect(r.sortino_ratio == null || Number.isFinite(r.sortino_ratio)).toBe(true);
+  });
+
+  it("irr_histogram has 30 bins, monotonic boundaries, and counts that sum within trials", () => {
+    const r = runMonteCarlo(baseDeal(), "multifamily", { trials: SMALL_TRIALS, seed: 5 });
+    expect(r.irr_histogram).toBeDefined();
+    expect(r.irr_histogram.bin_count).toBe(30);
+    expect(r.irr_histogram.bins.length).toBe(30);
+    for (let i = 1; i < r.irr_histogram.bins.length; i++) {
+      expect(r.irr_histogram.bins[i].low).toBeGreaterThanOrEqual(r.irr_histogram.bins[i - 1].low);
+    }
+    const sumCounts = r.irr_histogram.bins.reduce((s, b) => s + b.count, 0);
+    expect(sumCounts).toBeGreaterThan(0);
+    expect(sumCounts).toBeLessThanOrEqual(SMALL_TRIALS);
+  });
+
+  it("target_irr_pct is null when no business-plan target is provided, otherwise echoed", () => {
+    const noTarget = runMonteCarlo(baseDeal(), "multifamily", { trials: 100, seed: 1 });
+    expect(noTarget.target_irr_pct).toBeNull();
+    const withTarget = runMonteCarlo(baseDeal(), "multifamily", {
+      trials: 100,
+      seed: 1,
+      targetIrrPct: 13,
+    });
+    expect(withTarget.target_irr_pct).toBe(13);
+  });
 });

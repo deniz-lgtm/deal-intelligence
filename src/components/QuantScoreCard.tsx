@@ -1,30 +1,48 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, RefreshCw, TrendingUp, TrendingDown, AlertCircle } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Loader2,
+  RefreshCw,
+  TrendingUp,
+  TrendingDown,
+  AlertCircle,
+  Info,
+  ShieldAlert,
+  ChevronRight,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Mirror of FactorBreakdown / McDistribution from src/lib/quant-score —
-// imported as values would force a server module into the client bundle, so
+// importing values would force a server module into the client bundle, so
 // we re-declare the shapes here.
+interface CategoryInput {
+  id: string;
+  label: string;
+  stage: string;
+  raw: number | string | null;
+  score: number | null;
+  weight: number;
+  fatalFlaw?: boolean;
+  source?: string;
+}
+
 interface CategoryResult {
   category: string;
   score: number;
   confidence: number;
   notched: boolean;
-  inputs: Array<{
-    id: string;
-    label: string;
-    stage: string;
-    raw: number | string | null;
-    score: number | null;
-    weight: number;
-    fatalFlaw?: boolean;
-    source?: string;
-  }>;
+  inputs: CategoryInput[];
 }
 
 interface FactorBreakdown {
@@ -37,14 +55,32 @@ interface FactorBreakdown {
   algorithmVersion: string;
 }
 
+interface McHistogramBin {
+  low: number;
+  high: number;
+  count: number;
+}
+
+interface McHistogram {
+  bins: McHistogramBin[];
+  range: [number, number];
+  bin_count: number;
+}
+
 interface McDistribution {
   trials: number;
   irr: { p10: number; p25: number; p50: number; p75: number; p90: number; mean: number; std: number };
+  irr_histogram?: McHistogram;
   em: { p10: number; p50: number; p90: number; mean: number };
   prob_hit_target_irr: number | null;
   prob_capital_loss: number;
   prob_refi_failure: number | null;
   expected_shortfall_5pct: number;
+  sharpe_ratio: number | null;
+  sortino_ratio: number | null;
+  risk_free_pct: number;
+  sortino_target_pct: number;
+  target_irr_pct?: number | null;
   inputs_distribution_summary: Record<string, { mu: number; sigma: number; bounds?: [number, number]; kind: string }>;
   correlation_matrix_version: string;
   rng_seed: number;
@@ -101,6 +137,7 @@ export function QuantScoreCard({ dealId, initialStage = "uw" }: Props) {
   const [loading, setLoading] = useState(true);
   const [recomputing, setRecomputing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [drillDown, setDrillDown] = useState<CategoryResult | null>(null);
 
   const fetchLatest = useCallback(
     async (s: "om" | "uw" | "final") => {
@@ -154,38 +191,21 @@ export function QuantScoreCard({ dealId, initialStage = "uw" }: Props) {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
-        <div>
+      <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 pb-3">
+        <div className="flex items-center gap-2">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            Quant Deal Score
-            {row?.factor_breakdown.strategy && (
-              <Badge variant="outline" className="text-2xs font-normal">
-                {row.factor_breakdown.strategy.replace(/_/g, " ")}
-              </Badge>
-            )}
+            Deal Score
+            <ScoreInfoButton mc={row?.mc_distribution} algorithmVersion={row?.algorithm_version} />
           </CardTitle>
-          <p className="text-2xs text-muted-foreground mt-0.5">
-            {row?.algorithm_version || "—"} · multi-factor + Monte Carlo
-          </p>
+          {row?.factor_breakdown.strategy && (
+            <Badge variant="outline" className="text-2xs font-normal">
+              {row.factor_breakdown.strategy.replace(/_/g, " ")}
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="flex items-center gap-px rounded-md overflow-hidden border border-border/60 bg-card">
-            {(["om", "uw", "final"] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setStage(s)}
-                className={cn(
-                  "text-2xs px-2 py-1 uppercase tracking-wide",
-                  s === stage
-                    ? "bg-primary/10 text-primary font-medium"
-                    : "text-muted-foreground hover:bg-muted/40"
-                )}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-          <Button size="sm" variant="ghost" onClick={recompute} disabled={recomputing}>
+          <StageSelector stage={stage} onChange={setStage} />
+          <Button size="sm" variant="ghost" onClick={recompute} disabled={recomputing} title="Recompute">
             {recomputing ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
@@ -194,7 +214,7 @@ export function QuantScoreCard({ dealId, initialStage = "uw" }: Props) {
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-5">
         {error && (
           <div className="flex items-center gap-2 text-2xs text-rose-400">
             <AlertCircle className="h-3 w-3" />
@@ -211,8 +231,11 @@ export function QuantScoreCard({ dealId, initialStage = "uw" }: Props) {
           </div>
         ) : (
           <>
-            <CompositeHeader breakdown={row.factor_breakdown} />
-            <CategoryBars breakdown={row.factor_breakdown} />
+            <Hero breakdown={row.factor_breakdown} mc={row.mc_distribution} />
+            <CategoryBars
+              breakdown={row.factor_breakdown}
+              onPick={(cat) => setDrillDown(cat)}
+            />
             {row.mc_distribution && <McSection mc={row.mc_distribution} />}
             {row.narrative && (row.narrative.strengths.length > 0 || row.narrative.weaknesses.length > 0) && (
               <NarrativeSection narrative={row.narrative} />
@@ -223,41 +246,232 @@ export function QuantScoreCard({ dealId, initialStage = "uw" }: Props) {
           </>
         )}
       </CardContent>
+
+      <BreakdownSheet category={drillDown} onClose={() => setDrillDown(null)} />
     </Card>
   );
 }
 
-function CompositeHeader({ breakdown }: { breakdown: FactorBreakdown }) {
+// ─── Stage selector ─────────────────────────────────────────────────────────
+
+function StageSelector({
+  stage,
+  onChange,
+}: {
+  stage: "om" | "uw" | "final";
+  onChange: (s: "om" | "uw" | "final") => void;
+}) {
+  return (
+    <div className="flex items-center gap-px rounded-md overflow-hidden border border-border/60 bg-card">
+      {(["om", "uw", "final"] as const).map((s) => (
+        <button
+          key={s}
+          onClick={() => onChange(s)}
+          className={cn(
+            "text-2xs px-3 py-1.5 uppercase tracking-wider font-medium transition-colors",
+            s === stage ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted/40"
+          )}
+        >
+          {s}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Hero (composite + headline risk sentence) ──────────────────────────────
+
+function Hero({
+  breakdown,
+  mc,
+}: {
+  breakdown: FactorBreakdown;
+  mc: McDistribution | null;
+}) {
   const band = BAND_STYLES[breakdown.band] || BAND_STYLES.marginal;
+  const headline = useMemo(() => buildHeadline(breakdown, mc), [breakdown, mc]);
   return (
-    <div className="flex items-baseline gap-3">
-      <div className="text-3xl font-bold tabular-nums tracking-tight">
-        {breakdown.composite.toFixed(1)}
-        <span className="text-sm text-muted-foreground/60 font-normal ml-1">/100</span>
+    <div className="flex flex-col md:flex-row md:items-end justify-between gap-3 pb-1">
+      <div className="flex items-baseline gap-3">
+        <div className="text-5xl font-bold tabular-nums tracking-tight leading-none">
+          {breakdown.composite.toFixed(1)}
+          <span className="text-base text-muted-foreground/50 font-normal ml-1.5">/100</span>
+        </div>
+        <Badge className={cn("text-2xs border", band.cls)} variant="outline">
+          {band.label}
+        </Badge>
       </div>
-      <Badge className={cn("text-2xs border", band.cls)} variant="outline">
-        {band.label}
-      </Badge>
-      <span className="text-2xs text-muted-foreground ml-auto">
-        Confidence {(breakdown.confidence * 100).toFixed(0)}%
-      </span>
+      <div className="md:text-right">
+        <p className="text-xs text-foreground/90 leading-snug">{headline}</p>
+        <p className="text-2xs text-muted-foreground/70 mt-0.5">
+          Confidence {(breakdown.confidence * 100).toFixed(0)}%{" "}
+          <span className="text-muted-foreground/40">·</span> {breakdown.algorithmVersion}
+        </p>
+      </div>
     </div>
   );
 }
 
-function CategoryBars({ breakdown }: { breakdown: FactorBreakdown }) {
+function buildHeadline(breakdown: FactorBreakdown, mc: McDistribution | null): string {
+  const notched = breakdown.categories.filter((c) => c.notched).map((c) => CATEGORY_LABELS[c.category] ?? c.category);
+  if (notched.length > 0) {
+    return `Fatal flaw notched in ${notched.slice(0, 2).join(", ")}${notched.length > 2 ? `, +${notched.length - 2} more` : ""}.`;
+  }
+  if (mc) {
+    const parts: string[] = [];
+    if (mc.target_irr_pct != null && mc.prob_hit_target_irr != null) {
+      parts.push(
+        `${(mc.prob_hit_target_irr * 100).toFixed(0)}% chance of hitting the ${mc.target_irr_pct.toFixed(0)}% target IRR`
+      );
+    } else {
+      parts.push(`Median IRR ${mc.irr.p50.toFixed(1)}%`);
+    }
+    parts.push(`${(mc.prob_capital_loss * 100).toFixed(1)}% chance of capital loss`);
+    return parts.join(" · ");
+  }
+  return `Composite ${breakdown.composite.toFixed(1)} (${BAND_STYLES[breakdown.band]?.label ?? breakdown.band}).`;
+}
+
+// ─── Score info popover ─────────────────────────────────────────────────────
+
+function ScoreInfoButton({
+  mc,
+  algorithmVersion,
+}: {
+  mc: McDistribution | null | undefined;
+  algorithmVersion: string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    document.addEventListener("keydown", onEscape);
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      document.removeEventListener("keydown", onEscape);
+    };
+  }, [open]);
+
   return (
-    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-      {breakdown.categories
-        .filter((c) => (breakdown.weights[c.category] ?? 0) > 0)
-        .map((c) => (
-          <CategoryRow key={c.category} cat={c} weight={breakdown.weights[c.category] ?? 0} />
-        ))}
+    <div ref={ref} className="relative inline-flex">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="What is the deal score?"
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border/60 text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+      >
+        <Info className="h-2.5 w-2.5" />
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          className="absolute left-6 top-0 z-50 w-[420px] max-w-[calc(100vw-2rem)] rounded-lg border border-border/60 bg-popover text-popover-foreground shadow-lifted p-4 text-xs leading-relaxed space-y-2.5"
+        >
+          <div>
+            <p className="font-semibold text-sm">How this score works</p>
+            <p className="text-2xs text-muted-foreground mt-0.5">
+              Algorithm {algorithmVersion || "—"} · deterministic + Monte Carlo
+            </p>
+          </div>
+          <div>
+            <p className="font-medium text-foreground">Composite (0–100)</p>
+            <p className="text-muted-foreground">
+              Weighted average of 10 risk categories. Each category rolls up from individual inputs
+              mapped to 0–100 via piecewise thresholds. Category weights come from the business
+              plan's strategy. A single fatal flaw (DSCR &lt; 1.0, breakeven occupancy &gt; 95%, or a
+              critical environmental flag) notches the category by 15.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium text-foreground">Bands</p>
+            <p className="text-muted-foreground">
+              80+ Institutional · 65–80 Actionable · 50–65 Marginal · &lt;50 Pass.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium text-foreground">Confidence</p>
+            <p className="text-muted-foreground">
+              Share of inputs the engine could actually extract (present ÷ total). Missing inputs
+              are excluded — never imputed — so an OM-stage 72 isn't the same as a Final-stage 72.
+            </p>
+          </div>
+          {mc && (
+            <div>
+              <p className="font-medium text-foreground">Monte Carlo</p>
+              <p className="text-muted-foreground">
+                Runs the underwriting model {mc.trials.toLocaleString()} times with rent growth,
+                vacancy, exit cap, and rate sampled from calibrated distributions and correlated via
+                Cholesky decomposition. Each trial outputs an IRR/EM; the percentiles, Sharpe,
+                Sortino, and probability stats summarize that distribution. Sharpe uses risk-free ={" "}
+                {mc.risk_free_pct}%; Sortino uses target = {mc.sortino_target_pct}% and divides by
+                downside-only deviation.
+              </p>
+            </div>
+          )}
+          <div>
+            <p className="font-medium text-foreground">What Claude does</p>
+            <p className="text-muted-foreground">
+              Only writes the strengths/weaknesses bullets — grounded in the deterministic numbers.
+              Never assigns scores or estimates returns.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function CategoryRow({ cat, weight }: { cat: CategoryResult; weight: number }) {
+// ─── Category bars (weight-proportional widths + drill-down) ────────────────
+
+function CategoryBars({
+  breakdown,
+  onPick,
+}: {
+  breakdown: FactorBreakdown;
+  onPick: (cat: CategoryResult) => void;
+}) {
+  const visible = breakdown.categories.filter((c) => (breakdown.weights[c.category] ?? 0) > 0);
+  const maxWeight = Math.max(...visible.map((c) => breakdown.weights[c.category] ?? 0), 1);
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-2xs uppercase tracking-wider text-muted-foreground/70 mb-1">
+        <span>Factor breakdown</span>
+        <span>Bar width = weight · click any row to inspect</span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-1">
+        {visible.map((c) => (
+          <CategoryRow
+            key={c.category}
+            cat={c}
+            weight={breakdown.weights[c.category] ?? 0}
+            maxWeight={maxWeight}
+            onClick={() => onPick(c)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CategoryRow({
+  cat,
+  weight,
+  maxWeight,
+  onClick,
+}: {
+  cat: CategoryResult;
+  weight: number;
+  maxWeight: number;
+  onClick: () => void;
+}) {
   const present = cat.inputs.filter((i) => i.score != null).length;
   const total = cat.inputs.length;
   const score = cat.score;
@@ -269,61 +483,288 @@ function CategoryRow({ cat, weight }: { cat: CategoryResult; weight: number }) {
       : score >= 50
       ? "bg-amber-500"
       : "bg-rose-500";
+  // Bar container width is proportional to weight (relative to the heaviest
+  // category in the profile). Floor at 12% so the smallest categories still
+  // show a visible track.
+  const containerPct = Math.max(12, (weight / maxWeight) * 100);
   return (
-    <div className="flex flex-col gap-0.5">
+    <button
+      type="button"
+      onClick={onClick}
+      className="group text-left flex flex-col gap-1 py-1 px-1 -mx-1 rounded hover:bg-muted/30 transition-colors"
+    >
       <div className="flex items-center justify-between text-2xs">
-        <span className="text-muted-foreground">
-          {CATEGORY_LABELS[cat.category] || cat.category}
-          <span className="text-muted-foreground/50 ml-1">{weight.toFixed(0)}%</span>
-        </span>
-        <span className="tabular-nums font-medium">
-          {cat.confidence > 0 ? score.toFixed(0) : "—"}
-          {cat.notched && <span title="Fatal flaw notched" className="text-rose-400 ml-0.5">▼</span>}
-          {total > 0 && (
-            <span className="text-muted-foreground/50 ml-1 font-normal">
-              {present}/{total}
+        <span className="text-muted-foreground flex items-center gap-1.5">
+          <span className="font-medium text-foreground/90">{CATEGORY_LABELS[cat.category] || cat.category}</span>
+          <span className="text-muted-foreground/50">{weight.toFixed(0)}%</span>
+          {cat.notched && (
+            <span
+              title="Fatal flaw notched: a single 0-score input dropped this category 15 points"
+              className="inline-flex items-center gap-0.5 text-rose-300 bg-rose-500/15 border border-rose-500/30 rounded px-1 py-0 text-[9px] uppercase tracking-wider"
+            >
+              <ShieldAlert className="h-2.5 w-2.5" /> Notch
             </span>
           )}
         </span>
+        <span className="tabular-nums font-medium flex items-center gap-1">
+          {cat.confidence > 0 ? score.toFixed(0) : "—"}
+          {total > 0 && (
+            <span className="text-muted-foreground/50 ml-0.5 font-normal">
+              {present}/{total}
+            </span>
+          )}
+          <ChevronRight className="h-3 w-3 text-muted-foreground/30 group-hover:text-muted-foreground/70" />
+        </span>
       </div>
-      <div className="h-1 rounded-full bg-muted/40 overflow-hidden">
+      <div className="h-1 rounded-full bg-muted/30 overflow-hidden" style={{ width: `${containerPct}%` }}>
         <div
           className={cn("h-full transition-all", color)}
           style={{ width: cat.confidence > 0 ? `${score}%` : "0%" }}
         />
       </div>
+    </button>
+  );
+}
+
+// ─── Monte Carlo section (histogram + stats grid + footer) ──────────────────
+
+function McSection({ mc }: { mc: McDistribution }) {
+  return (
+    <div className="border-t border-border/40 pt-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-semibold">Monte Carlo Return Distribution</h4>
+        <span className="text-2xs text-muted-foreground">{mc.trials.toLocaleString()} trials</span>
+      </div>
+
+      {mc.irr_histogram && mc.irr_histogram.bins.length > 0 && (
+        <IrrHistogram mc={mc} />
+      )}
+
+      <McStatsGrid mc={mc} />
+
+      <p className="text-2xs text-muted-foreground/70">
+        Stochastic inputs: rent growth ±{mc.inputs_distribution_summary.rent_growth?.sigma}pp ·
+        vacancy triangular · exit cap ±{mc.inputs_distribution_summary.exit_cap?.sigma}pp · rate ±
+        {mc.inputs_distribution_summary.rate?.sigma}pp.{" "}
+        CVaR 5% IRR: {mc.expected_shortfall_5pct.toFixed(1)}%.{" "}
+        {mc.prob_refi_failure != null && `Refi failure: ${(mc.prob_refi_failure * 100).toFixed(1)}%.`}
+      </p>
     </div>
   );
 }
 
-function McSection({ mc }: { mc: McDistribution }) {
+// ─── IRR histogram (SVG, no chart lib) ──────────────────────────────────────
+
+function IrrHistogram({ mc }: { mc: McDistribution }) {
+  const hist = mc.irr_histogram!;
+  const [lo, hi] = hist.range;
+  const span = hi - lo;
+  if (span <= 0) return null;
+  const W = 600;
+  const H = 110;
+  const PAD_L = 20;
+  const PAD_R = 12;
+  const PAD_T = 8;
+  const PAD_B = 22;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+  const maxCount = Math.max(...hist.bins.map((b) => b.count), 1);
+  const xFor = (irr: number) => PAD_L + ((irr - lo) / span) * innerW;
+  const target = mc.target_irr_pct;
+
   return (
-    <div className="border-t border-border/40 pt-3">
-      <div className="flex items-center justify-between mb-2">
-        <h4 className="text-xs font-semibold">Monte Carlo Return Distribution</h4>
-        <span className="text-2xs text-muted-foreground">{mc.trials.toLocaleString()} trials</span>
-      </div>
-      <div className="grid grid-cols-3 gap-px bg-border rounded-md overflow-hidden border border-border/60">
-        <McStat label="P10 IRR" value={`${mc.irr.p10.toFixed(1)}%`} accent="rose" />
-        <McStat label="P50 IRR" value={`${mc.irr.p50.toFixed(1)}%`} accent="emerald" highlight />
-        <McStat label="P90 IRR" value={`${mc.irr.p90.toFixed(1)}%`} accent="emerald" />
-        <McStat label="P50 EM" value={`${mc.em.p50.toFixed(2)}x`} accent="blue" />
-        <McStat
-          label="P(loss)"
-          value={`${(mc.prob_capital_loss * 100).toFixed(1)}%`}
-          accent={mc.prob_capital_loss > 0.1 ? "rose" : "muted"}
-        />
-        <McStat
-          label="P(hit IRR)"
-          value={mc.prob_hit_target_irr != null ? `${(mc.prob_hit_target_irr * 100).toFixed(0)}%` : "—"}
-          accent="blue"
-        />
-      </div>
-      <p className="text-2xs text-muted-foreground/70 mt-1.5">
-        Stochastic inputs: rent growth ±{mc.inputs_distribution_summary.rent_growth?.sigma}pp · vacancy
-        triangular · exit cap ±{mc.inputs_distribution_summary.exit_cap?.sigma}pp · rate ±
-        {mc.inputs_distribution_summary.rate?.sigma}pp.{" "}
-        {mc.prob_refi_failure != null && `Refi failure: ${(mc.prob_refi_failure * 100).toFixed(1)}%.`}
+    <div className="rounded-md border border-border/50 bg-card/60 p-2 overflow-hidden">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[110px]">
+        {/* Zero baseline (loss/no-loss) */}
+        {lo < 0 && hi > 0 && (
+          <line
+            x1={xFor(0)}
+            x2={xFor(0)}
+            y1={PAD_T}
+            y2={H - PAD_B}
+            stroke="rgb(244 63 94 / 0.35)"
+            strokeWidth="1"
+            strokeDasharray="3 3"
+          />
+        )}
+        {/* Histogram bars — color shifts from rose (loss) → amber (below target) → emerald (above target) */}
+        {hist.bins.map((b, i) => {
+          const x = xFor(b.low);
+          const w = Math.max(1, xFor(b.high) - x - 1);
+          const h = (b.count / maxCount) * innerH;
+          const y = H - PAD_B - h;
+          const mid = (b.low + b.high) / 2;
+          let fill: string;
+          if (mid < 0) fill = "rgb(244 63 94 / 0.55)"; // rose
+          else if (target != null && mid < target) fill = "rgb(245 158 11 / 0.55)"; // amber
+          else fill = "rgb(16 185 129 / 0.6)"; // emerald
+          return <rect key={i} x={x} y={y} width={w} height={h} fill={fill} />;
+        })}
+        {/* P10 / P50 / P90 markers */}
+        <PercentileMarker x={xFor(mc.irr.p10)} label={`P10 ${mc.irr.p10.toFixed(0)}%`} accent="muted" yTop={PAD_T} yBot={H - PAD_B} />
+        <PercentileMarker x={xFor(mc.irr.p50)} label={`P50 ${mc.irr.p50.toFixed(0)}%`} accent="primary" yTop={PAD_T} yBot={H - PAD_B} />
+        <PercentileMarker x={xFor(mc.irr.p90)} label={`P90 ${mc.irr.p90.toFixed(0)}%`} accent="muted" yTop={PAD_T} yBot={H - PAD_B} />
+        {/* Target IRR marker */}
+        {target != null && target >= lo && target <= hi && (
+          <g>
+            <line
+              x1={xFor(target)}
+              x2={xFor(target)}
+              y1={PAD_T - 2}
+              y2={H - PAD_B}
+              stroke="rgb(99 102 241)"
+              strokeWidth="1.5"
+              strokeDasharray="4 2"
+            />
+            <text
+              x={xFor(target)}
+              y={PAD_T - 1}
+              fontSize="9"
+              fill="rgb(165 180 252)"
+              textAnchor="middle"
+            >
+              Target {target.toFixed(0)}%
+            </text>
+          </g>
+        )}
+        {/* Axis range labels */}
+        <text x={PAD_L} y={H - 6} fontSize="9" fill="rgb(148 163 184 / 0.7)">
+          {lo.toFixed(0)}%
+        </text>
+        <text x={W - PAD_R} y={H - 6} fontSize="9" fill="rgb(148 163 184 / 0.7)" textAnchor="end">
+          {hi.toFixed(0)}%
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+function PercentileMarker({
+  x,
+  label,
+  accent,
+  yTop,
+  yBot,
+}: {
+  x: number;
+  label: string;
+  accent: "primary" | "muted";
+  yTop: number;
+  yBot: number;
+}) {
+  const stroke = accent === "primary" ? "rgb(34 197 94)" : "rgb(148 163 184 / 0.6)";
+  const text = accent === "primary" ? "rgb(74 222 128)" : "rgb(148 163 184 / 0.85)";
+  return (
+    <g>
+      <line x1={x} x2={x} y1={yTop} y2={yBot} stroke={stroke} strokeWidth={accent === "primary" ? 1.5 : 1} />
+      <text x={x} y={yBot + 14} fontSize="9" fill={text} textAnchor="middle">
+        {label}
+      </text>
+    </g>
+  );
+}
+
+// ─── MC stats grid with 5-band Sharpe/Sortino + verdict ─────────────────────
+
+function McStatsGrid({ mc }: { mc: McDistribution }) {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-border rounded-md overflow-hidden border border-border/60">
+      <McStat
+        label="P10 IRR"
+        value={`${mc.irr.p10.toFixed(1)}%`}
+        accent={mc.irr.p10 < 0 ? "rose" : "muted"}
+        tip={`Worst-decile annualized IRR. 10% of the ${mc.trials.toLocaleString()} trials returned ≤ this.`}
+      />
+      <McStat
+        label="P50 IRR"
+        value={`${mc.irr.p50.toFixed(1)}%`}
+        accent="emerald"
+        highlight
+        tip={`Median annualized IRR across ${mc.trials.toLocaleString()} trials. Each trial draws rent growth (μ=${mc.inputs_distribution_summary.rent_growth?.mu}%, σ=${mc.inputs_distribution_summary.rent_growth?.sigma}pp), vacancy (triangular), exit cap (μ=${mc.inputs_distribution_summary.exit_cap?.mu}%, σ=${mc.inputs_distribution_summary.exit_cap?.sigma}pp), and rate (σ=${mc.inputs_distribution_summary.rate?.sigma}pp) — correlated via Cholesky — and re-runs the underwriting model.`}
+      />
+      <McStat
+        label="P90 IRR"
+        value={`${mc.irr.p90.toFixed(1)}%`}
+        accent="emerald"
+        tip="Upside-decile IRR. Only 10% of trials beat this number — the realistic upside ceiling."
+      />
+      <McStat
+        label="P50 EM"
+        value={`${mc.em.p50.toFixed(2)}x`}
+        accent="blue"
+        tip="Median equity multiple (total dollars returned ÷ equity invested) across the simulated trials."
+      />
+      <McStat
+        label="P(loss)"
+        value={`${(mc.prob_capital_loss * 100).toFixed(1)}%`}
+        accent={mc.prob_capital_loss > 0.1 ? "rose" : "muted"}
+        tip="Share of trials where equity multiple finished below 1.0× — the deal lost money on a nominal basis."
+      />
+      <McStat
+        label="P(hit IRR)"
+        value={mc.prob_hit_target_irr != null ? `${(mc.prob_hit_target_irr * 100).toFixed(0)}%` : "—"}
+        accent="blue"
+        tip="Share of trials that cleared the business plan's target IRR. Set the target on the business plan to enable this."
+      />
+      <RatioStat
+        label="Sharpe"
+        value={mc.sharpe_ratio}
+        kind="sharpe"
+        rfPct={mc.risk_free_pct}
+      />
+      <RatioStat
+        label="Sortino"
+        value={mc.sortino_ratio}
+        kind="sortino"
+        rfPct={mc.sortino_target_pct}
+      />
+    </div>
+  );
+}
+
+function ratioVerdict(r: number | null): { word: string; accent: "muted" | "rose" | "amber" | "blue" | "emerald" } {
+  if (r == null) return { word: "—", accent: "muted" };
+  if (r < 0) return { word: "Negative", accent: "rose" };
+  if (r < 0.5) return { word: "Weak", accent: "rose" };
+  if (r < 1) return { word: "Adequate", accent: "amber" };
+  if (r < 2) return { word: "Strong", accent: "emerald" };
+  return { word: "Excellent", accent: "emerald" };
+}
+
+function RatioStat({
+  label,
+  value,
+  kind,
+  rfPct,
+}: {
+  label: string;
+  value: number | null;
+  kind: "sharpe" | "sortino";
+  rfPct: number;
+}) {
+  const { word, accent } = ratioVerdict(value);
+  const tip =
+    kind === "sharpe"
+      ? `Sharpe = (mean IRR − ${rfPct}% risk-free) / σ(IRR). Penalises both upside and downside variance. Bands: <0 negative · 0–0.5 weak · 0.5–1 adequate · 1–2 strong · 2+ excellent.`
+      : `Sortino = (mean IRR − ${rfPct}% target) / σ_downside. Only counts variance from outcomes BELOW the target — fairer for asymmetric, right-skewed real-estate returns. Same band thresholds as Sharpe.`;
+  const colors: Record<string, string> = {
+    emerald: "text-emerald-300",
+    rose: "text-rose-300",
+    blue: "text-blue-300",
+    amber: "text-amber-300",
+    muted: "text-muted-foreground",
+  };
+  return (
+    <div className="bg-card p-2" title={tip}>
+      <p className="text-2xs uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+        {label}
+        <Info className="h-2.5 w-2.5 text-muted-foreground/40" />
+      </p>
+      <p className="flex items-baseline gap-1.5">
+        <span className={cn("text-sm font-bold tabular-nums", colors[accent])}>
+          {value != null ? value.toFixed(2) : "—"}
+        </span>
+        <span className={cn("text-2xs uppercase tracking-wider", colors[accent])}>{word}</span>
       </p>
     </div>
   );
@@ -334,11 +775,13 @@ function McStat({
   value,
   accent,
   highlight,
+  tip,
 }: {
   label: string;
   value: string;
   accent: "emerald" | "rose" | "blue" | "muted";
   highlight?: boolean;
+  tip?: string;
 }) {
   const colors: Record<string, string> = {
     emerald: "text-emerald-300",
@@ -347,12 +790,17 @@ function McStat({
     muted: "text-muted-foreground",
   };
   return (
-    <div className={cn("bg-card p-2", highlight && "bg-muted/20")}>
-      <p className="text-2xs uppercase tracking-wide text-muted-foreground">{label}</p>
+    <div className={cn("bg-card p-2", highlight && "bg-muted/20")} title={tip}>
+      <p className="text-2xs uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+        {label}
+        {tip && <Info className="h-2.5 w-2.5 text-muted-foreground/40" />}
+      </p>
       <p className={cn("text-sm font-bold tabular-nums", colors[accent])}>{value}</p>
     </div>
   );
 }
+
+// ─── Strengths / Weaknesses ─────────────────────────────────────────────────
 
 function NarrativeSection({ narrative }: { narrative: ScoreNarrative }) {
   return (
@@ -389,4 +837,122 @@ function NarrativeSection({ narrative }: { narrative: ScoreNarrative }) {
       </div>
     </div>
   );
+}
+
+// ─── Drill-down sheet (per-category input audit) ────────────────────────────
+
+function BreakdownSheet({
+  category,
+  onClose,
+}: {
+  category: CategoryResult | null;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={!!category} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl">
+        {category && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                {CATEGORY_LABELS[category.category] || category.category}
+                {category.notched && (
+                  <Badge variant="outline" className="text-2xs border-rose-500/30 text-rose-300 bg-rose-500/10">
+                    <ShieldAlert className="h-3 w-3 mr-1" /> Fatal flaw notched
+                  </Badge>
+                )}
+              </DialogTitle>
+              <DialogDescription>
+                Category score{" "}
+                <span className="font-medium text-foreground/90">{category.score.toFixed(1)}</span>{" "}
+                · confidence{" "}
+                <span className="font-medium text-foreground/90">{(category.confidence * 100).toFixed(0)}%</span>{" "}
+                ({category.inputs.filter((i) => i.score != null).length} of{" "}
+                {category.inputs.length} inputs present). Each input maps to 0–100 via piecewise
+                thresholds; the category score is the weighted average. Missing inputs are
+                excluded — never imputed.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="rounded-lg border border-border/50 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/40 text-2xs uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">Input</th>
+                    <th className="text-right px-3 py-2 font-medium w-[80px]">Raw</th>
+                    <th className="text-right px-3 py-2 font-medium w-[60px]">Score</th>
+                    <th className="text-right px-3 py-2 font-medium w-[50px]">Weight</th>
+                    <th className="text-left px-3 py-2 font-medium w-[60px]">Stage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {category.inputs.map((i) => (
+                    <BreakdownRow key={i.id} input={i} />
+                  ))}
+                  {category.inputs.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="text-center text-muted-foreground py-6">
+                        No inputs defined for this category at this stage.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BreakdownRow({ input }: { input: CategoryInput }) {
+  const score = input.score;
+  const scoreColor =
+    score == null
+      ? "text-muted-foreground/40"
+      : score >= 80
+      ? "text-emerald-300"
+      : score >= 65
+      ? "text-blue-300"
+      : score >= 50
+      ? "text-amber-300"
+      : "text-rose-300";
+  const rawDisplay =
+    input.raw == null
+      ? "—"
+      : typeof input.raw === "number"
+      ? Number.isFinite(input.raw) ? formatNumber(input.raw) : "—"
+      : String(input.raw);
+  return (
+    <tr className="border-t border-border/40 hover:bg-muted/20">
+      <td className="px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-foreground/90">{input.label}</span>
+          {input.fatalFlaw && (
+            <span title="Fatal-flaw input: a 0 here notches the category by 15">
+              <ShieldAlert className="h-3 w-3 text-rose-400/80" />
+            </span>
+          )}
+        </div>
+        {input.source && (
+          <p className="text-2xs text-muted-foreground/60 mt-0.5">{input.source}</p>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{rawDisplay}</td>
+      <td className={cn("px-3 py-2 text-right tabular-nums font-medium", scoreColor)}>
+        {score == null ? "—" : score.toFixed(0)}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{input.weight.toFixed(1)}</td>
+      <td className="px-3 py-2 uppercase text-2xs tracking-wider text-muted-foreground">{input.stage}</td>
+    </tr>
+  );
+}
+
+function formatNumber(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  if (abs >= 10) return n.toFixed(1);
+  if (abs >= 1) return n.toFixed(2);
+  return n.toFixed(3);
 }
