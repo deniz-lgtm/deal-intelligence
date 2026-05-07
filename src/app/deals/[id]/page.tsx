@@ -845,16 +845,10 @@ export default function DealOverviewPage({
       {/* ═══ QUANT DEAL SCORE (factor model + Monte Carlo) ═══ */}
       <QuantScoreCard dealId={params.id} initialStage={deal.final_score != null ? "final" : "uw"} />
 
-      {/* ═══ SCORES STRIP (legacy 1–10) ═══ */}
-      {(deal.om_score != null || deal.uw_score != null || deal.final_score != null) && (
-        <div className="grid grid-cols-3 gap-px bg-border rounded-xl overflow-hidden border border-border/60">
+      {/* ═══ LEGACY UW / FINAL 1–10 SCORES (OM stage now lives on the QuantScoreCard above) ═══ */}
+      {(deal.uw_score != null || deal.final_score != null) && (
+        <div className="grid grid-cols-2 gap-px bg-border rounded-xl overflow-hidden border border-border/60">
           {[
-            {
-              label: "OM Score",
-              value: deal.om_score,
-              reasoning: null as string | null,
-              href: `/deals/${params.id}/om-analysis`,
-            },
             {
               label: "UW Score",
               value: deal.uw_score,

@@ -57,8 +57,6 @@ export interface OmFullResult {
   financial_metrics: FinancialMetrics;
   assumptions: Assumptions;
   red_flags: RedFlag[];
-  deal_score: number;
-  score_reasoning: string;
   summary: string;
   recommendations: string[];
   model_used: string;
@@ -82,7 +80,6 @@ export interface OmExtracted {
 }
 
 export interface OmExtractionResult {
-  om_score: number;
   om_extracted: OmExtracted;
   red_flags: RedFlag[];
   raw_text_preview: string;
@@ -318,80 +315,18 @@ Respond with ONLY the JSON array.`;
   };
 }
 
-// ─── Stage 3 — Deal Score ─────────────────────────────────────────────────────
-
-async function calculateDealScore(
-  metrics: FinancialMetrics,
-  propertyDetails: PropertyDetails,
-  redFlags: RedFlag[],
-  dealContext?: string
-): Promise<{ deal_score: number; score_reasoning: string; tokensUsed: number }> {
-  const criticalCount = redFlags.filter((f) => f.severity === "critical").length;
-  const highCount = redFlags.filter((f) => f.severity === "high").length;
-
-  const contextBlock = dealContext?.trim()
-    ? `\nINVESTOR'S BUSINESS PLAN:\n${dealContext.trim()}\n\nScore the deal relative to the stated strategy. A value-add play on a vacant building is a different risk profile than a stabilized core deal — score accordingly.\n`
-    : "";
-
-  const prompt = `${CONCISE_STYLE}
-
-You are scoring this deal for initial pursuit prioritization inside Deal Intelligence — not for final investment approval. This is a first-look screen to decide whether to spend time underwriting it.
-${contextBlock}
-PROPERTY:
-${JSON.stringify(propertyDetails, null, 2)}
-
-FINANCIALS:
-${JSON.stringify(metrics, null, 2)}
-
-RED FLAGS IDENTIFIED:
-- Critical: ${criticalCount}
-- High: ${highCount}
-- Total: ${redFlags.length}
-${redFlags.slice(0, 5).map((f) => `  • [${f.severity.toUpperCase()}] ${f.category}: ${f.description}`).join("\n")}
-
-Score this deal 1–10 based on: fit with the stated strategy, quality of the opportunity, severity of genuine (not expected) red flags, and apparent upside. Missing data is not a reason to score lower if the business plan explains it.
-
-Return ONLY a JSON object:
-{
-  "deal_score": 7,
-  "score_reasoning": "3-4 short bullets prefixed with '• ' (one per line, max ~12 words each) — what makes this worth pursuing or not, with specific numbers. No paragraphs."
-}
-
-Score guide (pursuit prioritization):
-1-3: Pass — fundamental issues with the strategy fit or serious deal-killers
-4-5: Borderline — one key question needs an answer before spending more time
-6-7: Worth underwriting — move it forward, pull the model together
-8-9: Strong fit — prioritize, get an offer together quickly
-10: Exceptional — extremely rare`;
-
-  const response = await withRetry(() =>
-    getClient().messages.create({
-      model: MODEL,
-      max_tokens: 512,
-      messages: [{ role: "user", content: prompt }],
-    })
-  );
-
-  const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
-  const parsed = parseJson<{ deal_score: number; score_reasoning: string }>(raw, {
-    deal_score: 5,
-    score_reasoning: "Unable to score — insufficient data.",
-  });
-
-  return {
-    deal_score: Math.max(1, Math.min(10, Math.round(parsed.deal_score ?? 5))),
-    score_reasoning: parsed.score_reasoning ?? "",
-    tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
-  };
-}
-
-// ─── Stage 4 — Recommendations ───────────────────────────────────────────────
+// ─── Stage 3 — Recommendations ───────────────────────────────────────────────
+//
+// The legacy 1–10 deal score stage was removed — the deterministic
+// `quant-score` engine (factor model + Monte Carlo) is the system of
+// record now. OM extraction still runs metrics + red flags + summary
+// and the API route fires a quant-score recompute for stage="om" once
+// the analysis is persisted.
 
 async function generateRecommendations(
   metrics: FinancialMetrics,
   propertyDetails: PropertyDetails,
   redFlags: RedFlag[],
-  dealScore: number,
   dealContext?: string
 ): Promise<{ summary: string; recommendations: string[]; tokensUsed: number }> {
   const contextBlock = dealContext?.trim()
@@ -404,7 +339,6 @@ You are a deal associate writing a quick first-look memo for the acquisition tea
 
 Write a concise executive summary and structure the next steps to hand off clearly to those workflow stages. Do not recommend asking the broker for things they won't provide at OM stage (rent rolls, CapEx budgets, full financials). Do not recommend standard diligence tasks that are already built into the diligence checklist — only call out things specific to this deal.
 ${contextBlock}
-DEAL SCORE: ${dealScore}/10
 PROPERTY: ${propertyDetails.property_type || "Commercial"} at ${propertyDetails.address || "unknown address"}
 ASKING PRICE: ${metrics.asking_price ? `$${metrics.asking_price.toLocaleString()}` : "unknown"}
 CAP RATE: ${metrics.cap_rate ? `${(metrics.cap_rate * 100).toFixed(2)}%` : "unknown"}
@@ -464,24 +398,15 @@ export async function extractOmFull(pdfText: string, dealContext?: string, pdfBu
   );
   totalTokens += stage2.tokensUsed;
 
-  // Stage 3: Deal Score (context-aware)
-  const stage3 = await calculateDealScore(
+  // Stage 3: Recommendations (context-aware). Legacy 1–10 deal score
+  // stage was removed — quant-score is now the system of record.
+  const stage3 = await generateRecommendations(
     stage1.financial_metrics,
     stage1.property_details,
     stage2.red_flags,
     dealContext
   );
   totalTokens += stage3.tokensUsed;
-
-  // Stage 4: Recommendations (context-aware)
-  const stage4 = await generateRecommendations(
-    stage1.financial_metrics,
-    stage1.property_details,
-    stage2.red_flags,
-    stage3.deal_score,
-    dealContext
-  );
-  totalTokens += stage4.tokensUsed;
 
   const processingMs = Date.now() - startMs;
 
@@ -493,10 +418,8 @@ export async function extractOmFull(pdfText: string, dealContext?: string, pdfBu
     financial_metrics: stage1.financial_metrics,
     assumptions: stage1.assumptions,
     red_flags: stage2.red_flags,
-    deal_score: stage3.deal_score,
-    score_reasoning: stage3.score_reasoning,
-    summary: stage4.summary,
-    recommendations: stage4.recommendations,
+    summary: stage3.summary,
+    recommendations: stage3.recommendations,
     model_used: MODEL,
     tokens_used: totalTokens,
     cost_estimate: costEstimate,
@@ -523,7 +446,6 @@ export async function extractOmMetrics(pdfText: string, dealContext?: string, pd
   };
 
   return {
-    om_score: full.deal_score,
     om_extracted,
     red_flags: full.red_flags,
     raw_text_preview: pdfText.slice(0, 500),
@@ -544,7 +466,6 @@ export async function answerOmQuestion(
   const systemPrompt = `You are an expert real estate investment analyst who has thoroughly read and analyzed this Offering Memorandum.
 
 PROPERTY: ${analysis.property_details.property_type || "Commercial"} — ${analysis.property_details.address || "Address unknown"}
-DEAL SCORE: ${analysis.deal_score}/10
 KEY METRICS: Asking Price ${analysis.financial_metrics.asking_price ? `$${analysis.financial_metrics.asking_price.toLocaleString()}` : "unknown"}, Cap Rate ${analysis.financial_metrics.cap_rate ? `${(analysis.financial_metrics.cap_rate * 100).toFixed(2)}%` : "unknown"}, NOI ${analysis.financial_metrics.noi ? `$${analysis.financial_metrics.noi.toLocaleString()}` : "unknown"}
 
 ANALYSIS SUMMARY:

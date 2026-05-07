@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import { dealQueries, documentQueries, omAnalysisQueries } from "@/lib/db";
 import { extractOmMetrics } from "@/lib/om-extraction";
+import { recomputeQuantScore } from "@/lib/quant-score/recompute";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { uploadBlob } from "@/lib/blob-storage";
 
@@ -108,8 +109,6 @@ export async function POST(
       leverage: full.assumptions.leverage,
       exit_cap_rate: full.assumptions.exit_cap_rate,
       // Results
-      deal_score: full.deal_score,
-      score_reasoning: full.score_reasoning,
       summary: full.summary,
       recommendations: full.recommendations,
       red_flags: full.red_flags,
@@ -122,7 +121,6 @@ export async function POST(
 
     // ── Update deal with OM data (backwards compat) ──────────────────────────
     const dealUpdates: Record<string, unknown> = {
-      om_score: extraction.om_score,
       om_extracted: extraction.om_extracted,
     };
     if (extraction.om_extracted.asking_price)
@@ -149,12 +147,17 @@ export async function POST(
       file_size: buffer.length,
       mime_type: file.type,
       content_text: pdfText || null,
-      ai_summary: `Offering Memorandum — Deal Score: ${full.deal_score}/10. ${
+      ai_summary: `Offering Memorandum — ${
         redFlagCount > 0
           ? `${redFlagCount} red flag(s)${criticalCount > 0 ? `, ${criticalCount} critical` : ""}.`
           : "No red flags detected."
       } ${full.summary ? full.summary.slice(0, 200) : ""}`,
       ai_tags: ["offering-memorandum", "om", "financial"],
+    });
+
+    // Fire-and-forget quant-score recompute for stage="om" — see om-init for rationale.
+    void recomputeQuantScore(params.id, { stage: "om", runMc: false }).catch((err) => {
+      console.warn(`om-upload: quant-score recompute failed for ${params.id}: ${(err as Error).message}`);
     });
 
     const savedAnalysis = await omAnalysisQueries.getById(analysisId);

@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs/promises";
 import { dealQueries, documentQueries, omAnalysisQueries } from "@/lib/db";
 import { extractOmMetrics } from "@/lib/om-extraction";
+import { recomputeQuantScore } from "@/lib/quant-score/recompute";
 import { requireAuth, requireDealAccess } from "@/lib/auth";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
@@ -134,8 +135,6 @@ async function runAnalysisBackground({
       hold_period: full.assumptions.hold_period,
       leverage: full.assumptions.leverage,
       exit_cap_rate: full.assumptions.exit_cap_rate,
-      deal_score: full.deal_score,
-      score_reasoning: full.score_reasoning,
       summary: full.summary,
       recommendations: full.recommendations,
       red_flags: full.red_flags,
@@ -147,7 +146,6 @@ async function runAnalysisBackground({
 
     // Update deal fields
     const dealUpdates: Record<string, unknown> = {
-      om_score: extraction.om_score,
       om_extracted: extraction.om_extracted,
     };
     if (extraction.om_extracted.asking_price)
@@ -174,12 +172,20 @@ async function runAnalysisBackground({
       file_size: buffer.length,
       mime_type: file.type,
       content_text: pdfText || null,
-      ai_summary: `Offering Memorandum — Deal Score: ${full.deal_score}/10. ${
+      ai_summary: `Offering Memorandum — ${
         redFlagCount > 0
           ? `${redFlagCount} red flag(s)${criticalCount > 0 ? `, ${criticalCount} critical` : ""}.`
           : "No red flags detected."
       } ${full.summary ? full.summary.slice(0, 200) : ""}`,
       ai_tags: ["offering-memorandum", "om", "financial"],
+    });
+
+    // Fire-and-forget quant-score recompute for stage="om". The
+    // deterministic factor model is now the system of record for OM-stage
+    // scoring; this hook produces the OM-stage row right after extraction
+    // completes. Errors are swallowed — the analysis itself is the contract.
+    void recomputeQuantScore(dealId, { stage: "om", runMc: false }).catch((err) => {
+      console.warn(`om-init: quant-score recompute failed for ${dealId}: ${(err as Error).message}`);
     });
   } catch (err) {
     console.error("runAnalysisBackground failed:", err);
