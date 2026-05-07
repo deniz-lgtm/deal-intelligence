@@ -43,6 +43,7 @@ import { DocCoverageChip } from "@/components/ai";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { QuantScoreCard } from "@/components/QuantScoreCard";
 import DealNotes from "@/components/DealNotes";
 import { PhasePinControl } from "@/components/deals/PhasePinControl";
 import { PhaseProgressStrip } from "@/components/deals/PhaseProgressStrip";
@@ -841,7 +842,10 @@ export default function DealOverviewPage({
         )}
       </div>
 
-      {/* ═══ SCORES STRIP ═══ */}
+      {/* ═══ QUANT DEAL SCORE (factor model + Monte Carlo) ═══ */}
+      <QuantScoreCard dealId={params.id} initialStage={deal.final_score != null ? "final" : "uw"} />
+
+      {/* ═══ SCORES STRIP (legacy 1–10) ═══ */}
       {(deal.om_score != null || deal.uw_score != null || deal.final_score != null) && (
         <div className="grid grid-cols-3 gap-px bg-border rounded-xl overflow-hidden border border-border/60">
           {[

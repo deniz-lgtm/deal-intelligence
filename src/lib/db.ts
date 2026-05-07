@@ -105,6 +105,15 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS uw_score_reasoning TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score INTEGER",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_score_reasoning TEXT",
+    // Quant deal score: latest composite + band denormalized onto `deals`
+    // so list views (DealCard, KanbanCard) can render without per-row joins
+    // against deal_scores. Source of truth for the breakdown / history is
+    // the deal_scores table; these columns are maintained on insert.
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS quant_composite NUMERIC",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS quant_band TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS quant_confidence NUMERIC",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS quant_stage TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS quant_computed_at TIMESTAMPTZ",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS land_acres REAL",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lat NUMERIC",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS lng NUMERIC",
@@ -200,6 +209,31 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_phone TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_address TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_disclaimer_text TEXT NOT NULL DEFAULT ''",
+    // Quant deal score: factor weights override + strategy classifier on each plan.
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS factor_weights JSONB",
+    "ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS strategy TEXT",
+    // Quant deal score: persisted history of every recompute. One row per
+    // (deal, stage, computed_at). Latest row per (deal, stage) is the
+    // current view; older rows form an audit trail of how the score
+    // evolved as inputs firmed up.
+    `CREATE TABLE IF NOT EXISTS deal_scores (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      stage TEXT NOT NULL CHECK (stage IN ('om','uw','final')),
+      composite NUMERIC NOT NULL,
+      confidence NUMERIC NOT NULL,
+      band TEXT NOT NULL,
+      factor_breakdown JSONB NOT NULL,
+      mc_distribution JSONB,
+      weight_profile_id UUID,
+      weight_profile_snapshot JSONB,
+      inputs_snapshot JSONB,
+      narrative JSONB,
+      algorithm_version TEXT NOT NULL,
+      mc_version TEXT,
+      computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_deal_scores_deal_stage ON deal_scores(deal_id, stage, computed_at DESC)",
     // Legacy schedule tables (deal_milestones, deal_tasks) are no
     // longer created here. The data migration further down moves any
     // existing rows into deal_dev_phases, and a separate migration
@@ -4330,6 +4364,12 @@ export interface BusinessPlanRow {
   target_equity_multiple_max: number | null;
   owner_id: string | null;
   is_default: boolean;
+  // Quant deal score: per-strategy scoring profile and override weights.
+  // `strategy` defaults the weight profile (one of "ground_up_dev",
+  // "value_add", "core", "student_housing"). `factor_weights` overrides
+  // the defaults for any subset of categories.
+  strategy: string | null;
+  factor_weights: Record<string, number> | null;
   created_at: string;
   updated_at: string;
 }
@@ -4528,6 +4568,145 @@ export const businessPlanQueries = {
   delete: async (id: string): Promise<void> => {
     const pool = getPool();
     await pool.query("DELETE FROM business_plans WHERE id = $1", [id]);
+  },
+};
+
+// ─── Quant Deal Score queries ────────────────────────────────────────────────
+
+export interface DealScoreRow {
+  id: string;
+  deal_id: string;
+  stage: "om" | "uw" | "final";
+  composite: number;
+  confidence: number;
+  band: string;
+  factor_breakdown: unknown;
+  mc_distribution: unknown | null;
+  weight_profile_id: string | null;
+  weight_profile_snapshot: unknown | null;
+  inputs_snapshot: unknown | null;
+  narrative: unknown | null;
+  algorithm_version: string;
+  mc_version: string | null;
+  computed_at: string;
+}
+
+export const dealScoreQueries = {
+  /** Latest row for a (deal, stage). */
+  getLatest: async (dealId: string, stage: "om" | "uw" | "final"): Promise<DealScoreRow | null> => {
+    await ensureColumns();
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_scores
+       WHERE deal_id = $1 AND stage = $2
+       ORDER BY computed_at DESC LIMIT 1`,
+      [dealId, stage]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  /** Latest row per stage across all stages — for the deal page header. */
+  getLatestAll: async (dealId: string): Promise<DealScoreRow[]> => {
+    await ensureColumns();
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT DISTINCT ON (stage) *
+       FROM deal_scores
+       WHERE deal_id = $1
+       ORDER BY stage, computed_at DESC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  /** Full history (every recompute). */
+  getHistory: async (dealId: string): Promise<DealScoreRow[]> => {
+    await ensureColumns();
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_scores WHERE deal_id = $1 ORDER BY computed_at ASC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  /** Insert a new score row. Always appends — never updates. Also updates
+   *  the denormalized `quant_*` columns on `deals` so list views can read
+   *  the latest composite without joining. */
+  insert: async (row: {
+    deal_id: string;
+    stage: "om" | "uw" | "final";
+    composite: number;
+    confidence: number;
+    band: string;
+    factor_breakdown: unknown;
+    mc_distribution?: unknown | null;
+    weight_profile_id?: string | null;
+    weight_profile_snapshot?: unknown | null;
+    inputs_snapshot?: unknown | null;
+    narrative?: unknown | null;
+    algorithm_version: string;
+    mc_version?: string | null;
+  }): Promise<DealScoreRow> => {
+    await ensureColumns();
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_scores (
+         deal_id, stage, composite, confidence, band,
+         factor_breakdown, mc_distribution,
+         weight_profile_id, weight_profile_snapshot, inputs_snapshot, narrative,
+         algorithm_version, mc_version
+       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13)
+       RETURNING *`,
+      [
+        row.deal_id,
+        row.stage,
+        row.composite,
+        row.confidence,
+        row.band,
+        JSON.stringify(row.factor_breakdown),
+        row.mc_distribution == null ? null : JSON.stringify(row.mc_distribution),
+        row.weight_profile_id ?? null,
+        row.weight_profile_snapshot == null ? null : JSON.stringify(row.weight_profile_snapshot),
+        row.inputs_snapshot == null ? null : JSON.stringify(row.inputs_snapshot),
+        row.narrative == null ? null : JSON.stringify(row.narrative),
+        row.algorithm_version,
+        row.mc_version ?? null,
+      ]
+    );
+    // Maintain the denormalized snapshot on deals. We only overwrite when
+    // the new row's stage is "later" than the currently stored stage —
+    // an OM-stage recompute should not overwrite a UW-stage composite.
+    const stageRank: Record<string, number> = { om: 0, uw: 1, final: 2 };
+    await pool.query(
+      `UPDATE deals
+         SET quant_composite = $1,
+             quant_band = $2,
+             quant_confidence = $3,
+             quant_stage = $4,
+             quant_computed_at = NOW()
+       WHERE id = $5
+         AND ($6::int >= COALESCE(
+              CASE quant_stage
+                WHEN 'om' THEN 0
+                WHEN 'uw' THEN 1
+                WHEN 'final' THEN 2
+                ELSE -1
+              END,
+              -1
+            ))`,
+      [row.composite, row.band, row.confidence, row.stage, row.deal_id, stageRank[row.stage] ?? 0]
+    );
+    return res.rows[0];
+  },
+
+  /** Patch the narrative on an existing row (used after async narrative gen). */
+  setNarrative: async (id: string, narrative: unknown): Promise<void> => {
+    const pool = getPool();
+    await pool.query(
+      `UPDATE deal_scores SET narrative = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(narrative), id]
+    );
   },
 };
 

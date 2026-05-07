@@ -63,6 +63,14 @@ function scoreColor(score: number): string {
   return "text-red-400 bg-red-500/10 border-red-500/20";
 }
 
+// Quant composite (0–100). Bands match `bandFor` in src/lib/quant-score/types.
+function quantColor(score: number): string {
+  if (score >= 80) return "text-emerald-400 bg-emerald-500/10 border-emerald-500/30";
+  if (score >= 65) return "text-blue-400 bg-blue-500/10 border-blue-500/30";
+  if (score >= 50) return "text-amber-400 bg-amber-500/10 border-amber-500/30";
+  return "text-rose-400 bg-rose-500/10 border-rose-500/30";
+}
+
 interface DealCardProps {
   deal: Deal;
   documentCount?: number;
@@ -100,15 +108,29 @@ export default function DealCard({
             )}
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            {deal.om_score != null && (
+            {deal.quant_composite != null ? (
               <span
                 className={cn(
                   "text-2xs font-bold px-2 py-0.5 rounded-md border tabular-nums",
-                  scoreColor(deal.om_score)
+                  quantColor(deal.quant_composite)
                 )}
+                title={`Quant ${deal.quant_stage?.toUpperCase() ?? ""} · confidence ${
+                  deal.quant_confidence != null ? Math.round(deal.quant_confidence * 100) + "%" : "—"
+                }`}
               >
-                {deal.om_score}/10
+                {Math.round(deal.quant_composite)}
               </span>
+            ) : (
+              deal.om_score != null && (
+                <span
+                  className={cn(
+                    "text-2xs font-bold px-2 py-0.5 rounded-md border tabular-nums",
+                    scoreColor(deal.om_score)
+                  )}
+                >
+                  {deal.om_score}/10
+                </span>
+              )
             )}
             <button
               className={cn(
