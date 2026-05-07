@@ -4,6 +4,11 @@
 
 @layer base {
   :root {
+    /* Tells the UA to render native form controls (date picker popup,
+       scrollbars, spin buttons, etc.) in their dark variants instead of
+       light, so they match the rest of the dark editorial palette. */
+    color-scheme: dark;
+
     /* ── Dark luxury editorial palette ── */
     --background: 240 6% 7%;           /* #0F0F12 deep charcoal */
     --foreground: 40 20% 96%;          /* #F7F5F0 warm cream */
@@ -275,6 +280,36 @@
   select:invalid,
   select option[value=""] {
     color: hsl(var(--muted-foreground));
+  }
+
+  /* Native date / time / number inputs need their browser-rendered
+     indicators (calendar button, spin arrows) rendered for dark mode.
+     `color-scheme: dark` on :root already does the heavy lifting — this
+     is a belt-and-suspenders override per-input plus a hover bump so
+     the calendar button reads as interactive. */
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="month"],
+  input[type="week"],
+  input[type="time"],
+  input[type="number"] {
+    color-scheme: dark;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+  input[type="month"]::-webkit-calendar-picker-indicator,
+  input[type="week"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    opacity: 0.7;
+    cursor: pointer;
+    transition: opacity 0.15s ease-in-out;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator:hover,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover,
+  input[type="month"]::-webkit-calendar-picker-indicator:hover,
+  input[type="week"]::-webkit-calendar-picker-indicator:hover,
+  input[type="time"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
   }
 }
 

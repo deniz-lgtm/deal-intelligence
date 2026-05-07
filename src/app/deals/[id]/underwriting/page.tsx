@@ -1512,10 +1512,10 @@ function MBox({ label, value, sub, hi, warn }: { label: string; value: string; s
   );
 }
 
-function Section({ title, icon, children, open: defaultOpen = false }: { title: string; icon: React.ReactNode; children: React.ReactNode; open?: boolean; }) {
+function Section({ title, icon, children, open: defaultOpen = true }: { title: string; icon: React.ReactNode; children: React.ReactNode; open?: boolean; }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="border rounded-xl bg-card overflow-hidden">
+    <div className="border rounded-xl bg-card overflow-hidden mb-3">
       <button className="w-full flex items-center justify-between p-4 hover:bg-accent/30 transition-colors" onClick={() => setOpen(o => !o)}>
         <div className="flex items-center gap-2 font-semibold text-sm">{icon}{title}</div>
         {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
@@ -1673,15 +1673,18 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  type UWTab = "revenue_ops" | "capital" | "returns" | "scenarios";
+  type UWTab = "revenue_ops" | "costs" | "financing" | "returns" | "scenarios";
   const UW_TABS: { id: UWTab; label: string }[] = [
     { id: "revenue_ops", label: "Revenue & Ops" },
-    { id: "capital", label: "Capital" },
+    { id: "costs", label: "Costs" },
+    { id: "financing", label: "Financing" },
     { id: "returns", label: "Returns" },
     { id: "scenarios", label: "Scenarios" },
   ];
   const initialTab = ((): UWTab => {
-    const t = searchParams?.get("tab") as UWTab | null;
+    const raw = searchParams?.get("tab");
+    // "capital" was the old combined tab; redirect any saved links to Costs.
+    const t = (raw === "capital" ? "costs" : raw) as UWTab | null;
     return t && UW_TABS.some((x) => x.id === t) ? t : "revenue_ops";
   })();
   const [activeTab, setActiveTab] = useState<UWTab>(initialTab);
@@ -3239,7 +3242,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       )}
       </div>
 
-      <div className={tabCls("capital")}>
+      <div className={tabCls("costs")}>
       <Section title={isGroundUp ? "Development Cost Basis" : "Purchase & Cost Basis"} icon={<DollarSign className="h-4 w-4 text-green-400" />}>
         {isGroundUp ? (
           <div className="mt-3 space-y-4">
@@ -3313,7 +3316,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           Hidden in Basic — only relevant for value-add / redevelopment
           plays where existing improvements are demolished or repositioned.
           Already collapsed by default in Advanced. */}
-      <div className={tabCls("capital")}>
+      <div className={tabCls("costs")}>
       {!isBasic && (
       <Section title="Redevelopment Overlay" icon={<Building2 className="h-4 w-4 text-rose-400" />}>
         <div className="mt-3">
@@ -4037,7 +4040,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
 
       </div>
 
-      <div className={tabCls("capital")}>
+      <div className={tabCls("costs")}>
       <Section title={isGroundUp ? "Development Budget" : "Capital Expenditures"} icon={<Hammer className="h-4 w-4 text-orange-400" />}>
         <div className="mt-3 overflow-x-auto">
           {isGroundUp ? (
@@ -5195,7 +5198,7 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
           are the same facility — see the Construction-Acquisition Loan
           section below. This block captures the construction timeline
           (term + draws) that drives capitalized interest. */}
-      <div className={tabCls("capital")}>
+      <div className={tabCls("financing")}>
       {!isBasic && isGroundUp && (
       <Section title="Construction Period" icon={<Construction className="h-4 w-4 text-yellow-400" />}>
         <div className="mt-3">
