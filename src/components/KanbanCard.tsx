@@ -18,14 +18,7 @@ interface KanbanCardProps {
   onDragStart?: (e: React.DragEvent, dealId: string) => void;
 }
 
-function scoreColor(score: number): string {
-  if (score >= 8) return "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
-  if (score >= 6) return "text-amber-400 bg-amber-500/10 border-amber-500/20";
-  if (score >= 4) return "text-orange-400 bg-orange-500/10 border-orange-500/20";
-  return "text-red-400 bg-red-500/10 border-red-500/20";
-}
-
-// Quant composite (0–100). Bands match `bandFor` in src/lib/quant-score/types.
+// Composite (0–100). Bands match `bandFor` in src/lib/quant-score/types.
 function quantColor(score: number): string {
   if (score >= 80) return "text-emerald-400 bg-emerald-500/10 border-emerald-500/30";
   if (score >= 65) return "text-blue-400 bg-blue-500/10 border-blue-500/30";
@@ -117,29 +110,18 @@ export default function KanbanCard({ deal, onStar, onDragStart }: KanbanCardProp
           {deal.loi_executed && (
             <span className="text-emerald-400 font-medium text-[10px]">LOI</span>
           )}
-          {deal.quant_composite != null ? (
+          {deal.quant_composite != null && (
             <span
               className={cn(
                 "text-[10px] font-bold px-1.5 py-0 rounded border tabular-nums",
                 quantColor(deal.quant_composite)
               )}
-              title={`Quant ${deal.quant_stage?.toUpperCase() ?? ""} · confidence ${
+              title={`Deal Score · ${deal.quant_stage?.toUpperCase() ?? ""} · confidence ${
                 deal.quant_confidence != null ? Math.round(deal.quant_confidence * 100) + "%" : "—"
               }`}
             >
               {Math.round(deal.quant_composite)}
             </span>
-          ) : (
-            (deal.final_score ?? deal.uw_score ?? deal.om_score) != null && (
-              <span
-                className={cn(
-                  "text-[10px] font-bold px-1.5 py-0 rounded border tabular-nums",
-                  scoreColor((deal.final_score ?? deal.uw_score ?? deal.om_score)!)
-                )}
-              >
-                {deal.final_score ?? deal.uw_score ?? deal.om_score}
-              </span>
-            )
           )}
         </div>
       </div>

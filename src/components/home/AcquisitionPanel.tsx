@@ -55,11 +55,11 @@ export function AcquisitionPanel({ deals, allDeals }: Props) {
     ? { label: `${unreviewed} to review`, href: "/inbox" }
     : null;
 
-  // Top-of-panel rows: sort by om_score desc (nulls last), tiebreak by updated_at
+  // Top-of-panel rows: sort by quant composite desc (nulls last), tiebreak by updated_at
   const rows = [...deals]
     .sort((a, b) => {
-      const aScore = a.om_score ?? -1;
-      const bScore = b.om_score ?? -1;
+      const aScore = a.quant_composite ?? -1;
+      const bScore = b.quant_composite ?? -1;
       if (aScore !== bScore) return bScore - aScore;
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     })

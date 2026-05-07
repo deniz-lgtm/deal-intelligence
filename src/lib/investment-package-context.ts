@@ -255,7 +255,6 @@ export function buildSectionContext(
         bp?.target_markets?.length ? `Target Markets: ${bp.target_markets.join(", ")}` : "",
         bp?.target_irr_min || bp?.target_irr_max ? `Target IRR: ${bp?.target_irr_min ?? "?"}–${bp?.target_irr_max ?? "?"}%` : "",
         om?.summary ? `OM Summary: ${om.summary}` : "",
-        om?.score_reasoning ? `Score Reasoning: ${om.score_reasoning}` : "",
         deal.context_notes ? `Analyst Notes: ${deal.context_notes}` : "",
         affSnippet,
       ].filter(Boolean).join("\n");

@@ -432,7 +432,6 @@ async function buildDealFacts(dealId: string, businessPlanId: string | null): Pr
     push(omLines, "Reported NOI", formatCurrency(om.noi));
     push(omLines, "Reported Cap Rate", formatPercent(om.cap_rate));
     push(omLines, "Reported Vacancy", formatPercent(om.vacancy_rate));
-    push(omLines, "OM Score", formatNumber(om.deal_score, "/10"));
     if (typeof om.summary === "string" && om.summary.trim()) {
       push(omLines, "Summary", om.summary.trim().slice(0, 500));
     }

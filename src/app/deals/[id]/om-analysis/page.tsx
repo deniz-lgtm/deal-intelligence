@@ -73,8 +73,6 @@ interface OmAnalysis {
   leverage: string | null;
   exit_cap_rate: string | null;
   // Results
-  deal_score: number | null;
-  score_reasoning: string | null;
   summary: string | null;
   recommendations: string[] | null;
   red_flags: RedFlag[] | null;
@@ -621,72 +619,36 @@ function UploadPanel({
   );
 }
 
-// ─── Score Card ───────────────────────────────────────────────────────────────
+// ─── Summary Card ─────────────────────────────────────────────────────────────
+// The legacy 1–10 deal score has been retired in favour of the deterministic
+// quant-score engine on the deal overview. This card now surfaces just the
+// AI-extracted summary + critical flag count; the actual score lives one
+// level up on the deal page's QuantScoreCard.
 
 function ScoreCard({ analysis }: { analysis: OmAnalysis }) {
-  const score = analysis.deal_score ?? 0;
   const criticalCount = analysis.red_flags?.filter((f) => f.severity === "critical").length ?? 0;
-
-  // Split score reasoning into bullet points (by sentence or newline)
-  const reasoningBullets = (analysis.score_reasoning ?? "")
-    .split(/(?:\.\s+|\n+)/)
-    .map((s) => s.replace(/\.+$/, "").trim())
-    .filter((s) => s.length > 0);
-
+  if (!analysis.summary && criticalCount === 0) return null;
   return (
-    <Card className={cn("border", scoreBg(score))}>
+    <Card className="border border-border/60 bg-card">
       <CardContent className="pt-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 mb-1">
               <Sparkles className="h-3 w-3 text-amber-400" />
               <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">Guidance</span>
-              <span className="text-[10px] text-muted-foreground/60">— AI suggestion</span>
+              <span className="text-[10px] text-muted-foreground/60">— OM extraction summary</span>
             </div>
-            <p className="text-sm font-medium text-muted-foreground mb-1">Deal Score</p>
-            <div className="flex items-baseline gap-2">
-              <span className={cn("text-6xl font-bold tabular-nums", scoreColor(score))}>
-                {score}
-              </span>
-              <span className="text-2xl text-muted-foreground">/10</span>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2 items-end flex-shrink-0">
-            {criticalCount > 0 && (
-              <div className="flex items-center gap-1.5 text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-1.5 text-sm font-medium">
-                <AlertTriangle className="h-4 w-4" />
-                {criticalCount} critical flag{criticalCount > 1 ? "s" : ""}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Score bar */}
-        <div className="mt-4 h-2 bg-muted rounded-full overflow-hidden">
-          <div
-            className={cn(
-              "h-full rounded-full transition-all",
-              score >= 8 ? "bg-emerald-500" : score >= 6 ? "bg-amber-500" : score >= 4 ? "bg-orange-500" : "bg-rose-500"
-            )}
-            style={{ width: `${score * 10}%` }}
-          />
-        </div>
-
-        {/* Summary + reasoning bullets */}
-        {(analysis.summary || reasoningBullets.length > 0) && (
-          <div className="mt-4 space-y-2">
             {analysis.summary && (
-              <p className="text-sm text-muted-foreground leading-relaxed">{analysis.summary}</p>
-            )}
-            {reasoningBullets.length > 0 && (
-              <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-                {reasoningBullets.map((bullet, i) => (
-                  <li key={i}>{bullet}</li>
-                ))}
-              </ul>
+              <p className="text-sm text-foreground/85 leading-relaxed mt-2">{analysis.summary}</p>
             )}
           </div>
-        )}
+          {criticalCount > 0 && (
+            <div className="flex items-center gap-1.5 text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-1.5 text-sm font-medium flex-shrink-0">
+              <AlertTriangle className="h-4 w-4" />
+              {criticalCount} critical flag{criticalCount > 1 ? "s" : ""}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

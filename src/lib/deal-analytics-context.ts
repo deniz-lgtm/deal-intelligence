@@ -345,7 +345,6 @@ export function buildOmSummary(om: OmAnalysisRow | null): string {
   if (om.price_per_unit) lines.push(`  $/Unit: ${fc(om.price_per_unit)}`);
   if (om.rent_growth) lines.push(`  Rent Growth Assumption: ${om.rent_growth}`);
   if (om.exit_cap_rate) lines.push(`  Exit Cap Assumption: ${om.exit_cap_rate}`);
-  if (om.deal_score) lines.push(`  OM Score: ${om.deal_score}/10`);
   if (om.summary) lines.push(`\n  Summary: ${om.summary}`);
   if (om.red_flags && om.red_flags.length > 0) {
     lines.push(`\n  Red Flags:`);

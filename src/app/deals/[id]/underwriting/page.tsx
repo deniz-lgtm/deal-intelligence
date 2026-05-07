@@ -1525,33 +1525,6 @@ function Section({ title, icon, children, open: defaultOpen = true }: { title: s
   );
 }
 
-// Parse the stored deal-score reasoning into compact bullets.
-// - New format: "__STRUCTURED__<json>" with {reasoning, bullets}.
-// - Legacy format: plain string; split into sentences and keep the
-//   first 3-5 as bullets so older scores still render tidily.
-function extractScoreBullets(reasoning?: string | null): { bullets: string[]; summary: string } {
-  if (!reasoning) return { bullets: [], summary: "" };
-  const STRUCT = "__STRUCTURED__";
-  if (reasoning.startsWith(STRUCT)) {
-    try {
-      const payload = JSON.parse(reasoning.slice(STRUCT.length));
-      const bullets = Array.isArray(payload.bullets)
-        ? payload.bullets.filter((b: unknown): b is string => typeof b === "string" && b.trim().length > 0)
-        : [];
-      return { bullets: bullets.slice(0, 5), summary: typeof payload.reasoning === "string" ? payload.reasoning : "" };
-    } catch {
-      return { bullets: [], summary: reasoning.slice(STRUCT.length) };
-    }
-  }
-  // Legacy: split sentences, trim, keep 3-5 non-empty lines.
-  const parts = reasoning
-    .split(/(?:\r?\n+)|(?<=[.!?])\s+(?=[A-Z0-9])/g)
-    .map((s) => s.replace(/^[\s•\-–*\d.)\]]+/, "").trim())
-    .filter((s) => s.length > 0);
-  if (parts.length >= 2) return { bullets: parts.slice(0, 5), summary: "" };
-  return { bullets: [], summary: reasoning };
-}
-
 // Small hover/click popover that surfaces the AI's short per-line-item
 // rationale next to an OpEx row. Replaces the big "AI Estimate Basis"
 // blob that used to sit under the OpEx table.
@@ -1715,8 +1688,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
   const [showCompareModal, setShowCompareModal] = useState(false);
   const [compareSelection, setCompareSelection] = useState<Set<string>>(new Set());
   const [showMaxBidModal, setShowMaxBidModal] = useState(false);
-  const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null });
-  const [scoringUW, setScoringUW] = useState(false);
   // Rent comps editing UI lives on the Comps page now — see
   // src/app/deals/[id]/comps/page.tsx. The underlying data still lives in
   // this blob (rent_comps / rent_comp_unit_types / selected_comp_ids) so the
@@ -1843,10 +1814,8 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
     Promise.all([
       fetch(`/api/deals/${params.id}`).then(r => r.json()),
       fetch(uwUrl).then(r => r.json()),
-      fetch(`/api/deals/${params.id}/deal-score`).then(r => r.json()).catch(() => null),
-    ]).then(async ([dr, ur, scoresJson]) => {
+    ]).then(async ([dr, ur]) => {
       setDeal(dr.data);
-      if (scoresJson?.data) setDealScores(scoresJson.data);
       // Load business plan if linked
       if (dr.data?.business_plan_id) {
         try {
@@ -5516,98 +5485,6 @@ export default function UnderwritingPage({ params }: { params: { id: string } })
       </div>
       </div>
 
-      {/* ── Deal Score Progression ── */}
-      <div className="border rounded-xl bg-card overflow-hidden">
-        <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
-          <h3 className="font-semibold text-sm flex items-center gap-2"><Target className="h-4 w-4" /> Deal Score</h3>
-          <Button
-            size="sm" variant="outline"
-            disabled={scoringUW}
-            onClick={async () => {
-              setScoringUW(true);
-              try {
-                await save();
-                const res = await fetch(`/api/deals/${params.id}/deal-score`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ stage: "underwriting", ...(projectMassingId ? { massing_id: projectMassingId } : {}) }),
-                });
-                const json = await res.json();
-                if (res.ok && json.data) {
-                  // Store reasoning in the same __STRUCTURED__ shape the API
-                  // persists, so the card renders bullets immediately after
-                  // scoring — no page refresh needed.
-                  const bullets = Array.isArray(json.data.bullet_points)
-                    ? json.data.bullet_points.filter((b: unknown) => typeof b === "string")
-                    : [];
-                  const reasoning = bullets.length > 0
-                    ? `__STRUCTURED__${JSON.stringify({ reasoning: json.data.reasoning || "", bullets })}`
-                    : (json.data.reasoning || "");
-                  setDealScores(prev => ({ ...prev, uw_score: json.data.score, uw_score_reasoning: reasoning }));
-                  toast.success("Underwriting score updated");
-                } else { toast.error(json.error || "Scoring failed"); }
-              } catch { toast.error("Scoring failed"); }
-              finally { setScoringUW(false); }
-            }}
-          >
-            {scoringUW ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Scoring...</> : <><RefreshCw className="h-3.5 w-3.5 mr-1.5" />{dealScores.uw_score ? "Re-score" : "Score Deal"}</>}
-          </Button>
-        </div>
-        <div className="p-4">
-          <div className="grid grid-cols-2 gap-4">
-            {[
-              { label: "OM Analysis", score: dealScores.om_score, reasoning: dealScores.om_reasoning, empty: "Run OM Analysis first" },
-              { label: "Post-Underwriting", score: dealScores.uw_score, reasoning: dealScores.uw_score_reasoning, empty: "Score after completing underwriting" },
-            ].map(({ label, score, reasoning, empty }) => {
-              const accent = score ? score >= 8 ? "border-l-emerald-500" : score >= 6 ? "border-l-amber-500" : score >= 4 ? "border-l-orange-500" : "border-l-rose-500" : "border-l-muted-foreground/20";
-              const numColor = score ? score >= 8 ? "text-emerald-400" : score >= 6 ? "text-amber-400" : score >= 4 ? "text-orange-400" : "text-rose-400" : "text-muted-foreground/30";
-              // The scoring API can persist reasoning either as a raw
-              // string (legacy) or as "__STRUCTURED__<json>" carrying
-              // {reasoning, bullets}. Prefer bullets when present;
-              // otherwise split long paragraphs into their natural
-              // sentence/newline fragments so the card stays compact.
-              const { bullets, summary } = extractScoreBullets(reasoning);
-              return (
-                <div key={label} className={`rounded-lg border border-l-4 ${accent} bg-card p-4`}>
-                  <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
-                  <div className="flex items-baseline gap-1">
-                    <span className={`text-3xl font-bold tabular-nums ${numColor}`}>
-                      {score ?? "—"}
-                    </span>
-                    {score && <span className="text-sm text-muted-foreground">/10</span>}
-                  </div>
-                  {bullets.length > 0 ? (
-                    <ul className="mt-2 space-y-1">
-                      {bullets.map((b, i) => (
-                        <li key={i} className="text-xs text-foreground/80 leading-snug flex gap-1.5">
-                          <span className="text-primary/70 select-none">•</span>
-                          <span>{b}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : summary ? (
-                    <p className="text-xs text-foreground/70 mt-2 leading-snug">{summary}</p>
-                  ) : null}
-                  {!score && <p className="text-xs text-muted-foreground mt-1">{empty}</p>}
-                </div>
-              );
-            })}
-          </div>
-          {/* Score change indicator */}
-          {dealScores.om_score && dealScores.uw_score && (
-            <div className="mt-3 flex items-center gap-2 text-xs">
-              <span className="text-muted-foreground">Change:</span>
-              {dealScores.uw_score > dealScores.om_score ? (
-                <span className="text-emerald-600 font-medium flex items-center gap-0.5"><TrendingUp className="h-3 w-3" /> +{dealScores.uw_score - dealScores.om_score} from OM</span>
-              ) : dealScores.uw_score < dealScores.om_score ? (
-                <span className="text-rose-600 font-medium">{dealScores.uw_score - dealScores.om_score} from OM</span>
-              ) : (
-                <span className="text-muted-foreground font-medium">No change from OM</span>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* Deal Notes — preview only; full listing lives at /notes?deal=<id>
           so the UW page isn't dominated by a long note stream. Mirrors the

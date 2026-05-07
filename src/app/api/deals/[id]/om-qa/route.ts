@@ -100,8 +100,6 @@ export async function POST(
         description: string;
         recommendation: string;
       }>) ?? [],
-      deal_score: analysis.deal_score ?? 0,
-      score_reasoning: analysis.score_reasoning ?? "",
       summary: analysis.summary ?? "",
       recommendations: (analysis.recommendations as string[]) ?? [],
       model_used: analysis.model_used ?? "claude-sonnet-4-6",

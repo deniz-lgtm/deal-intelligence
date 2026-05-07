@@ -82,13 +82,9 @@ export interface Deal {
   loi_executed: boolean;
   psa_executed: boolean;
   business_plan_id: string | null;
-  om_score: number | null;
-  uw_score: number | null;
-  uw_score_reasoning: string | null;
-  final_score: number | null;
-  final_score_reasoning: string | null;
-  // Quant score (denormalized snapshot of the latest deal_scores row).
-  // Source of truth lives in deal_scores.
+  // Deal score (denormalized snapshot of the latest deal_scores row).
+  // Source of truth lives in the deal_scores table; the legacy 1–10
+  // om_score / uw_score / final_score columns are no longer read.
   quant_composite: number | null;
   quant_band: string | null;
   quant_confidence: number | null;

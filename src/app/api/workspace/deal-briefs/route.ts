@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
  * GET /api/workspace/deal-briefs?limit=5
  *
  * Returns a compact brief of the user's N most-recently-touched active deals,
- * one line per deal: name, stage, last-updated, top open task (if any),
- * uw_score or om_score. Powers the "Deal Briefs" card in the Today strip.
+ * one line per deal: name, stage, last-updated, top open task (if any).
+ * Powers the "Deal Briefs" card in the Today strip.
  *
  * Excludes dead / closed / archived deals — we want what's in-flight.
  */
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     // Most recently touched in-flight deals.
     const dealsRes = await pool.query(
       `SELECT d.id, d.name, d.city, d.state, d.status,
-              d.asking_price, d.om_score, d.uw_score, d.updated_at
+              d.asking_price, d.updated_at
        FROM deals d
        WHERE d.id IN ${accessibleDeals}
          AND d.status NOT IN ('dead', 'closed', 'archived')
@@ -88,8 +88,6 @@ export async function GET(req: NextRequest) {
       state: string | null;
       status: string;
       asking_price: number | null;
-      om_score: number | null;
-      uw_score: number | null;
       updated_at: string;
     };
 
@@ -100,8 +98,6 @@ export async function GET(req: NextRequest) {
       state: d.state,
       status: d.status,
       asking_price: d.asking_price,
-      om_score: d.om_score,
-      uw_score: d.uw_score,
       updated_at: d.updated_at,
       next_task: topTaskByDeal[d.id]
         ? {
