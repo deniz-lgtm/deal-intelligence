@@ -35,9 +35,6 @@ const EDITABLE_DEAL_FIELDS = new Set<string>([
   "execution_phase", "execution_started_at",
   // Document-execution flags
   "loi_executed", "psa_executed",
-  // Manual scoring overrides
-  "om_score", "uw_score", "uw_score_reasoning",
-  "final_score", "final_score_reasoning",
 ]);
 
 export async function GET(

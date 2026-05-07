@@ -109,8 +109,6 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
   const [dealContext, setDealContext] = useState<DealContext | null>(null);
 
   // Deal score state
-  const [dealScores, setDealScores] = useState<{ om_score: number | null; om_reasoning: string | null; uw_score: number | null; uw_score_reasoning: string | null; final_score: number | null; final_score_reasoning: string | null }>({ om_score: null, om_reasoning: null, uw_score: null, uw_score_reasoning: null, final_score: null, final_score_reasoning: null });
-  const [scoringFinal, setScoringFinal] = useState(false);
 
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
@@ -125,13 +123,11 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       fetch(`/api/deals/${params.id}`).then(r => r.json()),
       fetch(`/api/deals/${params.id}/investment-package`).then(r => r.json()).catch(() => null),
       fetch(`/api/underwriting?deal_id=${params.id}`).then(r => r.json()).catch(() => null),
-      fetch(`/api/deals/${params.id}/deal-score`).then(r => r.json()).catch(() => null),
       fetch(`/api/deals/${params.id}/documents`).then(r => r.json()).catch(() => null),
-    ]).then(([dealJson, pkgJson, uwJson, scoresJson, docsJson]) => {
+    ]).then(([dealJson, pkgJson, uwJson, docsJson]) => {
       if (docsJson?.data) setDocuments(docsJson.data);
       if (dealJson.data?.name) setDealName(dealJson.data.name);
       if (uwJson?.data?.updated_at) setUwUpdatedAt(uwJson.data.updated_at);
-      if (scoresJson?.data) setDealScores(scoresJson.data);
       // Build the IC Package context from whatever deal + UW data loaded.
       // dealToContext is pure and handles nulls gracefully.
       if (dealJson.data) {
@@ -445,76 +441,6 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
           </div>
         </div>
       )}
-
-      {/* ─── Deal Score Progression ─────────────────────────────────────── */}
-      <div className="border rounded-xl bg-card overflow-hidden">
-        <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-sm flex items-center gap-2"><Target className="h-4 w-4" /> Deal Score Progression</h3>
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">Guidance</span>
-          </div>
-          <Button
-            size="sm" variant="outline"
-            disabled={scoringFinal}
-            onClick={async () => {
-              setScoringFinal(true);
-              try {
-                const res = await fetch(`/api/deals/${params.id}/deal-score`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ stage: "final" }),
-                });
-                const json = await res.json();
-                if (res.ok && json.data) {
-                  setDealScores(prev => ({ ...prev, final_score: json.data.score, final_score_reasoning: json.data.reasoning }));
-                  toast.success("Final deal score updated");
-                } else { toast.error(json.error || "Scoring failed"); }
-              } catch { toast.error("Scoring failed"); }
-              finally { setScoringFinal(false); }
-            }}
-          >
-            {scoringFinal ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Scoring...</> : <><RefreshCw className="h-3.5 w-3.5 mr-1.5" />{dealScores.final_score ? "Re-score" : "Generate Final Score"}</>}
-          </Button>
-        </div>
-        <div className="p-4">
-          <div className="grid grid-cols-3 gap-4">
-            {/* OM Analysis Score */}
-            {[
-              { label: "OM Analysis", score: dealScores.om_score, reasoning: dealScores.om_reasoning, empty: "Run OM Analysis" },
-              { label: "Post-Underwriting", score: dealScores.uw_score, reasoning: dealScores.uw_score_reasoning, empty: "Score in Underwriting" },
-              { label: "Final Score", score: dealScores.final_score, reasoning: dealScores.final_score_reasoning, empty: "Generate final score" },
-            ].map(({ label, score, reasoning, empty }) => (
-              <div key={label} className={`rounded-lg border p-4 ${score ? score >= 8 ? "bg-emerald-500/10 border-emerald-500/30" : score >= 6 ? "bg-amber-500/10 border-amber-500/30" : score >= 4 ? "bg-orange-500/10 border-orange-500/30" : "bg-rose-500/10 border-rose-500/30" : "bg-muted/20 border-border"}`}>
-                <p className="text-xs font-medium text-foreground/80 mb-1">{label}</p>
-                <div className="flex items-baseline gap-1">
-                  <span className={`text-3xl font-bold tabular-nums ${score ? score >= 8 ? "text-emerald-400" : score >= 6 ? "text-amber-400" : score >= 4 ? "text-orange-400" : "text-rose-400" : "text-muted-foreground/40"}`}>
-                    {score ?? "—"}
-                  </span>
-                  {score && <span className="text-sm text-muted-foreground">/10</span>}
-                </div>
-                {reasoning && <p className="text-xs text-foreground/70 mt-2 leading-relaxed line-clamp-3">{reasoning}</p>}
-                {!score && <p className="text-xs text-muted-foreground mt-1">{empty}</p>}
-              </div>
-            ))}
-          </div>
-          {/* Score trend */}
-          {(dealScores.om_score || dealScores.uw_score || dealScores.final_score) && (
-            <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
-              <span>Trend:</span>
-              {[dealScores.om_score, dealScores.uw_score, dealScores.final_score].filter(Boolean).map((s, i, arr) => (
-                <span key={i} className="flex items-center gap-1">
-                  {i > 0 && (
-                    <span className={s! > arr[i-1]! ? "text-emerald-500" : s! < arr[i-1]! ? "text-rose-500" : "text-muted-foreground"}>
-                      {s! > arr[i-1]! ? <TrendingUp className="h-3 w-3" /> : "→"}
-                    </span>
-                  )}
-                  <span className="font-semibold">{s}</span>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* ─── IC Package Tab ─────────────────────────────────────────────── */}
       {/* Format-specific authoring: IC Package swaps the section editor

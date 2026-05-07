@@ -107,10 +107,6 @@ export async function exportDealToNotion(
     properties["NOI"] = { number: analysis.noi };
   }
 
-  if (analysis.deal_score != null) {
-    properties["Deal Score"] = { number: analysis.deal_score };
-  }
-
   if (summaryText) {
     properties["Summary"] = {
       rich_text: [{ text: { content: summaryText } }],
@@ -121,36 +117,11 @@ export async function exportDealToNotion(
     properties["Deal URL"] = { url: dealUrl };
   }
 
-  // Build page body content (children blocks)
+  // Build page body content (children blocks). The legacy 1–10 deal-score
+  // callout was removed when the deterministic quant-score engine became
+  // the system of record. Notion exports now lead with the metrics + flags.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const children: any[] = [];
-
-  // Score callout
-  if (analysis.deal_score != null) {
-    const scoreEmoji =
-      analysis.deal_score >= 8
-        ? "🟢"
-        : analysis.deal_score >= 6
-        ? "🟡"
-        : analysis.deal_score >= 4
-        ? "🟠"
-        : "🔴";
-    children.push({
-      object: "block",
-      type: "callout",
-      callout: {
-        rich_text: [
-          {
-            text: {
-              content: `Deal Score: ${analysis.deal_score}/10 — ${analysis.score_reasoning ?? ""}`,
-            },
-          },
-        ],
-        icon: { emoji: scoreEmoji },
-        color: "default",
-      },
-    });
-  }
 
   // Key metrics heading
   children.push({

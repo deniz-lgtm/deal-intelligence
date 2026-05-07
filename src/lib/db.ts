@@ -1917,13 +1917,12 @@ export const dealQueries = {
       `SELECT DISTINCT d.*,
               u.data                AS underwriting_data,
               oa.id                 AS analysis_id,
-              oa.status             AS analysis_status,
-              oa.deal_score         AS analysis_deal_score
+              oa.status             AS analysis_status
        FROM deals d
        LEFT JOIN underwriting u ON u.deal_id = d.id
        LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $2
        LEFT JOIN LATERAL (
-         SELECT id, status, deal_score
+         SELECT id, status
          FROM om_analyses
          WHERE deal_id = d.id
          ORDER BY created_at DESC
@@ -4191,8 +4190,6 @@ export interface OmAnalysisRow {
   leverage: string | null;
   exit_cap_rate: string | null;
   // Results
-  deal_score: number | null;
-  score_reasoning: string | null;
   summary: string | null;
   recommendations: string[] | null;
   red_flags: Array<{

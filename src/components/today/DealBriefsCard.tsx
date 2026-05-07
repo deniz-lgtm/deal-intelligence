@@ -11,8 +11,6 @@ interface DealBrief {
   state: string | null;
   status: string;
   asking_price: number | null;
-  om_score: number | null;
-  uw_score: number | null;
   updated_at: string;
   next_task: {
     title: string;

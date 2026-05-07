@@ -243,10 +243,11 @@ export default function AcquisitionPage() {
   const totalPipelineValue = pipelineDeals.reduce((sum, d) => sum + dealCost(d), 0);
   const totalPipelineSf = pipelineDeals.reduce((sum, d) => sum + (d.square_footage ?? 0), 0);
   const totalPipelineUnits = pipelineDeals.reduce((sum, d) => sum + (d.units ?? 0), 0);
+  // Average composite (0–100) across acq-stage deals that have been scored.
   const avgScore = (() => {
-    const scored = acqDeals.filter((d) => d.om_score != null);
+    const scored = acqDeals.filter((d) => d.quant_composite != null);
     if (scored.length === 0) return null;
-    return (scored.reduce((s, d) => s + (d.om_score || 0), 0) / scored.length).toFixed(1);
+    return (scored.reduce((s, d) => s + (d.quant_composite || 0), 0) / scored.length).toFixed(1);
   })();
 
   const columnMetrics = columns.map((status) => {
@@ -361,7 +362,7 @@ export default function AcquisitionPage() {
                     <FileSearch className="h-3.5 w-3.5 text-primary" />
                     <div>
                       <p className="text-sm font-bold tabular-nums tracking-tight leading-tight">{avgScore}</p>
-                      <p className="text-[10px] text-muted-foreground leading-tight">Avg OM</p>
+                      <p className="text-[10px] text-muted-foreground leading-tight">Avg score</p>
                     </div>
                   </div>
                 )}

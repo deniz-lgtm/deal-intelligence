@@ -48,7 +48,6 @@ interface InboxItem {
   // Surfaced by the inbox query — present only if analysis has been started
   analysis_id: string | null;
   analysis_status: "pending" | "processing" | "complete" | "error" | null;
-  analysis_deal_score: number | null;
 }
 
 const PROPERTY_TYPE_OPTIONS: { value: PropertyType; label: string }[] = [
