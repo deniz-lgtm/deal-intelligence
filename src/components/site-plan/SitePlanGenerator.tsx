@@ -152,6 +152,12 @@ function TileUpdater({
   onFallback: () => void;
 }) {
   const map = useMap();
+  // Hold onFallback in a ref so the tile-layer effect only re-runs when the
+  // style actually changes. Without this, every parent re-render (e.g. on
+  // cursor move) tore down and recreated the tile layer, which made the map
+  // flicker and ate clicks during drawing.
+  const onFallbackRef = useRef(onFallback);
+  onFallbackRef.current = onFallback;
   useEffect(() => {
     const cfg = getTileConfig(style);
     map.eachLayer((layer) => {
@@ -186,14 +192,14 @@ function TileUpdater({
         maxZoom: 20,
       });
       fallbackLayer.addTo(map);
-      onFallback();
+      onFallbackRef.current();
     };
     layer.on("tileerror", onTileError);
     layer.addTo(map);
     return () => {
       layer.off("tileerror", onTileError);
     };
-  }, [map, style, onFallback]);
+  }, [map, style]);
   return null;
 }
 
