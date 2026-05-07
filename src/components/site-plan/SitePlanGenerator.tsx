@@ -307,11 +307,15 @@ function DrawingSurface({
       let p = raw;
       const d = draftRef.current;
 
-      // Vertex snap — prefer existing draft first vertex (close hint) or
-      // the other polygon's vertices.
+      // Vertex snap — snap to other polygons' vertices, and to the
+      // in-progress draft's FIRST vertex only when closing is possible
+      // (≥3 vertices placed). Including draft[0] earlier than that pulls
+      // point 2 / point 3 back onto point 1 whenever the user clicks
+      // within the snap radius — looks to the analyst like the new
+      // vertex "disappeared".
       if (snapVertexOn) {
         const radiusFt = Math.max(6, 40 / Math.pow(2, map.getZoom() - 18)); // tighter at high zoom
-        const candidates = [...existingVertices, ...(d.length ? [d[0]] : [])];
+        const candidates = [...existingVertices, ...(d.length >= 3 ? [d[0]] : [])];
         const v = snapToNearestVertex(p, candidates, radiusFt);
         if (v) p = v;
       }
