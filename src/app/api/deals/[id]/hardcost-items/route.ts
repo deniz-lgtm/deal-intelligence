@@ -26,6 +26,8 @@ async function ensureTable() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query("ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS etc NUMERIC");
+  await pool.query("ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS forecast_note TEXT");
 }
 
 export async function GET(
@@ -63,7 +65,7 @@ export async function POST(
     if (accessError) return accessError;
 
     const body = await req.json();
-    const { category, description, vendor, amount, status, incurred_date, notes } = body;
+    const { category, description, vendor, amount, status, incurred_date, notes, etc, forecast_note } = body;
 
     if (!category?.trim() || !description?.trim()) {
       return NextResponse.json({ error: "category and description are required" }, { status: 400 });
@@ -79,6 +81,8 @@ export async function POST(
       status: status || "estimated",
       incurred_date: incurred_date || null,
       notes: notes || null,
+      etc: etc === undefined || etc === null || etc === "" ? null : Number(etc),
+      forecast_note: forecast_note || null,
     };
 
     let item;

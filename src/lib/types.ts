@@ -1026,6 +1026,93 @@ export const DILIGENCE_CHECKLIST_TEMPLATE: Array<{
   },
 ];
 
+// Construction-completion / closeout checklist. Seeded on demand from the
+// Closeout page (not at deal creation) so deals that never reach
+// construction don't carry irrelevant rows.
+export const CLOSEOUT_CHECKLIST_TEMPLATE: Array<{
+  category: string;
+  items: string[];
+}> = [
+  {
+    category: "Permits & CofO",
+    items: [
+      "Final building inspection passed",
+      "Certificate of Occupancy received",
+      "Fire marshal sign-off received",
+      "Health department sign-off (if applicable)",
+      "All open permit items closed with city",
+    ],
+  },
+  {
+    category: "Warranties",
+    items: [
+      "Roof warranty received",
+      "HVAC equipment warranties received",
+      "MEP system warranties received",
+      "Building envelope / waterproofing warranty",
+      "Major equipment warranty package compiled",
+    ],
+  },
+  {
+    category: "As-Builts & Records",
+    items: [
+      "As-built drawings received from architect",
+      "MEP as-builts received",
+      "Civil / site as-builts received",
+      "Survey of as-built conditions",
+      "Operations & maintenance manuals delivered",
+    ],
+  },
+  {
+    category: "Lien Waivers",
+    items: [
+      "Final lien waivers received from GC",
+      "Final lien waivers from all major subs",
+      "No outstanding mechanics liens of record",
+      "Title rundown post-completion clean",
+    ],
+  },
+  {
+    category: "Final Draw & Retainage",
+    items: [
+      "Final draw package submitted to lender",
+      "Retainage release request submitted",
+      "Retainage funded by lender",
+      "Final cost report reconciled to budget",
+      "Project cost certification (if required) issued",
+    ],
+  },
+  {
+    category: "Punch List",
+    items: [
+      "Punch list walkthrough complete",
+      "All Priority 1 punch items resolved",
+      "All Priority 2 punch items resolved",
+      "Substantial completion certificate issued",
+      "Final completion certificate issued",
+    ],
+  },
+  {
+    category: "Insurance",
+    items: [
+      "Builder's risk converted to property insurance",
+      "Liability policy in place for operations",
+      "Workers comp closed out for project",
+      "Insurance certificates archived",
+    ],
+  },
+  {
+    category: "Operations Handover",
+    items: [
+      "Property management onboarded to building",
+      "Owner training on building systems complete",
+      "Spare parts / attic stock inventoried",
+      "Vendor / service contracts assigned to operations",
+      "Tenant move-in / lease-up plan activated",
+    ],
+  },
+];
+
 // ─── Project Management ────────────────────────────────────────────────────
 
 export type TaskPriority = "low" | "medium" | "high" | "critical";
@@ -1898,6 +1985,10 @@ export interface HardCostItem {
   incurred_date: string | null;
   notes: string | null;
   sort_order: number;
+  // Forecast-to-Complete: forward forecast of remaining spend on this line item.
+  // EAC = (incurred portion) + etc when set; otherwise EAC = amount.
+  etc: number | null;
+  forecast_note: string | null;
   created_at: string;
   updated_at: string;
 }

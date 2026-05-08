@@ -27,6 +27,10 @@ interface ChecklistItemRow extends ChecklistItem {
 
 interface DiligenceChecklistProps {
   dealId: string;
+  // Defaults to 'diligence' to preserve existing call sites. Pass 'closeout'
+  // for the construction punch-list view; AI auto-fill is hidden in non-
+  // diligence phases since the autofill prompt is tuned for diligence docs.
+  phase?: "diligence" | "closeout";
 }
 
 const STATUS_CONFIG: Record<
@@ -58,7 +62,7 @@ const CATEGORY_DOC_MAP: Record<string, DocumentCategory[]> = {
   "Insurance": ["insurance"],
 };
 
-export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) {
+export default function DiligenceChecklist({ dealId, phase = "diligence" }: DiligenceChecklistProps) {
   const [items, setItems] = useState<ChecklistItemRow[]>([]);
   const [documents, setDocuments] = useState<Array<{ id: string; original_name: string; category: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -73,12 +77,13 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
 
   useEffect(() => {
     loadAll();
-  }, [dealId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealId, phase]);
 
   const loadAll = async () => {
     try {
       const [checklistRes, docsRes] = await Promise.all([
-        fetch(`/api/checklist?deal_id=${dealId}`),
+        fetch(`/api/checklist?deal_id=${dealId}&phase=${phase}`),
         fetch(`/api/deals/${dealId}/documents`),
       ]);
       const [checklistJson, docsJson] = await Promise.all([checklistRes.json(), docsRes.json()]);
@@ -195,13 +200,15 @@ export default function DiligenceChecklist({ dealId }: DiligenceChecklistProps) 
             </p>
           )}
         </div>
-        <Button onClick={autoFill} disabled={autofilling} variant="outline" size="sm" className="shrink-0 gap-1.5">
-          {autofilling ? (
-            <><Loader2 className="h-3.5 w-3.5 animate-spin" />Analyzing...</>
-          ) : (
-            <><Sparkles className="h-3.5 w-3.5 text-primary" />AI Auto-fill</>
-          )}
-        </Button>
+        {phase === "diligence" && (
+          <Button onClick={autoFill} disabled={autofilling} variant="outline" size="sm" className="shrink-0 gap-1.5">
+            {autofilling ? (
+              <><Loader2 className="h-3.5 w-3.5 animate-spin" />Analyzing...</>
+            ) : (
+              <><Sparkles className="h-3.5 w-3.5 text-primary" />AI Auto-fill</>
+            )}
+          </Button>
+        )}
       </div>
 
       {autofillResult && (
