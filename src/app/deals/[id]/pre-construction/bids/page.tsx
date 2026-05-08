@@ -36,6 +36,7 @@ interface Bid {
   bid_date: string | null;
   total_amount: number | null;
   status: "received" | "analyzed" | "shortlisted" | "declined" | "awarded";
+  source_document_id: string | null;
   raw_text: string | null;
   extraction_status: "pending" | "analyzed";
   notes: string | null;
@@ -124,6 +125,8 @@ export default function BidsPage({ params }: { params: { id: string } }) {
     raw_text: "",
     notes: "",
   });
+  const [bidFile, setBidFile] = useState<File | null>(null);
+  const [uploadingBid, setUploadingBid] = useState(false);
 
   // Inline cell edit
   const [editingCellId, setEditingCellId] = useState<string | null>(null);
@@ -150,21 +153,41 @@ export default function BidsPage({ params }: { params: { id: string } }) {
 
   const submitNewBid = async () => {
     if (!bidForm.contractor_name.trim()) return;
-    const payload = {
-      ...bidForm,
-      total_amount: bidForm.total_amount === "" ? null : Number(bidForm.total_amount),
-    };
-    await fetch(`/api/deals/${dealId}/gc-bids`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    setBidDialogOpen(false);
-    setBidForm({
-      contractor_name: "", contractor_company: "", contractor_email: "",
-      bid_date: "", total_amount: "", raw_text: "", notes: "",
-    });
-    load();
+    setUploadingBid(true);
+    try {
+      if (bidFile) {
+        // Multipart path: PDF gets stored in R2 and text-extracted server-side.
+        const fd = new FormData();
+        fd.append("file", bidFile);
+        fd.append("contractor_name", bidForm.contractor_name);
+        if (bidForm.contractor_company) fd.append("contractor_company", bidForm.contractor_company);
+        if (bidForm.contractor_email) fd.append("contractor_email", bidForm.contractor_email);
+        if (bidForm.bid_date) fd.append("bid_date", bidForm.bid_date);
+        if (bidForm.total_amount !== "") fd.append("total_amount", String(bidForm.total_amount));
+        if (bidForm.raw_text) fd.append("raw_text", bidForm.raw_text);
+        if (bidForm.notes) fd.append("notes", bidForm.notes);
+        await fetch(`/api/deals/${dealId}/gc-bids/upload`, { method: "POST", body: fd });
+      } else {
+        const payload = {
+          ...bidForm,
+          total_amount: bidForm.total_amount === "" ? null : Number(bidForm.total_amount),
+        };
+        await fetch(`/api/deals/${dealId}/gc-bids`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+      setBidDialogOpen(false);
+      setBidForm({
+        contractor_name: "", contractor_company: "", contractor_email: "",
+        bid_date: "", total_amount: "", raw_text: "", notes: "",
+      });
+      setBidFile(null);
+      load();
+    } finally {
+      setUploadingBid(false);
+    }
   };
 
   const deleteBid = async (bidId: string) => {
@@ -401,6 +424,18 @@ export default function BidsPage({ params }: { params: { id: string } }) {
 
                 {isExpanded && (
                   <div className="border-t border-border/30 px-4 py-3 space-y-3 bg-muted/10">
+                    {b.source_document_id && (
+                      <div>
+                        <a
+                          href={`/api/documents/${b.source_document_id}/view`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-2xs text-primary hover:underline"
+                        >
+                          View source bid PDF →
+                        </a>
+                      </div>
+                    )}
                     {b.notes && (
                       <div>
                         <div className="text-2xs uppercase tracking-wider text-muted-foreground mb-1">Notes</div>
@@ -572,15 +607,32 @@ export default function BidsPage({ params }: { params: { id: string } }) {
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">
-                Raw Bid Content
-                <span className="text-muted-foreground/60 ml-1 normal-case">— paste cover letter, schedule of values, exclusions, assumptions. AI leveling reads this.</span>
+                Bid PDF
+                <span className="text-muted-foreground/60 ml-1 normal-case">— upload the contractor's bid (PDF preferred). Text gets extracted automatically and fed to AI leveling.</span>
+              </label>
+              <input
+                type="file"
+                accept=".pdf,.txt"
+                className="w-full text-xs file:mr-2 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:bg-primary/15 file:text-primary file:cursor-pointer"
+                onChange={(e) => setBidFile(e.target.files?.[0] ?? null)}
+              />
+              {bidFile && (
+                <div className="text-2xs text-muted-foreground mt-1">
+                  Selected: {bidFile.name} ({(bidFile.size / 1024 / 1024).toFixed(1)} MB)
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">
+                Raw Bid Content (optional if PDF uploaded)
+                <span className="text-muted-foreground/60 ml-1 normal-case">— paste cover letter / SOV / exclusions; appended to PDF text.</span>
               </label>
               <textarea
-                rows={8}
+                rows={6}
                 className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary font-mono"
                 value={bidForm.raw_text}
                 onChange={(e) => setBidForm({ ...bidForm, raw_text: e.target.value })}
-                placeholder="Paste the relevant text from the bid PDF here. Include the schedule of values + exclusions + assumptions for best leveling results."
+                placeholder="Optional. Useful when the bid arrives as an email or you want to add scope clarifications the AI leveler should consider."
               />
             </div>
             <div>
@@ -593,8 +645,10 @@ export default function BidsPage({ params }: { params: { id: string } }) {
               />
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="ghost" size="sm" onClick={() => setBidDialogOpen(false)}>Cancel</Button>
-              <Button size="sm" onClick={submitNewBid}>Add Bid</Button>
+              <Button variant="ghost" size="sm" onClick={() => setBidDialogOpen(false)} disabled={uploadingBid}>Cancel</Button>
+              <Button size="sm" onClick={submitNewBid} disabled={uploadingBid}>
+                {uploadingBid ? "Uploading…" : "Add Bid"}
+              </Button>
             </div>
           </div>
         </DialogContent>

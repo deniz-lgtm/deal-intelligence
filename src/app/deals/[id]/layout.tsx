@@ -40,6 +40,9 @@ import {
   Stamp,
   Leaf,
   Handshake,
+  ListChecks,
+  ClipboardSignature,
+  FileQuestion,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
@@ -129,16 +132,25 @@ const BASE_NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+const PRE_CON_NAV_GROUP: NavGroup = {
+  label: "Pre-Con",
+  items: [
+    { href: "/pre-construction/bids", label: "Bid Leveler", icon: Handshake },
+    { href: "/pre-construction/value-engineering", label: "VE Log", icon: ListChecks },
+    { href: "/pre-construction/constructability", label: "Constructability & GMP", icon: ClipboardSignature },
+  ],
+};
+
 const CONSTRUCTION_NAV_GROUP: NavGroup = {
   label: "Construction",
   items: [
     { href: "/construction", label: "Dashboard", icon: HardHat },
     { href: "/construction/schedule", label: "Schedule", icon: CalendarDays },
-    { href: "/construction/bids", label: "GC Bids", icon: Handshake },
     { href: "/construction/budget", label: "Budget", icon: DollarSign },
     { href: "/construction/permits", label: "Permits", icon: FileCheck },
     { href: "/construction/vendors", label: "Vendors", icon: Users },
     { href: "/construction/change-orders", label: "Change Orders", icon: FileWarning },
+    { href: "/construction/rfis", label: "RFIs", icon: FileQuestion },
     { href: "/construction/closeout", label: "Closeout", icon: ClipboardCheck },
     { href: "/construction/reports", label: "Reports", icon: ClipboardCheck },
   ],
@@ -148,8 +160,9 @@ const NAV_GROUP_ORDER = new Map<string, number>([
   ["Work", 1],
   ["Files", 2],
   ["Development", 4],
-  ["Construction", 5],
-  ["Team", 6],
+  ["Pre-Con", 5],
+  ["Construction", 6],
+  ["Team", 7],
 ]);
 
 // Massing-aware routes read the active project from `?massing=<id>`.
@@ -188,16 +201,16 @@ function getNavGroups(
   // execution OR the owner has pinned the deal to Construction via the
   // header badge. Either signal means the construction team is now
   // active; the sidebar shouldn't wait on the other.
+  // Pre-Con appears whenever Development OR Construction would (the bid
+  // leveler / VE log are typically used in late dev / pre-mobilization).
   const showConstructionGroup = executionPhase != null || showInConstruction;
-  const base = showConstructionGroup
-    ? (() => {
-        const groups = [...BASE_NAV_GROUPS];
-        // Insert Construction before Team once that role
-        // is active on the deal.
-        groups.splice(3, 0, CONSTRUCTION_NAV_GROUP);
-        return groups;
-      })()
-    : BASE_NAV_GROUPS;
+  const showPreConGroup = showConstructionGroup || showInDevelopment || dealScope !== "acquisition";
+  const base = (() => {
+    const groups = [...BASE_NAV_GROUPS];
+    if (showPreConGroup) groups.splice(3, 0, PRE_CON_NAV_GROUP);
+    if (showConstructionGroup) groups.splice(3, 0, CONSTRUCTION_NAV_GROUP);
+    return groups;
+  })();
   return applyScopeGating(base, dealScope, showInDevelopment).sort((a, b) => {
     const aOrder = a.label ? NAV_GROUP_ORDER.get(a.label) ?? 99 : 0;
     const bOrder = b.label ? NAV_GROUP_ORDER.get(b.label) ?? 99 : 0;

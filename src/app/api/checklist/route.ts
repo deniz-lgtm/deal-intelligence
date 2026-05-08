@@ -99,6 +99,76 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
+// Manual creation of a checklist item — used by the closeout page so users
+// can add custom punch-list items per section without going through admin
+// templates.
+export async function POST(req: NextRequest) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
+
+  try {
+    const body = await req.json();
+    const { deal_id, category, item, phase = "diligence", notes = null } = body;
+    if (!deal_id || !category?.trim() || !item?.trim()) {
+      return NextResponse.json({ error: "deal_id, category, and item are required" }, { status: 400 });
+    }
+    const { errorResponse: accessError } = await requireDealEditAccess(deal_id, userId);
+    if (accessError) return accessError;
+
+    const id = uuidv4();
+    await checklistQueries.upsert({
+      id,
+      deal_id,
+      category: category.trim(),
+      item: item.trim(),
+      status: "pending",
+      notes,
+      ai_filled: false,
+      source_document_ids: null,
+      phase,
+    });
+    const created = await checklistQueries.getById(id);
+    return NextResponse.json({ data: created });
+  } catch (error) {
+    console.error("POST /api/checklist error:", error);
+    return NextResponse.json({ error: "Failed to create checklist item" }, { status: 500 });
+  }
+}
+
+// Edit an item's metadata (category, item label, phase) — separate from PATCH
+// which only handles status/notes changes via the existing flow.
+export async function PUT(req: NextRequest) {
+  const { userId, errorResponse } = await requireAuth();
+  if (errorResponse) return errorResponse;
+  try {
+    const body = await req.json();
+    const { id, category, item, phase } = body;
+    if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
+    const existing = await checklistQueries.getById(id) as { deal_id: string } | null;
+    if (!existing) return NextResponse.json({ error: "checklist item not found" }, { status: 404 });
+    const { errorResponse: accessError } = await requireDealEditAccess(existing.deal_id, userId);
+    if (accessError) return accessError;
+
+    const pool = getPool();
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    if (category !== undefined) { sets.push(`category = $${idx++}`); values.push(category); }
+    if (item !== undefined) { sets.push(`item = $${idx++}`); values.push(item); }
+    if (phase !== undefined) { sets.push(`phase = $${idx++}`); values.push(phase); }
+    if (sets.length === 0) return NextResponse.json({ error: "no editable fields provided" }, { status: 400 });
+    sets.push(`updated_at = NOW()`);
+    values.push(id);
+    await pool.query(`UPDATE checklist_items SET ${sets.join(", ")} WHERE id = $${idx}`, values);
+    const updated = await checklistQueries.getById(id);
+    return NextResponse.json({ data: updated });
+  } catch (error) {
+    console.error("PUT /api/checklist error:", error);
+    return NextResponse.json({ error: "Failed to update checklist item" }, { status: 500 });
+  }
+}
+
 export async function DELETE(req: NextRequest) {
   const { userId, errorResponse } = await requireAuth();
   if (errorResponse) return errorResponse;

@@ -1023,6 +1023,85 @@ export async function ensureColumns(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_gc_bid_questions_bid ON deal_gc_bid_questions(bid_id)`,
+    // Value Engineering log — proposed savings against the active budget.
+    // status moves accepted → applied once the line is rolled into a new
+    // budget version (typically V2 - Post-VE). Schedule impact captures the
+    // days a VE item adds or removes; net of all accepted items shows the
+    // schedule consequence of the cost optimization push.
+    `CREATE TABLE IF NOT EXISTS deal_ve_items (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      number INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      proposer TEXT,
+      hardcost_item_id TEXT REFERENCES deal_hardcost_items(id) ON DELETE SET NULL,
+      cost_savings NUMERIC NOT NULL DEFAULT 0,
+      schedule_impact_days INTEGER NOT NULL DEFAULT 0,
+      scope_impact TEXT,
+      status TEXT NOT NULL DEFAULT 'proposed',
+      decision_note TEXT,
+      decided_at TIMESTAMPTZ,
+      decided_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_ve_items_deal ON deal_ve_items(deal_id, status)`,
+    // Constructability / GMP review log — one row per finding raised during
+    // GMP buyout & constructability review (drawing conflicts, scope gaps,
+    // long-lead procurement risks, etc.).
+    `CREATE TABLE IF NOT EXISTS deal_constructability_items (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      number INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      category TEXT,
+      severity TEXT NOT NULL DEFAULT 'medium',
+      assignee TEXT,
+      due_date DATE,
+      status TEXT NOT NULL DEFAULT 'open',
+      resolution TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_constructability_items_deal ON deal_constructability_items(deal_id, status)`,
+    // Construction RFI repository — store contractor RFIs as uploaded docs
+    // with extracted metadata (RFI #, subject, response date, etc.).
+    `CREATE TABLE IF NOT EXISTS deal_construction_rfis (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      rfi_number TEXT,
+      subject TEXT NOT NULL,
+      submitted_by TEXT,
+      submitted_date DATE,
+      response_required_by DATE,
+      responded_date DATE,
+      status TEXT NOT NULL DEFAULT 'open',
+      discipline TEXT,
+      cost_impact NUMERIC,
+      schedule_impact_days INTEGER,
+      response_summary TEXT,
+      source_document_id TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_construction_rfis_deal ON deal_construction_rfis(deal_id, status)`,
+    // Closeout per-item attachments — one document attached per checklist
+    // item with optional AI verification verdict & notes.
+    `CREATE TABLE IF NOT EXISTS deal_checklist_attachments (
+      id TEXT PRIMARY KEY,
+      checklist_item_id TEXT NOT NULL REFERENCES checklist_items(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL,
+      uploaded_by TEXT,
+      ai_verdict TEXT,
+      ai_summary TEXT,
+      ai_confidence NUMERIC,
+      verified_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_checklist_attachments_item ON deal_checklist_attachments(checklist_item_id)`,
     // Draw Schedule
     `CREATE TABLE IF NOT EXISTS deal_draws (
       id TEXT PRIMARY KEY,
@@ -5818,6 +5897,307 @@ export const gcBidQueries = {
   deleteQuestion: async (id: string) => {
     const pool = getPool();
     await pool.query(`DELETE FROM deal_gc_bid_questions WHERE id = $1`, [id]);
+  },
+};
+
+// ─── Value Engineering queries ────────────────────────────────────────────────
+
+export const veItemQueries = {
+  listByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_ve_items WHERE deal_id = $1 ORDER BY status = 'rejected', status = 'applied', number ASC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (input: {
+    id: string;
+    deal_id: string;
+    title: string;
+    description?: string | null;
+    proposer?: string | null;
+    hardcost_item_id?: string | null;
+    cost_savings?: number;
+    schedule_impact_days?: number;
+    scope_impact?: string | null;
+  }) => {
+    const pool = getPool();
+    const numRes = await pool.query(
+      `SELECT COALESCE(MAX(number), 0) + 1 AS next FROM deal_ve_items WHERE deal_id = $1`,
+      [input.deal_id]
+    );
+    const n = numRes.rows[0].next as number;
+    const res = await pool.query(
+      `INSERT INTO deal_ve_items
+        (id, deal_id, number, title, description, proposer, hardcost_item_id,
+         cost_savings, schedule_impact_days, scope_impact)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [
+        input.id, input.deal_id, n, input.title,
+        input.description ?? null, input.proposer ?? null,
+        input.hardcost_item_id ?? null,
+        input.cost_savings ?? 0, input.schedule_impact_days ?? 0,
+        input.scope_impact ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "title", "description", "proposer", "hardcost_item_id",
+      "cost_savings", "schedule_impact_days", "scope_impact",
+      "status", "decision_note",
+    ];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    if (Object.prototype.hasOwnProperty.call(updates, "status")) {
+      const status = String(updates.status);
+      if (["accepted", "rejected", "applied"].includes(status)) {
+        setClauses.push(`decided_at = NOW()`);
+      }
+    }
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_ve_items SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_ve_items WHERE id = $1`, [id]);
+  },
+};
+
+// ─── Constructability queries ─────────────────────────────────────────────────
+
+export const constructabilityQueries = {
+  listByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_constructability_items WHERE deal_id = $1 ORDER BY status = 'closed', severity = 'low', number ASC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (input: {
+    id: string;
+    deal_id: string;
+    title: string;
+    description?: string | null;
+    category?: string | null;
+    severity?: string;
+    assignee?: string | null;
+    due_date?: string | null;
+  }) => {
+    const pool = getPool();
+    const numRes = await pool.query(
+      `SELECT COALESCE(MAX(number), 0) + 1 AS next FROM deal_constructability_items WHERE deal_id = $1`,
+      [input.deal_id]
+    );
+    const n = numRes.rows[0].next as number;
+    const res = await pool.query(
+      `INSERT INTO deal_constructability_items
+        (id, deal_id, number, title, description, category, severity, assignee, due_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [
+        input.id, input.deal_id, n, input.title,
+        input.description ?? null, input.category ?? null,
+        input.severity ?? "medium",
+        input.assignee ?? null, input.due_date ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "title", "description", "category", "severity",
+      "assignee", "due_date", "status", "resolution",
+    ];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_constructability_items SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_constructability_items WHERE id = $1`, [id]);
+  },
+};
+
+// ─── Construction RFI queries ─────────────────────────────────────────────────
+
+export const constructionRfiQueries = {
+  listByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_construction_rfis WHERE deal_id = $1 ORDER BY status = 'closed', submitted_date DESC NULLS LAST, created_at DESC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (input: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_construction_rfis
+        (id, deal_id, rfi_number, subject, submitted_by, submitted_date,
+         response_required_by, responded_date, status, discipline, cost_impact,
+         schedule_impact_days, response_summary, source_document_id, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       RETURNING *`,
+      [
+        input.id, input.deal_id,
+        input.rfi_number ?? null, input.subject,
+        input.submitted_by ?? null, input.submitted_date ?? null,
+        input.response_required_by ?? null, input.responded_date ?? null,
+        input.status ?? "open",
+        input.discipline ?? null, input.cost_impact ?? null,
+        input.schedule_impact_days ?? null, input.response_summary ?? null,
+        input.source_document_id ?? null, input.notes ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "rfi_number", "subject", "submitted_by", "submitted_date",
+      "response_required_by", "responded_date", "status", "discipline",
+      "cost_impact", "schedule_impact_days", "response_summary",
+      "source_document_id", "notes",
+    ];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_construction_rfis SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_construction_rfis WHERE id = $1`, [id]);
+  },
+};
+
+// ─── Checklist Attachment queries ─────────────────────────────────────────────
+
+export const checklistAttachmentQueries = {
+  listByItem: async (checklistItemId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT a.*, d.original_name, d.file_path, d.mime_type
+       FROM deal_checklist_attachments a
+       LEFT JOIN documents d ON d.id = a.document_id
+       WHERE a.checklist_item_id = $1
+       ORDER BY a.created_at DESC`,
+      [checklistItemId]
+    );
+    return res.rows;
+  },
+
+  listByDeal: async (dealId: string, phase?: string) => {
+    const pool = getPool();
+    const params: unknown[] = [dealId];
+    let where = "ci.deal_id = $1";
+    if (phase) {
+      params.push(phase);
+      where += ` AND ci.phase = $${params.length}`;
+    }
+    const res = await pool.query(
+      `SELECT a.*, d.original_name, d.file_path, d.mime_type, ci.id AS item_id
+       FROM deal_checklist_attachments a
+       JOIN checklist_items ci ON ci.id = a.checklist_item_id
+       LEFT JOIN documents d ON d.id = a.document_id
+       WHERE ${where}
+       ORDER BY a.created_at DESC`,
+      params
+    );
+    return res.rows;
+  },
+
+  create: async (input: {
+    id: string;
+    checklist_item_id: string;
+    document_id: string;
+    uploaded_by?: string | null;
+  }) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_checklist_attachments
+        (id, checklist_item_id, document_id, uploaded_by)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [input.id, input.checklist_item_id, input.document_id, input.uploaded_by ?? null]
+    );
+    return res.rows[0];
+  },
+
+  setVerification: async (
+    id: string,
+    verdict: string,
+    summary: string,
+    confidence: number
+  ) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `UPDATE deal_checklist_attachments
+         SET ai_verdict = $1, ai_summary = $2, ai_confidence = $3, verified_at = NOW()
+       WHERE id = $4 RETURNING *`,
+      [verdict, summary, confidence, id]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_checklist_attachments WHERE id = $1`, [id]);
   },
 };
 

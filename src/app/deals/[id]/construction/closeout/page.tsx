@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { ClipboardCheck, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import DiligenceChecklist from "@/components/DiligenceChecklist";
+import CloseoutChecklist from "@/components/CloseoutChecklist";
 
-// Punch List / Closeout — reuses the diligence checklist component scoped
-// to phase='closeout'. The closeout template is seeded on demand from this
-// page so deals that never reach construction don't carry irrelevant rows.
+// Punch List / Closeout — uses the dedicated CloseoutChecklist component
+// (per-item document upload + AI verification + editable sections).
+// Template is seeded on demand from this page so deals that never reach
+// construction don't carry irrelevant rows.
 
 export default function CloseoutPage({ params }: { params: { id: string } }) {
   const dealId = params.id;
@@ -77,7 +78,7 @@ export default function CloseoutPage({ params }: { params: { id: string } }) {
           </Button>
         </div>
       ) : (
-        <DiligenceChecklist dealId={dealId} phase="closeout" />
+        <CloseoutChecklist dealId={dealId} />
       )}
     </div>
   );
