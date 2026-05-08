@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import DealNotes from "@/components/DealNotes";
+import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -827,9 +828,9 @@ function QaChat({
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history]);
+  // Sticks to the bottom while content streams in, but releases the moment
+  // the user scrolls up so they aren't yanked back to the latest message.
+  useStickToBottom(bottomRef, [history]);
 
   async function send(question: string) {
     if (!question.trim() || sending) return;
