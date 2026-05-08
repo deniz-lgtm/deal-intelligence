@@ -882,6 +882,45 @@ export async function ensureColumns(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_deal_hardcost_items_deal_id ON deal_hardcost_items(deal_id)`,
     "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS etc NUMERIC",
     "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS forecast_note TEXT",
+    // Budget revamp — extend hardcost items into a unified Budget (hard + soft + contingency).
+    // The legacy table name stays `deal_hardcost_items` to avoid breaking existing references;
+    // semantically it now stores every budget line. Cost class lets the UI tab between sections.
+    "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS cost_class TEXT NOT NULL DEFAULT 'hard'",
+    "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS csi_code TEXT",
+    "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS unit TEXT",
+    "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS change_order_amount NUMERIC NOT NULL DEFAULT 0",
+    "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS retainage_pct NUMERIC NOT NULL DEFAULT 0",
+    "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS budget_version_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_deal_hardcost_items_version ON deal_hardcost_items(budget_version_id) WHERE budget_version_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_deal_hardcost_items_class ON deal_hardcost_items(deal_id, cost_class)",
+    // Budget versions — V1 Initial, V2 Post-VE, etc. The active version drives
+    // every read on the Budget page; other versions are read-only snapshots.
+    `CREATE TABLE IF NOT EXISTS deal_budget_versions (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      version_number INTEGER NOT NULL,
+      label TEXT NOT NULL,
+      notes TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT false,
+      cloned_from_version_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_by TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_budget_versions_deal ON deal_budget_versions(deal_id, version_number)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_deal_budget_versions_active ON deal_budget_versions(deal_id) WHERE is_active = true`,
+    // Backfill: every deal that has any hardcost items but no budget version yet
+    // gets a V1 'Initial' version, marked active. Existing items are linked to it.
+    `INSERT INTO deal_budget_versions (id, deal_id, version_number, label, is_active, created_at)
+       SELECT gen_random_uuid()::text, h.deal_id, 1, 'V1 - Initial', true, MIN(h.created_at)
+       FROM deal_hardcost_items h
+       WHERE NOT EXISTS (SELECT 1 FROM deal_budget_versions v WHERE v.deal_id = h.deal_id)
+       GROUP BY h.deal_id`,
+    `UPDATE deal_hardcost_items h SET budget_version_id = (
+       SELECT v.id FROM deal_budget_versions v
+       WHERE v.deal_id = h.deal_id AND v.is_active = true LIMIT 1
+     ) WHERE h.budget_version_id IS NULL AND EXISTS (
+       SELECT 1 FROM deal_budget_versions v WHERE v.deal_id = h.deal_id AND v.is_active = true
+     )`,
     // Decisions / RFI Log — internal questions raised during diligence/development.
     `CREATE TABLE IF NOT EXISTS deal_decisions (
       id TEXT PRIMARY KEY,
@@ -6307,11 +6346,27 @@ export const preDevCostQueries = {
 // ─── Hard Cost Budget queries ─────────────────────────────────────────────────
 
 export const hardCostQueries = {
-  getByDealId: async (dealId: string) => {
+  /**
+   * Returns budget lines for a deal. When `versionId` is provided, scopes to
+   * that version; otherwise returns the active version's lines. When neither
+   * version exists yet (legacy deals before the version table was added), the
+   * raw set is returned without a filter so existing UIs keep working.
+   */
+  getByDealId: async (dealId: string, versionId?: string | null, costClass?: string | null) => {
     const pool = getPool();
+    const params: unknown[] = [dealId];
+    let where = "deal_id = $1";
+    if (versionId) {
+      params.push(versionId);
+      where += ` AND budget_version_id = $${params.length}`;
+    }
+    if (costClass) {
+      params.push(costClass);
+      where += ` AND cost_class = $${params.length}`;
+    }
     const res = await pool.query(
-      "SELECT * FROM deal_hardcost_items WHERE deal_id = $1 ORDER BY category, sort_order, created_at",
-      [dealId]
+      `SELECT * FROM deal_hardcost_items WHERE ${where} ORDER BY cost_class, csi_code NULLS LAST, category, sort_order, created_at`,
+      params
     );
     return res.rows;
   },
@@ -6319,26 +6374,76 @@ export const hardCostQueries = {
   create: async (item: Record<string, unknown>) => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO deal_hardcost_items (id, deal_id, category, description, vendor, amount, status, incurred_date, notes, sort_order, etc, forecast_note, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+      `INSERT INTO deal_hardcost_items
+        (id, deal_id, category, description, vendor, amount, status,
+         incurred_date, notes, sort_order, etc, forecast_note,
+         cost_class, csi_code, unit, change_order_amount, retainage_pct, budget_version_id,
+         created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+               $13, $14, $15, $16, $17, $18, NOW(), NOW())
        RETURNING *`,
       [
         item.id, item.deal_id, item.category, item.description,
         item.vendor ?? null, item.amount ?? 0, item.status ?? "estimated",
         item.incurred_date ?? null, item.notes ?? null, item.sort_order ?? 0,
         item.etc ?? null, item.forecast_note ?? null,
+        item.cost_class ?? "hard", item.csi_code ?? null, item.unit ?? null,
+        item.change_order_amount ?? 0, item.retainage_pct ?? 0,
+        item.budget_version_id ?? null,
       ]
     );
     return res.rows[0];
   },
 
+  bulkCreate: async (items: Array<Record<string, unknown>>) => {
+    if (items.length === 0) return [];
+    const pool = getPool();
+    const client = await pool.connect();
+    const created: Record<string, unknown>[] = [];
+    try {
+      await client.query("BEGIN");
+      for (const item of items) {
+        const res = await client.query(
+          `INSERT INTO deal_hardcost_items
+            (id, deal_id, category, description, vendor, amount, status,
+             notes, sort_order, cost_class, csi_code, unit, change_order_amount,
+             retainage_pct, budget_version_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+           RETURNING *`,
+          [
+            item.id, item.deal_id, item.category, item.description,
+            item.vendor ?? null, item.amount ?? 0, item.status ?? "estimated",
+            item.notes ?? null, item.sort_order ?? 0,
+            item.cost_class ?? "hard", item.csi_code ?? null, item.unit ?? null,
+            item.change_order_amount ?? 0, item.retainage_pct ?? 0,
+            item.budget_version_id ?? null,
+          ]
+        );
+        created.push(res.rows[0]);
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+    return created;
+  },
+
   update: async (id: string, updates: Record<string, unknown>) => {
     const pool = getPool();
+    const allowed = [
+      "category", "description", "vendor", "amount", "status",
+      "incurred_date", "notes", "sort_order", "etc", "forecast_note",
+      "cost_class", "csi_code", "unit", "change_order_amount", "retainage_pct",
+      "budget_version_id",
+    ];
     const setClauses: string[] = [];
     const values: unknown[] = [];
     let idx = 1;
     for (const [key, value] of Object.entries(updates)) {
-      if (["category", "description", "vendor", "amount", "status", "incurred_date", "notes", "sort_order", "etc", "forecast_note"].includes(key)) {
+      if (allowed.includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
         idx++;
@@ -6357,6 +6462,146 @@ export const hardCostQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_hardcost_items WHERE id = $1", [id]);
+  },
+};
+
+// ─── Budget Version queries ───────────────────────────────────────────────────
+
+export const budgetVersionQueries = {
+  listByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_budget_versions WHERE deal_id = $1 ORDER BY version_number ASC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getActive: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_budget_versions WHERE deal_id = $1 AND is_active = true LIMIT 1`,
+      [dealId]
+    );
+    return res.rows[0] ?? null;
+  },
+
+  /**
+   * Create a new version. If `cloneFromVersionId` is set, deep-copies every
+   * budget line from that version into the new one (so VE iterations start
+   * from the previous version). Marking active is left to the caller.
+   */
+  create: async (input: {
+    id: string;
+    deal_id: string;
+    label: string;
+    notes?: string | null;
+    cloned_from_version_id?: string | null;
+    created_by?: string | null;
+  }) => {
+    const pool = getPool();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const numRes = await client.query(
+        `SELECT COALESCE(MAX(version_number), 0) + 1 AS next FROM deal_budget_versions WHERE deal_id = $1`,
+        [input.deal_id]
+      );
+      const versionNumber = numRes.rows[0].next as number;
+      const verRes = await client.query(
+        `INSERT INTO deal_budget_versions (id, deal_id, version_number, label, notes, cloned_from_version_id, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [
+          input.id, input.deal_id, versionNumber, input.label,
+          input.notes ?? null, input.cloned_from_version_id ?? null,
+          input.created_by ?? null,
+        ]
+      );
+      // Clone lines if requested. crypto.randomUUID is used through pg's
+      // gen_random_uuid() to keep the implementation engine-agnostic.
+      if (input.cloned_from_version_id) {
+        await client.query(
+          `INSERT INTO deal_hardcost_items
+             (id, deal_id, category, description, vendor, amount, status,
+              incurred_date, notes, sort_order, etc, forecast_note,
+              cost_class, csi_code, unit, change_order_amount, retainage_pct,
+              budget_version_id, created_at, updated_at)
+           SELECT gen_random_uuid()::text, deal_id, category, description, vendor, amount, status,
+                  incurred_date, notes, sort_order, etc, forecast_note,
+                  cost_class, csi_code, unit, change_order_amount, retainage_pct,
+                  $1, NOW(), NOW()
+           FROM deal_hardcost_items
+           WHERE budget_version_id = $2`,
+          [input.id, input.cloned_from_version_id]
+        );
+      }
+      await client.query("COMMIT");
+      return verRes.rows[0];
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Mark a version as active for a deal. Atomic — clears the existing
+   * active flag and sets the new one in a single transaction so the unique
+   * partial index on `is_active = true` doesn't fire mid-update.
+   */
+  setActive: async (dealId: string, versionId: string) => {
+    const pool = getPool();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `UPDATE deal_budget_versions SET is_active = false WHERE deal_id = $1 AND is_active = true`,
+        [dealId]
+      );
+      await client.query(
+        `UPDATE deal_budget_versions SET is_active = true WHERE id = $1 AND deal_id = $2`,
+        [versionId, dealId]
+      );
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  update: async (id: string, updates: { label?: string; notes?: string | null }) => {
+    const pool = getPool();
+    const allowed = ["label", "notes"];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_budget_versions SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    // Cascade: lines tied to this version get deleted; if the version is
+    // active, the deal will have no active version until another is set.
+    // Caller is responsible for re-activating one.
+    await pool.query(`DELETE FROM deal_hardcost_items WHERE budget_version_id = $1`, [id]);
+    await pool.query(`DELETE FROM deal_budget_versions WHERE id = $1`, [id]);
   },
 };
 
