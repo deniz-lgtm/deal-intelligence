@@ -149,6 +149,7 @@ const BASE_NAV_GROUPS: NavGroup[] = [
     label: "Team",
     items: [
       { href: "/chat", label: "Chat", icon: MessageSquare },
+      { href: "/decisions", label: "Decisions / RFIs", icon: FileWarning },
       { href: "/communication", label: "Communication", icon: Mailbox },
       { href: "/contacts", label: "Contacts", icon: Users },
       { href: "/deal-log", label: "Deal Log", icon: Activity },
@@ -161,12 +162,14 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
   items: [
     { href: "/construction", label: "Dashboard", icon: HardHat },
     { href: "/construction/schedule", label: "Schedule", icon: CalendarDays },
+    { href: "/construction/bids", label: "GC Bids", icon: Handshake },
     { href: "/construction/budget", label: "Hard Costs", icon: DollarSign },
     { href: "/construction/draws", label: "Draws", icon: Wallet },
     { href: "/construction/permits", label: "Permits", icon: FileCheck },
     { href: "/construction/vendors", label: "Vendors", icon: Users },
-    { href: "/construction/reports", label: "Reports", icon: ClipboardCheck },
     { href: "/construction/change-orders", label: "Change Orders", icon: FileWarning },
+    { href: "/construction/closeout", label: "Closeout", icon: ClipboardCheck },
+    { href: "/construction/reports", label: "Reports", icon: ClipboardCheck },
   ],
 };
 

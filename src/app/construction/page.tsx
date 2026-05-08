@@ -7,6 +7,7 @@ import { AppShell } from "@/components/AppShell";
 import { classifyDealPhase, type PhaseSignals } from "@/lib/phase-classification";
 import type { Deal } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
+import { VarianceRollup } from "@/components/construction/VarianceRollup";
 
 // Construction workspace — portfolio of deals under construction. Each card
 // links into the existing per-deal construction sub-pages
@@ -96,11 +97,14 @@ export default function ConstructionPage() {
           ) : rows.length === 0 ? (
             <EmptyState />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-fade-up">
-              {rows.map(({ deal, signals: s }) => (
-                <ConDealCard key={deal.id} deal={deal} signals={s} />
-              ))}
-            </div>
+            <>
+              <VarianceRollup />
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-fade-up">
+                {rows.map(({ deal, signals: s }) => (
+                  <ConDealCard key={deal.id} deal={deal} signals={s} />
+                ))}
+              </div>
+            </>
           )}
         </main>
       </div>

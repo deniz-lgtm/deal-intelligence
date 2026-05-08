@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const dealId = searchParams.get("deal_id");
+    const phase = searchParams.get("phase") || undefined;
 
     if (!dealId) {
       return NextResponse.json({ error: "deal_id is required" }, { status: 400 });
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
     const { errorResponse: accessError } = await requireDealAccess(dealId, userId);
     if (accessError) return accessError;
 
-    const items = await checklistQueries.getByDealId(dealId);
+    const items = await checklistQueries.getByDealId(dealId, phase);
     return NextResponse.json({ data: items });
   } catch (error) {
     console.error("GET /api/checklist error:", error);

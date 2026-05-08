@@ -300,9 +300,18 @@ export default function AcquisitionPage() {
                   )}
                   onClick={() => setShowAnalytics((v) => !v)}
                 >
-                  <BarChart3 className="h-3.5 w-3.5" /> Analytics
+                  <BarChart3 className="h-3.5 w-3.5" /> Stats
                   {showAnalytics ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                 </Button>
+                <Link href="/acquisition/analytics">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs gap-1.5 hidden sm:inline-flex text-muted-foreground hover:text-foreground"
+                  >
+                    <TrendingUp className="h-3.5 w-3.5" /> Insights
+                  </Button>
+                </Link>
                 <div className="w-px h-5 bg-border/40 mx-1 hidden sm:block" />
                 {can("deals.create") && (
                   <Link href="/deals/new">

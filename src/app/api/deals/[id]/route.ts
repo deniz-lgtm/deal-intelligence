@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dealQueries, documentQueries, photoQueries } from "@/lib/db";
+import { dealQueries, dealStatusHistoryQueries, documentQueries, photoQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess, requireDealEditAccess, requirePermission } from "@/lib/auth";
 import { geocodeAddress, buildCompAddress } from "@/lib/geocode";
 import { deleteBlob } from "@/lib/blob-storage";
@@ -35,6 +35,8 @@ const EDITABLE_DEAL_FIELDS = new Set<string>([
   "execution_phase", "execution_started_at",
   // Document-execution flags
   "loi_executed", "psa_executed",
+  // Pipeline analytics: required when transitioning to status='dead'
+  "dead_reason", "dead_reason_note",
 ]);
 
 export async function GET(
@@ -104,7 +106,31 @@ export async function PATCH(
       }
     }
 
+    // Capture the previous status before the update so we can record a
+    // status_history row if it actually changes. Skipped when status isn't
+    // in the patch body to avoid an extra read on common edits.
+    let previousStatus: string | null = null;
+    if (body.status !== undefined) {
+      const before = await dealQueries.getById(params.id);
+      previousStatus = (before?.status as string | undefined) ?? null;
+    }
+
     const deal = await dealQueries.update(params.id, body);
+
+    // Append a status_history row when status actually changed. Best-effort:
+    // analytics shouldn't block the edit if the history insert hiccups.
+    if (body.status !== undefined && previousStatus !== body.status) {
+      try {
+        await dealStatusHistoryQueries.recordChange({
+          deal_id: params.id,
+          from_status: previousStatus,
+          to_status: body.status,
+          changed_by: userId,
+        });
+      } catch (err) {
+        console.warn("Failed to record deal_status_history", err);
+      }
+    }
 
     // Re-geocode if the address changed and coordinates weren't explicitly
     // set in the patch body. Non-fatal — ignore failures.

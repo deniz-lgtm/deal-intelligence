@@ -880,6 +880,110 @@ export async function ensureColumns(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_hardcost_items_deal_id ON deal_hardcost_items(deal_id)`,
+    "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS etc NUMERIC",
+    "ALTER TABLE deal_hardcost_items ADD COLUMN IF NOT EXISTS forecast_note TEXT",
+    // Decisions / RFI Log — internal questions raised during diligence/development.
+    `CREATE TABLE IF NOT EXISTS deal_decisions (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      number INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      category TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      asked_by TEXT,
+      assigned_to TEXT,
+      due_date DATE,
+      resolution TEXT,
+      linked_document_id TEXT,
+      linked_phase_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      resolved_at TIMESTAMPTZ
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_decisions_deal ON deal_decisions(deal_id, created_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS deal_decision_comments (
+      id TEXT PRIMARY KEY,
+      decision_id TEXT NOT NULL REFERENCES deal_decisions(id) ON DELETE CASCADE,
+      author_user_id TEXT,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_decision_comments_decision ON deal_decision_comments(decision_id, created_at)`,
+    // Pipeline analytics — status history + dead-deal post-mortem.
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dead_reason TEXT",
+    "ALTER TABLE deals ADD COLUMN IF NOT EXISTS dead_reason_note TEXT",
+    `CREATE TABLE IF NOT EXISTS deal_status_history (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      from_status TEXT,
+      to_status TEXT NOT NULL,
+      changed_by TEXT,
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_status_history_deal ON deal_status_history(deal_id, changed_at)`,
+    // Backfill a single seed history row per deal so funnel/time-in-stage
+    // analytics work on day 1 (deals that existed before this column was added).
+    `INSERT INTO deal_status_history (id, deal_id, from_status, to_status, changed_by, changed_at)
+       SELECT gen_random_uuid()::text, d.id, NULL, d.status, d.owner_id, d.created_at
+       FROM deals d
+       WHERE NOT EXISTS (SELECT 1 FROM deal_status_history h WHERE h.deal_id = d.id)`,
+    // Punch List / Closeout: scope checklist items by lifecycle phase. Default
+    // 'diligence' so existing rows keep their meaning.
+    "ALTER TABLE checklist_items ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'diligence'",
+    "CREATE INDEX IF NOT EXISTS idx_checklist_items_phase ON checklist_items(deal_id, phase)",
+    // GC Bid Leveling — contractor bids with AI-extracted scope items and
+    // clarifying questions. Canonical scope items are per-deal so different
+    // projects can have different scope structures (TI vs ground-up MF, etc.).
+    `CREATE TABLE IF NOT EXISTS deal_gc_bids (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      contractor_name TEXT NOT NULL,
+      contractor_company TEXT,
+      contractor_email TEXT,
+      bid_date DATE,
+      total_amount NUMERIC,
+      status TEXT NOT NULL DEFAULT 'received',
+      source_document_id TEXT,
+      raw_text TEXT,
+      extraction_status TEXT NOT NULL DEFAULT 'pending',
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_gc_bids_deal ON deal_gc_bids(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_gc_scope_items (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      division TEXT,
+      scope TEXT NOT NULL,
+      notes TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_gc_scope_items_deal ON deal_gc_scope_items(deal_id, sort_order)`,
+    `CREATE TABLE IF NOT EXISTS deal_gc_bid_items (
+      id TEXT PRIMARY KEY,
+      bid_id TEXT NOT NULL REFERENCES deal_gc_bids(id) ON DELETE CASCADE,
+      scope_item_id TEXT NOT NULL REFERENCES deal_gc_scope_items(id) ON DELETE CASCADE,
+      amount NUMERIC,
+      status TEXT NOT NULL DEFAULT 'included',
+      qualifier_note TEXT,
+      ai_generated BOOLEAN NOT NULL DEFAULT false,
+      UNIQUE (bid_id, scope_item_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_gc_bid_items_bid ON deal_gc_bid_items(bid_id)`,
+    `CREATE TABLE IF NOT EXISTS deal_gc_bid_questions (
+      id TEXT PRIMARY KEY,
+      bid_id TEXT NOT NULL REFERENCES deal_gc_bids(id) ON DELETE CASCADE,
+      question TEXT NOT NULL,
+      category TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      answer TEXT,
+      ai_generated BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_gc_bid_questions_bid ON deal_gc_bid_questions(bid_id)`,
     // Draw Schedule
     `CREATE TABLE IF NOT EXISTS deal_draws (
       id TEXT PRIMARY KEY,
@@ -3696,8 +3800,15 @@ export const loiQueries = {
 // ─── Checklist queries ────────────────────────────────────────────────────────
 
 export const checklistQueries = {
-  getByDealId: async (dealId: string) => {
+  getByDealId: async (dealId: string, phase?: string) => {
     const pool = getPool();
+    if (phase) {
+      const res = await pool.query(
+        "SELECT * FROM checklist_items WHERE deal_id = $1 AND phase = $2 ORDER BY category, item",
+        [dealId, phase]
+      );
+      return res.rows;
+    }
     const res = await pool.query(
       "SELECT * FROM checklist_items WHERE deal_id = $1 ORDER BY category, item",
       [dealId]
@@ -3709,13 +3820,14 @@ export const checklistQueries = {
     const pool = getPool();
     await pool.query(
       `INSERT INTO checklist_items
-        (id, deal_id, category, item, status, notes, ai_filled, source_document_ids, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+        (id, deal_id, category, item, status, notes, ai_filled, source_document_ids, phase, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
        ON CONFLICT(id) DO UPDATE SET
          status = EXCLUDED.status,
          notes = EXCLUDED.notes,
          ai_filled = EXCLUDED.ai_filled,
          source_document_ids = EXCLUDED.source_document_ids,
+         phase = EXCLUDED.phase,
          updated_at = NOW()`,
       [
         item.id,
@@ -3728,6 +3840,7 @@ export const checklistQueries = {
         item.source_document_ids
           ? JSON.stringify(item.source_document_ids)
           : null,
+        item.phase ?? "diligence",
       ]
     );
   },
@@ -3754,13 +3867,14 @@ export const checklistQueries = {
       for (const item of items) {
         await client.query(
           `INSERT INTO checklist_items
-            (id, deal_id, category, item, status, notes, ai_filled, source_document_ids, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+            (id, deal_id, category, item, status, notes, ai_filled, source_document_ids, phase, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
            ON CONFLICT(id) DO UPDATE SET
              status = EXCLUDED.status,
              notes = EXCLUDED.notes,
              ai_filled = EXCLUDED.ai_filled,
              source_document_ids = EXCLUDED.source_document_ids,
+             phase = EXCLUDED.phase,
              updated_at = NOW()`,
           [
             item.id,
@@ -3773,6 +3887,7 @@ export const checklistQueries = {
             item.source_document_ids
               ? JSON.stringify(item.source_document_ids)
               : null,
+            item.phase ?? "diligence",
           ]
         );
       }
@@ -3783,6 +3898,49 @@ export const checklistQueries = {
     } finally {
       client.release();
     }
+  },
+
+  /**
+   * Idempotent seed of the closeout checklist for a deal. Skips items
+   * that already exist by (deal_id, phase, category, item) so callers
+   * can safely call this from a "Seed Closeout" button without
+   * duplicating rows.
+   */
+  seedCloseout: async (
+    dealId: string,
+    template: Array<{ category: string; items: string[] }>,
+    makeId: () => string
+  ) => {
+    const pool = getPool();
+    const client = await pool.connect();
+    let inserted = 0;
+    try {
+      await client.query("BEGIN");
+      for (const section of template) {
+        for (const item of section.items) {
+          const existing = await client.query(
+            `SELECT id FROM checklist_items WHERE deal_id = $1 AND phase = 'closeout' AND category = $2 AND item = $3`,
+            [dealId, section.category, item]
+          );
+          if (existing.rows.length === 0) {
+            await client.query(
+              `INSERT INTO checklist_items
+                (id, deal_id, category, item, status, ai_filled, phase, updated_at)
+               VALUES ($1,$2,$3,$4,'pending',false,'closeout',NOW())`,
+              [makeId(), dealId, section.category, item]
+            );
+            inserted++;
+          }
+        }
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+    return inserted;
   },
 };
 
@@ -5295,6 +5453,370 @@ export const scheduleCommentQueries = {
   },
 };
 
+// ─── Decisions / RFI Log queries ──────────────────────────────────────────────
+
+export const decisionQueries = {
+  listByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT d.*,
+         (SELECT COUNT(*)::int FROM deal_decision_comments c WHERE c.decision_id = d.id) AS comment_count
+       FROM deal_decisions d
+       WHERE d.deal_id = $1
+       ORDER BY d.status = 'resolved', d.status = 'closed', d.created_at DESC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(`SELECT * FROM deal_decisions WHERE id = $1`, [id]);
+    return res.rows[0] ?? null;
+  },
+
+  create: async (input: {
+    id: string;
+    deal_id: string;
+    title: string;
+    body?: string | null;
+    category?: string | null;
+    status?: string;
+    asked_by?: string | null;
+    assigned_to?: string | null;
+    due_date?: string | null;
+    linked_document_id?: string | null;
+    linked_phase_id?: string | null;
+  }) => {
+    const pool = getPool();
+    const numRes = await pool.query(
+      `SELECT COALESCE(MAX(number), 0) + 1 AS next FROM deal_decisions WHERE deal_id = $1`,
+      [input.deal_id]
+    );
+    const nextNumber = numRes.rows[0].next as number;
+    const res = await pool.query(
+      `INSERT INTO deal_decisions
+         (id, deal_id, number, title, body, category, status, asked_by, assigned_to, due_date, linked_document_id, linked_phase_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING *`,
+      [
+        input.id, input.deal_id, nextNumber, input.title,
+        input.body ?? null, input.category ?? null, input.status ?? "open",
+        input.asked_by ?? null, input.assigned_to ?? null,
+        input.due_date ?? null, input.linked_document_id ?? null, input.linked_phase_id ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = ["title", "body", "category", "status", "assigned_to", "due_date", "resolution", "linked_document_id", "linked_phase_id"];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    if (Object.prototype.hasOwnProperty.call(updates, "status")) {
+      const status = String(updates.status);
+      if (status === "resolved" || status === "closed") {
+        setClauses.push(`resolved_at = COALESCE(resolved_at, NOW())`);
+      } else {
+        setClauses.push(`resolved_at = NULL`);
+      }
+    }
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_decisions SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_decisions WHERE id = $1`, [id]);
+  },
+
+  listComments: async (decisionId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_decision_comments WHERE decision_id = $1 ORDER BY created_at ASC`,
+      [decisionId]
+    );
+    return res.rows;
+  },
+
+  addComment: async (input: { id: string; decision_id: string; author_user_id?: string | null; body: string }) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_decision_comments (id, decision_id, author_user_id, body)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [input.id, input.decision_id, input.author_user_id ?? null, input.body]
+    );
+    return res.rows[0];
+  },
+};
+
+// ─── GC Bid Leveling queries ─────────────────────────────────────────────────
+
+export const gcBidQueries = {
+  /**
+   * Returns the full leveling payload for a deal: all bids, all canonical
+   * scope items, all bid_items keyed by (bid, scope), and all questions.
+   * One round-trip is enough since every dataset is deal-scoped and small
+   * (typically 3–6 bids × 50 scope items × small question lists).
+   */
+  getFullLeveling: async (dealId: string) => {
+    const pool = getPool();
+    const [bidsRes, scopeRes, itemsRes, qsRes] = await Promise.all([
+      pool.query(
+        `SELECT * FROM deal_gc_bids WHERE deal_id = $1 ORDER BY created_at ASC`,
+        [dealId]
+      ),
+      pool.query(
+        `SELECT * FROM deal_gc_scope_items WHERE deal_id = $1 ORDER BY sort_order, division, scope`,
+        [dealId]
+      ),
+      pool.query(
+        `SELECT bi.*
+         FROM deal_gc_bid_items bi
+         JOIN deal_gc_bids b ON b.id = bi.bid_id
+         WHERE b.deal_id = $1`,
+        [dealId]
+      ),
+      pool.query(
+        `SELECT q.*
+         FROM deal_gc_bid_questions q
+         JOIN deal_gc_bids b ON b.id = q.bid_id
+         WHERE b.deal_id = $1
+         ORDER BY q.created_at DESC`,
+        [dealId]
+      ),
+    ]);
+    return {
+      bids: bidsRes.rows,
+      scope_items: scopeRes.rows,
+      bid_items: itemsRes.rows,
+      questions: qsRes.rows,
+    };
+  },
+
+  createBid: async (input: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_gc_bids
+        (id, deal_id, contractor_name, contractor_company, contractor_email,
+         bid_date, total_amount, status, source_document_id, raw_text, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       RETURNING *`,
+      [
+        input.id, input.deal_id, input.contractor_name,
+        input.contractor_company ?? null, input.contractor_email ?? null,
+        input.bid_date ?? null, input.total_amount ?? null,
+        input.status ?? "received",
+        input.source_document_id ?? null,
+        input.raw_text ?? null,
+        input.notes ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  updateBid: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "contractor_name", "contractor_company", "contractor_email",
+      "bid_date", "total_amount", "status", "source_document_id",
+      "raw_text", "extraction_status", "notes",
+    ];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_gc_bids SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  deleteBid: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_gc_bids WHERE id = $1`, [id]);
+  },
+
+  /**
+   * Replace the deal's canonical scope items + every bid_item that maps to
+   * them. Used by the AI leveling endpoint, which rebuilds the canonical
+   * scope each time it runs to absorb new bids' line items.
+   *
+   * This is intentionally destructive — manual cell edits made between
+   * leveling passes are not preserved. The AI prompt is told to keep the
+   * scope structure stable so re-runs converge.
+   */
+  replaceLeveling: async (
+    dealId: string,
+    scopeItems: Array<{ id: string; division: string | null; scope: string; sort_order: number; notes?: string | null }>,
+    bidItems: Array<{
+      id: string;
+      bid_id: string;
+      scope_item_id: string;
+      amount: number | null;
+      status: string;
+      qualifier_note: string | null;
+      ai_generated: boolean;
+    }>,
+    questions: Array<{ id: string; bid_id: string; question: string; category: string | null; ai_generated: boolean }>
+  ) => {
+    const pool = getPool();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Cascade-delete via scope items so bid_items get cleaned too.
+      await client.query(`DELETE FROM deal_gc_scope_items WHERE deal_id = $1`, [dealId]);
+      // Drop AI-generated questions but keep manual ones.
+      await client.query(
+        `DELETE FROM deal_gc_bid_questions WHERE ai_generated = true AND bid_id IN (SELECT id FROM deal_gc_bids WHERE deal_id = $1)`,
+        [dealId]
+      );
+      for (const s of scopeItems) {
+        await client.query(
+          `INSERT INTO deal_gc_scope_items (id, deal_id, division, scope, notes, sort_order)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [s.id, dealId, s.division ?? null, s.scope, s.notes ?? null, s.sort_order]
+        );
+      }
+      for (const bi of bidItems) {
+        await client.query(
+          `INSERT INTO deal_gc_bid_items (id, bid_id, scope_item_id, amount, status, qualifier_note, ai_generated)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [bi.id, bi.bid_id, bi.scope_item_id, bi.amount, bi.status, bi.qualifier_note, bi.ai_generated]
+        );
+      }
+      for (const q of questions) {
+        await client.query(
+          `INSERT INTO deal_gc_bid_questions (id, bid_id, question, category, ai_generated)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [q.id, q.bid_id, q.question, q.category, q.ai_generated]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  updateBidItem: async (
+    id: string,
+    updates: { amount?: number | null; status?: string; qualifier_note?: string | null }
+  ) => {
+    const pool = getPool();
+    const allowed = ["amount", "status", "qualifier_note"];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_gc_bid_items SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  updateQuestion: async (
+    id: string,
+    updates: { question?: string; category?: string | null; status?: string; answer?: string | null }
+  ) => {
+    const pool = getPool();
+    const allowed = ["question", "category", "status", "answer"];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_gc_bid_questions SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  deleteQuestion: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_gc_bid_questions WHERE id = $1`, [id]);
+  },
+};
+
+// ─── Deal Status History queries ──────────────────────────────────────────────
+
+export const dealStatusHistoryQueries = {
+  /**
+   * Append a status-change row. Skips no-op transitions
+   * (from === to) so analytics aren't polluted with re-saves
+   * that didn't actually change anything.
+   */
+  recordChange: async (input: {
+    deal_id: string;
+    from_status: string | null;
+    to_status: string;
+    changed_by?: string | null;
+  }) => {
+    if (input.from_status === input.to_status) return null;
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_status_history (id, deal_id, from_status, to_status, changed_by)
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4)
+       RETURNING *`,
+      [input.deal_id, input.from_status, input.to_status, input.changed_by ?? null]
+    );
+    return res.rows[0];
+  },
+
+  listForDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_status_history WHERE deal_id = $1 ORDER BY changed_at ASC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+};
+
 export const devPhaseQueries = {
   getByDealId: async (dealId: string) => {
     const pool = getPool();
@@ -5797,13 +6319,14 @@ export const hardCostQueries = {
   create: async (item: Record<string, unknown>) => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO deal_hardcost_items (id, deal_id, category, description, vendor, amount, status, incurred_date, notes, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+      `INSERT INTO deal_hardcost_items (id, deal_id, category, description, vendor, amount, status, incurred_date, notes, sort_order, etc, forecast_note, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
        RETURNING *`,
       [
         item.id, item.deal_id, item.category, item.description,
         item.vendor ?? null, item.amount ?? 0, item.status ?? "estimated",
         item.incurred_date ?? null, item.notes ?? null, item.sort_order ?? 0,
+        item.etc ?? null, item.forecast_note ?? null,
       ]
     );
     return res.rows[0];
@@ -5815,7 +6338,7 @@ export const hardCostQueries = {
     const values: unknown[] = [];
     let idx = 1;
     for (const [key, value] of Object.entries(updates)) {
-      if (["category", "description", "vendor", "amount", "status", "incurred_date", "notes", "sort_order"].includes(key)) {
+      if (["category", "description", "vendor", "amount", "status", "incurred_date", "notes", "sort_order", "etc", "forecast_note"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
         idx++;

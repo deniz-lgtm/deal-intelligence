@@ -61,7 +61,13 @@ export default function HardCostBudget({ dealId }: Props) {
     status: "estimated" as HardCostStatus,
     incurred_date: "",
     notes: "",
+    etc: "" as string,
+    forecast_note: "",
   });
+
+  // Inline ETC editor state. Tracks which item id is being edited and its draft value.
+  const [etcEditingId, setEtcEditingId] = useState<string | null>(null);
+  const [etcDraft, setEtcDraft] = useState<string>("");
 
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -108,6 +114,8 @@ export default function HardCostBudget({ dealId }: Props) {
       status: "estimated",
       incurred_date: "",
       notes: "",
+      etc: "",
+      forecast_note: "",
     });
   };
 
@@ -127,24 +135,30 @@ export default function HardCostBudget({ dealId }: Props) {
       status: item.status,
       incurred_date: item.incurred_date || "",
       notes: item.notes || "",
+      etc: item.etc === null || item.etc === undefined ? "" : String(item.etc),
+      forecast_note: item.forecast_note || "",
     });
     setItemDialogOpen(true);
   };
 
   const handleSaveItem = async () => {
     if (!itemForm.description.trim()) return;
+    const payload = {
+      ...itemForm,
+      etc: itemForm.etc === "" ? null : Number(itemForm.etc),
+    };
     try {
       if (editingItem) {
         await fetch(`/api/deals/${dealId}/hardcost-items/${editingItem.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(itemForm),
+          body: JSON.stringify(payload),
         });
       } else {
         await fetch(`/api/deals/${dealId}/hardcost-items`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(itemForm),
+          body: JSON.stringify(payload),
         });
       }
       setItemDialogOpen(false);
@@ -153,6 +167,22 @@ export default function HardCostBudget({ dealId }: Props) {
       loadAll();
     } catch (err) {
       console.error("Failed to save item:", err);
+    }
+  };
+
+  const commitEtcInline = async (item: HardCostItem) => {
+    const next = etcDraft.trim() === "" ? null : Number(etcDraft);
+    setEtcEditingId(null);
+    setEtcDraft("");
+    try {
+      await fetch(`/api/deals/${dealId}/hardcost-items/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ etc: next }),
+      });
+      loadAll();
+    } catch (err) {
+      console.error("Failed to update ETC:", err);
     }
   };
 
@@ -202,6 +232,18 @@ export default function HardCostBudget({ dealId }: Props) {
   };
 
   // ── Calculations ──
+  // EAC (Estimate-At-Completion) per line item:
+  //   - status incurred/paid: assume full amount is "in" and add etc only if >0
+  //   - status estimated/committed: if etc set, EAC = etc; else EAC = amount (original budget)
+  // Variance = EAC - amount (budgeted). Positive = overrun.
+  const eacFor = (c: HardCostItem) => {
+    const amount = Number(c.amount);
+    const etc = c.etc === null || c.etc === undefined ? null : Number(c.etc);
+    if (c.status === "incurred" || c.status === "paid") return amount + (etc ?? 0);
+    return etc ?? amount;
+  };
+  const varianceFor = (c: HardCostItem) => eacFor(c) - Number(c.amount);
+
   const totalEstimated = items.reduce((sum, c) => sum + Number(c.amount), 0);
   const totalCommittedOrSpent = items
     .filter((c) => c.status === "committed" || c.status === "incurred" || c.status === "paid")
@@ -212,6 +254,9 @@ export default function HardCostBudget({ dealId }: Props) {
   const totalPaid = items
     .filter((c) => c.status === "paid")
     .reduce((sum, c) => sum + Number(c.amount), 0);
+  const totalEac = items.reduce((sum, c) => sum + eacFor(c), 0);
+  const totalVariance = totalEac - totalEstimated;
+  const totalVariancePct = totalEstimated > 0 ? (totalVariance / totalEstimated) * 100 : 0;
 
   // Group items by category
   const itemsByCategory = items.reduce<Record<string, HardCostItem[]>>((acc, c) => {
@@ -274,6 +319,35 @@ export default function HardCostBudget({ dealId }: Props) {
           <div>
             <div className="text-2xs text-muted-foreground">Paid</div>
             <div className="text-base font-bold text-emerald-400">{fc(totalPaid)}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 mb-3 pt-3 border-t border-border/30">
+          <div>
+            <div className="text-2xs text-muted-foreground">EAC (Forecast)</div>
+            <div className="text-base font-bold">{fc(totalEac)}</div>
+          </div>
+          <div>
+            <div className="text-2xs text-muted-foreground">Variance ($)</div>
+            <div className={cn(
+              "text-base font-bold",
+              totalVariance > totalEstimated * 0.05 ? "text-red-400"
+              : totalVariance > 0 ? "text-amber-400"
+              : "text-emerald-400"
+            )}>
+              {totalVariance >= 0 ? "+" : ""}{fc(totalVariance)}
+            </div>
+          </div>
+          <div>
+            <div className="text-2xs text-muted-foreground">Variance %</div>
+            <div className={cn(
+              "text-base font-bold",
+              totalVariancePct > 5 ? "text-red-400"
+              : totalVariancePct > 0 ? "text-amber-400"
+              : "text-emerald-400"
+            )}>
+              {totalVariancePct >= 0 ? "+" : ""}{totalVariancePct.toFixed(1)}%
+            </div>
           </div>
         </div>
 
@@ -414,6 +488,15 @@ export default function HardCostBudget({ dealId }: Props) {
                     <div className="divide-y divide-border/20">
                       {catItems.map((c) => {
                         const cfg = HARDCOST_STATUS_CONFIG[c.status];
+                        const eac = eacFor(c);
+                        const variance = varianceFor(c);
+                        const variancePct = Number(c.amount) > 0 ? (variance / Number(c.amount)) * 100 : 0;
+                        const varianceTone =
+                          variance > Number(c.amount) * 0.05 ? "text-red-400"
+                          : variance > 0 ? "text-amber-400"
+                          : variance < 0 ? "text-emerald-400"
+                          : "text-muted-foreground";
+                        const isEditingEtc = etcEditingId === c.id;
                         return (
                           <div key={c.id} className="group flex items-center gap-2 px-3 py-2 hover:bg-muted/20">
                             <button
@@ -437,6 +520,46 @@ export default function HardCostBudget({ dealId }: Props) {
                               </Badge>
                             </button>
                             <span className="text-xs font-medium tabular-nums w-24 text-right">{fc(Number(c.amount))}</span>
+                            {/* ETC inline editor */}
+                            {isEditingEtc ? (
+                              <input
+                                autoFocus
+                                type="number"
+                                className="w-20 bg-background border border-border rounded px-1.5 py-0.5 text-xs text-right text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                                value={etcDraft}
+                                onChange={(e) => setEtcDraft(e.target.value)}
+                                onBlur={() => commitEtcInline(c)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") commitEtcInline(c);
+                                  if (e.key === "Escape") { setEtcEditingId(null); setEtcDraft(""); }
+                                }}
+                                placeholder="ETC"
+                              />
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setEtcEditingId(c.id);
+                                  setEtcDraft(c.etc === null || c.etc === undefined ? "" : String(c.etc));
+                                }}
+                                title="Click to set Estimate-to-Complete"
+                                className={cn(
+                                  "text-2xs tabular-nums w-20 text-right hover:text-primary",
+                                  c.etc === null || c.etc === undefined ? "text-muted-foreground/50 italic" : "text-foreground"
+                                )}
+                              >
+                                {c.etc === null || c.etc === undefined ? "set ETC" : `ETC ${fc(Number(c.etc))}`}
+                              </button>
+                            )}
+                            {/* EAC + variance — only meaningful when ETC set or status is incurred/paid */}
+                            <span className="text-2xs tabular-nums w-20 text-right text-muted-foreground" title="Estimate-At-Completion">
+                              {fc(eac)}
+                            </span>
+                            <span
+                              className={cn("text-2xs tabular-nums w-16 text-right", varianceTone)}
+                              title={`Variance vs budget: ${variance >= 0 ? "+" : ""}${fc(variance)}`}
+                            >
+                              {variance === 0 ? "—" : `${variancePct >= 0 ? "+" : ""}${variancePct.toFixed(0)}%`}
+                            </span>
                             <button
                               onClick={() => openEditItem(c)}
                               className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary transition-all"
@@ -554,6 +677,31 @@ export default function HardCostBudget({ dealId }: Props) {
                 value={itemForm.incurred_date}
                 onChange={(e) => setItemForm({ ...itemForm, incurred_date: e.target.value })}
               />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  ETC ($, optional)
+                  <span className="text-muted-foreground/60 ml-1 normal-case">— forecast remaining spend</span>
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  value={itemForm.etc}
+                  onChange={(e) => setItemForm({ ...itemForm, etc: e.target.value })}
+                  placeholder="Leave blank if on-budget"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Forecast Note</label>
+                <input
+                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  value={itemForm.forecast_note}
+                  onChange={(e) => setItemForm({ ...itemForm, forecast_note: e.target.value })}
+                  placeholder="e.g., trade letting overrun"
+                />
+              </div>
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
