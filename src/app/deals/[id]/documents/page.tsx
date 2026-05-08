@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import Link from "next/link";
 import {
   FileText,
   File,
@@ -18,6 +19,12 @@ import {
   Star,
   History,
   GitCompareArrows,
+  MessageSquare,
+  FileSearch,
+  ScrollText,
+  Presentation,
+  FolderArchive,
+  Share2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -320,6 +327,8 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
+      <FilesWorkflowHub dealId={params.id} documents={documents} />
+
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -373,6 +382,108 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         />
       )}
     </div>
+  );
+}
+
+function FilesWorkflowHub({
+  dealId,
+  documents,
+}: {
+  dealId: string;
+  documents: Document[];
+}) {
+  const countByCategory = (category: DocumentCategory) =>
+    documents.filter((doc) => doc.category === category).length;
+  const sourceCount = documents.filter((doc) => !AI_REPORT_CATEGORIES.includes(doc.category)).length;
+  const outputCount = documents.filter((doc) => AI_REPORT_CATEGORIES.includes(doc.category)).length;
+  const omCount = countByCategory("om");
+  const ddCount = countByCategory("dd_abstract");
+  const packageCount =
+    countByCategory("investment_package") + countByCategory("ic_package");
+
+  const actions = [
+    {
+      href: `/deals/${dealId}/om-analysis`,
+      label: "OM Review",
+      meta: omCount > 0 ? `${omCount} source${omCount === 1 ? "" : "s"}` : "No OM yet",
+      icon: FileSearch,
+    },
+    {
+      href: `/deals/${dealId}/dd-abstract`,
+      label: "DD Abstract",
+      meta: ddCount > 0 ? `${ddCount} saved` : "Draft",
+      icon: ScrollText,
+    },
+    {
+      href: `/deals/${dealId}/investment-package`,
+      label: "Investment Package",
+      meta: packageCount > 0 ? `${packageCount} saved` : "Build",
+      icon: Presentation,
+    },
+    {
+      href: `/deals/${dealId}/reports`,
+      label: "Reports",
+      meta: outputCount > 0 ? `${outputCount} outputs` : "Library",
+      icon: FolderArchive,
+    },
+    {
+      href: `/deals/${dealId}/room`,
+      label: "Deal Room",
+      meta: "Share",
+      icon: Share2,
+    },
+    {
+      href: `/deals/${dealId}/chat?prompt=${encodeURIComponent("Review this deal's files. What matters, what is missing, and what should be updated next? Keep it concise.")}`,
+      label: "Assistant",
+      meta: "Ask",
+      icon: MessageSquare,
+    },
+  ];
+
+  return (
+    <section className="border rounded-xl bg-card/70 overflow-hidden">
+      <div className="grid grid-cols-1 md:grid-cols-[220px_1fr]">
+        <div className="p-4 border-b md:border-b-0 md:border-r border-border/60">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+            <FileText className="h-3.5 w-3.5" />
+            Files Workspace
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-2xl font-semibold tabular-nums">{sourceCount}</div>
+              <div className="text-[11px] text-muted-foreground">Source docs</div>
+            </div>
+            <div>
+              <div className="text-2xl font-semibold tabular-nums">{outputCount}</div>
+              <div className="text-[11px] text-muted-foreground">Outputs</div>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-3">
+          {actions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <Link
+                key={action.href}
+                href={action.href}
+                className="group flex items-center gap-3 p-4 border-b border-r border-border/50 hover:bg-muted/40 transition-colors min-h-[76px]"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-md bg-muted/60 text-muted-foreground group-hover:text-foreground">
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium truncate">{action.label}</span>
+                  <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                    {action.meta}
+                    <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </span>
+                </span>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    </section>
   );
 }
 
