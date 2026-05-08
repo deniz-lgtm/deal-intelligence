@@ -729,7 +729,7 @@ function GanttStrip({
   );
 }
 
-// Re-export a small "view the other tracks" helper for page-level use.
+// Re-export a small schedule-view switcher for page-level use.
 export function OtherTrackLinks({
   dealId,
   current,
@@ -742,22 +742,31 @@ export function OtherTrackLinks({
     development: `/deals/${dealId}/project`,
     construction: `/deals/${dealId}/construction/schedule`,
   };
-  const others = (["acquisition", "development", "construction"] as ScheduleTrack[]).filter(
-    (t) => t !== current
-  );
+  const tracks: ScheduleTrack[] = ["acquisition", "development", "construction"];
   return (
-    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span>Other schedules:</span>
-      {others.map((t) => (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <span className="uppercase tracking-wide text-[10px]">Schedule views</span>
+      {tracks.map((t) => (
         <a
           key={t}
           href={hrefs[t]}
-          className="text-primary hover:underline inline-flex items-center gap-1"
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 transition-colors",
+            t === current
+              ? "border-primary/40 bg-primary/10 text-primary"
+              : "border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/40"
+          )}
+          aria-current={t === current ? "page" : undefined}
         >
           {SCHEDULE_TRACK_LABELS[t]}
-          <ArrowUpRight className="h-3 w-3" />
+          {t !== current && <ArrowUpRight className="h-3 w-3" />}
         </a>
       ))}
+      <span className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-muted-foreground">
+        Row arrow
+        <ArrowUpRight className="h-3 w-3" />
+        focused task plan
+      </span>
     </div>
   );
 }
