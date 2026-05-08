@@ -6,13 +6,10 @@ import { usePathname, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   FileText,
-  CheckSquare,
   MessageSquare,
   LayoutDashboard,
   Star,
   Calculator,
-  Camera,
-  FileSignature,
   ScrollText,
   FileSearch,
   Activity,
@@ -25,7 +22,6 @@ import {
   Users,
   BarChart3,
   Share2,
-  Footprints,
   DollarSign,
   Wallet,
   FileCheck,
@@ -40,7 +36,6 @@ import {
   Flag,
   GanttChart,
   CalendarDays,
-  Compass,
   PencilRuler,
   Stamp,
   Leaf,
@@ -89,56 +84,33 @@ const BASE_NAV_GROUPS: NavGroup[] = [
     items: [{ href: "", label: "Overview", icon: LayoutDashboard }],
   },
   {
-    label: "Analysis",
+    label: "Work",
     items: [
-      { href: "/site-zoning", label: "Zoning", icon: MapPin },
-      // Ground-up deals need the site plan & program locked before
-      // underwriting can price a pro forma — unit mix, parking, FAR feed
-      // directly into rents and costs. Sits above Underwriting for that
-      // reason. It stays in Analysis because it feeds both design and
-      // underwriting.
-      { href: "/programming", label: "Site Plan", icon: Layers },
+      { href: "/schedule", label: "Schedule", icon: Flag },
       { href: "/underwriting", label: "Underwriting", icon: Calculator },
+      { href: "/programming", label: "Site Plan", icon: Layers },
+      { href: "/site-zoning", label: "Zoning", icon: MapPin },
       { href: "/comps", label: "Comps", icon: BarChart3 },
       { href: "/location", label: "Location", icon: Globe },
     ],
   },
   {
-    label: "Documents",
+    label: "Files",
     items: [
-      { href: "/documents", label: "All Documents", icon: FileText },
+      { href: "/documents", label: "Documents", icon: FileText },
       { href: "/om-analysis", label: "OM Review", icon: FileSearch },
       { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
-      { href: "/investment-package", label: "Inv. Package", icon: Presentation },
+      { href: "/investment-package", label: "Investment Package", icon: Presentation },
       { href: "/reports", label: "Reports", icon: FolderArchive },
       { href: "/room", label: "Deal Room", icon: Share2 },
-      { href: "/photos", label: "Photos", icon: Camera },
     ],
   },
   {
-    // Sourcing-through-close: the items an acquisitions analyst touches
-    // while running a deal from site walk to signed PSA. The Schedule
-    // row here is the Acquisition-track CPM view (milestones like call
-    // for offers, LOI, PSA, DD end, close).
-    label: "Work Plan",
-    items: [
-      { href: "/schedule", label: "Schedule", icon: Flag },
-      { href: "/checklist", label: "Checklist", icon: CheckSquare },
-      { href: "/site-walk", label: "Site Walk", icon: Footprints },
-      { href: "/loi", label: "LOI", icon: FileSignature },
-    ],
-  },
-  {
-    // Development-track workspace: the design / entitlement / CEQA work
-    // between close and GC mobilization. Each item is a focused view on
-    // the shared deal_dev_phases table, filtered by workstream; the
-    // master Schedule page is the unified CPM gantt. Site Plan & Program
-    // lives in Analysis because for ground-up it's a precondition for
-    // underwriting.
+    // Development-track workspace: design, entitlement, CEQA, and
+    // procurement work between close and GC mobilization.
     label: "Development",
     items: [
-      { href: "/project",              label: "Schedule",        icon: GanttChart },
-      { href: "/project/pre-dev",      label: "Pre-Dev",         icon: Compass },
+      { href: "/project",              label: "Project Schedule", icon: GanttChart },
       { href: "/project/design",       label: "Design",          icon: PencilRuler },
       { href: "/project/entitlements", label: "Entitlements",    icon: Stamp },
       { href: "/project/ceqa",         label: "CEQA",            icon: Leaf },
@@ -148,7 +120,7 @@ const BASE_NAV_GROUPS: NavGroup[] = [
   {
     label: "Team",
     items: [
-      { href: "/chat", label: "Chat", icon: MessageSquare },
+      { href: "/chat", label: "Assistant", icon: MessageSquare },
       { href: "/decisions", label: "Decisions / RFIs", icon: FileWarning },
       { href: "/communication", label: "Communication", icon: Mailbox },
       { href: "/contacts", label: "Contacts", icon: Users },
@@ -174,9 +146,8 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
 };
 
 const NAV_GROUP_ORDER = new Map<string, number>([
-  ["Work Plan", 1],
-  ["Analysis", 2],
-  ["Documents", 3],
+  ["Work", 1],
+  ["Files", 2],
   ["Development", 4],
   ["Construction", 5],
   ["Team", 6],
@@ -222,9 +193,9 @@ function getNavGroups(
   const base = showConstructionGroup
     ? (() => {
         const groups = [...BASE_NAV_GROUPS];
-        // Insert Construction between Development and Team once that role
+        // Insert Construction before Team once that role
         // is active on the deal.
-        groups.splice(5, 0, CONSTRUCTION_NAV_GROUP);
+        groups.splice(3, 0, CONSTRUCTION_NAV_GROUP);
         return groups;
       })()
     : BASE_NAV_GROUPS;
@@ -299,15 +270,9 @@ export default function DealLayout({
   // overlay drawer when `mobileSidebarOpen` is true. The same header
   // toggle drives both desktop collapse and mobile open/close.
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  // Per-group collapse state keyed by group label. Overview (no label) is
-  // never collapsible. Work Plan and Analysis stay open; deeper document,
-  // execution, and team surfaces start tucked away.
-  const [navGroupsCollapsed, setNavGroupsCollapsed] = useState<Record<string, boolean>>({
-    Documents: true,
-    Development: true,
-    Team: true,
-    Construction: true,
-  });
+  // Per-group collapse state keyed by group label. Everything starts open
+  // so a deal page does not feel like a set of hidden drawers.
+  const [navGroupsCollapsed, setNavGroupsCollapsed] = useState<Record<string, boolean>>({});
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeMassingId = searchParams?.get("massing") || null;
@@ -316,14 +281,10 @@ export default function DealLayout({
   useEffect(() => {
     const stored = localStorage.getItem("dealSidebarCollapsed");
     if (stored !== null) setSidebarCollapsed(stored === "1");
-    const storedGroups = localStorage.getItem("dealNavGroupsCollapsed");
+    const storedGroups = localStorage.getItem("dealNavGroupsCollapsed.v2");
     if (storedGroups) {
       try {
         const parsed = JSON.parse(storedGroups) as Record<string, boolean>;
-        // Merge stored state over defaults so groups added after a user
-        // first visited (e.g. Development, which landed when the phase
-        // triptych rolled out) inherit their default collapse state
-        // instead of falling back to "open" because the key is absent.
         setNavGroupsCollapsed((prev) => ({ ...prev, ...parsed }));
       } catch {}
     }
@@ -354,7 +315,7 @@ export default function DealLayout({
   const toggleNavGroup = (label: string) => {
     setNavGroupsCollapsed((prev) => {
       const next = { ...prev, [label]: !prev[label] };
-      localStorage.setItem("dealNavGroupsCollapsed", JSON.stringify(next));
+      localStorage.setItem("dealNavGroupsCollapsed.v2", JSON.stringify(next));
       return next;
     });
   };
@@ -523,10 +484,10 @@ export default function DealLayout({
                       // Phase groups pick up their accent tint (same
                       // mechanism used by AppShell); all other labels
                       // stay on the neutral muted scale.
-                      group.label === "Work Plan" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
+                      group.label === "Work" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
                       group.label === "Development" && "text-[hsl(var(--phase-dev))]/80 hover:text-[hsl(var(--phase-dev))]",
                       group.label === "Construction" && "text-[hsl(var(--phase-con))]/80 hover:text-[hsl(var(--phase-con))]",
-                      !["Work Plan", "Development", "Construction"].includes(group.label) &&
+                      !["Work", "Development", "Construction"].includes(group.label) &&
                         "text-muted-foreground/60 hover:text-muted-foreground",
                       sidebarCollapsed && "md:hidden"
                     )}
