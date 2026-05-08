@@ -116,7 +116,7 @@ export default function KanbanCard({ deal, onStar, onDragStart }: KanbanCardProp
                 "text-[10px] font-bold px-1.5 py-0 rounded border tabular-nums",
                 quantColor(deal.quant_composite)
               )}
-              title={`Deal Score · ${deal.quant_stage?.toUpperCase() ?? ""} · confidence ${
+              title={`Quant Score · ${deal.quant_stage?.toUpperCase() ?? ""} · confidence ${
                 deal.quant_confidence != null ? Math.round(deal.quant_confidence * 100) + "%" : "—"
               }`}
             >

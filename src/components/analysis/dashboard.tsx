@@ -113,7 +113,7 @@ function RedFlagItem({ type, title, description }: RedFlagProps) {
 }
 
 const MOCK_ANALYSIS = {
-  score: 7.2,
+  score: 72,
   financial: {
     purchasePrice: "$12.5M",
     noi: "$875K",
@@ -160,18 +160,18 @@ export function AnalysisDashboard() {
 
   return (
     <div className="space-y-5">
-      {/* Deal Score */}
+      {/* Quant Score */}
       <div className="gradient-gold rounded-xl p-6 text-primary-foreground">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-primary-foreground/60 text-xs font-medium uppercase tracking-wider">Overall Deal Score</p>
+            <p className="text-primary-foreground/60 text-xs font-medium uppercase tracking-wider">Quant Score</p>
             <div className="flex items-baseline space-x-2 mt-2">
               <span className="text-5xl font-bold tracking-tight tabular-nums font-display">{MOCK_ANALYSIS.score}</span>
-              <span className="text-primary-foreground/40 text-lg">/ 10</span>
+              <span className="text-primary-foreground/40 text-lg">/ 100</span>
             </div>
             <p className="text-primary-foreground/70 text-sm mt-2">
-              {MOCK_ANALYSIS.score >= 7 ? "Strong investment opportunity" :
-               MOCK_ANALYSIS.score >= 5 ? "Moderate opportunity with caveats" :
+              {MOCK_ANALYSIS.score >= 80 ? "Institutional profile" :
+               MOCK_ANALYSIS.score >= 65 ? "Actionable with caveats" :
                "Proceed with caution"}
             </p>
           </div>
