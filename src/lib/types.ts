@@ -1974,6 +1974,8 @@ export const EXECUTION_PHASE_CONFIG: Record<ExecutionPhase, { label: string; col
 
 export type HardCostStatus = "estimated" | "committed" | "incurred" | "paid";
 
+export type BudgetCostClass = "hard" | "soft" | "contingency";
+
 export interface HardCostItem {
   id: string;
   deal_id: string;
@@ -1989,9 +1991,115 @@ export interface HardCostItem {
   // EAC = (incurred portion) + etc when set; otherwise EAC = amount.
   etc: number | null;
   forecast_note: string | null;
+  // Budget revamp: hard | soft | contingency; CSI division code (optional);
+  // unit of measure; per-line change orders + retainage; version FK.
+  cost_class: BudgetCostClass;
+  csi_code: string | null;
+  unit: string | null;
+  change_order_amount: number;
+  retainage_pct: number;
+  budget_version_id: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export interface BudgetVersion {
+  id: string;
+  deal_id: string;
+  version_number: number;
+  label: string;
+  notes: string | null;
+  is_active: boolean;
+  cloned_from_version_id: string | null;
+  created_at: string;
+  created_by: string | null;
+}
+
+// Standard CSI MasterFormat divisions used as seedable budget categories.
+// 32 divisions (the modern MasterFormat). Numbering is the user-facing form
+// (e.g. "03 - Concrete") so the UI can sort lexicographically and still get
+// the right ordering.
+export const CSI_DIVISIONS: Array<{ code: string; name: string }> = [
+  { code: "01", name: "General Requirements" },
+  { code: "02", name: "Existing Conditions" },
+  { code: "03", name: "Concrete" },
+  { code: "04", name: "Masonry" },
+  { code: "05", name: "Metals" },
+  { code: "06", name: "Wood, Plastics, and Composites" },
+  { code: "07", name: "Thermal and Moisture Protection" },
+  { code: "08", name: "Openings" },
+  { code: "09", name: "Finishes" },
+  { code: "10", name: "Specialties" },
+  { code: "11", name: "Equipment" },
+  { code: "12", name: "Furnishings" },
+  { code: "13", name: "Special Construction" },
+  { code: "14", name: "Conveying Equipment" },
+  { code: "21", name: "Fire Suppression" },
+  { code: "22", name: "Plumbing" },
+  { code: "23", name: "Heating, Ventilating, and Air Conditioning" },
+  { code: "26", name: "Electrical" },
+  { code: "27", name: "Communications" },
+  { code: "28", name: "Electronic Safety and Security" },
+  { code: "31", name: "Earthwork" },
+  { code: "32", name: "Exterior Improvements" },
+  { code: "33", name: "Utilities" },
+];
+
+// A starter SOV that mirrors the lender-style schedule developers actually use.
+// Categories are intentionally generic (per the screenshot) — most lenders
+// don't expect strict CSI divisions, just a coherent SOV with hard / soft /
+// contingency sections.
+export const STANDARD_SOV_TEMPLATE: Array<{ cost_class: BudgetCostClass; category: string; description: string }> = [
+  { cost_class: "hard", category: "Hard Cost", description: "General Conditions" },
+  { cost_class: "hard", category: "Hard Cost", description: "Existing Conditions" },
+  { cost_class: "hard", category: "Hard Cost", description: "Foundation" },
+  { cost_class: "hard", category: "Hard Cost", description: "Masonry" },
+  { cost_class: "hard", category: "Hard Cost", description: "Structural Steel" },
+  { cost_class: "hard", category: "Hard Cost", description: "Misc. Metals" },
+  { cost_class: "hard", category: "Hard Cost", description: "Wood Framing" },
+  { cost_class: "hard", category: "Hard Cost", description: "Cabinetry & Countertops" },
+  { cost_class: "hard", category: "Hard Cost", description: "Misc. Carpentry" },
+  { cost_class: "hard", category: "Hard Cost", description: "Exterior Assemblies" },
+  { cost_class: "hard", category: "Hard Cost", description: "Roofing" },
+  { cost_class: "hard", category: "Hard Cost", description: "Windows & Doors" },
+  { cost_class: "hard", category: "Hard Cost", description: "Drywall & Insulation" },
+  { cost_class: "hard", category: "Hard Cost", description: "Tile" },
+  { cost_class: "hard", category: "Hard Cost", description: "Flooring" },
+  { cost_class: "hard", category: "Hard Cost", description: "Paint" },
+  { cost_class: "hard", category: "Hard Cost", description: "Accessories (closets, tp holder, etc.)" },
+  { cost_class: "hard", category: "Hard Cost", description: "Equipment - Appliances" },
+  { cost_class: "hard", category: "Hard Cost", description: "Curtains & Shades" },
+  { cost_class: "hard", category: "Hard Cost", description: "Fire Protection" },
+  { cost_class: "hard", category: "Hard Cost", description: "Plumbing" },
+  { cost_class: "hard", category: "Hard Cost", description: "HVAC" },
+  { cost_class: "hard", category: "Hard Cost", description: "Electrical" },
+  { cost_class: "hard", category: "Hard Cost", description: "LV & Fire Alarm" },
+  { cost_class: "hard", category: "Hard Cost", description: "Site Work" },
+  { cost_class: "hard", category: "Hard Cost", description: "Landscaping" },
+  { cost_class: "hard", category: "Hard Cost", description: "Off-Site" },
+  { cost_class: "hard", category: "Hard Cost", description: "Utilities" },
+  { cost_class: "hard", category: "Hard Cost", description: "Solar" },
+  { cost_class: "hard", category: "Hard Cost", description: "GC OH & Fee" },
+  { cost_class: "soft", category: "Soft Cost", description: "Consultants" },
+  { cost_class: "soft", category: "Soft Cost", description: "Permits & Fees" },
+  { cost_class: "soft", category: "Soft Cost", description: "Bank Inspection & Review" },
+  { cost_class: "soft", category: "Soft Cost", description: "CM Fee" },
+  { cost_class: "soft", category: "Soft Cost", description: "Architect" },
+  { cost_class: "soft", category: "Soft Cost", description: "Civil Engineer" },
+  { cost_class: "soft", category: "Soft Cost", description: "Structural Engineer" },
+  { cost_class: "soft", category: "Soft Cost", description: "MEP Engineer" },
+  { cost_class: "soft", category: "Soft Cost", description: "Survey" },
+  { cost_class: "soft", category: "Soft Cost", description: "Geotechnical" },
+  { cost_class: "soft", category: "Soft Cost", description: "Environmental (Phase I/II)" },
+  { cost_class: "soft", category: "Soft Cost", description: "Legal" },
+  { cost_class: "soft", category: "Soft Cost", description: "Title & Escrow" },
+  { cost_class: "soft", category: "Soft Cost", description: "Insurance" },
+  { cost_class: "soft", category: "Soft Cost", description: "Property Tax (during construction)" },
+  { cost_class: "soft", category: "Soft Cost", description: "Loan Interest" },
+  { cost_class: "soft", category: "Soft Cost", description: "Loan Fees / Origination" },
+  { cost_class: "soft", category: "Soft Cost", description: "Marketing & Lease-up" },
+  { cost_class: "contingency", category: "Contingency", description: "Contingency" },
+];
 
 export const HARDCOST_STATUS_CONFIG: Record<HardCostStatus, { label: string; color: string }> = {
   estimated: { label: "Estimated", color: "bg-zinc-500/20 text-zinc-300" },
