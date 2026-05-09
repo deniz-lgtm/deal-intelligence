@@ -1,78 +1,80 @@
 import { useEffect, useRef, type DependencyList, type RefObject } from "react";
 
-const NEAR_BOTTOM_PX = 80;
-// Smooth-scroll animations rarely run longer than this. While the timer is
-// active we ignore `scroll` events so the animation doesn't keep "fixing"
-// our isAtBottom flag mid-flight.
-const PROGRAMMATIC_SCROLL_GUARD_MS = 600;
+// Engage threshold: when content arrives, auto-scroll only if the user is
+// within this distance of the bottom (so a tiny gap doesn't strand them).
+const ENGAGE_NEAR_BOTTOM_PX = 80;
+// Re-engage threshold: once the user has scrolled away, only restart sticking
+// if they manually scroll all the way to the very bottom. Strict so a small
+// wheel-up doesn't accidentally re-arm stick on the next message.
+const REENGAGE_AT_BOTTOM_PX = 4;
 
-// Auto-scrolls a sentinel into view whenever `deps` change, but only when
-// the user is already pinned near the bottom. The previous version trusted
-// `scroll` events alone — but the smooth-scroll animation itself fires scroll
-// events that re-pin isAtBottom to true, so a user scrolling up while content
-// streams in would get yanked back to the bottom on every chunk. This rev
-// distinguishes user-initiated scroll (wheel / touchmove) from programmatic
-// scroll, and disengages stick the moment the user actually moves the
-// viewport away from the bottom.
+// Auto-scrolls a sentinel into view when `deps` change, but only while the
+// user is "stuck" to the bottom. The previous version smooth-scrolled, but
+// browser-native smooth scrolls don't cancel on user input — every chunk of
+// streamed content fired a fresh animation that fought any wheel/touch
+// gesture. This rev:
+//   1. Snaps instantly (`behavior: "auto"`) so there's no animation to race.
+//   2. Disengages stick immediately on any wheel-up or touch-drag-down.
+//   3. Only re-engages when the user themselves scrolls to the very bottom.
 export function useStickToBottom(
   sentinelRef: RefObject<HTMLElement | null>,
   deps: DependencyList,
 ) {
   const stickRef = useRef(true);
-  const programmaticRef = useRef(false);
-  const programmaticTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const container = sentinelRef.current?.parentElement;
     if (!container) return;
 
-    const isNearBottom = () =>
-      container.scrollHeight - container.scrollTop - container.clientHeight <=
-      NEAR_BOTTOM_PX;
+    const distFromBottom = () =>
+      container.scrollHeight - container.scrollTop - container.clientHeight;
 
-    // Real user input. Cancel any in-flight programmatic-scroll guard so the
-    // resulting scroll event below is treated as the user's, not ours.
-    const onUserIntent = () => {
-      programmaticRef.current = false;
-      if (programmaticTimerRef.current != null) {
-        clearTimeout(programmaticTimerRef.current);
-        programmaticTimerRef.current = null;
-      }
+    const onWheel = (e: WheelEvent) => {
+      // Any upward wheel intent cancels stick, even if scrollTop hasn't moved
+      // far enough yet to leave the engage band.
+      if (e.deltaY < 0) stickRef.current = false;
+    };
+
+    let touchStartY = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      touchStartY = e.touches[0]?.clientY ?? 0;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const y = e.touches[0]?.clientY ?? 0;
+      // Finger dragging downward on screen = content scrolling up = user
+      // moving away from the latest message.
+      if (y - touchStartY > 4) stickRef.current = false;
     };
 
     const onScroll = () => {
-      if (programmaticRef.current) return;
-      stickRef.current = isNearBottom();
+      // Only re-engage when the user has scrolled all the way back to the
+      // very bottom themselves. The strict threshold prevents a small
+      // wheel-up (still inside the 80px engage band) from silently re-arming.
+      if (distFromBottom() <= REENGAGE_AT_BOTTOM_PX) {
+        stickRef.current = true;
+      }
     };
 
-    stickRef.current = isNearBottom();
+    stickRef.current = distFromBottom() <= ENGAGE_NEAR_BOTTOM_PX;
 
-    container.addEventListener("wheel", onUserIntent, { passive: true });
-    container.addEventListener("touchmove", onUserIntent, { passive: true });
+    container.addEventListener("wheel", onWheel, { passive: true });
+    container.addEventListener("touchstart", onTouchStart, { passive: true });
+    container.addEventListener("touchmove", onTouchMove, { passive: true });
     container.addEventListener("scroll", onScroll, { passive: true });
 
     return () => {
-      container.removeEventListener("wheel", onUserIntent);
-      container.removeEventListener("touchmove", onUserIntent);
+      container.removeEventListener("wheel", onWheel);
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
       container.removeEventListener("scroll", onScroll);
     };
   }, [sentinelRef]);
 
   useEffect(() => {
     if (!stickRef.current) return;
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-
-    programmaticRef.current = true;
-    sentinel.scrollIntoView({ behavior: "smooth" });
-
-    if (programmaticTimerRef.current != null) {
-      clearTimeout(programmaticTimerRef.current);
-    }
-    programmaticTimerRef.current = window.setTimeout(() => {
-      programmaticRef.current = false;
-      programmaticTimerRef.current = null;
-    }, PROGRAMMATIC_SCROLL_GUARD_MS);
+    // Instant scroll — smooth animations from prior chunks would still be
+    // running on the next chunk and fight any user gesture mid-flight.
+    sentinelRef.current?.scrollIntoView({ block: "end" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 }
