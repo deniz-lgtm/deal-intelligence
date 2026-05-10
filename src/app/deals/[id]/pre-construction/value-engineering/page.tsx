@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Plus,
   Trash2,
@@ -9,16 +11,9 @@ import {
   XCircle,
   TrendingDown,
   Clock,
-  Edit2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 type VEStatus = "proposed" | "in_review" | "accepted" | "rejected" | "applied";
@@ -50,20 +45,11 @@ const STATUS_CFG: Record<VEStatus, { label: string; tone: string }> = {
 const fc = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 
 export default function VELogPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
   const dealId = params.id;
   const [items, setItems] = useState<VEItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<VEStatus | "all">("all");
-
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [form, setForm] = useState({
-    title: "",
-    description: "",
-    proposer: "",
-    cost_savings: 0,
-    schedule_impact_days: 0,
-    scope_impact: "",
-  });
 
   const load = useCallback(async () => {
     try {
@@ -77,34 +63,18 @@ export default function VELogPage({ params }: { params: { id: string } }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const submit = async () => {
-    if (!form.title.trim()) return;
-    await fetch(`/api/deals/${dealId}/ve-items`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...form,
-        title: form.title.trim(),
-        description: form.description || null,
-        proposer: form.proposer || null,
-        scope_impact: form.scope_impact || null,
-      }),
-    });
-    setDialogOpen(false);
-    setForm({ title: "", description: "", proposer: "", cost_savings: 0, schedule_impact_days: 0, scope_impact: "" });
-    load();
-  };
-
-  const setStatus = async (id: string, status: VEStatus, note?: string) => {
+  const setStatus = async (id: string, status: VEStatus) => {
     await fetch(`/api/deals/${dealId}/ve-items/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status, ...(note ? { decision_note: note } : {}) }),
+      body: JSON.stringify({ status }),
     });
     load();
   };
 
-  const remove = async (id: string) => {
+  const remove = async (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (!confirm("Delete this VE item?")) return;
     await fetch(`/api/deals/${dealId}/ve-items/${id}`, { method: "DELETE" });
     load();
@@ -112,7 +82,6 @@ export default function VELogPage({ params }: { params: { id: string } }) {
 
   const filtered = filter === "all" ? items : items.filter((i) => i.status === filter);
 
-  // Roll-up: net savings of items that are accepted or applied (not just proposed).
   const totals = useMemo(() => {
     const t = { proposed: 0, accepted: 0, applied: 0, schedule: 0 };
     for (const i of items) {
@@ -136,12 +105,13 @@ export default function VELogPage({ params }: { params: { id: string } }) {
             Track VE items proposed against the active budget. Accepted items roll into the next budget version (typically V2 - Post-VE).
           </p>
         </div>
-        <Button size="sm" onClick={() => setDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-1" /> New VE Item
-        </Button>
+        <Link href={`/deals/${dealId}/pre-construction/value-engineering/new`}>
+          <Button size="sm">
+            <Plus className="h-4 w-4 mr-1" /> New VE Item
+          </Button>
+        </Link>
       </header>
 
-      {/* Roll-up cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <RollupCard label="Proposed savings" value={fc(totals.proposed)} icon={TrendingDown} tone="text-zinc-300" />
         <RollupCard label="Accepted savings" value={fc(totals.accepted)} icon={CheckCircle2} tone="text-amber-300" />
@@ -175,9 +145,11 @@ export default function VELogPage({ params }: { params: { id: string } }) {
               {items.length === 0 ? "No VE items proposed yet." : "No items match the filter."}
             </p>
             {items.length === 0 && (
-              <Button size="sm" variant="outline" onClick={() => setDialogOpen(true)}>
-                <Plus className="h-3 w-3 mr-1" /> Add the first one
-              </Button>
+              <Link href={`/deals/${dealId}/pre-construction/value-engineering/new`}>
+                <Button size="sm" variant="outline">
+                  <Plus className="h-3 w-3 mr-1" /> Add the first one
+                </Button>
+              </Link>
             )}
           </div>
         ) : (
@@ -198,12 +170,17 @@ export default function VELogPage({ params }: { params: { id: string } }) {
               <tbody>
                 {filtered.map((it) => {
                   const cfg = STATUS_CFG[it.status];
+                  const href = `/deals/${dealId}/pre-construction/value-engineering/${it.id}`;
                   return (
-                    <tr key={it.id} className="group border-t border-border/20 hover:bg-muted/10">
+                    <tr
+                      key={it.id}
+                      className="group border-t border-border/20 hover:bg-muted/10 cursor-pointer"
+                      onClick={() => router.push(href)}
+                    >
                       <td className="px-3 py-2 tabular-nums text-muted-foreground">VE-{String(it.number).padStart(3, "0")}</td>
                       <td className="px-3 py-2">
                         <div className="font-medium">{it.title}</div>
-                        {it.description && <div className="text-2xs text-muted-foreground mt-0.5 max-w-md">{it.description}</div>}
+                        {it.description && <div className="text-2xs text-muted-foreground mt-0.5 max-w-md line-clamp-2">{it.description}</div>}
                       </td>
                       <td className="px-3 py-2 text-muted-foreground">{it.proposer || "—"}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-emerald-400">{fc(Number(it.cost_savings))}</td>
@@ -217,21 +194,37 @@ export default function VELogPage({ params }: { params: { id: string } }) {
                       <td className="px-3 py-2 text-right">
                         <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100">
                           {it.status !== "accepted" && it.status !== "applied" && (
-                            <button onClick={() => setStatus(it.id, "accepted")} title="Accept" className="text-emerald-400 hover:text-emerald-300">
+                            <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStatus(it.id, "accepted"); }}
+                              title="Accept"
+                              className="text-emerald-400 hover:text-emerald-300"
+                            >
                               <CheckCircle2 className="h-3.5 w-3.5" />
                             </button>
                           )}
                           {it.status !== "rejected" && (
-                            <button onClick={() => setStatus(it.id, "rejected")} title="Reject" className="text-red-400 hover:text-red-300">
+                            <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStatus(it.id, "rejected"); }}
+                              title="Reject"
+                              className="text-red-400 hover:text-red-300"
+                            >
                               <XCircle className="h-3.5 w-3.5" />
                             </button>
                           )}
                           {it.status === "accepted" && (
-                            <button onClick={() => setStatus(it.id, "applied")} title="Mark applied to budget" className="text-blue-400 hover:text-blue-300">
+                            <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStatus(it.id, "applied"); }}
+                              title="Mark applied to budget"
+                              className="text-blue-400 hover:text-blue-300"
+                            >
                               <CheckCircle2 className="h-3.5 w-3.5" />
                             </button>
                           )}
-                          <button onClick={() => remove(it.id)} title="Delete" className="text-muted-foreground hover:text-red-400">
+                          <button
+                            onClick={(e) => remove(e, it.id)}
+                            title="Delete"
+                            className="text-muted-foreground hover:text-red-400"
+                          >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
@@ -244,76 +237,6 @@ export default function VELogPage({ params }: { params: { id: string } }) {
           </div>
         )}
       </div>
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>New Value Engineering Item</DialogTitle></DialogHeader>
-          <div className="space-y-3 pt-2">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Title</label>
-              <input
-                autoFocus
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                placeholder="e.g., Substitute LVT for hardwood in common areas"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Detail / rationale</label>
-              <textarea
-                rows={3}
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-none"
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Proposer</label>
-                <input
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={form.proposer}
-                  onChange={(e) => setForm({ ...form, proposer: e.target.value })}
-                  placeholder="GC / arch / owner"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Savings ($)</label>
-                <input
-                  type="number"
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-                  value={form.cost_savings}
-                  onChange={(e) => setForm({ ...form, cost_savings: Number(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Schedule Δ (days)</label>
-                <input
-                  type="number"
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-                  value={form.schedule_impact_days}
-                  onChange={(e) => setForm({ ...form, schedule_impact_days: Number(e.target.value) })}
-                  placeholder="negative = saves time"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Scope impact</label>
-              <input
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-                value={form.scope_impact}
-                onChange={(e) => setForm({ ...form, scope_impact: e.target.value })}
-                placeholder="What changes about the scope, finish, or specification?"
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="ghost" size="sm" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button size="sm" onClick={submit}>Add</Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

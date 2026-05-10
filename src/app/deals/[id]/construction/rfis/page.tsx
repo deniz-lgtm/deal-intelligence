@@ -1,24 +1,16 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import {
-  Plus,
   Trash2,
   FileQuestion,
   Upload,
-  Loader2,
-  Edit2,
   ExternalLink,
   AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 type Status = "open" | "in_review" | "answered" | "closed";
@@ -55,19 +47,6 @@ export default function ConstructionRfisPage({ params }: { params: { id: string 
   const [items, setItems] = useState<RFI[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"open" | "all">("open");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const [form, setForm] = useState({
-    rfi_number: "",
-    subject: "",
-    submitted_by: "",
-    submitted_date: "",
-    response_required_by: "",
-    discipline: "",
-    notes: "",
-  });
 
   const load = useCallback(async () => {
     try {
@@ -80,49 +59,6 @@ export default function ConstructionRfisPage({ params }: { params: { id: string 
   }, [dealId]);
 
   useEffect(() => { load(); }, [load]);
-
-  const submit = async () => {
-    setUploading(true);
-    try {
-      const file = fileRef.current?.files?.[0];
-      if (file) {
-        const fd = new FormData();
-        fd.append("file", file);
-        // Form fields are optional — AI will fill from PDF text.
-        for (const [k, v] of Object.entries(form)) {
-          if (v) fd.append(k, v);
-        }
-        if (!form.subject) fd.append("subject", file.name.replace(/\.pdf$/i, ""));
-        await fetch(`/api/deals/${dealId}/construction-rfis`, { method: "POST", body: fd });
-      } else {
-        if (!form.subject.trim()) {
-          alert("Subject is required when no file is uploaded.");
-          setUploading(false);
-          return;
-        }
-        await fetch(`/api/deals/${dealId}/construction-rfis`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...form,
-            subject: form.subject.trim(),
-            rfi_number: form.rfi_number || null,
-            submitted_by: form.submitted_by || null,
-            submitted_date: form.submitted_date || null,
-            response_required_by: form.response_required_by || null,
-            discipline: form.discipline || null,
-            notes: form.notes || null,
-          }),
-        });
-      }
-      setDialogOpen(false);
-      setForm({ rfi_number: "", subject: "", submitted_by: "", submitted_date: "", response_required_by: "", discipline: "", notes: "" });
-      if (fileRef.current) fileRef.current.value = "";
-      load();
-    } finally {
-      setUploading(false);
-    }
-  };
 
   const setStatus = async (id: string, status: Status, response?: string) => {
     await fetch(`/api/deals/${dealId}/construction-rfis/${id}`, {
@@ -165,9 +101,11 @@ export default function ConstructionRfisPage({ params }: { params: { id: string 
             submission date, response deadline, and discipline. Track response status to closeout.
           </p>
         </div>
-        <Button size="sm" onClick={() => setDialogOpen(true)}>
-          <Upload className="h-4 w-4 mr-1" /> Upload RFI
-        </Button>
+        <Link href={`/deals/${dealId}/construction/rfis/new`}>
+          <Button size="sm">
+            <Upload className="h-4 w-4 mr-1" /> Upload RFI
+          </Button>
+        </Link>
       </header>
 
       <div className="flex items-center gap-2 text-xs">
@@ -195,9 +133,11 @@ export default function ConstructionRfisPage({ params }: { params: { id: string 
               {items.length === 0 ? "No RFIs uploaded yet." : "No open RFIs."}
             </p>
             {items.length === 0 && (
-              <Button size="sm" variant="outline" onClick={() => setDialogOpen(true)}>
-                <Upload className="h-3 w-3 mr-1" /> Upload first RFI
-              </Button>
+              <Link href={`/deals/${dealId}/construction/rfis/new`}>
+                <Button size="sm" variant="outline">
+                  <Upload className="h-3 w-3 mr-1" /> Upload first RFI
+                </Button>
+              </Link>
             )}
           </div>
         ) : (
@@ -292,108 +232,6 @@ export default function ConstructionRfisPage({ params }: { params: { id: string 
         )}
       </div>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Upload Construction RFI</DialogTitle></DialogHeader>
-          <div className="space-y-3 pt-2">
-            <p className="text-2xs text-muted-foreground">
-              Upload the contractor's RFI PDF. AI extracts RFI #, subject, submission date, response deadline, and discipline automatically.
-              Override any field below if needed.
-            </p>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">RFI PDF</label>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".pdf,.txt"
-                className="w-full text-xs file:mr-2 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:bg-primary/15 file:text-primary file:cursor-pointer"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">RFI Number</label>
-                <input
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-                  value={form.rfi_number}
-                  onChange={(e) => setForm({ ...form, rfi_number: e.target.value })}
-                  placeholder="auto-extracted from PDF"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Discipline</label>
-                <select
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-                  value={form.discipline}
-                  onChange={(e) => setForm({ ...form, discipline: e.target.value })}
-                >
-                  <option value="">— auto —</option>
-                  <option value="architectural">Architectural</option>
-                  <option value="structural">Structural</option>
-                  <option value="mep">MEP</option>
-                  <option value="civil">Civil</option>
-                  <option value="electrical">Electrical</option>
-                  <option value="plumbing">Plumbing</option>
-                  <option value="hvac">HVAC</option>
-                  <option value="fire_life_safety">Fire / Life Safety</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Subject (override)</label>
-              <input
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-                value={form.subject}
-                onChange={(e) => setForm({ ...form, subject: e.target.value })}
-                placeholder="auto-extracted from PDF"
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Submitted By</label>
-                <input
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-                  value={form.submitted_by}
-                  onChange={(e) => setForm({ ...form, submitted_by: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Submitted Date</label>
-                <input
-                  type="date"
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-                  value={form.submitted_date}
-                  onChange={(e) => setForm({ ...form, submitted_date: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Response Due</label>
-                <input
-                  type="date"
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
-                  value={form.response_required_by}
-                  onChange={(e) => setForm({ ...form, response_required_by: e.target.value })}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Internal Notes</label>
-              <textarea
-                rows={2}
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm resize-none"
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="ghost" size="sm" onClick={() => setDialogOpen(false)} disabled={uploading}>Cancel</Button>
-              <Button size="sm" onClick={submit} disabled={uploading}>
-                {uploading ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Uploading…</> : "Upload"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

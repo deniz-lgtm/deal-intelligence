@@ -16,14 +16,9 @@ import {
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 // ─── Types mirror the API payload ─────────────────────────────────────────────
@@ -114,20 +109,6 @@ export default function BidsPage({ params }: { params: { id: string } }) {
   const [leveling, setLeveling] = useState(false);
   const [levelError, setLevelError] = useState<string | null>(null);
 
-  // Add-bid dialog
-  const [bidDialogOpen, setBidDialogOpen] = useState(false);
-  const [bidForm, setBidForm] = useState({
-    contractor_name: "",
-    contractor_company: "",
-    contractor_email: "",
-    bid_date: "",
-    total_amount: "",
-    raw_text: "",
-    notes: "",
-  });
-  const [bidFile, setBidFile] = useState<File | null>(null);
-  const [uploadingBid, setUploadingBid] = useState(false);
-
   // Inline cell edit
   const [editingCellId, setEditingCellId] = useState<string | null>(null);
   const [cellDraft, setCellDraft] = useState({ amount: "", qualifier_note: "" });
@@ -150,45 +131,6 @@ export default function BidsPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     load();
   }, [load]);
-
-  const submitNewBid = async () => {
-    if (!bidForm.contractor_name.trim()) return;
-    setUploadingBid(true);
-    try {
-      if (bidFile) {
-        // Multipart path: PDF gets stored in R2 and text-extracted server-side.
-        const fd = new FormData();
-        fd.append("file", bidFile);
-        fd.append("contractor_name", bidForm.contractor_name);
-        if (bidForm.contractor_company) fd.append("contractor_company", bidForm.contractor_company);
-        if (bidForm.contractor_email) fd.append("contractor_email", bidForm.contractor_email);
-        if (bidForm.bid_date) fd.append("bid_date", bidForm.bid_date);
-        if (bidForm.total_amount !== "") fd.append("total_amount", String(bidForm.total_amount));
-        if (bidForm.raw_text) fd.append("raw_text", bidForm.raw_text);
-        if (bidForm.notes) fd.append("notes", bidForm.notes);
-        await fetch(`/api/deals/${dealId}/gc-bids/upload`, { method: "POST", body: fd });
-      } else {
-        const payload = {
-          ...bidForm,
-          total_amount: bidForm.total_amount === "" ? null : Number(bidForm.total_amount),
-        };
-        await fetch(`/api/deals/${dealId}/gc-bids`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      }
-      setBidDialogOpen(false);
-      setBidForm({
-        contractor_name: "", contractor_company: "", contractor_email: "",
-        bid_date: "", total_amount: "", raw_text: "", notes: "",
-      });
-      setBidFile(null);
-      load();
-    } finally {
-      setUploadingBid(false);
-    }
-  };
 
   const deleteBid = async (bidId: string) => {
     if (!confirm("Delete this bid? Its line items and questions will also be removed.")) return;
@@ -325,9 +267,11 @@ export default function BidsPage({ params }: { params: { id: string } }) {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button size="sm" variant="outline" onClick={() => setBidDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-1" /> Add Bid
-          </Button>
+          <Link href={`/deals/${dealId}/pre-construction/bids/new`}>
+            <Button size="sm" variant="outline">
+              <Plus className="h-4 w-4 mr-1" /> Add Bid
+            </Button>
+          </Link>
           <Button size="sm" disabled={leveling || data.bids.length === 0} onClick={runLeveling}>
             {leveling ? (
               <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Leveling…</>
@@ -349,9 +293,11 @@ export default function BidsPage({ params }: { params: { id: string } }) {
         <div className="rounded-xl border border-dashed border-border/40 bg-card/30 p-8 text-center">
           <Award className="h-6 w-6 mx-auto mb-3 text-muted-foreground/50" />
           <p className="text-sm text-muted-foreground mb-3">No bids yet. Add the first contractor bid to start leveling.</p>
-          <Button size="sm" variant="outline" onClick={() => setBidDialogOpen(true)}>
-            <Plus className="h-3 w-3 mr-1" /> Add First Bid
-          </Button>
+          <Link href={`/deals/${dealId}/pre-construction/bids/new`}>
+            <Button size="sm" variant="outline">
+              <Plus className="h-3 w-3 mr-1" /> Add First Bid
+            </Button>
+          </Link>
         </div>
       ) : (
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -547,112 +493,6 @@ export default function BidsPage({ params }: { params: { id: string } }) {
         </section>
       )}
 
-      {/* ── Add bid dialog ─────────────────────────────────────────────────── */}
-      <Dialog open={bidDialogOpen} onOpenChange={setBidDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Add Contractor Bid</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 pt-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Contractor *</label>
-                <input
-                  autoFocus
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={bidForm.contractor_name}
-                  onChange={(e) => setBidForm({ ...bidForm, contractor_name: e.target.value })}
-                  placeholder="Project manager / lead estimator"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Company</label>
-                <input
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={bidForm.contractor_company}
-                  onChange={(e) => setBidForm({ ...bidForm, contractor_company: e.target.value })}
-                  placeholder="Turner Construction"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Email</label>
-                <input
-                  type="email"
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={bidForm.contractor_email}
-                  onChange={(e) => setBidForm({ ...bidForm, contractor_email: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Bid Date</label>
-                <input
-                  type="date"
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={bidForm.bid_date}
-                  onChange={(e) => setBidForm({ ...bidForm, bid_date: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Total Amount ($)</label>
-                <input
-                  type="number"
-                  min={0}
-                  className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={bidForm.total_amount}
-                  onChange={(e) => setBidForm({ ...bidForm, total_amount: e.target.value })}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">
-                Bid PDF
-                <span className="text-muted-foreground/60 ml-1 normal-case">— upload the contractor's bid (PDF preferred). Text gets extracted automatically and fed to AI leveling.</span>
-              </label>
-              <input
-                type="file"
-                accept=".pdf,.txt"
-                className="w-full text-xs file:mr-2 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:bg-primary/15 file:text-primary file:cursor-pointer"
-                onChange={(e) => setBidFile(e.target.files?.[0] ?? null)}
-              />
-              {bidFile && (
-                <div className="text-2xs text-muted-foreground mt-1">
-                  Selected: {bidFile.name} ({(bidFile.size / 1024 / 1024).toFixed(1)} MB)
-                </div>
-              )}
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">
-                Raw Bid Content (optional if PDF uploaded)
-                <span className="text-muted-foreground/60 ml-1 normal-case">— paste cover letter / SOV / exclusions; appended to PDF text.</span>
-              </label>
-              <textarea
-                rows={6}
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary font-mono"
-                value={bidForm.raw_text}
-                onChange={(e) => setBidForm({ ...bidForm, raw_text: e.target.value })}
-                placeholder="Optional. Useful when the bid arrives as an email or you want to add scope clarifications the AI leveler should consider."
-              />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Internal Notes</label>
-              <textarea
-                rows={2}
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-none"
-                value={bidForm.notes}
-                onChange={(e) => setBidForm({ ...bidForm, notes: e.target.value })}
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="ghost" size="sm" onClick={() => setBidDialogOpen(false)} disabled={uploadingBid}>Cancel</Button>
-              <Button size="sm" onClick={submitNewBid} disabled={uploadingBid}>
-                {uploadingBid ? "Uploading…" : "Add Bid"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
