@@ -1066,6 +1066,20 @@ export async function ensureColumns(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_constructability_items_deal ON deal_constructability_items(deal_id, status)`,
+    // Image / file attachments for constructability findings. Reuses the
+    // documents table for storage so AI extraction, viewing, etc. all work
+    // out of the box. Per-attachment caption captures the snippet context
+    // (e.g. "drawing A2.10 — clouded RFI on south elevation").
+    `CREATE TABLE IF NOT EXISTS deal_constructability_attachments (
+      id TEXT PRIMARY KEY,
+      item_id TEXT NOT NULL REFERENCES deal_constructability_items(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL,
+      caption TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      uploaded_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_constructability_attachments_item ON deal_constructability_attachments(item_id, sort_order)`,
     // Construction RFI repository — store contractor RFIs as uploaded docs
     // with extracted metadata (RFI #, subject, response date, etc.).
     `CREATE TABLE IF NOT EXISTS deal_construction_rfis (
@@ -5912,6 +5926,12 @@ export const veItemQueries = {
     return res.rows;
   },
 
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(`SELECT * FROM deal_ve_items WHERE id = $1`, [id]);
+    return res.rows[0] ?? null;
+  },
+
   create: async (input: {
     id: string;
     deal_id: string;
@@ -5990,10 +6010,82 @@ export const constructabilityQueries = {
   listByDeal: async (dealId: string) => {
     const pool = getPool();
     const res = await pool.query(
-      `SELECT * FROM deal_constructability_items WHERE deal_id = $1 ORDER BY status = 'closed', severity = 'low', number ASC`,
+      `SELECT i.*,
+         (SELECT COUNT(*)::int FROM deal_constructability_attachments a WHERE a.item_id = i.id) AS attachment_count
+       FROM deal_constructability_items i
+       WHERE i.deal_id = $1
+       ORDER BY i.status = 'closed', i.severity = 'low', i.number ASC`,
       [dealId]
     );
     return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(`SELECT * FROM deal_constructability_items WHERE id = $1`, [id]);
+    return res.rows[0] ?? null;
+  },
+
+  listAttachments: async (itemId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT a.*, d.original_name, d.file_path, d.mime_type, d.file_size
+       FROM deal_constructability_attachments a
+       LEFT JOIN documents d ON d.id = a.document_id
+       WHERE a.item_id = $1
+       ORDER BY a.sort_order ASC, a.created_at ASC`,
+      [itemId]
+    );
+    return res.rows;
+  },
+
+  createAttachment: async (input: {
+    id: string;
+    item_id: string;
+    document_id: string;
+    caption?: string | null;
+    sort_order?: number;
+    uploaded_by?: string | null;
+  }) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_constructability_attachments
+        (id, item_id, document_id, caption, sort_order, uploaded_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [
+        input.id, input.item_id, input.document_id,
+        input.caption ?? null, input.sort_order ?? 0,
+        input.uploaded_by ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  updateAttachment: async (id: string, updates: { caption?: string | null; sort_order?: number }) => {
+    const pool = getPool();
+    const allowed = ["caption", "sort_order"];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_constructability_attachments SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  deleteAttachment: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_constructability_attachments WHERE id = $1`, [id]);
   },
 
   create: async (input: {
@@ -6068,6 +6160,12 @@ export const constructionRfiQueries = {
       [dealId]
     );
     return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(`SELECT * FROM deal_construction_rfis WHERE id = $1`, [id]);
+    return res.rows[0] ?? null;
   },
 
   create: async (input: Record<string, unknown>) => {
