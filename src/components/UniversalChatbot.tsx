@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronUp,
   PanelRightClose,
+  X,
   Sparkles,
   AlertTriangle,
   MessageCircleQuestion,
@@ -276,10 +277,16 @@ export default function UniversalChatbot({
             </div>
             {!isEmbedded && (
               <button
+                type="button"
                 onClick={() => setOpen(false)}
-                className="flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                aria-label="Close assistant"
+                className="flex items-center justify-center h-11 w-11 sm:h-8 sm:w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 active:bg-muted transition-colors -mr-1 sm:mr-0"
               >
-                <PanelRightClose className="h-4 w-4" />
+                {/* Use X on mobile (universally read as "close"); the
+                    PanelRightClose chevron only makes sense on desktop where
+                    the panel docks to the right. */}
+                <X className="h-5 w-5 sm:hidden" />
+                <PanelRightClose className="h-4 w-4 hidden sm:block" />
               </button>
             )}
           </header>
