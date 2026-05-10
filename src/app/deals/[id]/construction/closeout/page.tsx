@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ClipboardCheck, Sparkles, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { ClipboardCheck, Sparkles, Loader2, ShieldCheck, FileSignature } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import CloseoutChecklist from "@/components/CloseoutChecklist";
 
@@ -57,6 +58,13 @@ export default function CloseoutPage({ params }: { params: { id: string } }) {
             Track everything required to wind down construction and turn the building over to operations.
           </p>
         </div>
+        <Link href={`/deals/${dealId}/construction/closeout/registers`}>
+          <Button variant="outline" size="sm">
+            <ShieldCheck className="h-3.5 w-3.5 mr-1" />
+            <FileSignature className="h-3.5 w-3.5 mr-1" />
+            Registers
+          </Button>
+        </Link>
       </div>
 
       {hasItems === null ? (
