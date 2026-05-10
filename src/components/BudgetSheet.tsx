@@ -11,6 +11,9 @@ import {
   Edit2,
   CheckCircle2,
   GitBranch,
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -94,10 +97,33 @@ export default function BudgetSheet({ dealId }: Props) {
   const [addItemOpen, setAddItemOpen] = useState(false);
   const [addDrawOpen, setAddDrawOpen] = useState(false);
 
-  const [importTab, setImportTab] = useState<"paste" | "file">("paste");
+  const [importTab, setImportTab] = useState<"paste" | "file" | "pdf">("paste");
   const [pasteText, setPasteText] = useState("");
   const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
+
+  // AI insights panel state
+  const [insightsOpen, setInsightsOpen] = useState(false);
+  const [generatingNarrative, setGeneratingNarrative] = useState(false);
+  const [narrative, setNarrative] = useState<string | null>(null);
+  const [paceAnomalies, setPaceAnomalies] = useState<Array<{
+    hardcost_item_id: string;
+    description: string;
+    category: string;
+    pct_complete: number;
+    project_pct_complete: number;
+    delta_pct: number;
+    severity: "info" | "warn" | "alert";
+    reason: string;
+  }>>([]);
+
+  // Approved-CO totals per line, keyed by hardcost_item_id. Used to auto-fill
+  // the CO column when the user has linked COs to lines (instead of entering
+  // change_order_amount manually). Falls back to the manual field when no
+  // linked CO exists.
+  const [approvedCoByLine, setApprovedCoByLine] = useState<Record<string, number>>({});
 
   const [newVersion, setNewVersion] = useState({ label: "", clone_from: "", set_active: true });
   const [newItem, setNewItem] = useState({
@@ -112,14 +138,17 @@ export default function BudgetSheet({ dealId }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const [vRes, dRes, diRes] = await Promise.all([
+      const [vRes, dRes, diRes, coRes] = await Promise.all([
         fetch(`/api/deals/${dealId}/budget-versions`),
         fetch(`/api/deals/${dealId}/draws`),
         fetch(`/api/deals/${dealId}/draws?with_items=1`),
+        fetch(`/api/deals/${dealId}/change-orders/approved-by-line`),
       ]);
       const vJson = await vRes.json();
       const dJson = await dRes.json();
       const diJson = await diRes.json();
+      const coJson = await coRes.json().catch(() => ({ data: {} }));
+      setApprovedCoByLine((coJson.data || {}) as Record<string, number>);
       const vs = (vJson.data || []) as BudgetVersion[];
       setVersions(vs);
       const active = vs.find((v) => v.is_active) || vs[0] || null;
@@ -226,7 +255,13 @@ export default function BudgetSheet({ dealId }: Props) {
 
   const computeRow = (item: HardCostItem) => {
     const original = Number(item.amount) || 0;
-    const co = Number(item.change_order_amount) || 0;
+    // Prefer approved-CO totals from the change-order tracker when this line
+    // has linked COs; fall back to the manual change_order_amount field
+    // (which is still editable for lines without a linked CO).
+    const linkedCo = approvedCoByLine[item.id];
+    const co = linkedCo !== undefined && linkedCo !== 0
+      ? Number(linkedCo)
+      : Number(item.change_order_amount) || 0;
     const current = original + co;
     let totalCompleted = 0;
     for (const d of sortedDraws) {
@@ -326,6 +361,61 @@ export default function BudgetSheet({ dealId }: Props) {
       setImporting(false);
     }
   };
+
+  const submitPdf = async () => {
+    const f = pdfRef.current?.files?.[0];
+    if (!f) return;
+    const fd = new FormData();
+    fd.append("file", f);
+    if (activeVersionId) fd.append("version_id", activeVersionId);
+    setImporting(true);
+    setImportMessage(null);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/budget/extract-pdf`, { method: "POST", body: fd });
+      const j = await res.json();
+      if (!res.ok) {
+        setImportMessage(j.error || "Extraction failed");
+      } else {
+        setImportOpen(false);
+        if (pdfRef.current) pdfRef.current.value = "";
+        setImportMessage(null);
+        load();
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const generateNarrative = async () => {
+    setGeneratingNarrative(true);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/budget/variance-narrative`, { method: "POST" });
+      const j = await res.json();
+      setNarrative(j.data?.narrative ?? null);
+    } finally {
+      setGeneratingNarrative(false);
+    }
+  };
+
+  // Refresh anomalies whenever the dataset changes. Cheap heuristic call;
+  // doesn't hit Claude.
+  useEffect(() => {
+    if (items.length === 0 || draws.length === 0) {
+      setPaceAnomalies([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/deals/${dealId}/budget/pace-anomalies`);
+        const j = await res.json();
+        if (!cancelled) setPaceAnomalies(j.data?.anomalies ?? []);
+      } catch {
+        /* swallow — non-critical */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dealId, items, draws]);
 
   const submitFile = async () => {
     const f = fileRef.current?.files?.[0];
@@ -470,6 +560,77 @@ export default function BudgetSheet({ dealId }: Props) {
           <Sparkles className="h-3 w-3 mr-1" /> Seed Template
         </Button>
       </div>
+
+      {/* AI insights — pace anomalies + variance narrative */}
+      {items.length > 0 && (paceAnomalies.length > 0 || draws.length > 0) && (
+        <section className="rounded-xl border border-border/40 bg-card/40 overflow-hidden">
+          <header className="flex items-center justify-between px-4 py-2.5 border-b border-border/30 bg-muted/10">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <span className="text-xs font-medium">AI Insights</span>
+              {paceAnomalies.length > 0 && (
+                <span className="text-2xs text-muted-foreground">
+                  {paceAnomalies.filter((a) => a.severity === "alert").length} alert·{paceAnomalies.filter((a) => a.severity === "warn").length} warn
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => setInsightsOpen((v) => !v)}
+              className="text-2xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+            >
+              {insightsOpen ? <><ChevronDown className="h-3 w-3" /> Hide</> : <><ChevronRight className="h-3 w-3" /> Show</>}
+            </button>
+          </header>
+          {insightsOpen && (
+            <div className="px-4 py-3 space-y-3">
+              {paceAnomalies.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-2xs uppercase tracking-wider text-muted-foreground">Billing-pace anomalies</div>
+                  {paceAnomalies.slice(0, 6).map((a) => (
+                    <div
+                      key={a.hardcost_item_id}
+                      className={cn(
+                        "rounded border px-2.5 py-1.5 text-xs flex items-start gap-2",
+                        a.severity === "alert" && "border-red-500/30 bg-red-500/5",
+                        a.severity === "warn" && "border-amber-500/30 bg-amber-500/5",
+                        a.severity === "info" && "border-border/40",
+                      )}
+                    >
+                      <AlertTriangle className={cn(
+                        "h-3 w-3 shrink-0 mt-0.5",
+                        a.severity === "alert" ? "text-red-400" : a.severity === "warn" ? "text-amber-300" : "text-muted-foreground",
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">{a.description}</div>
+                        <div className="text-2xs text-muted-foreground mt-0.5">{a.reason}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {paceAnomalies.length > 6 && (
+                    <div className="text-2xs text-muted-foreground">+ {paceAnomalies.length - 6} more anomalies</div>
+                  )}
+                </div>
+              )}
+              <div className="space-y-1.5 pt-1 border-t border-border/20">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-2xs uppercase tracking-wider text-muted-foreground">Variance narrative</div>
+                  <Button size="sm" variant="ghost" className="h-6 text-2xs" onClick={generateNarrative} disabled={generatingNarrative}>
+                    {generatingNarrative ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Drafting</> : <><Sparkles className="h-3 w-3 mr-1" /> Draft</>}
+                  </Button>
+                </div>
+                {narrative ? (
+                  <p className="text-xs whitespace-pre-wrap leading-relaxed">{narrative}</p>
+                ) : (
+                  <p className="text-2xs text-muted-foreground italic">
+                    Click Draft to have Claude write a 3–5 sentence narrative explaining your variance against the original budget.
+                    Pulls in approved COs, top variance lines, and open RFIs.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Empty state */}
       {items.length === 0 ? (
@@ -621,7 +782,13 @@ export default function BudgetSheet({ dealId }: Props) {
               <button onClick={() => setImportTab("file")} className={cn("px-3 py-1 rounded-md", importTab === "file" ? "bg-primary/15 text-primary" : "text-muted-foreground")}>
                 Upload XLSX / CSV
               </button>
+              <button onClick={() => setImportTab("pdf")} className={cn("px-3 py-1 rounded-md inline-flex items-center gap-1", importTab === "pdf" ? "bg-primary/15 text-primary" : "text-muted-foreground")}>
+                <Sparkles className="h-3 w-3" /> PDF (AI extract)
+              </button>
             </div>
+            {importMessage && (
+              <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-2xs text-red-300">{importMessage}</div>
+            )}
             {importTab === "paste" ? (
               <>
                 <p className="text-2xs text-muted-foreground">
@@ -642,7 +809,7 @@ export default function BudgetSheet({ dealId }: Props) {
                   </Button>
                 </div>
               </>
-            ) : (
+            ) : importTab === "file" ? (
               <>
                 <p className="text-2xs text-muted-foreground">
                   Upload XLSX or CSV with the same columns as the paste mode. Headers are matched
@@ -654,6 +821,21 @@ export default function BudgetSheet({ dealId }: Props) {
                   <Button variant="ghost" size="sm" onClick={() => setImportOpen(false)}>Cancel</Button>
                   <Button size="sm" onClick={submitFile} disabled={importing}>
                     {importing ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Importing</> : "Upload"}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-2xs text-muted-foreground">
+                  Upload the contractor's SOV PDF. Claude reads it and structures it into budget rows
+                  (description, amount, hard/soft/contingency). Most contractor SOVs export as PDF —
+                  this avoids manual rekeying. Slower than paste/XLSX (~10–30s).
+                </p>
+                <input ref={pdfRef} type="file" accept=".pdf" className="text-xs" />
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setImportOpen(false)}>Cancel</Button>
+                  <Button size="sm" onClick={submitPdf} disabled={importing}>
+                    {importing ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Extracting</> : <><Sparkles className="h-3 w-3 mr-1" /> Extract & Import</>}
                   </Button>
                 </div>
               </>

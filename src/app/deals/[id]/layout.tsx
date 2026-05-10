@@ -43,6 +43,8 @@ import {
   ListChecks,
   ClipboardSignature,
   FileQuestion,
+  Truck,
+  Hammer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
@@ -138,6 +140,8 @@ const PRE_CON_NAV_GROUP: NavGroup = {
     { href: "/pre-construction/bids", label: "Bid Leveler", icon: Handshake },
     { href: "/pre-construction/value-engineering", label: "VE Log", icon: ListChecks },
     { href: "/pre-construction/constructability", label: "Constructability & GMP", icon: ClipboardSignature },
+    { href: "/pre-construction/long-lead", label: "Long-Lead", icon: Truck },
+    { href: "/pre-construction/buyout", label: "Buyout", icon: Hammer },
   ],
 };
 

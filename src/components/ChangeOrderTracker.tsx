@@ -260,7 +260,23 @@ export default function ChangeOrderTracker({ dealId }: Props) {
                   return (
                     <tr key={co.id} className="border-b border-border/20 hover:bg-muted/20 transition-colors">
                       <td className="px-3 py-2 text-xs font-mono text-muted-foreground">{co.co_number}</td>
-                      <td className="px-3 py-2 text-xs font-medium">{co.title}</td>
+                      <td className="px-3 py-2 text-xs">
+                        <div className="font-medium">{co.title}</div>
+                        {(co.source_rfi_id || co.hardcost_item_id) && (
+                          <div className="flex items-center gap-2 mt-0.5 text-2xs text-muted-foreground">
+                            {co.source_rfi_id && (
+                              <span title={co.source_rfi_subject || ""}>
+                                ← RFI {co.source_rfi_number || ""}
+                              </span>
+                            )}
+                            {co.hardcost_item_id && (
+                              <span title={`${co.hardcost_item_category || ""} → ${co.hardcost_item_description || ""}`} className="text-blue-300/80">
+                                → {co.hardcost_item_description || co.hardcost_item_category}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{co.submitted_by || "—"}</td>
                       <td className={cn("px-3 py-2 text-xs font-medium text-right tabular-nums", impact.className)}>
                         {impact.text}

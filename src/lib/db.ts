@@ -1253,6 +1253,103 @@ export async function ensureColumns(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_change_orders_deal_id ON deal_change_orders(deal_id)`,
+    // RFI ↔ CO ↔ Budget pipeline. RFIs that turn into a cost event get linked
+    // to the resulting CO; COs are linked to the budget category and (when
+    // the user picks a specific line) the hardcost item. The change-order
+    // amount on the line is rolled up by the cost_impact of approved COs
+    // pointing at it.
+    "ALTER TABLE deal_change_orders ADD COLUMN IF NOT EXISTS source_rfi_id TEXT",
+    "ALTER TABLE deal_change_orders ADD COLUMN IF NOT EXISTS hardcost_item_id TEXT",
+    "ALTER TABLE deal_construction_rfis ADD COLUMN IF NOT EXISTS resolved_co_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_deal_change_orders_rfi ON deal_change_orders(source_rfi_id) WHERE source_rfi_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_deal_change_orders_hardcost ON deal_change_orders(hardcost_item_id) WHERE hardcost_item_id IS NOT NULL",
+    // Warranties extracted from closeout-uploaded documents. Linked back to
+    // the source attachment so a user can drill from the warranty register
+    // to the source PDF.
+    `CREATE TABLE IF NOT EXISTS deal_warranties (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      vendor TEXT,
+      product TEXT NOT NULL,
+      scope TEXT,
+      start_date DATE,
+      duration_months INTEGER,
+      end_date DATE,
+      coverage_summary TEXT,
+      contact_email TEXT,
+      contact_phone TEXT,
+      claim_instructions TEXT,
+      source_document_id TEXT,
+      source_attachment_id TEXT,
+      ai_confidence NUMERIC,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_warranties_deal ON deal_warranties(deal_id, end_date)`,
+    // Lien-waiver verifications — one row per waiver doc uploaded. Captures
+    // what the user / AI extracted and whether it passed automated checks
+    // against the actual draw record.
+    `CREATE TABLE IF NOT EXISTS deal_lien_waivers (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      contractor_name TEXT,
+      waiver_type TEXT,
+      through_date DATE,
+      amount NUMERIC,
+      draw_id TEXT,
+      source_document_id TEXT,
+      source_attachment_id TEXT,
+      match_status TEXT NOT NULL DEFAULT 'unverified',
+      match_notes TEXT,
+      ai_confidence NUMERIC,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_lien_waivers_deal ON deal_lien_waivers(deal_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_lien_waivers_draw ON deal_lien_waivers(draw_id) WHERE draw_id IS NOT NULL`,
+    // Long-lead procurement register — items that must be ordered weeks
+    // before mobilization. Lifecycle: identified → quoted → ordered →
+    // delivered → installed.
+    `CREATE TABLE IF NOT EXISTS deal_long_lead_items (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      number INTEGER NOT NULL,
+      item TEXT NOT NULL,
+      trade TEXT,
+      supplier TEXT,
+      lead_time_weeks INTEGER,
+      required_on_site DATE,
+      target_order_date DATE,
+      ordered_date DATE,
+      expected_delivery_date DATE,
+      delivered_date DATE,
+      cost NUMERIC,
+      hardcost_item_id TEXT,
+      status TEXT NOT NULL DEFAULT 'identified',
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_long_lead_items_deal ON deal_long_lead_items(deal_id, status)`,
+    // Buyout packages — subcontract trades the GC needs to award between
+    // GMP and mobilization. Status moves through scope_in_review → out_to_bid
+    // → leveling → awarded.
+    `CREATE TABLE IF NOT EXISTS deal_buyout_packages (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      number INTEGER NOT NULL,
+      trade TEXT NOT NULL,
+      scope_summary TEXT,
+      target_award_date DATE,
+      awarded_date DATE,
+      awarded_to TEXT,
+      awarded_amount NUMERIC,
+      hardcost_item_id TEXT,
+      status TEXT NOT NULL DEFAULT 'scope_in_review',
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_buyout_packages_deal ON deal_buyout_packages(deal_id, status)`,
     // IC Package versions — each row is an editable draft/final of the
     // deal's investment-committee briefing. `prose` holds the LLM-
     // generated sections merged with any human edits.
@@ -6197,7 +6294,7 @@ export const constructionRfiQueries = {
       "rfi_number", "subject", "submitted_by", "submitted_date",
       "response_required_by", "responded_date", "status", "discipline",
       "cost_impact", "schedule_impact_days", "response_summary",
-      "source_document_id", "notes",
+      "source_document_id", "notes", "resolved_co_id",
     ];
     const setClauses: string[] = [];
     const values: unknown[] = [];
@@ -7468,23 +7565,42 @@ export const changeOrderQueries = {
   getByDealId: async (dealId: string) => {
     const pool = getPool();
     const res = await pool.query(
-      "SELECT * FROM deal_change_orders WHERE deal_id = $1 ORDER BY co_number",
+      `SELECT co.*,
+         rfi.rfi_number AS source_rfi_number,
+         rfi.subject AS source_rfi_subject,
+         hc.description AS hardcost_item_description,
+         hc.category AS hardcost_item_category
+       FROM deal_change_orders co
+       LEFT JOIN deal_construction_rfis rfi ON rfi.id = co.source_rfi_id
+       LEFT JOIN deal_hardcost_items hc ON hc.id = co.hardcost_item_id
+       WHERE co.deal_id = $1
+       ORDER BY co.co_number`,
       [dealId]
     );
     return res.rows;
   },
 
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(`SELECT * FROM deal_change_orders WHERE id = $1`, [id]);
+    return res.rows[0] ?? null;
+  },
+
   create: async (co: Record<string, unknown>) => {
     const pool = getPool();
     const res = await pool.query(
-      `INSERT INTO deal_change_orders (id, deal_id, co_number, title, description, submitted_by, cost_impact, schedule_impact_days, status, submitted_date, decided_date, hardcost_category, notes, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+      `INSERT INTO deal_change_orders
+        (id, deal_id, co_number, title, description, submitted_by, cost_impact,
+         schedule_impact_days, status, submitted_date, decided_date,
+         hardcost_category, hardcost_item_id, source_rfi_id, notes, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
        RETURNING *`,
       [
         co.id, co.deal_id, co.co_number, co.title, co.description ?? "",
         co.submitted_by ?? null, co.cost_impact ?? 0, co.schedule_impact_days ?? 0,
         co.status ?? "draft", co.submitted_date ?? null, co.decided_date ?? null,
-        co.hardcost_category ?? null, co.notes ?? null,
+        co.hardcost_category ?? null, co.hardcost_item_id ?? null,
+        co.source_rfi_id ?? null, co.notes ?? null,
       ]
     );
     return res.rows[0];
@@ -7492,11 +7608,16 @@ export const changeOrderQueries = {
 
   update: async (id: string, updates: Record<string, unknown>) => {
     const pool = getPool();
+    const allowed = [
+      "title", "description", "submitted_by", "cost_impact", "schedule_impact_days",
+      "status", "submitted_date", "decided_date",
+      "hardcost_category", "hardcost_item_id", "source_rfi_id", "notes",
+    ];
     const setClauses: string[] = [];
     const values: unknown[] = [];
     let idx = 1;
     for (const [key, value] of Object.entries(updates)) {
-      if (["title", "description", "submitted_by", "cost_impact", "schedule_impact_days", "status", "submitted_date", "decided_date", "hardcost_category", "notes"].includes(key)) {
+      if (allowed.includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
         idx++;
@@ -7515,6 +7636,313 @@ export const changeOrderQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_change_orders WHERE id = $1", [id]);
+  },
+
+  /**
+   * Sum of approved-CO cost_impact per hardcost_item. Used by the Budget
+   * sheet to roll change orders into the per-line "CO" column without the
+   * user having to keep change_order_amount manually in sync.
+   */
+  approvedCoTotalsByLine: async (dealId: string): Promise<Record<string, number>> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT hardcost_item_id, COALESCE(SUM(cost_impact), 0)::numeric AS total
+       FROM deal_change_orders
+       WHERE deal_id = $1 AND status = 'approved' AND hardcost_item_id IS NOT NULL
+       GROUP BY hardcost_item_id`,
+      [dealId]
+    );
+    const out: Record<string, number> = {};
+    for (const r of res.rows) out[r.hardcost_item_id] = Number(r.total);
+    return out;
+  },
+};
+
+// ─── Warranty queries ─────────────────────────────────────────────────────────
+
+export const warrantyQueries = {
+  listByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_warranties WHERE deal_id = $1 ORDER BY end_date NULLS LAST, vendor`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(`SELECT * FROM deal_warranties WHERE id = $1`, [id]);
+    return res.rows[0] ?? null;
+  },
+
+  create: async (input: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_warranties
+        (id, deal_id, vendor, product, scope, start_date, duration_months, end_date,
+         coverage_summary, contact_email, contact_phone, claim_instructions,
+         source_document_id, source_attachment_id, ai_confidence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       RETURNING *`,
+      [
+        input.id, input.deal_id, input.vendor ?? null, input.product,
+        input.scope ?? null, input.start_date ?? null, input.duration_months ?? null,
+        input.end_date ?? null, input.coverage_summary ?? null,
+        input.contact_email ?? null, input.contact_phone ?? null,
+        input.claim_instructions ?? null,
+        input.source_document_id ?? null, input.source_attachment_id ?? null,
+        input.ai_confidence ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "vendor", "product", "scope", "start_date", "duration_months", "end_date",
+      "coverage_summary", "contact_email", "contact_phone", "claim_instructions",
+    ];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_warranties SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_warranties WHERE id = $1`, [id]);
+  },
+};
+
+// ─── Lien Waiver queries ──────────────────────────────────────────────────────
+
+export const lienWaiverQueries = {
+  listByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT lw.*, d.draw_number, d.title AS draw_title
+       FROM deal_lien_waivers lw
+       LEFT JOIN deal_draws d ON d.id = lw.draw_id
+       WHERE lw.deal_id = $1
+       ORDER BY lw.created_at DESC`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (input: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_lien_waivers
+        (id, deal_id, contractor_name, waiver_type, through_date, amount,
+         draw_id, source_document_id, source_attachment_id,
+         match_status, match_notes, ai_confidence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING *`,
+      [
+        input.id, input.deal_id,
+        input.contractor_name ?? null, input.waiver_type ?? null,
+        input.through_date ?? null, input.amount ?? null,
+        input.draw_id ?? null, input.source_document_id ?? null,
+        input.source_attachment_id ?? null,
+        input.match_status ?? "unverified", input.match_notes ?? null,
+        input.ai_confidence ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "contractor_name", "waiver_type", "through_date", "amount",
+      "draw_id", "match_status", "match_notes",
+    ];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_lien_waivers SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_lien_waivers WHERE id = $1`, [id]);
+  },
+};
+
+// ─── Long-Lead Item queries ───────────────────────────────────────────────────
+
+export const longLeadQueries = {
+  listByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_long_lead_items WHERE deal_id = $1 ORDER BY required_on_site NULLS LAST, number`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string) => {
+    const pool = getPool();
+    const res = await pool.query(`SELECT * FROM deal_long_lead_items WHERE id = $1`, [id]);
+    return res.rows[0] ?? null;
+  },
+
+  create: async (input: Record<string, unknown>) => {
+    const pool = getPool();
+    const numRes = await pool.query(
+      `SELECT COALESCE(MAX(number), 0) + 1 AS next FROM deal_long_lead_items WHERE deal_id = $1`,
+      [input.deal_id]
+    );
+    const n = numRes.rows[0].next as number;
+    const res = await pool.query(
+      `INSERT INTO deal_long_lead_items
+        (id, deal_id, number, item, trade, supplier, lead_time_weeks,
+         required_on_site, target_order_date, ordered_date, expected_delivery_date,
+         delivered_date, cost, hardcost_item_id, status, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       RETURNING *`,
+      [
+        input.id, input.deal_id, n, input.item,
+        input.trade ?? null, input.supplier ?? null, input.lead_time_weeks ?? null,
+        input.required_on_site ?? null, input.target_order_date ?? null,
+        input.ordered_date ?? null, input.expected_delivery_date ?? null,
+        input.delivered_date ?? null, input.cost ?? null,
+        input.hardcost_item_id ?? null,
+        input.status ?? "identified", input.notes ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "item", "trade", "supplier", "lead_time_weeks",
+      "required_on_site", "target_order_date", "ordered_date", "expected_delivery_date",
+      "delivered_date", "cost", "hardcost_item_id", "status", "notes",
+    ];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_long_lead_items SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_long_lead_items WHERE id = $1`, [id]);
+  },
+};
+
+// ─── Buyout Package queries ───────────────────────────────────────────────────
+
+export const buyoutQueries = {
+  listByDeal: async (dealId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM deal_buyout_packages WHERE deal_id = $1 ORDER BY target_award_date NULLS LAST, number`,
+      [dealId]
+    );
+    return res.rows;
+  },
+
+  create: async (input: Record<string, unknown>) => {
+    const pool = getPool();
+    const numRes = await pool.query(
+      `SELECT COALESCE(MAX(number), 0) + 1 AS next FROM deal_buyout_packages WHERE deal_id = $1`,
+      [input.deal_id]
+    );
+    const n = numRes.rows[0].next as number;
+    const res = await pool.query(
+      `INSERT INTO deal_buyout_packages
+        (id, deal_id, number, trade, scope_summary, target_award_date,
+         awarded_date, awarded_to, awarded_amount, hardcost_item_id, status, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING *`,
+      [
+        input.id, input.deal_id, n, input.trade,
+        input.scope_summary ?? null, input.target_award_date ?? null,
+        input.awarded_date ?? null, input.awarded_to ?? null,
+        input.awarded_amount ?? null, input.hardcost_item_id ?? null,
+        input.status ?? "scope_in_review", input.notes ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = [
+      "trade", "scope_summary", "target_award_date",
+      "awarded_date", "awarded_to", "awarded_amount", "hardcost_item_id",
+      "status", "notes",
+    ];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (allowed.includes(k)) {
+        setClauses.push(`${k} = $${idx}`);
+        values.push(v);
+        idx++;
+      }
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE deal_buyout_packages SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM deal_buyout_packages WHERE id = $1`, [id]);
   },
 };
 

@@ -2,12 +2,15 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Trash2,
   FileQuestion,
   Upload,
   ExternalLink,
   AlertTriangle,
+  FileWarning,
+  ArrowRightCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +32,7 @@ interface RFI {
   schedule_impact_days: number | null;
   response_summary: string | null;
   source_document_id: string | null;
+  resolved_co_id: string | null;
   notes: string | null;
   created_at: string;
 }
@@ -43,10 +47,30 @@ const STATUS_TONE: Record<Status, string> = {
 const fc = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 
 export default function ConstructionRfisPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
   const dealId = params.id;
   const [items, setItems] = useState<RFI[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"open" | "all">("open");
+  const [converting, setConverting] = useState<string | null>(null);
+
+  const convertToCO = async (rfiId: string) => {
+    setConverting(rfiId);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/construction-rfis/${rfiId}/convert-to-co`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const j = await res.json();
+      if (j.data?.id) {
+        // Land on the change orders page with the new draft CO highlighted.
+        router.push(`/deals/${dealId}/construction/change-orders?co=${j.data.id}`);
+      }
+    } finally {
+      setConverting(null);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -188,39 +212,59 @@ export default function ConstructionRfisPage({ params }: { params: { id: string 
                         <Badge variant="secondary" className={cn("text-2xs", STATUS_TONE[r.status])}>{r.status}</Badge>
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100">
-                          {r.source_document_id && (
-                            <a
-                              href={`/api/documents/${r.source_document_id}/view`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-muted-foreground hover:text-primary"
-                              title="View PDF"
+                        <div className="flex items-center gap-1.5 justify-end">
+                          {r.resolved_co_id ? (
+                            <Link
+                              href={`/deals/${dealId}/construction/change-orders?co=${r.resolved_co_id}`}
+                              className="text-2xs text-primary hover:underline inline-flex items-center gap-1"
+                              title="View linked Change Order"
                             >
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
-                          {r.status !== "answered" && (
+                              <ArrowRightCircle className="h-3 w-3" /> CO
+                            </Link>
+                          ) : (
                             <button
-                              onClick={() => {
-                                const resp = prompt("Response summary:") ?? "";
-                                if (resp) setStatus(r.id, "answered", resp);
-                                else setStatus(r.id, "answered");
-                              }}
-                              className="text-emerald-400 hover:text-emerald-300"
-                              title="Mark answered"
+                              onClick={() => convertToCO(r.id)}
+                              disabled={converting === r.id}
+                              className="text-2xs text-amber-300 hover:text-amber-200 inline-flex items-center gap-1 opacity-0 group-hover:opacity-100"
+                              title="Convert to draft Change Order"
                             >
-                              ✓
+                              <FileWarning className="h-3 w-3" /> {converting === r.id ? "…" : "→ CO"}
                             </button>
                           )}
-                          {r.status === "answered" && (
-                            <button onClick={() => setStatus(r.id, "closed")} className="text-muted-foreground hover:text-foreground" title="Close">
-                              ⊘
+                          <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100">
+                            {r.source_document_id && (
+                              <a
+                                href={`/api/documents/${r.source_document_id}/view`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-muted-foreground hover:text-primary"
+                                title="View PDF"
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                            {r.status !== "answered" && (
+                              <button
+                                onClick={() => {
+                                  const resp = prompt("Response summary:") ?? "";
+                                  if (resp) setStatus(r.id, "answered", resp);
+                                  else setStatus(r.id, "answered");
+                                }}
+                                className="text-emerald-400 hover:text-emerald-300"
+                                title="Mark answered"
+                              >
+                                ✓
+                              </button>
+                            )}
+                            {r.status === "answered" && (
+                              <button onClick={() => setStatus(r.id, "closed")} className="text-muted-foreground hover:text-foreground" title="Close">
+                                ⊘
+                              </button>
+                            )}
+                            <button onClick={() => remove(r.id)} className="text-muted-foreground hover:text-red-400" title="Delete">
+                              <Trash2 className="h-3 w-3" />
                             </button>
-                          )}
-                          <button onClick={() => remove(r.id)} className="text-muted-foreground hover:text-red-400" title="Delete">
-                            <Trash2 className="h-3 w-3" />
-                          </button>
+                          </div>
                         </div>
                       </td>
                     </tr>

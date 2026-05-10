@@ -184,6 +184,67 @@ export default function BidsPage({ params }: { params: { id: string } }) {
     return m;
   }, [data]);
 
+  // Adjusted total — apples-to-apples. For each bid, where the bid excludes
+  // or is unclear on a scope item, impute the median of other bids' amounts
+  // for that item (when at least one other bid included it). Surfaces who's
+  // truly cheapest after gaps are normalized away.
+  const adjustedTotals = useMemo(() => {
+    if (!data) return new Map<string, { included: number; imputed: number; adjusted: number; imputationCount: number }>();
+    const m = new Map<string, { included: number; imputed: number; adjusted: number; imputationCount: number }>();
+
+    // Index per scope item: included amounts across bids that included it.
+    const includedByScope = new Map<string, number[]>();
+    for (const bi of data.bid_items) {
+      if (bi.status === "included" && bi.amount !== null && bi.amount !== undefined) {
+        const arr = includedByScope.get(bi.scope_item_id) ?? [];
+        arr.push(Number(bi.amount));
+        includedByScope.set(bi.scope_item_id, arr);
+      }
+    }
+    const median = (arr: number[]) => {
+      if (arr.length === 0) return null;
+      const s = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+    };
+
+    for (const bid of data.bids) {
+      let included = 0;
+      let imputed = 0;
+      let imputationCount = 0;
+      for (const scope of data.scope_items) {
+        const cell = cellMap.get(`${bid.id}::${scope.id}`);
+        if (cell?.status === "included" && cell.amount !== null && cell.amount !== undefined) {
+          included += Number(cell.amount);
+        } else if (!cell || cell.status === "excluded" || cell.status === "unclear") {
+          // Impute when other bids included this scope.
+          const others = (includedByScope.get(scope.id) ?? []).filter((_, i) => {
+            // Exclude this bid's own number from the median pool.
+            const cellsForScope = data.bid_items.filter((bi) => bi.scope_item_id === scope.id && bi.status === "included" && bi.amount !== null && bi.amount !== undefined);
+            return cellsForScope[i]?.bid_id !== bid.id;
+          });
+          const m = median(others);
+          if (m !== null) {
+            imputed += m;
+            imputationCount++;
+          }
+        }
+        // status === "alternate" → 0 (alts aren't in the base scope)
+      }
+      m.set(bid.id, { included, imputed, adjusted: included + imputed, imputationCount });
+    }
+    return m;
+  }, [data, cellMap]);
+
+  // Lowest adjusted total = the apples-to-apples winner.
+  const lowestAdjusted = useMemo(() => {
+    let lowest: number | null = null;
+    for (const v of Array.from(adjustedTotals.values())) {
+      if (v.adjusted > 0 && (lowest === null || v.adjusted < lowest)) lowest = v.adjusted;
+    }
+    return lowest;
+  }, [adjustedTotals]);
+
   const groupedScope = useMemo(() => {
     const groups: Record<string, ScopeItem[]> = {};
     if (!data) return groups;
@@ -478,7 +539,7 @@ export default function BidsPage({ params }: { params: { id: string } }) {
                     onCellDraftChange={setCellDraft}
                   />
                 ))}
-                {/* Totals row */}
+                {/* Totals row — original bid totals */}
                 <tr className="border-t-2 border-border/40 bg-muted/30 font-medium">
                   <td className="px-3 py-2 sticky left-0 bg-muted/30 z-10">Total Bid</td>
                   {data.bids.map((b) => (
@@ -486,6 +547,47 @@ export default function BidsPage({ params }: { params: { id: string } }) {
                       {fc(b.total_amount)}
                     </td>
                   ))}
+                </tr>
+                {/* Imputation row — only shown when at least one bid has imputations */}
+                {Array.from(adjustedTotals.values()).some((v) => v.imputationCount > 0) && (
+                  <tr className="bg-muted/15 text-amber-300/90">
+                    <td className="px-3 py-2 sticky left-0 bg-muted/15 z-10 text-2xs uppercase tracking-wider">+ Imputed gaps</td>
+                    {data.bids.map((b) => {
+                      const adj = adjustedTotals.get(b.id);
+                      if (!adj || adj.imputationCount === 0) {
+                        return <td key={b.id} className="px-3 py-2 text-right tabular-nums text-muted-foreground/40">—</td>;
+                      }
+                      return (
+                        <td key={b.id} className="px-3 py-2 text-right tabular-nums" title={`${adj.imputationCount} excluded/unclear scope item${adj.imputationCount === 1 ? "" : "s"} imputed at median of other bids' amounts`}>
+                          + {fc(adj.imputed)}
+                          <div className="text-2xs opacity-70">({adj.imputationCount} {adj.imputationCount === 1 ? "gap" : "gaps"})</div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                )}
+                {/* Adjusted total — apples-to-apples winner */}
+                <tr className="border-t border-border/40 bg-primary/10 text-primary font-bold">
+                  <td className="px-3 py-2 sticky left-0 bg-primary/10 z-10">Adjusted Total</td>
+                  {data.bids.map((b) => {
+                    const adj = adjustedTotals.get(b.id);
+                    if (!adj || adj.adjusted === 0) {
+                      return <td key={b.id} className="px-3 py-2 text-right tabular-nums text-muted-foreground/40">—</td>;
+                    }
+                    const isLowest = lowestAdjusted !== null && Math.abs(adj.adjusted - lowestAdjusted) < 1;
+                    const delta = lowestAdjusted !== null ? adj.adjusted - lowestAdjusted : 0;
+                    return (
+                      <td key={b.id} className="px-3 py-2 text-right tabular-nums">
+                        {fc(adj.adjusted)}
+                        {!isLowest && lowestAdjusted !== null && delta > 0 && (
+                          <div className="text-2xs font-normal text-muted-foreground">+{fc(delta)} vs low</div>
+                        )}
+                        {isLowest && (
+                          <div className="text-2xs font-normal text-emerald-400">⊙ apples-to-apples low</div>
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               </tbody>
             </table>
