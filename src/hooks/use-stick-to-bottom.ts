@@ -47,11 +47,17 @@ export function useStickToBottom(
     };
 
     const onScroll = () => {
-      // Only re-engage when the user has scrolled all the way back to the
-      // very bottom themselves. The strict threshold prevents a small
-      // wheel-up (still inside the 80px engage band) from silently re-arming.
-      if (distFromBottom() <= REENGAGE_AT_BOTTOM_PX) {
+      // Re-engage when the user has scrolled all the way to the very bottom
+      // (also catches our own programmatic scrollIntoView landing at d≈0).
+      // Disengage as soon as they leave the engage band — this is what makes
+      // scrollbar-drag and keyboard scrolling work, since those don't fire
+      // wheel/touch events. Positions in between are left alone so a small
+      // wheel-up doesn't accidentally re-arm stick.
+      const d = distFromBottom();
+      if (d <= REENGAGE_AT_BOTTOM_PX) {
         stickRef.current = true;
+      } else if (d > ENGAGE_NEAR_BOTTOM_PX) {
+        stickRef.current = false;
       }
     };
 
