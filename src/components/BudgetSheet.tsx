@@ -119,6 +119,12 @@ export default function BudgetSheet({ dealId }: Props) {
     reason: string;
   }>>([]);
 
+  // Approved-CO totals per line, keyed by hardcost_item_id. Used to auto-fill
+  // the CO column when the user has linked COs to lines (instead of entering
+  // change_order_amount manually). Falls back to the manual field when no
+  // linked CO exists.
+  const [approvedCoByLine, setApprovedCoByLine] = useState<Record<string, number>>({});
+
   const [newVersion, setNewVersion] = useState({ label: "", clone_from: "", set_active: true });
   const [newItem, setNewItem] = useState({
     cost_class: "hard" as BudgetCostClass,
@@ -132,14 +138,17 @@ export default function BudgetSheet({ dealId }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const [vRes, dRes, diRes] = await Promise.all([
+      const [vRes, dRes, diRes, coRes] = await Promise.all([
         fetch(`/api/deals/${dealId}/budget-versions`),
         fetch(`/api/deals/${dealId}/draws`),
         fetch(`/api/deals/${dealId}/draws?with_items=1`),
+        fetch(`/api/deals/${dealId}/change-orders/approved-by-line`),
       ]);
       const vJson = await vRes.json();
       const dJson = await dRes.json();
       const diJson = await diRes.json();
+      const coJson = await coRes.json().catch(() => ({ data: {} }));
+      setApprovedCoByLine((coJson.data || {}) as Record<string, number>);
       const vs = (vJson.data || []) as BudgetVersion[];
       setVersions(vs);
       const active = vs.find((v) => v.is_active) || vs[0] || null;
@@ -246,7 +255,13 @@ export default function BudgetSheet({ dealId }: Props) {
 
   const computeRow = (item: HardCostItem) => {
     const original = Number(item.amount) || 0;
-    const co = Number(item.change_order_amount) || 0;
+    // Prefer approved-CO totals from the change-order tracker when this line
+    // has linked COs; fall back to the manual change_order_amount field
+    // (which is still editable for lines without a linked CO).
+    const linkedCo = approvedCoByLine[item.id];
+    const co = linkedCo !== undefined && linkedCo !== 0
+      ? Number(linkedCo)
+      : Number(item.change_order_amount) || 0;
     const current = original + co;
     let totalCompleted = 0;
     for (const d of sortedDraws) {

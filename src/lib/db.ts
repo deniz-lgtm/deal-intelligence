@@ -6294,7 +6294,7 @@ export const constructionRfiQueries = {
       "rfi_number", "subject", "submitted_by", "submitted_date",
       "response_required_by", "responded_date", "status", "discipline",
       "cost_impact", "schedule_impact_days", "response_summary",
-      "source_document_id", "notes",
+      "source_document_id", "notes", "resolved_co_id",
     ];
     const setClauses: string[] = [];
     const values: unknown[] = [];

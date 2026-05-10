@@ -2352,9 +2352,17 @@ export interface ChangeOrder {
   submitted_date: string | null;
   decided_date: string | null;
   hardcost_category: string | null;
+  hardcost_item_id: string | null;
+  source_rfi_id: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
+  // Joined fields from changeOrderQueries.getByDealId — populated only on
+  // list reads, not on create/update results.
+  source_rfi_number?: string | null;
+  source_rfi_subject?: string | null;
+  hardcost_item_description?: string | null;
+  hardcost_item_category?: string | null;
 }
 
 export const CHANGE_ORDER_STATUS_CONFIG: Record<ChangeOrderStatus, { label: string; color: string }> = {

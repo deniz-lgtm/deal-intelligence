@@ -66,7 +66,11 @@ export async function POST(
     if (accessError) return accessError;
 
     const body = await req.json();
-    const { title, description, submitted_by, cost_impact, schedule_impact_days, status, submitted_date, decided_date, hardcost_category, notes } = body;
+    const {
+      title, description, submitted_by, cost_impact, schedule_impact_days,
+      status, submitted_date, decided_date,
+      hardcost_category, hardcost_item_id, source_rfi_id, notes,
+    } = body;
 
     if (!title?.trim()) {
       return NextResponse.json({ error: "title is required" }, { status: 400 });
@@ -97,6 +101,8 @@ export async function POST(
       submitted_date: submitted_date || null,
       decided_date: decided_date || null,
       hardcost_category: hardcost_category || null,
+      hardcost_item_id: hardcost_item_id || null,
+      source_rfi_id: source_rfi_id || null,
       notes: notes || null,
     };
 
