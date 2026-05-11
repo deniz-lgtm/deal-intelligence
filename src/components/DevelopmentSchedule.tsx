@@ -49,6 +49,7 @@ import {
   ArrowUpAZ,
   ArrowDownAZ,
   PanelRightOpen,
+  ClipboardPaste,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -240,6 +241,61 @@ const fc = (n: number) =>
 
 function scheduleScopeLabel(track: ScheduleTrack | "all") {
   return track === "all" ? "Master" : SCHEDULE_TRACK_LABELS[track];
+}
+
+type PastedScheduleRow = {
+  label: string;
+  duration_days: number;
+  start_date: string;
+  task_owner: string;
+  track: ScheduleTrack;
+};
+
+function normalizePasteTrack(value: string | undefined, fallback: ScheduleTrack): ScheduleTrack {
+  const raw = (value || "").trim().toLowerCase();
+  if (raw === "acq" || raw === "acquisition") return "acquisition";
+  if (raw === "dev" || raw === "development") return "development";
+  if (raw === "con" || raw === "construction") return "construction";
+  return fallback;
+}
+
+function parseSchedulePaste(text: string, fallbackTrack: ScheduleTrack): PastedScheduleRow[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return [];
+  const splitLine = (line: string) =>
+    line.includes("\t")
+      ? line.split("\t").map((cell) => cell.trim())
+      : line.split(",").map((cell) => cell.trim().replace(/^"|"$/g, ""));
+  const first = splitLine(lines[0]).map((cell) => cell.toLowerCase());
+  const hasHeader = first.some((cell) =>
+    ["task", "task name", "phase", "name", "duration", "days", "start", "owner", "track"].includes(cell)
+  );
+  const headerIndex = (candidates: string[], fallback: number) => {
+    if (!hasHeader) return fallback;
+    const index = first.findIndex((cell) => candidates.some((candidate) => cell.includes(candidate)));
+    return index >= 0 ? index : fallback;
+  };
+  const labelIndex = headerIndex(["task", "phase", "name"], 0);
+  const durationIndex = headerIndex(["duration", "days"], 1);
+  const startIndex = headerIndex(["start"], 2);
+  const ownerIndex = headerIndex(["owner", "assignee"], 3);
+  const trackIndex = headerIndex(["track", "phase group"], 4);
+  return lines.slice(hasHeader ? 1 : 0).flatMap((line) => {
+    const cells = splitLine(line);
+    const label = cells[labelIndex]?.trim();
+    if (!label) return [];
+    const duration = Number(cells[durationIndex]);
+    return [{
+      label,
+      duration_days: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 30,
+      start_date: cells[startIndex] || "",
+      task_owner: cells[ownerIndex] || "",
+      track: normalizePasteTrack(cells[trackIndex], fallbackTrack),
+    }];
+  });
 }
 
 export default function DevelopmentSchedule({
@@ -482,6 +538,13 @@ export default function DevelopmentSchedule({
     task_owner: "",
   });
   const [quickAdding, setQuickAdding] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [pasteTrack, setPasteTrack] = useState<ScheduleTrack>("development");
+  const [pastingRows, setPastingRows] = useState(false);
+  const [childQuickAdds, setChildQuickAdds] = useState<
+    Record<string, { label: string; duration_days: number; task_owner: string }>
+  >({});
   const [seedingEntitlements, setSeedingEntitlements] = useState(false);
   // Deal documents — fetched once and used by the phase dialog's linker.
   const [dealDocuments, setDealDocuments] = useState<
@@ -499,6 +562,10 @@ export default function DevelopmentSchedule({
   const detailPhase = useMemo(
     () => phases.find((phase) => phase.id === detailPhaseId) || null,
     [phases, detailPhaseId]
+  );
+  const pastedRows = useMemo(
+    () => parseSchedulePaste(pasteText, pasteTrack),
+    [pasteText, pasteTrack]
   );
   // AI-suggest state — a preview modal drives which tasks actually land
   // on the schedule (we never auto-create).
@@ -814,6 +881,89 @@ export default function DevelopmentSchedule({
       toast.error((err as Error).message || "Failed to add schedule row");
     } finally {
       setQuickAdding(false);
+    }
+  };
+
+  const handlePasteImport = async () => {
+    if (pastedRows.length === 0 || pastingRows) return;
+    setPastingRows(true);
+    let created = 0;
+    try {
+      for (let i = 0; i < pastedRows.length; i++) {
+        const row = pastedRows[i];
+        const res = await fetch(`/api/deals/${dealId}/dev-schedule`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            track: track === "all" ? row.track : track,
+            label: row.label,
+            duration_days: row.duration_days,
+            predecessor_id: null,
+            lag_days: 0,
+            parent_phase_id: null,
+            task_category: null,
+            task_owner: row.task_owner || null,
+            linked_document_ids: null,
+            budget: null,
+            start_date: row.start_date || null,
+            pct_complete: 0,
+            status: "not_started",
+            notes: "",
+            sort_order: phases.length + i,
+          }),
+        });
+        if (res.ok) created++;
+      }
+      toast.success(`Imported ${created} schedule row${created === 1 ? "" : "s"}`);
+      setPasteOpen(false);
+      setPasteText("");
+      await loadAll();
+    } catch (err) {
+      toast.error((err as Error).message || "Paste import failed");
+    } finally {
+      setPastingRows(false);
+    }
+  };
+
+  const handleQuickAddChild = async (parent: DevPhase) => {
+    const draft = childQuickAdds[parent.id];
+    const label = draft?.label?.trim();
+    if (!label) return;
+    try {
+      const siblings = phases.filter((phase) => phase.parent_phase_id === parent.id);
+      const res = await fetch(`/api/deals/${dealId}/dev-schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          track: parent.track ?? (track === "all" ? "development" : track),
+          label,
+          duration_days: Math.max(1, Number(draft.duration_days) || 1),
+          predecessor_id: null,
+          lag_days: 0,
+          parent_phase_id: parent.id,
+          task_category: "pre_submittal",
+          task_owner: draft.task_owner?.trim() || null,
+          linked_document_ids: null,
+          budget: null,
+          start_date: null,
+          pct_complete: 0,
+          status: "not_started",
+          notes: "",
+          sort_order: siblings.length,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || err.error || "Failed to add child task");
+        return;
+      }
+      setChildQuickAdds((prev) => ({
+        ...prev,
+        [parent.id]: { label: "", duration_days: draft.duration_days || 7, task_owner: "" },
+      }));
+      await loadAll();
+    } catch (err) {
+      toast.error((err as Error).message || "Failed to add child task");
     }
   };
 
@@ -1719,6 +1869,9 @@ export default function DevelopmentSchedule({
               <Button size="sm" variant="outline" className="text-xs" onClick={openCreatePhase}>
                 <Plus className="h-3 w-3 mr-1" /> Add Phase
               </Button>
+              <Button size="sm" variant="outline" className="text-xs" onClick={() => setPasteOpen(true)}>
+                <ClipboardPaste className="h-3 w-3 mr-1" /> Paste rows
+              </Button>
               {/* Always available — the wizard dedupes by phase_key,
                   so a user who seeded "Purchase" only can come back
                   later and layer in "Diligence" or "IC" without
@@ -2445,7 +2598,91 @@ export default function DevelopmentSchedule({
                       );
                     };
 
-                    return rootPhases.map((p) => {
+                    const renderChildQuickAdd = (parent: DevPhase) => {
+                      const draft = childQuickAdds[parent.id] || {
+                        label: "",
+                        duration_days: 7,
+                        task_owner: "",
+                      };
+                      return (
+                        <div
+                          key={`${parent.id}-quick-child`}
+                          className="grid gap-2 items-center rounded-md border border-dashed border-border/40 bg-background/25 px-2 py-1.5"
+                          style={{ gridTemplateColumns: gridTemplate }}
+                        >
+                          <div className="flex min-w-0 items-center gap-1 pl-8">
+                            <span className="text-muted-foreground/50">└</span>
+                            <input
+                              value={draft.label}
+                              onChange={(event) =>
+                                setChildQuickAdds((prev) => ({
+                                  ...prev,
+                                  [parent.id]: { ...draft, label: event.target.value },
+                                }))
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") handleQuickAddChild(parent);
+                              }}
+                              placeholder={`Add task under ${parent.label}`}
+                              className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-1 text-2xs outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-primary/40 focus:bg-background"
+                            />
+                          </div>
+                          <input
+                            type="number"
+                            min={1}
+                            value={draft.duration_days}
+                            onChange={(event) =>
+                              setChildQuickAdds((prev) => ({
+                                ...prev,
+                                [parent.id]: {
+                                  ...draft,
+                                  duration_days: Number(event.target.value),
+                                },
+                              }))
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") handleQuickAddChild(parent);
+                            }}
+                            className="min-w-0 rounded border border-transparent bg-transparent px-1 py-1 text-2xs tabular-nums outline-none transition-colors focus:border-primary/40 focus:bg-background"
+                          />
+                          {columns.predecessor && <span />}
+                          {columns.start && <span className="text-2xs text-muted-foreground/40">auto</span>}
+                          {columns.finish && <span className="text-2xs text-muted-foreground/40">auto</span>}
+                          {columns.budget && <span />}
+                          {columns.owner && (
+                            <input
+                              value={draft.task_owner}
+                              onChange={(event) =>
+                                setChildQuickAdds((prev) => ({
+                                  ...prev,
+                                  [parent.id]: { ...draft, task_owner: event.target.value },
+                                }))
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") handleQuickAddChild(parent);
+                              }}
+                              placeholder="Owner"
+                              className="min-w-0 rounded border border-transparent bg-transparent px-1 py-1 text-2xs outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-primary/40 focus:bg-background"
+                            />
+                          )}
+                          <span className="text-2xs text-muted-foreground/40">Child task</span>
+                          <div className="flex justify-end">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 gap-1 px-2 text-2xs"
+                              disabled={!draft.label.trim()}
+                              onClick={() => handleQuickAddChild(parent)}
+                            >
+                              <Plus className="h-2.5 w-2.5" />
+                              Add
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    };
+
+                    const renderRoot = (p: DevPhase) => {
                       const children = childrenByParent.get(p.id) || [];
                       const isEntitlement = p.phase_key === "entitlements";
                       // Children are stored by sort_order so up/down
@@ -2506,6 +2743,7 @@ export default function DevelopmentSchedule({
                               </SortableContext>
                             </DndContext>
                           )}
+                          {renderChildQuickAdd(p)}
                           {sortedChildren.length > 0 && (childBudgetTotal > 0 || plannedTotalDays > 0) && (
                             <div className="flex items-center gap-3 pl-6 text-2xs text-muted-foreground">
                               <span>
@@ -2738,7 +2976,26 @@ export default function DevelopmentSchedule({
                           )}
                         </div>
                       );
-                    });
+                    };
+
+                    if (isMasterTrack) {
+                      const tracks: ScheduleTrack[] = ["acquisition", "development", "construction"];
+                      return tracks.flatMap((sectionTrack) => {
+                        const rows = rootPhases.filter((phase) => (phase.track ?? "development") === sectionTrack);
+                        if (rows.length === 0) return [];
+                        return [
+                          <div
+                            key={`section-${sectionTrack}`}
+                            className="rounded-md border border-border/50 bg-muted/20 px-3 py-1.5 text-2xs font-medium uppercase tracking-[0.14em] text-muted-foreground"
+                          >
+                            {SCHEDULE_TRACK_LABELS[sectionTrack]}
+                          </div>,
+                          ...rows.map(renderRoot),
+                        ];
+                      });
+                    }
+
+                    return rootPhases.map(renderRoot);
                   })()}
                 </div>
                 {totalScheduleBudget > 0 && columns.budget && (
@@ -2917,7 +3174,76 @@ export default function DevelopmentSchedule({
       </section>
       )}
 
-      {/* ── Phase Dialog ── */}
+      {/* ── Paste Rows Dialog ── */}
+      <Dialog open={pasteOpen} onOpenChange={setPasteOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Paste Schedule Rows</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 pt-2">
+            <p className="text-sm text-muted-foreground">
+              Paste rows copied from Excel, Project, or Sheets. Supported columns:
+              task/name, duration, start, owner, and track.
+            </p>
+            {isMasterTrack && (
+              <label className="block space-y-1 text-xs text-muted-foreground">
+                <span>Default track when pasted rows do not include one</span>
+                <select
+                  value={pasteTrack}
+                  onChange={(event) => setPasteTrack(event.target.value as ScheduleTrack)}
+                  className="h-9 rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="acquisition">Acquisition</option>
+                  <option value="development">Development</option>
+                  <option value="construction">Construction</option>
+                </select>
+              </label>
+            )}
+            <textarea
+              value={pasteText}
+              onChange={(event) => setPasteText(event.target.value)}
+              rows={8}
+              placeholder={"Task Name\tDuration\tStart\tOwner\tTrack\nSubmit LOI\t7\t2026-05-15\tAcq Manager\tAcquisition"}
+              className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
+            />
+            <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+              <div className="mb-2 flex items-center justify-between text-xs">
+                <span className="font-medium text-foreground">Preview</span>
+                <span className="text-muted-foreground">{pastedRows.length} row{pastedRows.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="max-h-44 overflow-y-auto text-xs">
+                {pastedRows.length === 0 ? (
+                  <p className="text-muted-foreground">Paste rows above to preview them here.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {pastedRows.slice(0, 12).map((row, index) => (
+                      <div key={`${row.label}-${index}`} className="grid grid-cols-[1fr_56px_88px_92px] gap-2 rounded bg-background/60 px-2 py-1">
+                        <span className="truncate">{row.label}</span>
+                        <span className="tabular-nums text-muted-foreground">{row.duration_days}d</span>
+                        <span className="text-muted-foreground">{row.start_date || "No start"}</span>
+                        <span className="text-muted-foreground">{SCHEDULE_TRACK_LABELS[row.track]}</span>
+                      </div>
+                    ))}
+                    {pastedRows.length > 12 && (
+                      <p className="pt-1 text-muted-foreground">+ {pastedRows.length - 12} more</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setPasteOpen(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handlePasteImport} disabled={pastedRows.length === 0 || pastingRows}>
+                {pastingRows && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                Import rows
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {detailPhase && (
         <aside className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-md flex-col border-l border-border/70 bg-background shadow-2xl">
           <div className="flex items-start justify-between gap-4 border-b border-border/60 px-5 py-4">

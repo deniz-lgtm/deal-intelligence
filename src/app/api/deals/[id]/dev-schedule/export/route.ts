@@ -69,6 +69,12 @@ type ScheduleCommentCounts = Record<
   { comment_count: number; open_comment_count: number }
 >;
 
+const TRACK_ORDER: Record<ScheduleTrack, number> = {
+  acquisition: 0,
+  development: 1,
+  construction: 2,
+};
+
 function asDateStamp(iso: string | null): string | null {
   if (!iso) return null;
   // iCalendar DATE format: YYYYMMDD. We treat phases as all-day events
@@ -102,6 +108,10 @@ function buildCsv(phases: DevPhase[], dealName: string): string {
     ].map(CSV_ESCAPE).join(","),
   ];
   const sorted = [...phases].sort((a, b) => {
+    const trackDelta =
+      (TRACK_ORDER[(a.track ?? "development") as ScheduleTrack] ?? 1) -
+      (TRACK_ORDER[(b.track ?? "development") as ScheduleTrack] ?? 1);
+    if (trackDelta !== 0) return trackDelta;
     // Roots sorted by sort_order; children land right after their parent.
     const aKey = a.parent_phase_id
       ? `${byId.get(a.parent_phase_id)?.sort_order ?? 9999}-${a.sort_order}`
@@ -179,8 +189,15 @@ function buildExcelXml(
   const tagline = branding?.tagline?.trim() || "Schedule Packet";
   const footer = branding?.footer_text?.trim() || "CONFIDENTIAL";
   const byId = new Map(phases.map((p) => [p.id, p]));
+  const includeTrackSections = !focusPhase && trackLabel === "All Tracks";
   const roots = (focusPhase ? [focusPhase] : phases.filter((p) => !p.parent_phase_id))
     .sort((a, b) => {
+      if (includeTrackSections) {
+        const trackDelta =
+          (TRACK_ORDER[(a.track ?? "development") as ScheduleTrack] ?? 1) -
+          (TRACK_ORDER[(b.track ?? "development") as ScheduleTrack] ?? 1);
+        if (trackDelta !== 0) return trackDelta;
+      }
       if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
       return (a.start_date ?? "9999").localeCompare(b.start_date ?? "9999");
     });
@@ -277,15 +294,27 @@ function buildExcelXml(
       ${cell(p.notes || "", style)}
     </Row>`;
   };
-  const scheduleRows = roots.flatMap((root, rootIndex) => {
+  const sectionRow = (label: string) => `<Row ss:Height="22">${cell(label, "TrackSection", "String", 14)}</Row>`;
+  const rowsForRoots = (rows: DevPhase[], prefix = "") => rows.flatMap((root, rootIndex) => {
     const rootWbs = String(rootIndex + 1);
+    const wbs = prefix ? `${prefix}.${rootWbs}` : rootWbs;
     return [
-      rowFor(root, false, rootWbs),
+      rowFor(root, false, wbs),
       ...childrenFor(root.id).map((child, childIndex) =>
-        rowFor(child, true, `${rootWbs}.${childIndex + 1}`)
+        rowFor(child, true, `${wbs}.${childIndex + 1}`)
       ),
     ];
   });
+  const scheduleRows = includeTrackSections
+    ? (["acquisition", "development", "construction"] as ScheduleTrack[]).flatMap((track, trackIndex) => {
+        const trackRoots = roots.filter((root) => (root.track ?? "development") === track);
+        if (trackRoots.length === 0) return [];
+        return [
+          sectionRow(SCHEDULE_TRACK_LABELS[track]),
+          ...rowsForRoots(trackRoots, String(trackIndex + 1)),
+        ];
+      })
+    : rowsForRoots(roots);
   const statsByTrack = (["acquisition", "development", "construction"] as ScheduleTrack[]).map((track) => {
     const rows = allRows.filter((p) => (p.track ?? "development") === track);
     const trackAvg =
@@ -347,6 +376,7 @@ function buildExcelXml(
   <Style ss:ID="Subtitle"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#${secondary}" ss:Pattern="Solid"/><Alignment ss:Vertical="Center"/></Style>
   <Style ss:ID="Meta"><Font ss:Color="#666666"/><Interior ss:Color="#F3F6F8" ss:Pattern="Solid"/></Style>
   <Style ss:ID="Header"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#${secondary}" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="TrackSection"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#${primary}" ss:Pattern="Solid"/></Style>
   <Style ss:ID="Phase"><Font ss:Bold="1" ss:Color="#111827"/><Interior ss:Color="#EAF2F8" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/></Borders></Style>
   <Style ss:ID="Child"><Font ss:Color="#111827"/><Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E7EB"/></Borders></Style>
   <Style ss:ID="Body"><Font ss:Color="#111827"/></Style>
