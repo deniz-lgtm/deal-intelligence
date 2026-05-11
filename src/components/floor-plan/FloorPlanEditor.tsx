@@ -155,6 +155,21 @@ interface State {
 const EMPTY_STATE: State = { els: [], title: "Untitled Plan" };
 const STORAGE_KEY = "floorPlanEditor.v3";
 
+export type FloorPlanEditorState = State;
+
+interface FloorPlanEditorProps {
+  /** When supplied, the editor hydrates from this instead of localStorage
+   *  and skips the sketchpad-mode auto-save. Use this when embedding the
+   *  editor inside a library entry (saved to Postgres). */
+  initialState?: State | null;
+  /** Fired on every state change when running in controlled mode. The
+   *  parent is responsible for debouncing + persisting to its store. */
+  onChange?: (state: State) => void;
+  /** Optional extra controls rendered in the toolbar (e.g. a Save button
+   *  when running inside a library entry). */
+  toolbarExtras?: React.ReactNode;
+}
+
 function snap(v: number): number {
   return Math.round(v / GRID) * GRID;
 }
@@ -293,8 +308,9 @@ const BASE_TOOLS: { id: ToolId; label: string; icon: typeof MousePointer2 }[] = 
   { id: "leader", label: "Leader", icon: ArrowUpRight },
 ];
 
-export function FloorPlanEditor() {
-  const [state, setState] = useState<State>(EMPTY_STATE);
+export function FloorPlanEditor({ initialState, onChange, toolbarExtras }: FloorPlanEditorProps = {}) {
+  const [state, setState] = useState<State>(initialState ?? EMPTY_STATE);
+  const isControlled = initialState !== undefined;
   const [tool, setTool] = useState<ToolId>("select");
   const [pendingKind, setPendingKind] = useState<ObjectKind | null>(null);
   const [palette, setPalette] = useState<"furniture" | "fixture" | null>(null);
@@ -317,21 +333,26 @@ export function FloorPlanEditor() {
   const exportRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (isControlled) return;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) setState(JSON.parse(raw));
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [isControlled]);
 
   useEffect(() => {
+    if (isControlled) {
+      onChange?.(state);
+      return;
+    }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
       /* ignore */
     }
-  }, [state]);
+  }, [state, isControlled, onChange]);
 
   const commit = useCallback(
     (next: State | ((s: State) => State)) => {
@@ -820,6 +841,7 @@ export function FloorPlanEditor() {
           <Download className="h-3.5 w-3.5" />
           Export PNG
         </button>
+        {toolbarExtras}
       </div>
 
       <div className="flex flex-1 min-h-0">
