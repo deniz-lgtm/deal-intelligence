@@ -162,7 +162,7 @@ interface Props {
    * (Seed Defaults button, Pre-Dev Budget tracker, workstream filter)
    * auto-hide for other tracks.
    */
-  track?: ScheduleTrack;
+  track?: ScheduleTrack | "all";
   /**
    * Workstream filter. When set, only root phases whose phase_key maps
    * into one of these workstreams (plus their child tasks) render on
@@ -238,6 +238,10 @@ function sanitizeColumnWidths(value: unknown): ScheduleColumnWidths {
 const fc = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 
+function scheduleScopeLabel(track: ScheduleTrack | "all") {
+  return track === "all" ? "Master" : SCHEDULE_TRACK_LABELS[track];
+}
+
 export default function DevelopmentSchedule({
   dealId,
   track = "development",
@@ -250,6 +254,7 @@ export default function DevelopmentSchedule({
   // The Seed Defaults button is available on every track and seeds
   // only that track's phases; see /api/deals/[id]/dev-schedule/seed.
   const isDevTrack = track === "development";
+  const isMasterTrack = track === "all";
   const effectiveHideBudget = hideBudget || !isDevTrack;
   const effectiveWorkstreams = isDevTrack ? workstreams : undefined;
   const [phases, setPhases] = useState<DevPhase[]>([]);
@@ -471,6 +476,7 @@ export default function DevelopmentSchedule({
   });
   const [quickAdd, setQuickAdd] = useState({
     label: "",
+    track: "development" as ScheduleTrack,
     duration_days: 30,
     start_date: "",
     task_owner: "",
@@ -582,7 +588,7 @@ export default function DevelopmentSchedule({
         // Filter to the caller-supplied track. deal_dev_phases holds all
         // three tracks (acquisition / development / construction); the
         // page is just picking which slice to render.
-        fetch(`/api/deals/${dealId}/dev-schedule?track=${track}`),
+        fetch(`/api/deals/${dealId}/dev-schedule${isMasterTrack ? "" : `?track=${track}`}`),
         // Pre-dev costs + settings are dev-track-only; skip the fetch
         // entirely on acq/con to cut round-trips.
         isDevTrack
@@ -606,7 +612,7 @@ export default function DevelopmentSchedule({
     } finally {
       setLoading(false);
     }
-  }, [dealId, track, isDevTrack]);
+  }, [dealId, track, isDevTrack, isMasterTrack]);
 
   useEffect(() => {
     loadAll();
@@ -614,6 +620,10 @@ export default function DevelopmentSchedule({
 
   // ── Seed default phases ──
   const handleSeedPhases = async () => {
+    if (isMasterTrack) {
+      setWizardOpen(true);
+      return;
+    }
     setSeeding(true);
     try {
       const res = await fetch(`/api/deals/${dealId}/dev-schedule/seed`, {
@@ -711,7 +721,7 @@ export default function DevelopmentSchedule({
       // Stamp the track on create so the server-side default (develop-
       // ment) doesn't stash every new row in the dev track regardless
       // of which schedule page the user was on.
-      track,
+      track: track === "all" ? "development" : track,
       label: phaseForm.label,
       duration_days: phaseForm.duration_days,
       predecessor_id: phaseForm.predecessor_id || null,
@@ -766,7 +776,7 @@ export default function DevelopmentSchedule({
     setQuickAdding(true);
     try {
       const payload = {
-        track,
+        track: track === "all" ? quickAdd.track : track,
         label,
         duration_days: Math.max(1, Number(quickAdd.duration_days) || 1),
         predecessor_id: null,
@@ -794,6 +804,7 @@ export default function DevelopmentSchedule({
       }
       setQuickAdd({
         label: "",
+        track: quickAdd.track,
         duration_days: quickAdd.duration_days,
         start_date: quickAdd.start_date,
         task_owner: "",
@@ -1243,7 +1254,7 @@ export default function DevelopmentSchedule({
   ) => {
     // Browser navigates to the export route with the proper Content-
     // Disposition header — simplest cross-client path to "download file".
-    const trackParam = scope === "track" ? `&track=${track}` : "";
+    const trackParam = scope === "track" && track !== "all" ? `&track=${track}` : "";
     const url = `/api/deals/${dealId}/dev-schedule/export?format=${format}${trackParam}`;
     window.open(url, "_blank");
   };
@@ -1572,11 +1583,11 @@ export default function DevelopmentSchedule({
   const scheduleAssistantPrompts = [
     {
       label: "Ask prep questions",
-      prompt: `Ask me the key prep questions you need before changing the ${SCHEDULE_TRACK_LABELS[track]} schedule. Focus on target dates, approvals, owners, missing documents, and handoff risks.`,
+      prompt: `Ask me the key prep questions you need before changing the ${scheduleScopeLabel(track)} schedule. Focus on target dates, approvals, owners, missing documents, and handoff risks.`,
     },
     {
       label: "Find missing tasks",
-      prompt: `Review this ${SCHEDULE_TRACK_LABELS[track]} schedule and the Development Playbook. What important tasks, decisions, or owner follow-ups appear to be missing? Keep it concise before creating anything.`,
+      prompt: `Review this ${scheduleScopeLabel(track)} schedule and the Development Playbook. What important tasks, decisions, or owner follow-ups appear to be missing? Keep it concise before creating anything.`,
     },
     {
       label: "Create task plan",
@@ -1659,7 +1670,7 @@ export default function DevelopmentSchedule({
         >
           {scheduleExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
           <GanttChart className="h-4 w-4 text-primary" />
-          <span className="font-medium text-sm">{SCHEDULE_TRACK_LABELS[track]} Schedule</span>
+          <span className="font-medium text-sm">{scheduleScopeLabel(track)} Schedule</span>
           <Badge variant="secondary" className="ml-auto text-2xs">
             {phases.filter((p) => p.status === "complete").length}/{phases.length} phases
           </Badge>
@@ -1749,7 +1760,7 @@ export default function DevelopmentSchedule({
                     title="Download the schedule for spreadsheets / calendars"
                   >
                     <option value="">Export…</option>
-                    <optgroup label={`This track (${SCHEDULE_TRACK_LABELS[track]})`}>
+                    <optgroup label={isMasterTrack ? "Master schedule" : `This track (${scheduleScopeLabel(track)})`}>
                       <option value="xls">Excel schedule packet</option>
                       <option value="csv">CSV data</option>
                       <option value="ics">ICS (Calendar)</option>
@@ -1915,17 +1926,36 @@ export default function DevelopmentSchedule({
                   className="grid gap-2 items-center rounded-md border border-dashed border-border/60 bg-background/45 px-2 py-2"
                   style={{ gridTemplateColumns: gridTemplate }}
                 >
-                  <input
-                    value={quickAdd.label}
-                    onChange={(event) =>
-                      setQuickAdd((prev) => ({ ...prev, label: event.target.value }))
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") handleQuickAddPhase();
-                    }}
-                    placeholder={`Add ${SCHEDULE_TRACK_LABELS[track].toLowerCase()} row`}
-                    className="min-w-0 rounded border border-transparent bg-transparent px-1 py-1 text-xs outline-none transition-colors placeholder:text-muted-foreground/55 focus:border-primary/40 focus:bg-background"
-                  />
+                  <div className="flex min-w-0 items-center gap-1">
+                    {isMasterTrack && (
+                      <select
+                        value={quickAdd.track}
+                        onChange={(event) =>
+                          setQuickAdd((prev) => ({
+                            ...prev,
+                            track: event.target.value as ScheduleTrack,
+                          }))
+                        }
+                        className="h-7 rounded border border-border/50 bg-background px-1.5 text-2xs outline-none focus:border-primary/50"
+                        title="Track"
+                      >
+                        <option value="acquisition">Acq</option>
+                        <option value="development">Dev</option>
+                        <option value="construction">Con</option>
+                      </select>
+                    )}
+                    <input
+                      value={quickAdd.label}
+                      onChange={(event) =>
+                        setQuickAdd((prev) => ({ ...prev, label: event.target.value }))
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") handleQuickAddPhase();
+                      }}
+                      placeholder={`Add ${scheduleScopeLabel(track).toLowerCase()} row`}
+                      className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-1 text-xs outline-none transition-colors placeholder:text-muted-foreground/55 focus:border-primary/40 focus:bg-background"
+                    />
+                  </div>
                   <input
                     type="number"
                     min={1}
@@ -2893,7 +2923,7 @@ export default function DevelopmentSchedule({
           <div className="flex items-start justify-between gap-4 border-b border-border/60 px-5 py-4">
             <div className="min-w-0">
               <div className="mb-2 inline-flex rounded-full border border-border/60 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                {detailPhase.parent_phase_id ? "Task Detail" : `${SCHEDULE_TRACK_LABELS[detailPhase.track || track]} Row`}
+                {detailPhase.parent_phase_id ? "Task Detail" : `${SCHEDULE_TRACK_LABELS[detailPhase.track || "development"]} Row`}
               </div>
               <InlineText
                 value={detailPhase.label}
