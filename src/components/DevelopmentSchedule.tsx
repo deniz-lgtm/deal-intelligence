@@ -48,6 +48,7 @@ import {
   ArrowUpRight,
   ArrowUpAZ,
   ArrowDownAZ,
+  PanelRightOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -441,6 +442,7 @@ export default function DevelopmentSchedule({
   // Phase dialog
   const [phaseDialogOpen, setPhaseDialogOpen] = useState(false);
   const [editingPhase, setEditingPhase] = useState<DevPhase | null>(null);
+  const [detailPhaseId, setDetailPhaseId] = useState<string | null>(null);
   const [phaseForm, setPhaseForm] = useState({
     label: "",
     duration_days: 30,
@@ -488,6 +490,10 @@ export default function DevelopmentSchedule({
       } catch { /* no docs — the linker just shows empty state */ }
     })();
   }, [dealId]);
+  const detailPhase = useMemo(
+    () => phases.find((phase) => phase.id === detailPhaseId) || null,
+    [phases, detailPhaseId]
+  );
   // AI-suggest state — a preview modal drives which tasks actually land
   // on the schedule (we never auto-create).
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -2386,8 +2392,20 @@ export default function DevelopmentSchedule({
                                 </Badge>
                               </button>
                               <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDetailPhaseId(p.id);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all"
+                                title="Open row details"
+                                type="button"
+                              >
+                                <PanelRightOpen className="h-3 w-3" />
+                              </button>
+                              <button
                                 onClick={() => handleDeletePhase(p.id)}
                                 className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all"
+                                type="button"
                               >
                                 <Trash2 className="h-3 w-3" />
                               </button>
@@ -2870,6 +2888,172 @@ export default function DevelopmentSchedule({
       )}
 
       {/* ── Phase Dialog ── */}
+      {detailPhase && (
+        <aside className="fixed bottom-0 right-0 top-0 z-40 flex w-full max-w-md flex-col border-l border-border/70 bg-background shadow-2xl">
+          <div className="flex items-start justify-between gap-4 border-b border-border/60 px-5 py-4">
+            <div className="min-w-0">
+              <div className="mb-2 inline-flex rounded-full border border-border/60 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                {detailPhase.parent_phase_id ? "Task Detail" : `${SCHEDULE_TRACK_LABELS[detailPhase.track || track]} Row`}
+              </div>
+              <InlineText
+                value={detailPhase.label}
+                allowEmpty={false}
+                onSave={(value) =>
+                  updatePhaseField(detailPhase.id, { label: value || detailPhase.label })
+                }
+                title="Click to rename"
+                className="text-base font-semibold text-foreground"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setDetailPhaseId(null)}
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+              aria-label="Close detail panel"
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1.5 text-xs text-muted-foreground">
+                <span>Status</span>
+                <select
+                  value={detailPhase.status}
+                  onChange={(event) =>
+                    updatePhaseField(detailPhase.id, {
+                      status: event.target.value as DevPhaseStatus,
+                      pct_complete:
+                        event.target.value === "complete"
+                          ? 100
+                          : event.target.value === "not_started"
+                            ? 0
+                            : detailPhase.pct_complete,
+                    })
+                  }
+                  className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
+                >
+                  {Object.entries(DEV_PHASE_STATUS_CONFIG).map(([key, cfg]) => (
+                    <option key={key} value={key}>{cfg.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1.5 text-xs text-muted-foreground">
+                <span>% Complete</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  key={`pct-${detailPhase.id}-${detailPhase.pct_complete}`}
+                  defaultValue={detailPhase.pct_complete}
+                  onBlur={(event) =>
+                    updatePhaseField(detailPhase.id, {
+                      pct_complete: Math.min(100, Math.max(0, Number(event.target.value) || 0)),
+                    })
+                  }
+                  className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
+                />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1.5 text-xs text-muted-foreground">
+                <span>Duration</span>
+                <input
+                  type="number"
+                  min={1}
+                  key={`duration-${detailPhase.id}-${detailPhase.duration_days ?? 1}`}
+                  defaultValue={detailPhase.duration_days ?? 1}
+                  onBlur={(event) =>
+                    updatePhaseField(detailPhase.id, {
+                      duration_days: Math.max(1, Number(event.target.value) || 1),
+                    })
+                  }
+                  className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
+                />
+              </label>
+              <label className="space-y-1.5 text-xs text-muted-foreground">
+                <span>Start</span>
+                <input
+                  type="date"
+                  value={detailPhase.start_date ?? ""}
+                  disabled={!!detailPhase.predecessor_id}
+                  onChange={(event) =>
+                    updatePhaseField(detailPhase.id, { start_date: event.target.value || null })
+                  }
+                  className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                />
+              </label>
+            </div>
+
+            <label className="block space-y-1.5 text-xs text-muted-foreground">
+              <span>Owner</span>
+              <input
+                key={`owner-${detailPhase.id}-${detailPhase.task_owner ?? ""}`}
+                defaultValue={detailPhase.task_owner ?? ""}
+                onBlur={(event) =>
+                  updatePhaseField(detailPhase.id, {
+                    task_owner: event.target.value.trim() || null,
+                  })
+                }
+                placeholder="Owner / assignee"
+                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
+              />
+            </label>
+
+            <label className="block space-y-1.5 text-xs text-muted-foreground">
+              <span>Notes</span>
+              <textarea
+                key={`notes-${detailPhase.id}-${detailPhase.notes ?? ""}`}
+                defaultValue={detailPhase.notes ?? ""}
+                onBlur={(event) =>
+                  updatePhaseField(detailPhase.id, { notes: event.target.value })
+                }
+                placeholder="Add context, handoff notes, or decisions."
+                rows={5}
+                className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
+              />
+            </label>
+
+            <div className="rounded-lg border border-border/60 bg-card/60 p-3 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between gap-2">
+                <span>Predecessor</span>
+                <span className="truncate text-foreground">
+                  {detailPhase.predecessor_id
+                    ? phases.find((phase) => phase.id === detailPhase.predecessor_id)?.label || "Linked row"
+                    : "Anchor row"}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span>Finish</span>
+                <span className="text-foreground">{detailPhase.end_date || "Computed after dates are set"}</span>
+              </div>
+              {Array.isArray(detailPhase.linked_document_ids) && detailPhase.linked_document_ids.length > 0 && (
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span>Linked docs</span>
+                  <span className="text-foreground">{detailPhase.linked_document_ids.length}</span>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-border/60 px-5 py-3">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setDetailPhaseId(null);
+                openEditPhase(detailPhase);
+              }}
+            >
+              Full edit
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setDetailPhaseId(null)}>
+              Done
+            </Button>
+          </div>
+        </aside>
+      )}
+
       <Dialog open={phaseDialogOpen} onOpenChange={(open) => {
         setPhaseDialogOpen(open);
         if (!open) { setEditingPhase(null); resetPhaseForm(); }
