@@ -221,6 +221,92 @@ interface DateFieldProps {
   className?: string;
 }
 
+interface TextFieldProps {
+  value: string | null | undefined;
+  onSave: (value: string | null) => void | Promise<void>;
+  title?: string;
+  placeholder?: string;
+  className?: string;
+  allowEmpty?: boolean;
+}
+
+export function InlineText({
+  value,
+  onSave,
+  title,
+  placeholder = "—",
+  className = "",
+  allowEmpty = true,
+}: TextFieldProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>(value ?? "");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const commit = async () => {
+    const next = draft.trim();
+    setEditing(false);
+    if (!allowEmpty && next === "") {
+      setDraft(value ?? "");
+      return;
+    }
+    if (next === (value ?? "")) return;
+    await onSave(next === "" ? null : next);
+  };
+
+  const cancel = () => {
+    setDraft(value ?? "");
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") cancel();
+        }}
+        className={`min-w-0 bg-background border border-primary/40 rounded px-1 py-0 text-xs focus:outline-none focus:ring-1 focus:ring-primary ${className}`}
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
+  }
+
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        setDraft(value ?? "");
+        setEditing(true);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setDraft(value ?? "");
+          setEditing(true);
+        }
+      }}
+      title={title || "Click to edit"}
+      className={`inline-block min-w-0 truncate cursor-pointer rounded px-1 transition-colors hover:bg-muted/40 hover:text-foreground ${className}`}
+    >
+      {value && value.trim() ? value : placeholder}
+    </span>
+  );
+}
+
 export function InlineDate({
   value,
   onSave,

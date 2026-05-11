@@ -57,6 +57,7 @@ import {
   InlineDate,
   InlinePredecessor,
   InlineCurrency,
+  InlineText,
 } from "@/components/schedule/InlineEdit";
 import {
   ScheduleColumnsMenu,
@@ -2002,13 +2003,15 @@ export default function DevelopmentSchedule({
                                   {catCfg.label}
                                 </span>
                               )}
-                              <button
-                                onClick={() => openEditPhase(p)}
-                                className="text-left truncate hover:text-primary transition-colors min-w-0"
-                                title="Open full edit dialog (notes, child tasks, doc links)"
-                              >
-                                {p.label}
-                              </button>
+                              <InlineText
+                                value={p.label}
+                                allowEmpty={false}
+                                onSave={(value) =>
+                                  updatePhaseField(p.id, { label: value || p.label })
+                                }
+                                title="Click to edit row name"
+                                className="text-left text-xs flex-1"
+                              />
                               {!isChild && (
                                 <a
                                   href={`/deals/${dealId}/schedule/focus/${p.id}`}
@@ -2119,32 +2122,18 @@ export default function DevelopmentSchedule({
                               </div>
                             )}
 
-                            {/* Owner cell — child rows only. Editing falls
-                                through to the modal so we don't need an
-                                inline text-edit primitive. */}
+                            {/* Owner cell */}
                             {columns.owner && (
                               <div className="text-xs min-w-0 truncate">
-                                {isChild ? (
-                                  <button
-                                    onClick={() => openEditPhase(p)}
-                                    className="text-2xs text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded px-1 transition-colors truncate"
-                                    title={
-                                      p.task_owner
-                                        ? `Owner: ${p.task_owner} — click to edit`
-                                        : "Click to set owner"
-                                    }
-                                  >
-                                    {p.task_owner ?? (
-                                      <span className="text-muted-foreground/40">
-                                        —
-                                      </span>
-                                    )}
-                                  </button>
-                                ) : (
-                                  <span className="text-muted-foreground/40 px-1">
-                                    —
-                                  </span>
-                                )}
+                                <InlineText
+                                  value={p.task_owner ?? null}
+                                  onSave={(value) =>
+                                    updatePhaseField(p.id, { task_owner: value })
+                                  }
+                                  title={p.task_owner ? `Owner: ${p.task_owner}` : "Click to set owner"}
+                                  placeholder="—"
+                                  className="max-w-full text-2xs text-muted-foreground"
+                                />
                               </div>
                             )}
 
