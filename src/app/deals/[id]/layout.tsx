@@ -72,6 +72,10 @@ type NavItem = {
   href: string;
   label: string;
   icon: typeof LayoutDashboard;
+  /** Render a hairline divider beneath this item — used to break the
+   *  Construction group into pre-con prep vs. operational items without
+   *  splitting them into two collapsible groups. */
+  dividerAfter?: boolean;
 };
 
 type NavGroup = {
@@ -136,23 +140,20 @@ const BASE_NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-const PRE_CON_NAV_GROUP: NavGroup = {
-  label: "Pre-Con",
+// Construction group holds the GC-team workflow end-to-end: pre-con prep
+// (bid leveling, VE, constructability, long-lead, buyout) at the top,
+// then operational construction below the divider. Keeping them in one
+// collapsible section reflects how the same team owns both phases.
+const CONSTRUCTION_NAV_GROUP: NavGroup = {
+  label: "Construction",
   items: [
     { href: "/pre-construction/bids", label: "Bid Leveler", icon: Handshake },
     { href: "/pre-construction/value-engineering", label: "VE Log", icon: ListChecks },
     { href: "/pre-construction/constructability", label: "Constructability & GMP", icon: ClipboardSignature },
     { href: "/pre-construction/long-lead", label: "Long-Lead", icon: Truck },
-    { href: "/pre-construction/buyout", label: "Buyout", icon: Hammer },
-  ],
-};
-
-const CONSTRUCTION_NAV_GROUP: NavGroup = {
-  label: "Construction",
-  items: [
+    { href: "/pre-construction/buyout", label: "Buyout", icon: Hammer, dividerAfter: true },
     { href: "/construction", label: "Dashboard", icon: HardHat },
     { href: "/construction/schedule", label: "Con Schedule", icon: CalendarDays },
-    { href: "/construction/bids", label: "GC Bids", icon: Handshake },
     { href: "/construction/budget", label: "Hard Costs", icon: DollarSign },
     { href: "/construction/draws", label: "Draws", icon: Wallet },
     { href: "/construction/permits", label: "Permits", icon: FileCheck },
@@ -169,9 +170,8 @@ const NAV_GROUP_ORDER = new Map<string, number>([
   ["Analyze", 2],
   ["Files", 3],
   ["Development", 4],
-  ["Pre-Con", 5],
-  ["Construction", 6],
-  ["Team", 7],
+  ["Construction", 5],
+  ["Team", 6],
 ]);
 
 // Massing-aware routes read the active project from `?massing=<id>`.
@@ -206,17 +206,20 @@ function getNavGroups(
   showInDevelopment: boolean,
   showInConstruction: boolean
 ): NavGroup[] {
-  // Construction group appears whenever the deal has been promoted to
-  // execution OR the owner has pinned the deal to Construction via the
-  // header badge. Either signal means the construction team is now
-  // active; the sidebar shouldn't wait on the other.
-  // Pre-Con appears whenever Development OR Construction would (the bid
-  // leveler / VE log are typically used in late dev / pre-mobilization).
-  const showConstructionGroup = executionPhase != null || showInConstruction;
-  const showPreConGroup = showConstructionGroup || showInDevelopment || dealScope !== "acquisition";
+  // Construction now contains both pre-con prep and operational items.
+  // We show it as soon as any of these signal that the construction track
+  // is relevant: a set execution phase, explicit pin to construction or
+  // development, or a non-acquisition deal scope. This is the union of
+  // the old construction + pre-con conditions — pre-con tools become
+  // visible exactly when they used to, just inside the Construction
+  // collapsible.
+  const showConstructionGroup =
+    executionPhase != null ||
+    showInConstruction ||
+    showInDevelopment ||
+    dealScope !== "acquisition";
   const base = (() => {
     const groups = [...BASE_NAV_GROUPS];
-    if (showPreConGroup) groups.splice(3, 0, PRE_CON_NAV_GROUP);
     if (showConstructionGroup) groups.splice(3, 0, CONSTRUCTION_NAV_GROUP);
     return groups;
   })();
@@ -542,24 +545,29 @@ export default function DealLayout({
                   const linkTitle = sidebarCollapsed ? item.label : undefined;
 
                   return (
-                    <Link key={item.href} href={fullPath} title={linkTitle}>
-                      <button
-                        className={cn(
-                          "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
-                          // Center icons only on desktop-collapsed; mobile
-                          // drawer is always w-56 so labels stay inline.
-                          sidebarCollapsed && "md:justify-center",
-                          isActive
-                            ? "gradient-gold text-primary-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                        )}
-                      >
-                        <Icon className="h-4 w-4 flex-shrink-0" />
-                        <span className={cn("truncate", sidebarCollapsed && "md:hidden")}>
-                          {item.label}
-                        </span>
-                      </button>
-                    </Link>
+                    <div key={item.href}>
+                      <Link href={fullPath} title={linkTitle}>
+                        <button
+                          className={cn(
+                            "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
+                            // Center icons only on desktop-collapsed; mobile
+                            // drawer is always w-56 so labels stay inline.
+                            sidebarCollapsed && "md:justify-center",
+                            isActive
+                              ? "gradient-gold text-primary-foreground shadow-sm"
+                              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                          )}
+                        >
+                          <Icon className="h-4 w-4 flex-shrink-0" />
+                          <span className={cn("truncate", sidebarCollapsed && "md:hidden")}>
+                            {item.label}
+                          </span>
+                        </button>
+                      </Link>
+                      {item.dividerAfter && (
+                        <div className="mx-2 my-1 border-t border-border/30" />
+                      )}
+                    </div>
                   );
                 })}
               </div>
