@@ -467,6 +467,13 @@ export default function DevelopmentSchedule({
     // entitlement spend without jumping to the pre-dev budget tracker.
     budget: null as number | null,
   });
+  const [quickAdd, setQuickAdd] = useState({
+    label: "",
+    duration_days: 30,
+    start_date: "",
+    task_owner: "",
+  });
+  const [quickAdding, setQuickAdding] = useState(false);
   const [seedingEntitlements, setSeedingEntitlements] = useState(false);
   // Deal documents — fetched once and used by the phase dialog's linker.
   const [dealDocuments, setDealDocuments] = useState<
@@ -744,6 +751,52 @@ export default function DevelopmentSchedule({
       loadAll();
     } catch (err) {
       console.error("Failed to save phase:", err);
+    }
+  };
+
+  const handleQuickAddPhase = async () => {
+    const label = quickAdd.label.trim();
+    if (!label || quickAdding) return;
+    setQuickAdding(true);
+    try {
+      const payload = {
+        track,
+        label,
+        duration_days: Math.max(1, Number(quickAdd.duration_days) || 1),
+        predecessor_id: null,
+        lag_days: 0,
+        parent_phase_id: null,
+        task_category: null,
+        task_owner: quickAdd.task_owner.trim() || null,
+        linked_document_ids: null,
+        budget: null,
+        start_date: quickAdd.start_date || null,
+        pct_complete: 0,
+        status: "not_started" as DevPhaseStatus,
+        notes: "",
+        sort_order: phases.length,
+      };
+      const res = await fetch(`/api/deals/${dealId}/dev-schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || err.error || "Failed to add schedule row");
+        return;
+      }
+      setQuickAdd({
+        label: "",
+        duration_days: quickAdd.duration_days,
+        start_date: quickAdd.start_date,
+        task_owner: "",
+      });
+      await loadAll();
+    } catch (err) {
+      toast.error((err as Error).message || "Failed to add schedule row");
+    } finally {
+      setQuickAdding(false);
     }
   };
 
@@ -1850,6 +1903,95 @@ export default function DevelopmentSchedule({
                   <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("actions", event)}>
                     <span className="block text-right pr-1">%</span>
                   </ResizableHeaderCell>
+                </div>
+
+                <div
+                  className="grid gap-2 items-center rounded-md border border-dashed border-border/60 bg-background/45 px-2 py-2"
+                  style={{ gridTemplateColumns: gridTemplate }}
+                >
+                  <input
+                    value={quickAdd.label}
+                    onChange={(event) =>
+                      setQuickAdd((prev) => ({ ...prev, label: event.target.value }))
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") handleQuickAddPhase();
+                    }}
+                    placeholder={`Add ${SCHEDULE_TRACK_LABELS[track].toLowerCase()} row`}
+                    className="min-w-0 rounded border border-transparent bg-transparent px-1 py-1 text-xs outline-none transition-colors placeholder:text-muted-foreground/55 focus:border-primary/40 focus:bg-background"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    value={quickAdd.duration_days}
+                    onChange={(event) =>
+                      setQuickAdd((prev) => ({
+                        ...prev,
+                        duration_days: Number(event.target.value),
+                      }))
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") handleQuickAddPhase();
+                    }}
+                    className="min-w-0 rounded border border-transparent bg-transparent px-1 py-1 text-2xs tabular-nums outline-none transition-colors focus:border-primary/40 focus:bg-background"
+                    title="Duration in days"
+                  />
+                  {columns.predecessor && (
+                    <span className="px-1 text-2xs text-muted-foreground/50">Anchor</span>
+                  )}
+                  {columns.start && (
+                    <input
+                      type="date"
+                      value={quickAdd.start_date}
+                      onChange={(event) =>
+                        setQuickAdd((prev) => ({ ...prev, start_date: event.target.value }))
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") handleQuickAddPhase();
+                      }}
+                      className="min-w-0 rounded border border-transparent bg-transparent px-1 py-1 text-2xs tabular-nums outline-none transition-colors focus:border-primary/40 focus:bg-background"
+                      title="Optional anchor start date"
+                    />
+                  )}
+                  {columns.finish && (
+                    <span className="px-1 text-2xs text-muted-foreground/50">Computed</span>
+                  )}
+                  {columns.budget && (
+                    <span className="px-1 text-2xs text-muted-foreground/50">—</span>
+                  )}
+                  {columns.owner && (
+                    <input
+                      value={quickAdd.task_owner}
+                      onChange={(event) =>
+                        setQuickAdd((prev) => ({ ...prev, task_owner: event.target.value }))
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") handleQuickAddPhase();
+                      }}
+                      placeholder="Owner"
+                      className="min-w-0 rounded border border-transparent bg-transparent px-1 py-1 text-2xs outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-primary/40 focus:bg-background"
+                    />
+                  )}
+                  <span className="px-1 text-2xs text-muted-foreground/50">
+                    Type a row and press Enter
+                  </span>
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1 px-2 text-2xs"
+                      disabled={!quickAdd.label.trim() || quickAdding}
+                      onClick={handleQuickAddPhase}
+                    >
+                      {quickAdding ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Plus className="h-3 w-3" />
+                      )}
+                      Add
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Gantt rows — roots render at top level with any child
