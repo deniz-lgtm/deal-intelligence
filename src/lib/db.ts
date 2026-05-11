@@ -1393,6 +1393,56 @@ export async function ensureColumns(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_playbook_chunks_document_id ON playbook_chunks(document_id)`,
     `CREATE INDEX IF NOT EXISTS idx_playbook_chunks_search ON playbook_chunks USING GIN (to_tsvector('english', content))`,
+
+    // ─── CRM extensions ────────────────────────────────────────────────────
+    // last_touched_at / next_action_at drive the follow-up queue and the
+    // contact kanban. relationship_stage groups contacts on /contacts.
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_touched_at TIMESTAMPTZ`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS next_action_at TIMESTAMPTZ`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS next_action_note TEXT`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS relationship_stage TEXT NOT NULL DEFAULT 'warm'`,
+    `CREATE INDEX IF NOT EXISTS idx_contacts_next_action ON contacts(next_action_at) WHERE next_action_at IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_contacts_relationship_stage ON contacts(relationship_stage)`,
+    // is_source: this contact is the deal's primary sourcing relationship
+    // (i.e. the broker who sent the OM). Used by the source rollup.
+    `ALTER TABLE deal_contacts ADD COLUMN IF NOT EXISTS is_source BOOLEAN NOT NULL DEFAULT false`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_contacts_source ON deal_contacts(contact_id) WHERE is_source = true`,
+    // Activity timeline that can cross deals. deal_id is optional — a "called
+    // broker about market" with no specific deal still belongs on the timeline.
+    `CREATE TABLE IF NOT EXISTS contact_activities (
+      id TEXT PRIMARY KEY,
+      contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      deal_id TEXT REFERENCES deals(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL DEFAULT 'note',
+      subject TEXT,
+      body TEXT,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_contact_activities_contact ON contact_activities(contact_id, occurred_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_contact_activities_deal ON contact_activities(deal_id, occurred_at DESC) WHERE deal_id IS NOT NULL`,
+
+    // ─── Screening decisions ───────────────────────────────────────────────
+    // Persisted screening verdict from the inbox (send-to-LOI / park / kill)
+    // alongside a one-line thesis. Surfaces later in the Deal Brief's
+    // "screened during" history.
+    `CREATE TABLE IF NOT EXISTS screen_decisions (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      thesis TEXT,
+      decision TEXT NOT NULL,
+      decided_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      decided_by TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_screen_decisions_deal ON screen_decisions(deal_id, decided_at DESC)`,
+
+    // ─── Stage stamping on artifacts ───────────────────────────────────────
+    // Each artifact remembers the deal stage at the time it was created so
+    // the Deal Brief can render "OM uploaded during screening" etc.
+    `ALTER TABLE documents ADD COLUMN IF NOT EXISTS stage_at_creation TEXT`,
+    `ALTER TABLE deal_decisions ADD COLUMN IF NOT EXISTS stage_at_creation TEXT`,
+    `ALTER TABLE deal_notes ADD COLUMN IF NOT EXISTS stage_at_creation TEXT`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
