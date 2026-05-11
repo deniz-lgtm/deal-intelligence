@@ -111,3 +111,60 @@ function roundTo(n: number, digits: number): number {
   const m = Math.pow(10, digits);
   return Math.round(n * m) / m;
 }
+
+/**
+ * Infer a BR / BA count from the room labels in a schedule. We look at
+ * labels (case-insensitive):
+ *   - bedrooms: any label that mentions "bed" or "bdrm" (Bedroom, Master
+ *     Bedroom, Bdrm 2, etc.) — does NOT match "Bedroom Closet" which lacks
+ *     a digit/standalone word; we keep it simple and just count rooms.
+ *   - full bathroom: "bath" / "bathroom" / "WC"
+ *   - half bathroom: "half bath" / "powder" → counts as 0.5
+ *
+ * Returns nulls when nothing matches so callers can choose to hide the
+ * inferred badge rather than showing "0 BR / 0 BA".
+ */
+export function inferBedroomBathroom(
+  rows: AreaScheduleRow[],
+): { bedrooms: number | null; bathrooms: number | null } {
+  let bedrooms = 0;
+  let bathrooms = 0;
+  let matchedAny = false;
+
+  for (const row of rows) {
+    const label = row.label.toLowerCase();
+    if (/\bbed(room)?\b|\bbdrm\b|\bmaster\b/.test(label) && !/closet|wic|walk\s*-?in/.test(label)) {
+      bedrooms += 1;
+      matchedAny = true;
+      continue;
+    }
+    if (/\bhalf\s*bath\b|\bpowder\b/.test(label)) {
+      bathrooms += 0.5;
+      matchedAny = true;
+      continue;
+    }
+    if (/\bbath(room)?\b|\bwc\b|\bensuite\b/.test(label)) {
+      bathrooms += 1;
+      matchedAny = true;
+      continue;
+    }
+  }
+
+  if (!matchedAny) return { bedrooms: null, bathrooms: null };
+  return {
+    bedrooms: bedrooms > 0 ? bedrooms : null,
+    bathrooms: bathrooms > 0 ? roundTo(bathrooms, 1) : null,
+  };
+}
+
+/** Render the inferred BR/BA as a compact human label, or null if nothing
+ *  could be inferred. e.g. "2 BR / 2 BA", "Studio / 1 BA", "3 BR". */
+export function formatBedroomBathroom(
+  inferred: { bedrooms: number | null; bathrooms: number | null },
+): string | null {
+  const { bedrooms, bathrooms } = inferred;
+  if (bedrooms === null && bathrooms === null) return null;
+  const brPart = bedrooms === null ? null : bedrooms === 0 ? "Studio" : `${bedrooms} BR`;
+  const baPart = bathrooms === null ? null : `${bathrooms} BA`;
+  return [brPart, baPart].filter(Boolean).join(" / ");
+}

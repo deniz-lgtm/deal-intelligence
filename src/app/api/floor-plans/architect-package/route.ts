@@ -5,6 +5,8 @@ import { resolveBranding } from "@/lib/export-markdown";
 import { htmlToPdf } from "@/lib/html-to-pdf";
 import {
   computeAreaSchedule,
+  formatBedroomBathroom,
+  inferBedroomBathroom,
   type PlanElementLike,
 } from "@/lib/floor-plan-area-schedule";
 import { renderArchitectPackageBodyHtml } from "@/lib/pdf-exports/floor-plan-architect-package";
@@ -60,14 +62,16 @@ export async function POST(req: NextRequest) {
   });
 
   const roomChip = schedule.rows.length === 1 ? "1 room" : `${schedule.rows.length} rooms`;
+  const brBaLabel = formatBedroomBathroom(inferBedroomBathroom(schedule.rows));
   const html = renderReportHtml({
     title: `Architect Package — ${title}`,
     headline: title,
     subtitle: "Floor Plan · Architect Package",
     eyebrow: "DESIGN",
     chips: [
-      roomChip,
+      ...(brBaLabel ? [brBaLabel] : []),
       `${Math.round(schedule.totalFt2)} ft²`,
+      roomChip,
       new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
     ],
     bodyHtml,

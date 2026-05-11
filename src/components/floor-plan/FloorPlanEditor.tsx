@@ -22,7 +22,15 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { computeAreaSchedule } from "@/lib/floor-plan-area-schedule";
+import { computeAreaSchedule, formatBedroomBathroom, inferBedroomBathroom } from "@/lib/floor-plan-area-schedule";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // SVG-based floor plan sketcher. Coordinates live on a 1ft grid (PX_PER_FT).
 // Element types: rooms, walls, doors, windows, labels, and a generic
@@ -688,21 +696,57 @@ export function FloorPlanEditor() {
     }
   };
 
+  // Architect-package dialog state. The dialog collects title, prepared-by,
+  // and notes before the actual export runs — without it the PDF goes out
+  // as "Untitled Plan" with no signature line. preparedBy persists in
+  // localStorage so the user doesn't retype their name on every export.
+  const [pkgDialogOpen, setPkgDialogOpen] = useState(false);
+  const [pkgTitle, setPkgTitle] = useState("");
+  const [pkgPreparedBy, setPkgPreparedBy] = useState("");
+  const [pkgNotes, setPkgNotes] = useState("");
   const [exportingPackage, setExportingPackage] = useState(false);
+
+  // Restore prepared-by from a previous session.
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("floorPlanPreparedBy");
+      if (stored) setPkgPreparedBy(stored);
+    } catch { /* ignore */ }
+  }, []);
+
+  const openPackageDialog = () => {
+    setPkgTitle(state.title || "Untitled Plan");
+    setPkgNotes("");
+    setPkgDialogOpen(true);
+  };
+
   // Architect package = canvas PNG + computed area schedule, wrapped in the
   // branded report shell. Captures the same exportRef the PNG export uses so
   // the user gets exactly what they see on screen.
-  const exportArchitectPackage = async () => {
+  const runArchitectPackageExport = async () => {
     const node = exportRef.current;
     if (!node) return;
     setExportingPackage(true);
     try {
+      // Persist the canonical title onto the plan state so the canvas
+      // header + the next export reflect what the user typed.
+      const finalTitle = pkgTitle.trim() || "Untitled Plan";
+      if (finalTitle !== state.title) commit({ ...state, title: finalTitle });
+
+      const finalPreparedBy = pkgPreparedBy.trim();
+      try {
+        if (finalPreparedBy) localStorage.setItem("floorPlanPreparedBy", finalPreparedBy);
+        else localStorage.removeItem("floorPlanPreparedBy");
+      } catch { /* ignore */ }
+
       const dataUrl = await toPng(node, { backgroundColor: "#ffffff", pixelRatio: 2 });
       const res = await fetch("/api/floor-plans/architect-package", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: state.title || "Untitled Plan",
+          title: finalTitle,
+          prepared_by: finalPreparedBy || null,
+          notes: pkgNotes.trim() || null,
           plan_image_data_url: dataUrl,
           elements: state.els,
         }),
@@ -715,9 +759,10 @@ export function FloorPlanEditor() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${(state.title || "floor-plan").replace(/[^a-zA-Z0-9]/g, "-")}-architect-package.pdf`;
+      a.download = `${finalTitle.replace(/[^a-zA-Z0-9]/g, "-")}-architect-package.pdf`;
       a.click();
       URL.revokeObjectURL(url);
+      setPkgDialogOpen(false);
     } catch (err) {
       console.error("Architect package export failed", err);
       alert(err instanceof Error ? err.message : "Architect package export failed");
@@ -862,7 +907,7 @@ export function FloorPlanEditor() {
           PNG
         </button>
         <button
-          onClick={exportArchitectPackage}
+          onClick={openPackageDialog}
           disabled={exportingPackage || state.els.filter((e) => e.type === "room").length === 0}
           title="Branded PDF with the plan, area schedule, and totals — ready to email to the architect."
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-foreground text-background text-xs font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1266,6 +1311,27 @@ export function FloorPlanEditor() {
                   />
                 </g>
               )}
+
+              {/* Scale bar (10 ft = 10 * PX_PER_FT = 120 px). Lives in the
+                  bottom-left of the canvas so it's always captured by the
+                  PNG export. Pure decoration — no pointer events. */}
+              <g transform={`translate(20 ${800 - 30})`} pointerEvents="none">
+                <line x1={0} y1={0} x2={10 * PX_PER_FT} y2={0} stroke="#0a0d12" strokeWidth={1.5} />
+                <line x1={0} y1={-4} x2={0} y2={4} stroke="#0a0d12" strokeWidth={1.5} />
+                <line x1={5 * PX_PER_FT} y1={-3} x2={5 * PX_PER_FT} y2={3} stroke="#0a0d12" strokeWidth={1} />
+                <line x1={10 * PX_PER_FT} y1={-4} x2={10 * PX_PER_FT} y2={4} stroke="#0a0d12" strokeWidth={1.5} />
+                <text x={0} y={15} fontSize={9} fontFamily="sans-serif" fill="#0a0d12">0</text>
+                <text x={5 * PX_PER_FT} y={15} fontSize={9} fontFamily="sans-serif" fill="#0a0d12" textAnchor="middle">5</text>
+                <text x={10 * PX_PER_FT} y={15} fontSize={9} fontFamily="sans-serif" fill="#0a0d12" textAnchor="middle">10 ft</text>
+              </g>
+
+              {/* North arrow — top-right corner. Conventional architectural
+                  marker so the reviewer / architect can orient quickly. */}
+              <g transform="translate(1160 36)" pointerEvents="none">
+                <circle cx={0} cy={0} r={18} fill="#ffffff" stroke="#0a0d12" strokeWidth={1} />
+                <path d="M 0 -13 L 5 7 L 0 2 L -5 7 Z" fill="#0a0d12" />
+                <text x={0} y={-22} fontSize={10} fontFamily="sans-serif" fill="#0a0d12" textAnchor="middle" fontWeight={700}>N</text>
+              </g>
             </svg>
           </div>
         </div>
@@ -1469,6 +1535,75 @@ export function FloorPlanEditor() {
           )}
         </aside>
       </div>
+
+      {/* Architect-package transmittal dialog. Captures the metadata the
+          PDF cover + signature line need before the actual export fires. */}
+      <Dialog open={pkgDialogOpen} onOpenChange={setPkgDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send to Architect</DialogTitle>
+            <DialogDescription>
+              Builds a branded PDF with the plan, area schedule, and totals.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Project title</label>
+              <input
+                autoFocus
+                type="text"
+                value={pkgTitle}
+                onChange={(e) => setPkgTitle(e.target.value)}
+                placeholder="e.g. 2 BR / 2 BA — Pinewood Phase II"
+                className="mt-1 w-full rounded-md border border-border/50 bg-background/60 px-3 py-2 text-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Prepared by</label>
+              <input
+                type="text"
+                value={pkgPreparedBy}
+                onChange={(e) => setPkgPreparedBy(e.target.value)}
+                placeholder="Name + firm — appears as the transmittal signature line"
+                className="mt-1 w-full rounded-md border border-border/50 bg-background/60 px-3 py-2 text-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15"
+              />
+              <p className="mt-1 text-[10px] text-muted-foreground/70">Remembered for next time.</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Notes (optional)</label>
+              <textarea
+                value={pkgNotes}
+                onChange={(e) => setPkgNotes(e.target.value)}
+                rows={3}
+                placeholder="Design intent, open questions, what you want feedback on…"
+                className="mt-1 w-full rounded-md border border-border/50 bg-background/60 px-3 py-2 text-sm focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setPkgDialogOpen(false)}
+              disabled={exportingPackage}
+              className="px-3 py-1.5 rounded-md border border-border/50 text-xs font-medium hover:bg-muted/50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={runArchitectPackageExport}
+              disabled={exportingPackage || !pkgTitle.trim()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-foreground text-background text-xs font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {exportingPackage ? (
+                <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Building…</>
+              ) : (
+                <><FileDown className="h-3.5 w-3.5" /> Generate PDF</>
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1984,6 +2119,8 @@ function LeaderGlyph({
 // "Bedroom" rooms collapse into one summed line.
 function TotalsPanel({ els }: { els: El[] }) {
   const schedule = useMemo(() => computeAreaSchedule(els as unknown as Parameters<typeof computeAreaSchedule>[0]), [els]);
+  const brBa = useMemo(() => inferBedroomBathroom(schedule.rows), [schedule.rows]);
+  const brBaLabel = formatBedroomBathroom(brBa);
 
   if (schedule.rows.length === 0) {
     return (
@@ -2004,6 +2141,15 @@ function TotalsPanel({ els }: { els: El[] }) {
 
   return (
     <div className="space-y-3">
+      {brBaLabel && (
+        <div className="rounded-md border border-primary/30 bg-primary/8 px-2.5 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-primary/70">Inferred unit type</div>
+          <div className="mt-0.5 text-sm font-semibold text-foreground tabular-nums">
+            {brBaLabel} <span className="text-muted-foreground font-normal">· {Math.round(schedule.totalFt2)} ft²</span>
+          </div>
+        </div>
+      )}
+
       <div>
         <div className="flex items-baseline justify-between mb-1.5">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60">

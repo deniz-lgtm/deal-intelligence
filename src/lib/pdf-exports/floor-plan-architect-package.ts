@@ -10,7 +10,7 @@
  * html-to-image). Puppeteer embeds it inline when it renders the HTML.
  */
 
-import type { AreaSchedule } from "@/lib/floor-plan-area-schedule";
+import { formatBedroomBathroom, inferBedroomBathroom, type AreaSchedule } from "@/lib/floor-plan-area-schedule";
 
 function esc(s: unknown): string {
   return String(s ?? "")
@@ -38,9 +38,17 @@ export function renderArchitectPackageBodyHtml(data: ArchitectPackageData): stri
     ? Math.round((schedule.totalFt2 / schedule.bboxFt2) * 100)
     : null;
 
+  const brBaLabel = formatBedroomBathroom(inferBedroomBathroom(schedule.rows));
+
   // ── Section 1: canvas image ──────────────────────────────────────────
   const canvasSection = `
     <section style="margin-top: 6pt;">
+      ${brBaLabel ? `
+        <p style="margin: 0 0 10pt 0; font-size: 11pt;">
+          <strong style="color: #0a0d12;">${esc(brBaLabel)}</strong>
+          <span style="color: #6b6863;"> · ${Math.round(schedule.totalFt2)} ft² · ${schedule.rows.length} room${schedule.rows.length === 1 ? "" : "s"}</span>
+        </p>
+      ` : ""}
       <div style="border: 1px solid #e0d8c6; padding: 12pt; background: #ffffff;">
         <img
           src="${esc(planImageDataUrl)}"
