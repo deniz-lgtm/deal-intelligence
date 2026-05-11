@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import type { PointerEvent, ReactNode } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   DndContext,
@@ -175,6 +176,63 @@ interface Props {
   hideBudget?: boolean;
 }
 
+type ScheduleColumnWidthKey =
+  | "name"
+  | "duration"
+  | "predecessor"
+  | "start"
+  | "finish"
+  | "budget"
+  | "owner"
+  | "bar"
+  | "actions";
+
+type ScheduleColumnWidths = Record<ScheduleColumnWidthKey, number>;
+
+const DEFAULT_SCHEDULE_COLUMN_WIDTHS: ScheduleColumnWidths = {
+  name: 300,
+  duration: 58,
+  predecessor: 145,
+  start: 104,
+  finish: 104,
+  budget: 116,
+  owner: 138,
+  bar: 420,
+  actions: 96,
+};
+
+const SCHEDULE_COLUMN_LIMITS: Record<ScheduleColumnWidthKey, { min: number; max: number }> = {
+  name: { min: 180, max: 560 },
+  duration: { min: 48, max: 100 },
+  predecessor: { min: 110, max: 260 },
+  start: { min: 86, max: 160 },
+  finish: { min: 86, max: 160 },
+  budget: { min: 90, max: 190 },
+  owner: { min: 96, max: 240 },
+  bar: { min: 280, max: 900 },
+  actions: { min: 76, max: 130 },
+};
+
+function clampColumnWidth(key: ScheduleColumnWidthKey, value: number) {
+  const limits = SCHEDULE_COLUMN_LIMITS[key];
+  return Math.min(limits.max, Math.max(limits.min, Math.round(value)));
+}
+
+function sanitizeColumnWidths(value: unknown): ScheduleColumnWidths {
+  if (!value || typeof value !== "object") return DEFAULT_SCHEDULE_COLUMN_WIDTHS;
+  const raw = value as Partial<Record<ScheduleColumnWidthKey, unknown>>;
+  return (Object.keys(DEFAULT_SCHEDULE_COLUMN_WIDTHS) as ScheduleColumnWidthKey[]).reduce(
+    (next, key) => {
+      const candidate = Number(raw[key]);
+      next[key] = Number.isFinite(candidate)
+        ? clampColumnWidth(key, candidate)
+        : DEFAULT_SCHEDULE_COLUMN_WIDTHS[key];
+      return next;
+    },
+    { ...DEFAULT_SCHEDULE_COLUMN_WIDTHS }
+  );
+}
+
 const fc = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 
@@ -269,7 +327,9 @@ export default function DevelopmentSchedule({
   );
   const [columns, setColumns] =
     useState<ScheduleColumnVisibility>(colDefaults);
+  const [columnWidths, setColumnWidths] = useState<ScheduleColumnWidths>(DEFAULT_SCHEDULE_COLUMN_WIDTHS);
   const colsStorageKey = `dealSchedule:${dealId}:${track}:cols`;
+  const widthsStorageKey = `dealSchedule:${dealId}:${track}:widths:v1`;
   const sortStorageKey = `dealSchedule:${dealId}:${track}:sort`;
   // Load persisted prefs on mount / deal+track change.
   useEffect(() => {
@@ -290,6 +350,12 @@ export default function DevelopmentSchedule({
       setColumns(colDefaults);
     }
     try {
+      const rawWidths = window.localStorage.getItem(widthsStorageKey);
+      setColumnWidths(rawWidths ? sanitizeColumnWidths(JSON.parse(rawWidths)) : DEFAULT_SCHEDULE_COLUMN_WIDTHS);
+    } catch {
+      setColumnWidths(DEFAULT_SCHEDULE_COLUMN_WIDTHS);
+    }
+    try {
       const rawSort = window.localStorage.getItem(sortStorageKey);
       if (rawSort) {
         const parsed = JSON.parse(rawSort);
@@ -303,7 +369,7 @@ export default function DevelopmentSchedule({
     } catch {
       setSortBy(null);
     }
-  }, [colsStorageKey, sortStorageKey, colDefaults]);
+  }, [colsStorageKey, widthsStorageKey, sortStorageKey, colDefaults]);
   // Persist column visibility on change.
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -311,6 +377,12 @@ export default function DevelopmentSchedule({
       window.localStorage.setItem(colsStorageKey, JSON.stringify(columns));
     } catch { /* swallow */ }
   }, [colsStorageKey, columns]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(widthsStorageKey, JSON.stringify(columnWidths));
+    } catch { /* swallow */ }
+  }, [widthsStorageKey, columnWidths]);
   // Persist sort on change.
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -336,6 +408,34 @@ export default function DevelopmentSchedule({
     setSortBy(null);
     setSortDir("asc");
   };
+
+  const beginColumnResize = useCallback(
+    (key: ScheduleColumnWidthKey, event: PointerEvent<HTMLSpanElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidth = columnWidths[key];
+      const doc = event.currentTarget.ownerDocument;
+      const move = (moveEvent: globalThis.PointerEvent) => {
+        const delta = moveEvent.clientX - startX;
+        setColumnWidths((prev) => ({
+          ...prev,
+          [key]: clampColumnWidth(key, startWidth + delta),
+        }));
+      };
+      const stop = () => {
+        doc.removeEventListener("pointermove", move);
+        doc.removeEventListener("pointerup", stop);
+        doc.body.style.cursor = "";
+        doc.body.style.userSelect = "";
+      };
+      doc.body.style.cursor = "col-resize";
+      doc.body.style.userSelect = "none";
+      doc.addEventListener("pointermove", move);
+      doc.addEventListener("pointerup", stop, { once: true });
+    },
+    [columnWidths]
+  );
 
   // Phase dialog
   const [phaseDialogOpen, setPhaseDialogOpen] = useState(false);
@@ -1379,17 +1479,35 @@ export default function DevelopmentSchedule({
   // line up perfectly; the bar always takes the largest fraction. Hidden
   // columns omit their entry entirely so the bar gets that width back.
   const gridTemplate = (() => {
-    const cols: string[] = ["minmax(160px, 1fr)"]; // name (always)
-    cols.push("48px"); // duration (always)
-    if (columns.predecessor) cols.push("130px");
-    if (columns.start) cols.push("90px");
-    if (columns.finish) cols.push("90px");
-    if (columns.budget) cols.push("96px");
-    if (columns.owner) cols.push("110px");
-    cols.push("minmax(0, 1.4fr)"); // bar (always)
-    cols.push("88px"); // status + actions (always)
+    const cols: string[] = [`${columnWidths.name}px`]; // name (always)
+    cols.push(`${columnWidths.duration}px`); // duration (always)
+    if (columns.predecessor) cols.push(`${columnWidths.predecessor}px`);
+    if (columns.start) cols.push(`${columnWidths.start}px`);
+    if (columns.finish) cols.push(`${columnWidths.finish}px`);
+    if (columns.budget) cols.push(`${columnWidths.budget}px`);
+    if (columns.owner) cols.push(`${columnWidths.owner}px`);
+    cols.push(`minmax(${columnWidths.bar}px, 1fr)`); // bar (always)
+    cols.push(`${columnWidths.actions}px`); // status + actions (always)
     return cols.join(" ");
   })();
+  const visibleGridColumnCount =
+    4 +
+    Number(columns.predecessor) +
+    Number(columns.start) +
+    Number(columns.finish) +
+    Number(columns.budget) +
+    Number(columns.owner);
+  const gridMinWidth =
+    columnWidths.name +
+    columnWidths.duration +
+    (columns.predecessor ? columnWidths.predecessor : 0) +
+    (columns.start ? columnWidths.start : 0) +
+    (columns.finish ? columnWidths.finish : 0) +
+    (columns.budget ? columnWidths.budget : 0) +
+    (columns.owner ? columnWidths.owner : 0) +
+    columnWidths.bar +
+    columnWidths.actions +
+    (visibleGridColumnCount - 1) * 8;
 
   const scheduleAssistantPrompts = [
     {
@@ -1488,7 +1606,7 @@ export default function DevelopmentSchedule({
         </button>
 
         {scheduleExpanded && (
-          <div className="px-4 pb-4 space-y-3">
+          <div className="px-4 pb-4 space-y-3 overflow-x-auto">
             {/* Bulk action bar — only renders when something is
                 selected. Sits at the top of the schedule body so it's
                 visible regardless of how far the user has scrolled
@@ -1544,6 +1662,14 @@ export default function DevelopmentSchedule({
                 {phases.length === 0 ? "Seed Schedule" : "Seed bundles"}
               </Button>
               <ScheduleColumnsMenu visibility={columns} onChange={setColumns} />
+              <button
+                type="button"
+                onClick={() => setColumnWidths(DEFAULT_SCHEDULE_COLUMN_WIDTHS)}
+                className="h-8 rounded-md border border-border/60 px-2 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                title="Reset schedule column widths"
+              >
+                Reset widths
+              </button>
               {phases.length > 0 && (
                 <div className="inline-flex items-center gap-1">
                   <Download className="h-3 w-3 text-muted-foreground" />
@@ -1611,7 +1737,7 @@ export default function DevelopmentSchedule({
                 No phases yet. Click &quot;Seed Default Phases&quot; to start with a typical CRE timeline.
               </p>
             ) : (
-              <>
+              <div className="min-w-full space-y-3" style={{ minWidth: gridMinWidth }}>
                 {/* Timeline range header */}
                 {minDate && maxDate && (
                   <div className="flex justify-between text-2xs text-muted-foreground border-b border-border/30 pb-1 relative">
@@ -1648,63 +1774,81 @@ export default function DevelopmentSchedule({
                   className="grid gap-2 items-center pb-1 border-b border-border/40 text-2xs uppercase tracking-wide text-muted-foreground/80"
                   style={{ gridTemplateColumns: gridTemplate }}
                 >
-                  <SortHeader
-                    label="Task name"
-                    active={sortBy === "name"}
-                    direction={sortDir}
-                    onClick={() => cycleSort("name")}
-                    align="start"
-                  />
-                  <SortHeader
-                    label="Dur."
-                    active={sortBy === "duration"}
-                    direction={sortDir}
-                    onClick={() => cycleSort("duration")}
-                    align="start"
-                  />
-                  {columns.predecessor && (
+                  <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("name", event)}>
                     <SortHeader
-                      label="Predecessor"
-                      active={sortBy === "predecessor"}
+                      label="Task name"
+                      active={sortBy === "name"}
                       direction={sortDir}
-                      onClick={() => cycleSort("predecessor")}
+                      onClick={() => cycleSort("name")}
                       align="start"
                     />
+                  </ResizableHeaderCell>
+                  <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("duration", event)}>
+                    <SortHeader
+                      label="Dur."
+                      active={sortBy === "duration"}
+                      direction={sortDir}
+                      onClick={() => cycleSort("duration")}
+                      align="start"
+                    />
+                  </ResizableHeaderCell>
+                  {columns.predecessor && (
+                    <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("predecessor", event)}>
+                      <SortHeader
+                        label="Predecessor"
+                        active={sortBy === "predecessor"}
+                        direction={sortDir}
+                        onClick={() => cycleSort("predecessor")}
+                        align="start"
+                      />
+                    </ResizableHeaderCell>
                   )}
                   {columns.start && (
-                    <SortHeader
-                      label="Start"
-                      active={sortBy === "start"}
-                      direction={sortDir}
-                      onClick={() => cycleSort("start")}
-                      align="start"
-                    />
+                    <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("start", event)}>
+                      <SortHeader
+                        label="Start"
+                        active={sortBy === "start"}
+                        direction={sortDir}
+                        onClick={() => cycleSort("start")}
+                        align="start"
+                      />
+                    </ResizableHeaderCell>
                   )}
                   {columns.finish && (
-                    <SortHeader
-                      label="Finish"
-                      active={sortBy === "finish"}
-                      direction={sortDir}
-                      onClick={() => cycleSort("finish")}
-                      align="start"
-                    />
+                    <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("finish", event)}>
+                      <SortHeader
+                        label="Finish"
+                        active={sortBy === "finish"}
+                        direction={sortDir}
+                        onClick={() => cycleSort("finish")}
+                        align="start"
+                      />
+                    </ResizableHeaderCell>
                   )}
                   {columns.budget && (
-                    <SortHeader
-                      label="Budget"
-                      active={sortBy === "budget"}
-                      direction={sortDir}
-                      onClick={() => cycleSort("budget")}
-                      align="start"
-                    />
+                    <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("budget", event)}>
+                      <SortHeader
+                        label="Budget"
+                        active={sortBy === "budget"}
+                        direction={sortDir}
+                        onClick={() => cycleSort("budget")}
+                        align="start"
+                      />
+                    </ResizableHeaderCell>
                   )}
                   {columns.owner && (
-                    <span className="text-2xs uppercase tracking-wide px-1">
-                      Owner
-                    </span>
+                    <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("owner", event)}>
+                      <span className="text-2xs uppercase tracking-wide px-1">
+                        Owner
+                      </span>
+                    </ResizableHeaderCell>
                   )}
-                  <span /> {/* bar column — no header */}
-                  <span className="text-right pr-1">%</span>
+                  <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("bar", event)}>
+                    <span className="text-2xs uppercase tracking-wide px-1">Timeline</span>
+                  </ResizableHeaderCell>
+                  <ResizableHeaderCell onResizeStart={(event) => beginColumnResize("actions", event)}>
+                    <span className="block text-right pr-1">%</span>
+                  </ResizableHeaderCell>
                 </div>
 
                 {/* Gantt rows — roots render at top level with any child
@@ -2431,7 +2575,7 @@ export default function DevelopmentSchedule({
                 <div className="text-2xs text-muted-foreground pt-1">
                   ⚓ = anchor phase (manually set start date) · linked phases auto-shift when their predecessor moves
                 </div>
-              </>
+              </div>
             )}
           </div>
         )}
@@ -3170,6 +3314,33 @@ export default function DevelopmentSchedule({
         onSeeded={() => {
           loadAll();
         }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Spreadsheet-style header wrapper. Drag the right edge to resize a
+ * schedule column; the parent owns persistence so widths follow the
+ * user per deal + track.
+ */
+function ResizableHeaderCell({
+  children,
+  onResizeStart,
+}: {
+  children: ReactNode;
+  onResizeStart: (event: PointerEvent<HTMLSpanElement>) => void;
+}) {
+  return (
+    <div className="group/header relative min-w-0 pr-2">
+      <div className="min-w-0">{children}</div>
+      <span
+        role="separator"
+        aria-orientation="vertical"
+        tabIndex={-1}
+        onPointerDown={onResizeStart}
+        className="absolute right-0 top-0 h-full w-2 cursor-col-resize rounded-sm transition-colors hover:bg-primary/35 group-hover/header:bg-border/70"
+        title="Drag to resize column"
       />
     </div>
   );
