@@ -381,7 +381,7 @@ export default function DealOverviewPage({
     if (item.parent_phase_id || hasMiniSchedule) {
       return `/deals/${params.id}/schedule/focus/${focusId}`;
     }
-    if (track === "acquisition") return `/deals/${params.id}/schedule`;
+    if (track === "acquisition") return `/deals/${params.id}/schedule/acquisition`;
     if (track === "construction") return `/deals/${params.id}/construction/schedule`;
     return `/deals/${params.id}/project`;
   };

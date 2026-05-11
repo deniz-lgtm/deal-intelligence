@@ -202,7 +202,7 @@ function ItemGlyph({ item }: { item: UpcomingItem }) {
  */
 function hrefForItem(item: UpcomingItem): string {
   if (item.kind === "phase" && item.track) {
-    if (item.track === "acquisition") return `/deals/${item.deal_id}/schedule`;
+    if (item.track === "acquisition") return `/deals/${item.deal_id}/schedule/acquisition`;
     if (item.track === "construction")
       return `/deals/${item.deal_id}/construction/schedule`;
     return `/deals/${item.deal_id}/project`;

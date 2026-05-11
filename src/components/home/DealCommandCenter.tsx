@@ -153,7 +153,7 @@ function signalChips(signal?: PhaseSignals) {
 function scheduleHref(deal: CommandCenterDeal, phases: DealPhase[]) {
   if (phases.includes("construction")) return `/deals/${deal.id}/construction/schedule`;
   if (phases.includes("development")) return `/deals/${deal.id}/project`;
-  return `/deals/${deal.id}/schedule`;
+  return `/deals/${deal.id}/schedule/acquisition`;
 }
 
 export function DealCommandCenter({ deals, signals, loading = false, search = "" }: DealCommandCenterProps) {

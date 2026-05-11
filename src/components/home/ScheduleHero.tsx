@@ -167,7 +167,7 @@ function trackVar(track: "acquisition" | "development" | "construction" | string
 function trackScheduleHref(dealId: string, track: PhaseRow["track"]) {
   if (track === "construction") return `/deals/${dealId}/construction/schedule`;
   if (track === "development") return `/deals/${dealId}/project`;
-  return `/deals/${dealId}/schedule`;
+  return `/deals/${dealId}/schedule/acquisition`;
 }
 
 /**

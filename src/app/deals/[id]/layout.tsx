@@ -108,10 +108,11 @@ const FEASIBILITY_NAV_GROUP: NavGroup = {
 
 const SCHEDULE_BASE_ITEMS: NavItem[] = [
   { href: "/schedule", label: "Master Schedule", icon: Flag },
+  { href: "/schedule/acquisition", label: "Acquisition Schedule", icon: CalendarDays },
 ];
 
 const DEVELOPMENT_SCHEDULE_ITEMS: NavItem[] = [
-  { href: "/project", label: "Development Plan", icon: GanttChart },
+  { href: "/project", label: "Development Schedule", icon: GanttChart },
   { href: "/project/design", label: "Design", icon: PencilRuler },
   { href: "/project/entitlements", label: "Entitlements", icon: Stamp },
   { href: "/project/ceqa", label: "CEQA", icon: Leaf },
@@ -153,7 +154,7 @@ const EXECUTION_NAV_GROUP: NavGroup = {
     { href: "/pre-construction/long-lead", label: "Long-Lead", icon: Truck },
     { href: "/pre-construction/buyout", label: "Buyout", icon: Hammer, dividerAfter: true },
     { href: "/construction", label: "Dashboard", icon: HardHat },
-    { href: "/construction/schedule", label: "Con Schedule", icon: CalendarDays },
+    { href: "/construction/schedule", label: "Construction Schedule", icon: CalendarDays },
     { href: "/construction/budget", label: "Hard Costs", icon: DollarSign },
     { href: "/construction/draws", label: "Draws", icon: Wallet },
     { href: "/construction/permits", label: "Permits", icon: FileCheck },

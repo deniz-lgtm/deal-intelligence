@@ -738,7 +738,7 @@ export function OtherTrackLinks({
   current: ScheduleTrack;
 }) {
   const hrefs: Record<ScheduleTrack, string> = {
-    acquisition: `/deals/${dealId}/schedule`,
+    acquisition: `/deals/${dealId}/schedule/acquisition`,
     development: `/deals/${dealId}/project`,
     construction: `/deals/${dealId}/construction/schedule`,
   };
@@ -746,6 +746,13 @@ export function OtherTrackLinks({
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
       <span className="uppercase tracking-wide text-[10px]">Schedule views</span>
+      <a
+        href={`/deals/${dealId}/schedule`}
+        className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2.5 py-1 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+      >
+        Master
+        <ArrowUpRight className="h-3 w-3" />
+      </a>
       {tracks.map((t) => (
         <a
           key={t}

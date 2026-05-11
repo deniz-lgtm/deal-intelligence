@@ -37,7 +37,7 @@ const STATUS_OPTIONS: DevPhaseStatus[] = [
 ];
 
 const TRACK_BACK_HREF: Record<ScheduleTrack, (dealId: string) => string> = {
-  acquisition: (dealId) => `/deals/${dealId}/schedule`,
+  acquisition: (dealId) => `/deals/${dealId}/schedule/acquisition`,
   development: (dealId) => `/deals/${dealId}/project`,
   construction: (dealId) => `/deals/${dealId}/construction/schedule`,
 };
