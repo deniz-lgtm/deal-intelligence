@@ -2020,6 +2020,38 @@ export async function initSchema(): Promise<void> {
       UNIQUE(deal_id, site_plan_scenario_id)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_uw_per_massing_deal_id ON underwriting_per_massing(deal_id)`,
+    // Floor-plan repository: canonical library of plans organized by unit
+    // type. Each plan has an editor blob (plan_data JSONB) and any number
+    // of per-market metric rows (rent, $/SF, hard cost) in a child table.
+    `CREATE TABLE IF NOT EXISTS floor_plans (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      unit_type TEXT NOT NULL,
+      bedrooms INTEGER NOT NULL DEFAULT 0,
+      bathrooms NUMERIC(3,1) NOT NULL DEFAULT 1,
+      square_footage INTEGER,
+      description TEXT,
+      plan_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      thumbnail TEXT,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_floor_plans_unit_type ON floor_plans(unit_type)`,
+    `CREATE INDEX IF NOT EXISTS idx_floor_plans_updated_at ON floor_plans(updated_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS floor_plan_metrics (
+      id TEXT PRIMARY KEY,
+      floor_plan_id TEXT NOT NULL REFERENCES floor_plans(id) ON DELETE CASCADE,
+      market TEXT NOT NULL,
+      monthly_rent NUMERIC(10,2),
+      rent_per_sf NUMERIC(8,2),
+      hard_cost NUMERIC(12,2),
+      hard_cost_per_sf NUMERIC(8,2),
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_floor_plan_metrics_plan ON floor_plan_metrics(floor_plan_id)`,
   ];
 
   for (const query of queries) {
@@ -8412,5 +8444,209 @@ export const usageQueries = {
       photo_bytes: photoBytes,
       total_bytes: docBytes + photoBytes,
     };
+  },
+};
+
+// ─── Floor-plan repository ────────────────────────────────────────────────
+// Library of reusable floor plans organized by unit type, each with any
+// number of per-market price/rent metric rows. Org-wide visibility (any
+// signed-in user sees all plans) — matches comps / business-plans patterns.
+
+export interface FloorPlanRow {
+  id: string;
+  name: string;
+  unit_type: string;
+  bedrooms: number;
+  bathrooms: number;
+  square_footage: number | null;
+  description: string | null;
+  plan_data: unknown;
+  thumbnail: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FloorPlanMetricRow {
+  id: string;
+  floor_plan_id: string;
+  market: string;
+  monthly_rent: number | null;
+  rent_per_sf: number | null;
+  hard_cost: number | null;
+  hard_cost_per_sf: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const floorPlanQueries = {
+  list: async (opts?: { unit_type?: string }): Promise<FloorPlanRow[]> => {
+    const pool = getPool();
+    const params: unknown[] = [];
+    let where = "";
+    if (opts?.unit_type) {
+      params.push(opts.unit_type);
+      where = `WHERE unit_type = $1`;
+    }
+    const res = await pool.query(
+      `SELECT * FROM floor_plans ${where} ORDER BY updated_at DESC`,
+      params
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string): Promise<FloorPlanRow | null> => {
+    const pool = getPool();
+    const res = await pool.query(`SELECT * FROM floor_plans WHERE id = $1`, [id]);
+    return res.rows[0] ?? null;
+  },
+
+  create: async (input: {
+    id: string;
+    name: string;
+    unit_type: string;
+    bedrooms: number;
+    bathrooms: number;
+    square_footage?: number | null;
+    description?: string | null;
+    plan_data?: unknown;
+    thumbnail?: string | null;
+    created_by?: string | null;
+  }): Promise<FloorPlanRow> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO floor_plans
+        (id, name, unit_type, bedrooms, bathrooms, square_footage, description, plan_data, thumbnail, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+       RETURNING *`,
+      [
+        input.id,
+        input.name,
+        input.unit_type,
+        input.bedrooms,
+        input.bathrooms,
+        input.square_footage ?? null,
+        input.description ?? null,
+        JSON.stringify(input.plan_data ?? {}),
+        input.thumbnail ?? null,
+        input.created_by ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  update: async (id: string, patch: Partial<{
+    name: string;
+    unit_type: string;
+    bedrooms: number;
+    bathrooms: number;
+    square_footage: number | null;
+    description: string | null;
+    plan_data: unknown;
+    thumbnail: string | null;
+  }>): Promise<FloorPlanRow | null> => {
+    const pool = getPool();
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    let i = 1;
+    for (const [k, v] of Object.entries(patch)) {
+      if (k === "plan_data") {
+        sets.push(`plan_data = $${i++}::jsonb`);
+        params.push(JSON.stringify(v ?? {}));
+      } else {
+        sets.push(`${k} = $${i++}`);
+        params.push(v);
+      }
+    }
+    if (sets.length === 0) return floorPlanQueries.getById(id);
+    sets.push(`updated_at = NOW()`);
+    params.push(id);
+    const res = await pool.query(
+      `UPDATE floor_plans SET ${sets.join(", ")} WHERE id = $${i} RETURNING *`,
+      params
+    );
+    return res.rows[0] ?? null;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM floor_plans WHERE id = $1`, [id]);
+  },
+
+  listMetrics: async (floorPlanId: string): Promise<FloorPlanMetricRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM floor_plan_metrics WHERE floor_plan_id = $1 ORDER BY market ASC`,
+      [floorPlanId]
+    );
+    return res.rows;
+  },
+
+  createMetric: async (input: {
+    id: string;
+    floor_plan_id: string;
+    market: string;
+    monthly_rent?: number | null;
+    rent_per_sf?: number | null;
+    hard_cost?: number | null;
+    hard_cost_per_sf?: number | null;
+    notes?: string | null;
+  }): Promise<FloorPlanMetricRow> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO floor_plan_metrics
+        (id, floor_plan_id, market, monthly_rent, rent_per_sf, hard_cost, hard_cost_per_sf, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        input.id,
+        input.floor_plan_id,
+        input.market,
+        input.monthly_rent ?? null,
+        input.rent_per_sf ?? null,
+        input.hard_cost ?? null,
+        input.hard_cost_per_sf ?? null,
+        input.notes ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  updateMetric: async (
+    id: string,
+    patch: Partial<{
+      market: string;
+      monthly_rent: number | null;
+      rent_per_sf: number | null;
+      hard_cost: number | null;
+      hard_cost_per_sf: number | null;
+      notes: string | null;
+    }>
+  ): Promise<FloorPlanMetricRow | null> => {
+    const pool = getPool();
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    let i = 1;
+    for (const [k, v] of Object.entries(patch)) {
+      sets.push(`${k} = $${i++}`);
+      params.push(v);
+    }
+    if (sets.length === 0) {
+      const r = await pool.query(`SELECT * FROM floor_plan_metrics WHERE id = $1`, [id]);
+      return r.rows[0] ?? null;
+    }
+    sets.push(`updated_at = NOW()`);
+    params.push(id);
+    const res = await pool.query(
+      `UPDATE floor_plan_metrics SET ${sets.join(", ")} WHERE id = $${i} RETURNING *`,
+      params
+    );
+    return res.rows[0] ?? null;
+  },
+
+  deleteMetric: async (id: string): Promise<void> => {
+    const pool = getPool();
+    await pool.query(`DELETE FROM floor_plan_metrics WHERE id = $1`, [id]);
   },
 };
