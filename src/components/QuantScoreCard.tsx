@@ -71,13 +71,15 @@ interface McHistogram {
 
 interface McDistribution {
   trials: number;
+  irr_valid?: boolean;
+  irr_sample_count?: number;
   irr: { p10: number; p25: number; p50: number; p75: number; p90: number; mean: number; std: number };
   irr_histogram?: McHistogram;
   em: { p10: number; p50: number; p90: number; mean: number };
   prob_hit_target_irr: number | null;
   prob_capital_loss: number;
   prob_refi_failure: number | null;
-  expected_shortfall_5pct: number;
+  expected_shortfall_5pct: number | null;
   sharpe_ratio: number | null;
   sortino_ratio: number | null;
   risk_free_pct: number;
@@ -86,6 +88,10 @@ interface McDistribution {
   inputs_distribution_summary: Record<string, { mu: number; sigma: number; bounds?: [number, number]; kind: string }>;
   correlation_matrix_version: string;
   rng_seed: number;
+}
+
+function hasValidIrr(mc: McDistribution): boolean {
+  return mc.irr_valid !== false && (mc.irr_sample_count ?? 1) > 0;
 }
 
 interface ScoreNarrative {
@@ -384,7 +390,9 @@ function buildHeadline(breakdown: FactorBreakdown, mc: McDistribution | null): s
   }
   if (mc) {
     const parts: string[] = [];
-    if (mc.target_irr_pct != null && mc.prob_hit_target_irr != null) {
+    if (!hasValidIrr(mc)) {
+      parts.push("IRR simulation unavailable");
+    } else if (mc.target_irr_pct != null && mc.prob_hit_target_irr != null) {
       parts.push(
         `${(mc.prob_hit_target_irr * 100).toFixed(0)}% chance of hitting the ${mc.target_irr_pct.toFixed(0)}% target IRR`
       );
@@ -594,14 +602,26 @@ function CategoryRow({
 // ─── Monte Carlo section (histogram + stats grid + footer) ──────────────────
 
 function McSection({ mc }: { mc: McDistribution }) {
+  const irrValid = hasValidIrr(mc);
   return (
     <div className="border-t border-border/40 pt-3 space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-semibold">Monte Carlo Return Distribution</h4>
-        <span className="text-2xs text-muted-foreground">{mc.trials.toLocaleString()} trials</span>
+        <span className="text-2xs text-muted-foreground">
+          {mc.trials.toLocaleString()} trials
+          {irrValid && mc.irr_sample_count != null && mc.irr_sample_count !== mc.trials
+            ? `, ${mc.irr_sample_count.toLocaleString()} IRR samples`
+            : ""}
+        </span>
       </div>
 
-      {mc.irr_histogram && mc.irr_histogram.bins.length > 0 && (
+      {!irrValid && (
+        <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          IRR did not converge in any trial, so IRR percentiles and risk ratios are hidden. Equity multiple and capital-loss stats still reflect the simulated outcomes.
+        </div>
+      )}
+
+      {irrValid && mc.irr_histogram && mc.irr_histogram.bins.length > 0 && (
         <IrrHistogram mc={mc} />
       )}
 
@@ -611,7 +631,7 @@ function McSection({ mc }: { mc: McDistribution }) {
         Stochastic inputs: rent growth ±{mc.inputs_distribution_summary.rent_growth?.sigma}pp ·
         vacancy triangular · exit cap ±{mc.inputs_distribution_summary.exit_cap?.sigma}pp · rate ±
         {mc.inputs_distribution_summary.rate?.sigma}pp.{" "}
-        CVaR 5% IRR: {mc.expected_shortfall_5pct.toFixed(1)}%.{" "}
+        CVaR 5% IRR: {mc.expected_shortfall_5pct == null ? "n/a" : `${mc.expected_shortfall_5pct.toFixed(1)}%`}.{" "}
         {mc.prob_refi_failure != null && `Refi failure: ${(mc.prob_refi_failure * 100).toFixed(1)}%.`}
       </p>
     </div>
@@ -732,25 +752,26 @@ function PercentileMarker({
 // ─── MC stats grid with 5-band Sharpe/Sortino + verdict ─────────────────────
 
 function McStatsGrid({ mc }: { mc: McDistribution }) {
+  const irrValid = hasValidIrr(mc);
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-border rounded-md overflow-hidden border border-border/60">
       <McStat
         label="P10 IRR"
-        value={`${mc.irr.p10.toFixed(1)}%`}
-        accent={mc.irr.p10 < 0 ? "rose" : "muted"}
+        value={irrValid ? `${mc.irr.p10.toFixed(1)}%` : "n/a"}
+        accent={irrValid && mc.irr.p10 < 0 ? "rose" : "muted"}
         tip={`Worst-decile annualized IRR. 10% of the ${mc.trials.toLocaleString()} trials returned ≤ this.`}
       />
       <McStat
         label="P50 IRR"
-        value={`${mc.irr.p50.toFixed(1)}%`}
-        accent="emerald"
+        value={irrValid ? `${mc.irr.p50.toFixed(1)}%` : "n/a"}
+        accent={irrValid ? "emerald" : "muted"}
         highlight
         tip={`Median annualized IRR across ${mc.trials.toLocaleString()} trials. Each trial draws rent growth (μ=${mc.inputs_distribution_summary.rent_growth?.mu}%, σ=${mc.inputs_distribution_summary.rent_growth?.sigma}pp), vacancy (triangular), exit cap (μ=${mc.inputs_distribution_summary.exit_cap?.mu}%, σ=${mc.inputs_distribution_summary.exit_cap?.sigma}pp), and rate (σ=${mc.inputs_distribution_summary.rate?.sigma}pp) — correlated via Cholesky — and re-runs the underwriting model.`}
       />
       <McStat
         label="P90 IRR"
-        value={`${mc.irr.p90.toFixed(1)}%`}
-        accent="emerald"
+        value={irrValid ? `${mc.irr.p90.toFixed(1)}%` : "n/a"}
+        accent={irrValid ? "emerald" : "muted"}
         tip="Upside-decile IRR. Only 10% of trials beat this number — the realistic upside ceiling."
       />
       <McStat

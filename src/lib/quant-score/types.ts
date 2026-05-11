@@ -122,6 +122,10 @@ export interface McHistogram {
 
 export interface McDistribution {
   trials: number;
+  /** False when every trial failed to produce a finite, converged IRR. */
+  irr_valid: boolean;
+  /** Number of trials with a finite, converged IRR sample. */
+  irr_sample_count: number;
   irr: { p10: number; p25: number; p50: number; p75: number; p90: number; mean: number; std: number };
   /** Pre-computed 30-bin density histogram of IRR samples for the UI. */
   irr_histogram: McHistogram;
@@ -129,7 +133,7 @@ export interface McDistribution {
   prob_hit_target_irr: number | null;
   prob_capital_loss: number;
   prob_refi_failure: number | null;
-  expected_shortfall_5pct: number;
+  expected_shortfall_5pct: number | null;
   /** Sharpe ratio: (mean IRR − risk-free) / σ(IRR). Null if σ ≈ 0. */
   sharpe_ratio: number | null;
   /** Sortino ratio: (mean IRR − target) / σ_downside. Null if no downside samples. */

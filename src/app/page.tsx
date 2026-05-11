@@ -1,25 +1,16 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Plus, Search, LayoutDashboard } from "lucide-react";
+import { LayoutDashboard, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/AppShell";
-import { TodayStrip } from "@/components/today/TodayStrip";
 import { ScheduleHero } from "@/components/home/ScheduleHero";
-import { AcquisitionPanel } from "@/components/home/AcquisitionPanel";
-import { DevelopmentPanel } from "@/components/home/DevelopmentPanel";
-import { ConstructionPanel } from "@/components/home/ConstructionPanel";
+import { DealCommandCenter } from "@/components/home/DealCommandCenter";
+import { TodayStrip } from "@/components/today/TodayStrip";
 import { usePermissions } from "@/lib/usePermissions";
-import { classifyDealPhase, type PhaseSignals } from "@/lib/phase-classification";
-import type { Deal, DealPhase } from "@/lib/types";
-
-// The triptych home. Three side-by-side "departments" — Acquisition,
-// Development, Construction — each owned by one role on a team but reading
-// the same underlying data. A deal is auto-classified into one or more
-// panels by stage + data signals, with an owner override available on each
-// deal's detail page (PhasePinControl). Below xl, panels stack vertically
-// in the user's primaryPhase-first order from localStorage.
+import type { PhaseSignals } from "@/lib/phase-classification";
+import type { Deal } from "@/lib/types";
 
 interface DealWithStats extends Deal {
   document_count?: number;
@@ -28,28 +19,12 @@ interface DealWithStats extends Deal {
   total_project_cost?: number | null;
 }
 
-type PrimaryPhase = DealPhase;
-
-const PANEL_COMPONENTS: Record<DealPhase, (typeof AcquisitionPanel) | (typeof DevelopmentPanel) | (typeof ConstructionPanel)> = {
-  acquisition: AcquisitionPanel,
-  development: DevelopmentPanel,
-  construction: ConstructionPanel,
-};
-
 export default function HomePage() {
   const { can } = usePermissions();
   const [deals, setDeals] = useState<DealWithStats[]>([]);
   const [signals, setSignals] = useState<Record<string, PhaseSignals>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [primaryPhase, setPrimaryPhase] = useState<PrimaryPhase>("acquisition");
-
-  useEffect(() => {
-    const stored = localStorage.getItem("primaryPhase") as PrimaryPhase | null;
-    if (stored === "acquisition" || stored === "development" || stored === "construction") {
-      setPrimaryPhase(stored);
-    }
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,51 +51,24 @@ export default function HomePage() {
     };
   }, []);
 
-  // Apply search filter once, then phase classification fans out from there.
   const filtered = useMemo(() => {
     if (!search) return deals;
     const q = search.toLowerCase();
     return deals.filter(
-      (d) =>
-        d.name.toLowerCase().includes(q) ||
-        d.address?.toLowerCase().includes(q) ||
-        d.city?.toLowerCase().includes(q),
+      (deal) =>
+        deal.name.toLowerCase().includes(q) ||
+        deal.address?.toLowerCase().includes(q) ||
+        deal.city?.toLowerCase().includes(q)
     );
   }, [deals, search]);
 
-  // Bucket deals into phases via the classifier. Classification reads only
-  // deal columns (status + show_in_* flags), so signals isn't a dep here —
-  // signals are passed through to panels that surface them as KPI/row cues.
-  const buckets = useMemo(() => {
-    const acq: DealWithStats[] = [];
-    const dev: DealWithStats[] = [];
-    const con: DealWithStats[] = [];
-    for (const deal of filtered) {
-      const result = classifyDealPhase(deal);
-      if (result.phases.includes("acquisition")) acq.push(deal);
-      if (result.phases.includes("development")) dev.push(deal);
-      if (result.phases.includes("construction")) con.push(deal);
-    }
-    return { acquisition: acq, development: dev, construction: con };
-  }, [filtered]);
-
-  // Stacked-mobile order: primary phase first. On xl+, the grid always flows
-  // Acq → Dev → Con in reading order (the triptych's canonical sequence).
-  const stackedOrder: DealPhase[] = [
-    primaryPhase,
-    ...(["acquisition", "development", "construction"] as DealPhase[]).filter(
-      (p) => p !== primaryPhase,
-    ),
-  ];
-
   return (
     <AppShell>
-      <div className="flex flex-col flex-1 min-h-0">
-        {/* ── Masthead band ── */}
-        <header className="relative overflow-hidden border-b border-border/40 shrink-0">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <header className="relative shrink-0 overflow-hidden border-b border-border/40">
           <div className="absolute inset-0 gradient-mesh" />
-          <div className="relative max-w-full mx-auto px-6 sm:px-8">
-            <div className="flex items-center justify-between h-14 min-w-0">
+          <div className="relative mx-auto max-w-full px-6 sm:px-8">
+            <div className="flex h-14 min-w-0 items-center justify-between">
               <div className="flex items-baseline gap-3">
                 <span className="font-nameplate text-xl leading-none tracking-tight">
                   Atelier
@@ -129,140 +77,59 @@ export default function HomePage() {
                   Vol. 1 &middot; {new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" })}
                 </span>
               </div>
-              <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              <div className="flex shrink-0 items-center gap-1 sm:gap-2">
                 <div className="relative hidden md:block">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground/40" />
+                  <Search className="absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground/40" />
                   <input
                     type="text"
-                    placeholder="Search deals…"
+                    placeholder="Search deals..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    className="w-60 pl-7 pr-3 py-1.5 text-xs border border-border/40 rounded-full bg-background/40 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/40 transition-all placeholder:text-muted-foreground/30"
+                    className="w-60 rounded-full border border-border/40 bg-background/40 py-1.5 pl-7 pr-3 text-xs transition-all placeholder:text-muted-foreground/30 focus:border-primary/40 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/15"
                   />
                 </div>
                 <Link
                   href="/floor-plans"
-                  className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+                  className="hidden items-center gap-1.5 rounded-full border border-border/40 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground sm:inline-flex"
                   title="Floor plan sketchpad"
                 >
                   <LayoutDashboard className="h-3.5 w-3.5" />
                   <span>Floor Plans</span>
                 </Link>
-                <div className="w-px h-5 bg-border/40 mx-1 hidden sm:block" />
+                <div className="mx-1 hidden h-5 w-px bg-border/40 sm:block" />
                 {can("deals.create") && (
-                  <Link href="/deals/new">
-                    <Button size="sm" className="text-xs">
-                      <Plus className="h-3.5 w-3.5 mr-1.5" />
+                  <Button asChild size="sm" className="text-xs">
+                    <Link href="/deals/new">
+                      <Plus className="mr-1.5 h-3.5 w-3.5" />
                       New Deal
-                    </Button>
-                  </Link>
+                    </Link>
+                  </Button>
                 )}
               </div>
             </div>
           </div>
         </header>
 
-        {/* The Schedule — slick timeline hero, replaces the old top-strip
-            cards (Upcoming / Pipeline / Market). Each row is a live deal,
-            bars colored by track. The Today strip moves below the triptych. */}
         <ScheduleHero />
 
-        {/* Mobile search (header version is hidden on small viewports) */}
-        <div className="md:hidden shrink-0 border-b border-border/30 bg-card/20 px-6 py-2.5">
+        <div className="shrink-0 border-b border-border/30 bg-card/20 px-6 py-2.5 md:hidden">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40" />
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/40" />
             <input
               type="text"
-              placeholder="Search deals…"
+              placeholder="Search deals..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-xs border border-border/50 rounded-lg bg-background/50 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all placeholder:text-muted-foreground/30"
+              className="w-full rounded-lg border border-border/50 bg-background/50 py-2 pl-9 pr-4 text-xs transition-all placeholder:text-muted-foreground/30 focus:border-primary/40 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
             />
           </div>
         </div>
 
-        {/* ── The triptych ── */}
-        {loading ? (
-          <TriptychSkeleton />
-        ) : (
-          <div className="flex-1 overflow-y-auto">
-            <div
-              className="grid grid-cols-1 xl:grid-cols-3 xl:divide-x divide-border/30"
-              style={{ gridTemplateAreas: undefined }}
-            >
-              {/* Order rendering so that on stacked mobile, primary phase comes
-                  first. On xl+ the natural DOM order renders left-to-right in
-                  the triptych, so we have to keep canonical order there.
-                  Solution: render canonical order but apply `order-N` classes
-                  below xl based on stacked preference. */}
-              {(["acquisition", "development", "construction"] as DealPhase[]).map((phase) => {
-                const Panel = PANEL_COMPONENTS[phase];
-                const panelDeals = buckets[phase];
-                const staggerIdx = ["acquisition", "development", "construction"].indexOf(phase);
-                const staggerClass = ["stagger-1", "stagger-3", "stagger-4"][staggerIdx];
-                const orderIdx = stackedOrder.indexOf(phase);
-                const orderClass = ["order-1", "order-2", "order-3"][orderIdx] ?? "order-3";
-
-                return (
-                  <div
-                    key={phase}
-                    className={`${orderClass} xl:order-none animate-fade-up ${staggerClass}`}
-                  >
-                    {phase === "acquisition" && (
-                      <AcquisitionPanel deals={panelDeals} allDeals={buckets.acquisition} />
-                    )}
-                    {phase === "development" && (
-                      <DevelopmentPanel deals={panelDeals} signals={signals} />
-                    )}
-                    {phase === "construction" && (
-                      <ConstructionPanel deals={panelDeals} signals={signals} />
-                    )}
-                    {/* Panel component is unused above but keeps type-inference */}
-                    <span className="sr-only">{Panel.name}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Today strip — moved BELOW the triptych. Pipeline / Upcoming
-                / Market still live here as secondary context, with the
-                schedule hero as the home-page lede. */}
-            <TodayStrip />
-          </div>
-        )}
+        <div className="flex-1 overflow-y-auto">
+          <DealCommandCenter deals={filtered} signals={signals} loading={loading} search={search} />
+          <TodayStrip />
+        </div>
       </div>
     </AppShell>
-  );
-}
-
-function TriptychSkeleton() {
-  return (
-    <div className="flex-1 grid grid-cols-1 xl:grid-cols-3 xl:divide-x divide-border/30">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="px-6 py-8 min-h-[70vh] animate-pulse">
-          <div className="flex items-baseline justify-between">
-            <div className="h-7 w-36 rounded bg-muted/30" />
-            <div className="h-3 w-12 rounded bg-muted/20" />
-          </div>
-          <div className="h-px bg-border/30 mt-3" />
-          <div className="grid grid-cols-3 gap-4 mt-7">
-            {[0, 1, 2].map((k) => (
-              <div key={k}>
-                <div className="h-8 w-16 rounded bg-muted/30 mb-2" />
-                <div className="h-2.5 w-12 rounded bg-muted/20" />
-              </div>
-            ))}
-          </div>
-          <div className="mt-7 space-y-3">
-            {[0, 1, 2, 3, 4].map((k) => (
-              <div key={k} className="flex items-center justify-between">
-                <div className="h-4 w-48 rounded bg-muted/20" />
-                <div className="h-3 w-14 rounded bg-muted/15" />
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
   );
 }

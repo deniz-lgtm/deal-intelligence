@@ -24,17 +24,17 @@ import { MarketWidgetsCard } from "./MarketWidgetsCard";
 // see. State persists in localStorage so the preference sticks.
 
 export function TodayStrip() {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   useEffect(() => {
-    const stored = localStorage.getItem("todayStripCollapsed");
+    const stored = localStorage.getItem("todayStripCollapsed.v2");
     if (stored !== null) setCollapsed(stored === "1");
   }, []);
 
   const toggle = () => {
     setCollapsed((prev) => {
       const next = !prev;
-      localStorage.setItem("todayStripCollapsed", next ? "1" : "0");
+      localStorage.setItem("todayStripCollapsed.v2", next ? "1" : "0");
       return next;
     });
   };

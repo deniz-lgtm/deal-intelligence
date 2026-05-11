@@ -164,6 +164,12 @@ function trackVar(track: "acquisition" | "development" | "construction" | string
       : "--phase-con";
 }
 
+function trackScheduleHref(dealId: string, track: PhaseRow["track"]) {
+  if (track === "construction") return `/deals/${dealId}/construction/schedule`;
+  if (track === "development") return `/deals/${dealId}/project`;
+  return `/deals/${dealId}/schedule`;
+}
+
 /**
  * Greedy lane assignment — for each deal's phases, pack them into the
  * fewest horizontal lanes such that no two bars in the same lane overlap.
@@ -201,7 +207,7 @@ export function ScheduleHero() {
     try {
       const w = Number(localStorage.getItem("schedHeroWeeks"));
       if (w === 4 || w === 12 || w === 26 || w === 52) setWeeks(w);
-      const l = localStorage.getItem("schedHeroLabels");
+      const l = localStorage.getItem("schedHeroLabels.v2");
       if (l === "0") setShowLabels(false);
       const c = localStorage.getItem("schedHeroCollapsed");
       if (c === "1") setCollapsed(true);
@@ -210,7 +216,7 @@ export function ScheduleHero() {
     }
   }, []);
   useEffect(() => { try { localStorage.setItem("schedHeroWeeks", String(weeks)); } catch {} }, [weeks]);
-  useEffect(() => { try { localStorage.setItem("schedHeroLabels", showLabels ? "1" : "0"); } catch {} }, [showLabels]);
+  useEffect(() => { try { localStorage.setItem("schedHeroLabels.v2", showLabels ? "1" : "0"); } catch {} }, [showLabels]);
   useEffect(() => { try { localStorage.setItem("schedHeroCollapsed", collapsed ? "1" : "0"); } catch {} }, [collapsed]);
 
   useEffect(() => {
@@ -388,6 +394,8 @@ export function ScheduleHero() {
   // none have schedules — the latter renders inline "Seed schedule"
   // rows now instead of a single big empty state).
   const noDeals = !loading && data && data.deals.length === 0;
+  const noScheduledRows =
+    !loading && data && data.deals.length > 0 && populatedRows.length === 0;
 
   // Today is always at offset 0 in this window since the SQL starts at
   // CURRENT_DATE. Render the hairline at 0%.
@@ -431,29 +439,23 @@ export function ScheduleHero() {
           </div>
 
           {!collapsed && (
-            <div className="flex items-center gap-4 mr-10">
+            <div className="mr-10 flex flex-wrap items-center justify-end gap-3">
               {/* ─ Duration tabs ─ */}
-              <div className="flex items-center gap-px rounded-full border border-border/40 bg-card/30 backdrop-blur-sm overflow-hidden">
+              <div className="flex flex-wrap items-center gap-1 rounded-full border border-border/50 bg-card/45 p-1 backdrop-blur-sm">
                 {DURATIONS.map((d) => {
                   const active = d.weeks === weeks;
                   return (
                     <button
                       key={d.weeks}
                       onClick={() => setWeeks(d.weeks as 4 | 12 | 26 | 52)}
-                      className={`relative px-3 py-1.5 text-2xs font-medium tabular-nums tracking-[0.12em] uppercase transition-colors ${
+                      className={`rounded-full px-3 py-1.5 text-2xs font-semibold uppercase tracking-[0.12em] tabular-nums transition-colors ${
                         active
-                          ? "text-foreground"
-                          : "text-muted-foreground/60 hover:text-foreground"
+                          ? "bg-primary/15 text-primary ring-1 ring-primary/35"
+                          : "text-muted-foreground/65 hover:bg-muted/40 hover:text-foreground"
                       }`}
                       aria-pressed={active}
                     >
-                      {active && (
-                        <span
-                          className="absolute inset-0 rounded-full bg-foreground/[0.04] border border-primary/30"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <span className="relative">{d.label}</span>
+                      {d.label}
                     </button>
                   );
                 })}
@@ -462,24 +464,24 @@ export function ScheduleHero() {
               {/* ─ Labels toggle ─ */}
               <button
                 onClick={() => setShowLabels((s) => !s)}
-                className="flex items-center gap-2 group"
+                className="group inline-flex items-center gap-2 rounded-full border border-border/45 bg-card/35 px-2.5 py-1.5 transition-colors hover:border-primary/30 hover:bg-card/60"
                 aria-pressed={showLabels}
               >
                 <span
-                  className={`relative h-4 w-7 rounded-full border transition-colors ${
+                  className={`relative h-5 w-9 rounded-full border transition-colors ${
                     showLabels
-                      ? "bg-primary/20 border-primary/40"
-                      : "bg-card/40 border-border/40"
+                      ? "border-primary/50 bg-primary/25"
+                      : "border-border/60 bg-muted/40"
                   }`}
                 >
                   <span
-                    className={`absolute top-[1px] h-[calc(100%-2px)] aspect-square rounded-full bg-foreground/80 transition-transform ${
-                      showLabels ? "translate-x-3" : "translate-x-[1px]"
+                    className={`absolute top-0.5 h-4 w-4 rounded-full bg-foreground shadow-sm transition-transform ${
+                      showLabels ? "translate-x-4" : "translate-x-0.5"
                     }`}
                   />
                 </span>
-                <span className="text-2xs uppercase tracking-[0.18em] text-muted-foreground/70 group-hover:text-foreground transition-colors">
-                  Labels
+                <span className="text-2xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/75 transition-colors group-hover:text-foreground">
+                  Labels {showLabels ? "on" : "off"}
                 </span>
               </button>
             </div>
@@ -488,6 +490,28 @@ export function ScheduleHero() {
 
         {/* Hairline under the title — staggered scale-in on mount, just like
             the existing nameplate underlines. */}
+        {!collapsed && (
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+            {[
+              ["Acq", "--phase-acq"],
+              ["Dev", "--phase-dev"],
+              ["Con", "--phase-con"],
+            ].map(([label, colorVar]) => (
+              <span key={label} className="inline-flex items-center gap-1.5">
+                <span
+                  className="h-2.5 w-2.5 rounded-full border"
+                  style={{
+                    background: `hsl(var(${colorVar}) / 0.22)`,
+                    borderColor: `hsl(var(${colorVar}) / 0.65)`,
+                  }}
+                  aria-hidden="true"
+                />
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
+
         <div
           className="mt-6 h-px origin-left transition-transform duration-700 ease-out scale-x-100"
           style={{ background: "hsl(var(--primary) / 0.5)" }}
@@ -524,6 +548,13 @@ export function ScheduleHero() {
                 title="No deals yet"
                 body="Create one to start populating the schedule."
                 cta={{ href: "/deals/new", label: "Create a deal" }}
+              />
+            )}
+
+            {noScheduledRows && (
+              <EmptyState
+                title="No schedule bars in this view"
+                body="Try a longer range or open a deal to seed its schedule."
               />
             )}
 
@@ -630,9 +661,10 @@ function DealRowComponent({ row, index, showLabels }: DealRowProps) {
               ? "1 phase"
               : `${b.phaseCount} phases`;
           return (
-            <div
+            <Link
               key={b.id}
-              className="absolute group/bar overflow-hidden rounded-[4px] transition-transform hover:-translate-y-px hover:shadow-md"
+              href={trackScheduleHref(deal.id, b.track)}
+              className="absolute group/bar overflow-hidden rounded-[4px] transition-transform hover:-translate-y-px hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/45"
               style={{
                 left: `${b.startPct}%`,
                 width: `${b.widthPct}%`,
@@ -659,7 +691,7 @@ function DealRowComponent({ row, index, showLabels }: DealRowProps) {
               )}
               {showLabels && (
                 <span
-                  className="relative z-[1] flex items-center h-full px-2 text-[10px] tracking-[0.05em] truncate font-medium text-foreground/85"
+                  className="relative z-[1] flex h-full min-w-0 items-center truncate whitespace-nowrap px-2 text-[10px] font-medium tracking-[0.05em] text-foreground/85"
                 >
                   {b.label}
                 </span>
@@ -693,7 +725,7 @@ function DealRowComponent({ row, index, showLabels }: DealRowProps) {
                   </span>
                 );
               })}
-            </div>
+            </Link>
           );
         })}
       </div>

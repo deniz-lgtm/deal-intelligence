@@ -206,15 +206,17 @@ describe("computeQuantScore", () => {
     expect(cap?.notched).toBe(true);
   });
 
-  it("category confidence equals present/total", () => {
+  it("category confidence equals present weight / total weight", () => {
     const out = computeQuantScore(makeInputs(), { stage: "uw", strategy: "value_add" });
     for (const cat of out.categories) {
-      const present = cat.inputs.filter((i) => i.score != null).length;
-      const total = cat.inputs.length;
-      if (total === 0) {
+      const presentWeight = cat.inputs
+        .filter((i) => i.score != null)
+        .reduce((sum, i) => sum + (i.weight || 1), 0);
+      const totalWeight = cat.inputs.reduce((sum, i) => sum + (i.weight || 1), 0);
+      if (totalWeight === 0) {
         expect(cat.confidence).toBe(0);
       } else {
-        expect(cat.confidence).toBeCloseTo(present / total, 5);
+        expect(cat.confidence).toBeCloseTo(presentWeight / totalWeight, 5);
       }
     }
   });

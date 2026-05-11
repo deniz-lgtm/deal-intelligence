@@ -3,7 +3,7 @@
 // Walks the factor table, extracts values from the input bundle, maps them
 // to 0–100 subscores, rolls up into category scores (with a soft-floor
 // notch for fatal flaws), and finally into a weighted composite. Missing
-// inputs are tracked as confidence (present / total), not imputed.
+// inputs are tracked as confidence (present weight / total weight), not imputed.
 
 import {
   FACTORS,
@@ -134,19 +134,20 @@ function evaluateFactor(f: FactorDef, inputs: FactorInputs): FactorEval {
 function rollUpCategory(cr: CategoryResult): void {
   let weightedSum = 0;
   let weightSum = 0;
-  let totalCount = 0;
-  let presentCount = 0;
+  let totalInputWeight = 0;
+  let presentInputWeight = 0;
   let fatalTriggered = false;
   for (const inp of cr.inputs) {
-    totalCount++;
+    const inputWeight = inp.weight || 1;
+    totalInputWeight += inputWeight;
     if (inp.score == null) continue;
-    presentCount++;
-    weightedSum += inp.score * (inp.weight || 1);
-    weightSum += inp.weight || 1;
+    presentInputWeight += inputWeight;
+    weightedSum += inp.score * inputWeight;
+    weightSum += inputWeight;
     if (inp.fatalFlaw && inp.score === 0) fatalTriggered = true;
   }
   cr.score = weightSum > 0 ? round1(weightedSum / weightSum) : 0;
-  cr.confidence = totalCount > 0 ? round2(presentCount / totalCount) : 0;
+  cr.confidence = totalInputWeight > 0 ? round2(presentInputWeight / totalInputWeight) : 0;
   if (fatalTriggered) {
     cr.notched = true;
     cr.score = round1(Math.max(0, cr.score - FATAL_NOTCH));

@@ -85,18 +85,22 @@ type NavGroup = {
 // documents, and team coordination stay in stable places.
 const BASE_NAV_GROUPS: NavGroup[] = [
   {
-    label: null,
-    items: [{ href: "", label: "Overview", icon: LayoutDashboard }],
+    label: "Command",
+    items: [
+      { href: "", label: "Overview", icon: LayoutDashboard },
+      { href: "/chat", label: "Assistant", icon: MessageSquare },
+      { href: "/schedule", label: "Schedule", icon: Flag },
+      { href: "/decisions", label: "Decisions / RFIs", icon: FileWarning },
+    ],
   },
   {
-    label: "Work",
+    label: "Analyze",
     items: [
-      { href: "/schedule", label: "Schedule", icon: Flag },
       { href: "/underwriting", label: "Underwriting", icon: Calculator },
       { href: "/programming", label: "Site Plan", icon: Layers },
       { href: "/site-zoning", label: "Zoning", icon: MapPin },
-      { href: "/comps", label: "Comps", icon: BarChart3 },
       { href: "/location", label: "Location", icon: Globe },
+      { href: "/comps", label: "Comps", icon: BarChart3 },
     ],
   },
   {
@@ -115,7 +119,7 @@ const BASE_NAV_GROUPS: NavGroup[] = [
     // procurement work between close and GC mobilization.
     label: "Development",
     items: [
-      { href: "/project",              label: "Project Schedule", icon: GanttChart },
+      { href: "/project",              label: "Dev Schedule",     icon: GanttChart },
       { href: "/project/design",       label: "Design",          icon: PencilRuler },
       { href: "/project/entitlements", label: "Entitlements",    icon: Stamp },
       { href: "/project/ceqa",         label: "CEQA",            icon: Leaf },
@@ -125,8 +129,6 @@ const BASE_NAV_GROUPS: NavGroup[] = [
   {
     label: "Team",
     items: [
-      { href: "/chat", label: "Assistant", icon: MessageSquare },
-      { href: "/decisions", label: "Decisions / RFIs", icon: FileWarning },
       { href: "/communication", label: "Communication", icon: Mailbox },
       { href: "/contacts", label: "Contacts", icon: Users },
       { href: "/deal-log", label: "Deal Log", icon: Activity },
@@ -149,8 +151,10 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
   label: "Construction",
   items: [
     { href: "/construction", label: "Dashboard", icon: HardHat },
-    { href: "/construction/schedule", label: "Schedule", icon: CalendarDays },
-    { href: "/construction/budget", label: "Budget", icon: DollarSign },
+    { href: "/construction/schedule", label: "Con Schedule", icon: CalendarDays },
+    { href: "/construction/bids", label: "GC Bids", icon: Handshake },
+    { href: "/construction/budget", label: "Hard Costs", icon: DollarSign },
+    { href: "/construction/draws", label: "Draws", icon: Wallet },
     { href: "/construction/permits", label: "Permits", icon: FileCheck },
     { href: "/construction/vendors", label: "Vendors", icon: Users },
     { href: "/construction/change-orders", label: "Change Orders", icon: FileWarning },
@@ -161,8 +165,9 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
 };
 
 const NAV_GROUP_ORDER = new Map<string, number>([
-  ["Work", 1],
-  ["Files", 2],
+  ["Command", 1],
+  ["Analyze", 2],
+  ["Files", 3],
   ["Development", 4],
   ["Pre-Con", 5],
   ["Construction", 6],
@@ -500,10 +505,11 @@ export default function DealLayout({
                       // Phase groups pick up their accent tint (same
                       // mechanism used by AppShell); all other labels
                       // stay on the neutral muted scale.
-                      group.label === "Work" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
+                      group.label === "Command" && "text-primary/80 hover:text-primary",
+                      group.label === "Analyze" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
                       group.label === "Development" && "text-[hsl(var(--phase-dev))]/80 hover:text-[hsl(var(--phase-dev))]",
                       group.label === "Construction" && "text-[hsl(var(--phase-con))]/80 hover:text-[hsl(var(--phase-con))]",
-                      !["Work", "Development", "Construction"].includes(group.label) &&
+                      !["Command", "Analyze", "Development", "Construction"].includes(group.label) &&
                         "text-muted-foreground/60 hover:text-muted-foreground",
                       sidebarCollapsed && "md:hidden"
                     )}

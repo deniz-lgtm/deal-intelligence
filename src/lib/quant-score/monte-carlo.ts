@@ -108,10 +108,13 @@ export function runMonteCarlo(
 
   const irrSorted = [...irrSamples].sort((a, b) => a - b);
   const emSorted = [...emSamples].sort((a, b) => a - b);
+  const irrValid = irrSorted.length > 0;
   const irrStats = meanStd(irrSamples);
   const emStats = meanStd(emSamples);
-  const cvarCount = Math.max(1, Math.floor(0.05 * irrSorted.length));
-  const cvar = irrSorted.slice(0, cvarCount).reduce((s, v) => s + v, 0) / cvarCount;
+  const cvarCount = irrValid ? Math.max(1, Math.floor(0.05 * irrSorted.length)) : 0;
+  const cvar = irrValid
+    ? irrSorted.slice(0, cvarCount).reduce((s, v) => s + v, 0) / cvarCount
+    : null;
 
   // Risk-adjusted returns. Sharpe uses the 10yr Treasury proxy (4.0%) as
   // the risk-free hurdle and divides excess return by total volatility.
@@ -142,14 +145,16 @@ export function runMonteCarlo(
 
   return {
     trials,
+    irr_valid: irrValid,
+    irr_sample_count: irrSamples.length,
     irr: {
-      p10: round2(quantileSorted(irrSorted, 0.1)),
-      p25: round2(quantileSorted(irrSorted, 0.25)),
-      p50: round2(quantileSorted(irrSorted, 0.5)),
-      p75: round2(quantileSorted(irrSorted, 0.75)),
-      p90: round2(quantileSorted(irrSorted, 0.9)),
-      mean: round2(irrStats.mean),
-      std: round2(irrStats.std),
+      p10: irrValid ? round2(quantileSorted(irrSorted, 0.1)) : 0,
+      p25: irrValid ? round2(quantileSorted(irrSorted, 0.25)) : 0,
+      p50: irrValid ? round2(quantileSorted(irrSorted, 0.5)) : 0,
+      p75: irrValid ? round2(quantileSorted(irrSorted, 0.75)) : 0,
+      p90: irrValid ? round2(quantileSorted(irrSorted, 0.9)) : 0,
+      mean: irrValid ? round2(irrStats.mean) : 0,
+      std: irrValid ? round2(irrStats.std) : 0,
     },
     irr_histogram: histogram,
     em: {
@@ -162,7 +167,7 @@ export function runMonteCarlo(
       opts.targetIrrPct == null || irrSamples.length === 0 ? null : round3(hits / irrSamples.length),
     prob_capital_loss: round3(capitalLosses / Math.max(1, emSamples.length)),
     prob_refi_failure: refiTrials > 0 ? round3(refiFailures / refiTrials) : null,
-    expected_shortfall_5pct: round2(cvar),
+    expected_shortfall_5pct: cvar == null ? null : round2(cvar),
     sharpe_ratio: sharpe == null ? null : round2(sharpe),
     sortino_ratio: sortino == null ? null : round2(sortino),
     risk_free_pct: RISK_FREE_PCT,

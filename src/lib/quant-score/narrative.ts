@@ -89,15 +89,20 @@ function buildPrompt(
     .map((i) => `  • ${i.category}/${i.id}: raw=${i.raw}, score=${i.score}`)
     .join("\n");
 
+  const mcHasIrr = mc
+    ? mc.irr_valid !== false && (mc.irr_sample_count == null || mc.irr_sample_count > 0)
+    : false;
   const mcLines = mc
     ? [
         `Monte Carlo (${mc.trials} trials):`,
-        `  IRR P10/P50/P90 = ${mc.irr.p10}% / ${mc.irr.p50}% / ${mc.irr.p90}%`,
+        mcHasIrr
+          ? `  IRR P10/P50/P90 = ${mc.irr.p10}% / ${mc.irr.p50}% / ${mc.irr.p90}%`
+          : `  IRR percentiles unavailable: no converged IRR samples`,
         `  EM  P10/P50/P90 = ${mc.em.p10}x / ${mc.em.p50}x / ${mc.em.p90}x`,
         `  Prob capital loss = ${(mc.prob_capital_loss * 100).toFixed(1)}%`,
-        mc.prob_hit_target_irr != null ? `  Prob hit target IRR = ${(mc.prob_hit_target_irr * 100).toFixed(1)}%` : null,
+        mcHasIrr && mc.prob_hit_target_irr != null ? `  Prob hit target IRR = ${(mc.prob_hit_target_irr * 100).toFixed(1)}%` : null,
         mc.prob_refi_failure != null ? `  Prob refi failure = ${(mc.prob_refi_failure * 100).toFixed(1)}%` : null,
-        `  CVaR 5% IRR = ${mc.expected_shortfall_5pct}%`,
+        mc.expected_shortfall_5pct != null ? `  CVaR 5% IRR = ${mc.expected_shortfall_5pct}%` : null,
       ]
         .filter(Boolean)
         .join("\n")
