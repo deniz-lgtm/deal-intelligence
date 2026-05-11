@@ -108,14 +108,14 @@ const BASE_NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Files",
+    label: "Docs & Outputs",
     items: [
       { href: "/documents", label: "Documents", icon: FileText },
-      { href: "/om-analysis", label: "OM Review", icon: FileSearch },
-      { href: "/dd-abstract", label: "DD Abstract", icon: ScrollText },
-      { href: "/investment-package", label: "Investment Package", icon: Presentation },
-      { href: "/reports", label: "Reports", icon: FolderArchive },
-      { href: "/room", label: "Deal Room", icon: Share2 },
+      { href: "/om-analysis", label: "Offering Memo", icon: FileSearch },
+      { href: "/dd-abstract", label: "Diligence Summary", icon: ScrollText },
+      { href: "/investment-package", label: "IC Package", icon: Presentation },
+      { href: "/reports", label: "Output Library", icon: FolderArchive },
+      { href: "/room", label: "Share Room", icon: Share2 },
     ],
   },
   {
@@ -168,7 +168,7 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
 const NAV_GROUP_ORDER = new Map<string, number>([
   ["Command", 1],
   ["Analyze", 2],
-  ["Files", 3],
+  ["Docs & Outputs", 3],
   ["Development", 4],
   ["Construction", 5],
   ["Team", 6],
@@ -177,7 +177,7 @@ const NAV_GROUP_ORDER = new Map<string, number>([
 // Massing-aware routes read the active project from `?massing=<id>`.
 // The sidebar preserves the param when navigating between them so an
 // analyst working on "Massing 2" doesn't bounce back to the base case
-// every time they click over to the DD Abstract or Investment Package.
+// every time they click over to the diligence summary or IC package.
 // Site & Zoning no longer has massing tabs (the map moved to Programming).
 const MASSING_AWARE_HREFS = new Set([
   "/underwriting",

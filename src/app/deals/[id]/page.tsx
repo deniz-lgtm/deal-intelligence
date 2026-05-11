@@ -126,10 +126,9 @@ export default function DealOverviewPage({
   const [deleting, setDeleting] = useState(false);
   const [advancingTo, setAdvancingTo] = useState<DealStatus | null>(null);
   const [showGateWarning, setShowGateWarning] = useState<{ status: DealStatus; message: string } | null>(null);
-  // Investment Materials collapsible bar: separate from the Execution
-  // sidebar group so outputs (LOI / DD Abstract / Inv. Package / Deal
-  // Room) are reachable in one click from the Overview without cluttering
-  // the nav. Collapsed by default.
+  // Documents & outputs collapsible bar: separate from the sidebar group
+  // so source docs, AI summaries, IC materials, and share rooms are
+  // reachable in one click from the Overview without cluttering the nav.
   const [materialsOpen, setMaterialsOpen] = useState(true);
   const [photos, setPhotos] = useState<Photo[]>([]);
   // Cover source — persisted per deal in localStorage. "street_view"
@@ -828,11 +827,9 @@ export default function DealOverviewPage({
         ownerTasks={openOwnerTasks}
       />
 
-      {/* ═══ INVESTMENT MATERIALS (collapsible) ═══
-          Surfaces the output artifacts (LOI, DD Abstract, Investment
-          Package, Deal Room) in a compact bar so they're one click
-          away without taking over the page. Execution sidebar group
-          still has the same links for deep editing. */}
+      {/* Documents & Outputs (collapsible). Surfaces source docs and
+          generated outputs in a compact bar so they're one click away
+          without taking over the page. */}
       <div className="border border-border/40 rounded-lg bg-card/40 overflow-hidden">
         <button
           onClick={() => setMaterialsOpen((o) => !o)}
@@ -844,39 +841,45 @@ export default function DealOverviewPage({
             <ChevronRight className="h-3 w-3 text-muted-foreground/60 shrink-0" />
           )}
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Investment materials
+            Documents & outputs
           </span>
           {!materialsOpen && (
             <span className="text-[11px] text-muted-foreground/80 truncate">
-              LOI{deal.loi_executed ? " ✓" : ""} · DD Abstract · Inv. Package · Deal Room
+              Docs · OM · Diligence Summary · IC Package · Share Room
             </span>
           )}
         </button>
         {materialsOpen && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-2 border-t border-border/40">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2 p-2 border-t border-border/40">
             {[
+              {
+                href: `/deals/${params.id}/documents`,
+                icon: <FileText className="h-4 w-4 text-sky-400" />,
+                label: "Documents",
+                status: `${documents.length} source${documents.length === 1 ? "" : "s"}`,
+              },
               {
                 href: `/deals/${params.id}/loi`,
                 icon: <FileSignature className="h-4 w-4 text-orange-400" />,
-                label: "Letter of Intent",
+                label: "LOI",
                 status: deal.loi_executed ? "Executed" : "Draft",
               },
               {
                 href: `/deals/${params.id}/dd-abstract`,
                 icon: <ScrollText className="h-4 w-4 text-amber-400" />,
-                label: "DD Abstract",
+                label: "Diligence Summary",
                 status: "Open to view",
               },
               {
                 href: `/deals/${params.id}/investment-package`,
                 icon: <Presentation className="h-4 w-4 text-blue-400" />,
-                label: "Investment Package",
+                label: "IC Package",
                 status: "Open to view",
               },
               {
                 href: `/deals/${params.id}/room`,
                 icon: <Share2 className="h-4 w-4 text-emerald-400" />,
-                label: "Deal Room",
+                label: "Share Room",
                 status: "Share externally",
               },
             ].map((m) => (
@@ -895,7 +898,7 @@ export default function DealOverviewPage({
         )}
       </div>
 
-      {/* ═══ QUANT DEAL SCORE (factor model + Monte Carlo) ═══ */}
+      {/* Deal Score (factor model + Monte Carlo) */}
       <QuantScoreCard
         dealId={params.id}
         businessPlanId={deal.business_plan_id ?? null}
