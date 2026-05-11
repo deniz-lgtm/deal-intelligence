@@ -293,16 +293,16 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h2 className="text-xl font-bold">Investment Package</h2>
+          <h2 className="text-xl font-bold">IC Package</h2>
           <p className="text-sm text-muted-foreground">
-            Build an investment memo section by section — add notes, AI expands them
+            Build IC-ready materials section by section — add notes, AI expands them
             {meta.audience && <span className="ml-2 text-xs bg-muted px-2 py-0.5 rounded">{AUDIENCES.find(a => a.id === meta.audience)?.label || meta.audience}</span>}
             {meta.format && <span className="ml-1 text-xs bg-muted px-2 py-0.5 rounded">{FORMATS.find(f => f.id === meta.format)?.label || meta.format}</span>}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-shrink-0 min-w-0">
           {/* Per-page PDF/DOC/PPT exports are gone — every format now
-              flows through Reports & Packages. For section-based formats
+              flows through the Output Library. For section-based formats
               this button is shown only once the user has authored
               content; the IC Package format renders its own button inside
               the IcPackageTab. */}
@@ -322,7 +322,7 @@ export default function InvestmentPackagePage({ params }: { params: { id: string
           </Button>
           <div className="flex items-center gap-2 flex-wrap min-w-0">
             <Button onClick={() => { setShowWizard(true); setWizardStep(0); }} disabled={generatingAll}>
-              {generatingAll ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><Sparkles className="h-4 w-4 mr-2" />Generate Package</>}
+              {generatingAll ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><Sparkles className="h-4 w-4 mr-2" />Generate IC Package</>}
             </Button>
             <DocCoverageChip documents={documents} section="inv_package" />
           </div>

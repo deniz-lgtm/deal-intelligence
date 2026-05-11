@@ -56,7 +56,7 @@ const CATEGORY_LABELS: Record<ArtifactCategory, string> = {
 
 const CATEGORY_DESCRIPTIONS: Record<ArtifactCategory, string> = {
   investor_packages: "IC packages, pitch decks, memos, one-pagers",
-  analysis_outputs: "Proforma, DD abstracts, zoning reports",
+  analysis_outputs: "Proforma, diligence summaries, zoning reports",
   deal_documents: "LOIs and deal-stage documents",
 };
 
@@ -139,7 +139,7 @@ export default function ReportsClient({
             <span className="truncate">{dealName}</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
-            Reports &amp; Packages
+            Output Library
           </h1>
           <p className="text-sm text-muted-foreground max-w-prose">
             Every generated artifact for this deal. When inputs change,
@@ -422,7 +422,7 @@ function EmptyState({
         <FolderArchive className="h-10 w-10 text-muted-foreground mx-auto" />
         <div className="font-medium text-base">No generated artifacts yet</div>
         <div className="text-sm text-muted-foreground max-w-md mx-auto">
-          Generate an IC Package, investment memo, proforma, DD abstract,
+          Generate an IC Package, investment memo, proforma, diligence summary,
           zoning report, or LOI — the PDF lands here with version history
           and auto-detected staleness when deal inputs change.
         </div>

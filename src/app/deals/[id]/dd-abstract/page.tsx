@@ -99,7 +99,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
 
       setAbstract(json.data);
       setLastGenerated(new Date().toISOString());
-      toast.success("DD Abstract generated");
+      toast.success("Diligence Summary generated");
 
       // Save/update as document
       saveAsDocument(json.data);
@@ -123,7 +123,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
         await fetch(`/api/documents/${savedDocId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content_text: markdown, ai_summary: "AI-generated DD Abstract — updated " + new Date().toLocaleDateString() }),
+          body: JSON.stringify({ content_text: markdown, ai_summary: "AI-generated Diligence Summary — updated " + new Date().toLocaleDateString() }),
         });
       } else {
         // Create new document entry
@@ -157,7 +157,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              text: `[DD Abstract ${new Date().toLocaleDateString()}] ${summaryLines.join(" ")}`,
+              text: `[Diligence Summary ${new Date().toLocaleDateString()}] ${summaryLines.join(" ")}`,
               category: "context",
               source: "dd_abstract",
             }),
@@ -173,9 +173,9 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-xl font-bold">DD Abstract</h2>
+          <h2 className="text-xl font-bold">Diligence Summary</h2>
           <p className="text-sm text-muted-foreground">
-            AI-generated due diligence memo — pulls from underwriting, documents, checklist, and deal notes
+            AI-generated diligence summary — pulls from underwriting, documents, checklist, and deal notes
             {lastGenerated && <span className="ml-2 text-xs">· Last updated {new Date(lastGenerated).toLocaleDateString()}</span>}
           </p>
         </div>
@@ -194,9 +194,9 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
             {generating ? (
               <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</>
             ) : abstract ? (
-              <><RefreshCw className="h-4 w-4 mr-2" />Update Abstract</>
+              <><RefreshCw className="h-4 w-4 mr-2" />Update Summary</>
             ) : (
-              <><FileText className="h-4 w-4 mr-2" />Generate Abstract</>
+              <><FileText className="h-4 w-4 mr-2" />Generate Summary</>
             )}
           </Button>
           <DocCoverageChip documents={documents} section="dd_abstract" />
@@ -212,7 +212,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
                 <Settings2 className="h-4 w-4" />
                 Select Sections
               </h3>
-              <p className="text-xs text-muted-foreground mt-1">Choose which sections to include in the abstract</p>
+              <p className="text-xs text-muted-foreground mt-1">Choose which sections to include in the summary</p>
             </div>
             <div className="p-4 space-y-2 max-h-[50vh] overflow-y-auto">
               {ALL_SECTIONS.map(s => (
@@ -253,13 +253,13 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
       {!abstract && !generating && !error && (
         <div className="text-center py-16 border-2 border-dashed rounded-xl">
           <FileText className="h-12 w-12 mx-auto text-muted-foreground/30 mb-3" />
-          <p className="font-medium mb-1">No abstract yet</p>
+          <p className="font-medium mb-1">No diligence summary yet</p>
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
             Pulls from your underwriting model, uploaded documents, and checklist. Run the underwriting model first for the richest output.
           </p>
           <Button onClick={() => setShowPicker(true)}>
             <FileText className="h-4 w-4 mr-2" />
-            Generate Abstract
+            Generate Summary
           </Button>
         </div>
       )}
@@ -276,7 +276,7 @@ export default function DDAbstractPage({ params }: { params: { id: string } }) {
       {abstract && (
         <div className="border rounded-xl bg-card">
           <div className="flex items-center justify-between px-6 py-3 border-b bg-muted/30 rounded-t-xl">
-            <span className="text-xs text-muted-foreground font-medium">DD Abstract — {dealName}</span>
+            <span className="text-xs text-muted-foreground font-medium">Diligence Summary — {dealName}</span>
             <div className="flex items-center gap-2">
               {savedDocId && <span className="text-[10px] text-emerald-600">Saved to documents</span>}
               <GenerateToLibraryButton

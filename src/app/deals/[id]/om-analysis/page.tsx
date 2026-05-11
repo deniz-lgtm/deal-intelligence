@@ -1288,7 +1288,7 @@ export default function OmAnalysisPage() {
       {/* Header row */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold">OM Analysis</h1>
+          <h1 className="text-xl font-semibold">Offering Memo Review</h1>
           {analysis.property_name && (
             <p className="text-sm text-muted-foreground mt-0.5">{analysis.property_name}</p>
           )}
