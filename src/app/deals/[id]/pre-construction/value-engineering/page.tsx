@@ -11,6 +11,7 @@ import {
   XCircle,
   TrendingDown,
   Clock,
+  FileDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -105,11 +106,24 @@ export default function VELogPage({ params }: { params: { id: string } }) {
             Track VE items proposed against the active budget. Accepted items roll into the next budget version (typically V2 - Post-VE).
           </p>
         </div>
-        <Link href={`/deals/${dealId}/pre-construction/value-engineering/new`}>
-          <Button size="sm">
-            <Plus className="h-4 w-4 mr-1" /> New VE Item
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <a
+            href={`/api/deals/${dealId}/ve-items/pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-disabled={items.length === 0}
+            className={items.length === 0 ? "pointer-events-none" : ""}
+          >
+            <Button size="sm" variant="outline" disabled={items.length === 0}>
+              <FileDown className="h-4 w-4 mr-1" /> Export PDF
+            </Button>
+          </a>
+          <Link href={`/deals/${dealId}/pre-construction/value-engineering/new`}>
+            <Button size="sm">
+              <Plus className="h-4 w-4 mr-1" /> New VE Item
+            </Button>
+          </Link>
+        </div>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">

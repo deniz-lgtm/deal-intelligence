@@ -15,6 +15,7 @@ import {
   Edit2,
   ChevronDown,
   ChevronRight,
+  FileDown,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -333,6 +334,17 @@ export default function BidsPage({ params }: { params: { id: string } }) {
               <Plus className="h-4 w-4 mr-1" /> Add Bid
             </Button>
           </Link>
+          <a
+            href={`/api/deals/${dealId}/gc-bids/pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-disabled={data.bids.length === 0}
+            className={data.bids.length === 0 ? "pointer-events-none" : ""}
+          >
+            <Button size="sm" variant="outline" disabled={data.bids.length === 0}>
+              <FileDown className="h-4 w-4 mr-1" /> Export PDF
+            </Button>
+          </a>
           <Button size="sm" disabled={leveling || data.bids.length === 0} onClick={runLeveling}>
             {leveling ? (
               <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Leveling…</>
