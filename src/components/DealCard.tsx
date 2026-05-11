@@ -107,7 +107,7 @@ export default function DealCard({
                   "text-2xs font-bold px-2 py-0.5 rounded-md border tabular-nums",
                   quantColor(deal.quant_composite)
                 )}
-                title={`Quant Score · ${deal.quant_stage?.toUpperCase() ?? ""} · confidence ${
+                title={`Deal Score · ${deal.quant_stage?.toUpperCase() ?? ""} · confidence ${
                   deal.quant_confidence != null ? Math.round(deal.quant_confidence * 100) + "%" : "—"
                 }`}
               >

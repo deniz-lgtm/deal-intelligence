@@ -240,7 +240,7 @@ export function QuantScoreCard({ dealId, businessPlanId, businessPlanName, initi
       <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 pb-3">
         <div className="flex items-center gap-2">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            Quant Score
+            Deal Score
             <ScoreInfoButton mc={row?.mc_distribution} algorithmVersion={row?.algorithm_version} />
           </CardTitle>
           {row?.factor_breakdown.strategy && (
@@ -280,7 +280,7 @@ export function QuantScoreCard({ dealId, businessPlanId, businessPlanName, initi
         )}
         {!row ? (
           <div className="text-xs text-muted-foreground py-6 text-center">
-            No Quant Score for this stage yet.{" "}
+            No Deal Score for this stage yet.{" "}
             <button onClick={recompute} className="text-primary underline hover:opacity-80">
               Run recompute
             </button>

@@ -340,7 +340,7 @@ export function DealCommandCenter({ deals, signals, loading = false, search = ""
                               <div className="mt-1 text-sm text-foreground">{getSizeMetric(deal)}</div>
                             </div>
                             <div>
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Quant</div>
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Score</div>
                               <div className={cn("mt-1 text-sm font-semibold", quantTone(deal.quant_composite))}>
                                 {formatScore(deal.quant_composite)}
                               </div>

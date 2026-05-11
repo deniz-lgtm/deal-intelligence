@@ -160,11 +160,11 @@ export function AnalysisDashboard() {
 
   return (
     <div className="space-y-5">
-      {/* Quant Score */}
+      {/* Deal Score */}
       <div className="gradient-gold rounded-xl p-6 text-primary-foreground">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-primary-foreground/60 text-xs font-medium uppercase tracking-wider">Quant Score</p>
+            <p className="text-primary-foreground/60 text-xs font-medium uppercase tracking-wider">Deal Score</p>
             <div className="flex items-baseline space-x-2 mt-2">
               <span className="text-5xl font-bold tracking-tight tabular-nums font-display">{MOCK_ANALYSIS.score}</span>
               <span className="text-primary-foreground/40 text-lg">/ 100</span>

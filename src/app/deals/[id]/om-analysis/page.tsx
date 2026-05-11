@@ -611,7 +611,7 @@ function UploadPanel({
           )}
 
           <div className="text-xs text-muted-foreground text-center">
-            AI will extract metrics, identify red flags calibrated to your strategy, and update the deal's Quant Score.
+            AI will extract metrics, identify red flags calibrated to your strategy, and update the Deal Score.
           </div>
         </>
       )}

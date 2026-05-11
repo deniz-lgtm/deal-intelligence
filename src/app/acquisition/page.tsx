@@ -371,7 +371,7 @@ export default function AcquisitionPage() {
                     <FileSearch className="h-3.5 w-3.5 text-primary" />
                     <div>
                       <p className="text-sm font-bold tabular-nums tracking-tight leading-tight">{avgScore}</p>
-                    <p className="text-[10px] text-muted-foreground leading-tight">Avg Quant</p>
+                    <p className="text-[10px] text-muted-foreground leading-tight">Avg Score</p>
                     </div>
                   </div>
                 )}
