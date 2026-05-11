@@ -83,69 +83,69 @@ type NavGroup = {
   items: NavItem[];
 };
 
-// Deal-level navigation is organized by what someone is trying to do,
-// not by every internal module the app has accumulated. Role-specific
-// execution work still has its own sections, but diligence, analysis,
-// documents, and team coordination stay in stable places.
-const BASE_NAV_GROUPS: NavGroup[] = [
-  {
-    label: "Command",
-    items: [
-      { href: "", label: "Overview", icon: LayoutDashboard },
-      { href: "/chat", label: "Assistant", icon: MessageSquare },
-      { href: "/schedule", label: "Schedule", icon: Flag },
-      { href: "/decisions", label: "Decisions / RFIs", icon: FileWarning },
-    ],
-  },
-  {
-    label: "Analyze",
-    items: [
-      { href: "/underwriting", label: "Underwriting", icon: Calculator },
-      { href: "/programming", label: "Site Plan", icon: Layers },
-      { href: "/site-zoning", label: "Zoning", icon: MapPin },
-      { href: "/location", label: "Location", icon: Globe },
-      { href: "/comps", label: "Comps", icon: BarChart3 },
-    ],
-  },
-  {
-    label: "Docs & Outputs",
-    items: [
-      { href: "/documents", label: "Documents", icon: FileText },
-      { href: "/om-analysis", label: "Offering Memo", icon: FileSearch },
-      { href: "/dd-abstract", label: "Diligence Summary", icon: ScrollText },
-      { href: "/investment-package", label: "IC Package", icon: Presentation },
-      { href: "/reports", label: "Output Library", icon: FolderArchive },
-      { href: "/room", label: "Share Room", icon: Share2 },
-    ],
-  },
-  {
-    // Development-track workspace: design, entitlement, CEQA, and
-    // procurement work between close and GC mobilization.
-    label: "Development",
-    items: [
-      { href: "/project",              label: "Dev Schedule",     icon: GanttChart },
-      { href: "/project/design",       label: "Design",          icon: PencilRuler },
-      { href: "/project/entitlements", label: "Entitlements",    icon: Stamp },
-      { href: "/project/ceqa",         label: "CEQA",            icon: Leaf },
-      { href: "/project/procurement",  label: "Procurement",     icon: Handshake },
-    ],
-  },
-  {
-    label: "Team",
-    items: [
-      { href: "/communication", label: "Communication", icon: Mailbox },
-      { href: "/contacts", label: "Contacts", icon: Users },
-      { href: "/deal-log", label: "Deal Log", icon: Activity },
-    ],
-  },
+// Deal-level navigation is organized around the few places people work:
+// understand the deal, schedule it, document it, coordinate it, and
+// execute it. Existing routes stay intact; the sidebar gives them a
+// calmer workflow model.
+const OVERVIEW_NAV_GROUP: NavGroup = {
+  label: "Overview",
+  items: [
+    { href: "", label: "Deal Home", icon: LayoutDashboard },
+    { href: "/chat", label: "Assistant", icon: MessageSquare },
+  ],
+};
+
+const FEASIBILITY_NAV_GROUP: NavGroup = {
+  label: "Feasibility",
+  items: [
+    { href: "/underwriting", label: "Underwriting", icon: Calculator },
+    { href: "/programming", label: "Site Plan", icon: Layers },
+    { href: "/site-zoning", label: "Zoning", icon: MapPin },
+    { href: "/location", label: "Location", icon: Globe },
+    { href: "/comps", label: "Comps", icon: BarChart3 },
+  ],
+};
+
+const SCHEDULE_BASE_ITEMS: NavItem[] = [
+  { href: "/schedule", label: "Master Schedule", icon: Flag },
 ];
+
+const DEVELOPMENT_SCHEDULE_ITEMS: NavItem[] = [
+  { href: "/project", label: "Development Plan", icon: GanttChart },
+  { href: "/project/design", label: "Design", icon: PencilRuler },
+  { href: "/project/entitlements", label: "Entitlements", icon: Stamp },
+  { href: "/project/ceqa", label: "CEQA", icon: Leaf },
+  { href: "/project/procurement", label: "Procurement", icon: Handshake },
+];
+
+const DOCS_NAV_GROUP: NavGroup = {
+  label: "Docs & Outputs",
+  items: [
+    { href: "/documents", label: "Documents", icon: FileText },
+    { href: "/om-analysis", label: "Offering Memo", icon: FileSearch },
+    { href: "/dd-abstract", label: "Diligence Summary", icon: ScrollText },
+    { href: "/investment-package", label: "IC Package", icon: Presentation },
+    { href: "/reports", label: "Output Library", icon: FolderArchive },
+    { href: "/room", label: "Share Room", icon: Share2 },
+  ],
+};
+
+const TEAM_NAV_GROUP: NavGroup = {
+  label: "Team",
+  items: [
+    { href: "/decisions", label: "Decisions / RFIs", icon: FileWarning },
+    { href: "/communication", label: "Communication", icon: Mailbox },
+    { href: "/contacts", label: "Contacts", icon: Users },
+    { href: "/deal-log", label: "Deal Log", icon: Activity },
+  ],
+};
 
 // Construction group holds the GC-team workflow end-to-end: pre-con prep
 // (bid leveling, VE, constructability, long-lead, buyout) at the top,
 // then operational construction below the divider. Keeping them in one
 // collapsible section reflects how the same team owns both phases.
-const CONSTRUCTION_NAV_GROUP: NavGroup = {
-  label: "Construction",
+const EXECUTION_NAV_GROUP: NavGroup = {
+  label: "Execution",
   items: [
     { href: "/pre-construction/bids", label: "Bid Leveler", icon: Handshake },
     { href: "/pre-construction/value-engineering", label: "VE Log", icon: ListChecks },
@@ -166,12 +166,12 @@ const CONSTRUCTION_NAV_GROUP: NavGroup = {
 };
 
 const NAV_GROUP_ORDER = new Map<string, number>([
-  ["Command", 1],
-  ["Analyze", 2],
-  ["Docs & Outputs", 3],
-  ["Development", 4],
-  ["Construction", 5],
-  ["Team", 6],
+  ["Overview", 1],
+  ["Feasibility", 2],
+  ["Schedule", 3],
+  ["Docs & Outputs", 4],
+  ["Team", 5],
+  ["Execution", 6],
 ]);
 
 // Massing-aware routes read the active project from `?massing=<id>`.
@@ -197,7 +197,13 @@ function applyScopeGating(
   // items become first-class even on an acquisition-scope deal — clicking
   // the Dev badge is the signal that the dev team is now involved.
   if (dealScope !== "acquisition" || showInDevelopment) return groups;
-  return groups.filter((group) => group.label !== "Development");
+  return groups.map((group) => {
+    if (group.label !== "Schedule") return group;
+    return {
+      ...group,
+      items: group.items.filter((item) => !item.href.startsWith("/project")),
+    };
+  });
 }
 
 function getNavGroups(
@@ -218,9 +224,23 @@ function getNavGroups(
     showInConstruction ||
     showInDevelopment ||
     dealScope !== "acquisition";
+  const showDevelopmentSchedule = dealScope !== "acquisition" || showInDevelopment;
+  const scheduleGroup: NavGroup = {
+    label: "Schedule",
+    items: [
+      ...SCHEDULE_BASE_ITEMS,
+      ...(showDevelopmentSchedule ? DEVELOPMENT_SCHEDULE_ITEMS : []),
+    ],
+  };
   const base = (() => {
-    const groups = [...BASE_NAV_GROUPS];
-    if (showConstructionGroup) groups.splice(3, 0, CONSTRUCTION_NAV_GROUP);
+    const groups = [
+      OVERVIEW_NAV_GROUP,
+      FEASIBILITY_NAV_GROUP,
+      scheduleGroup,
+      DOCS_NAV_GROUP,
+      TEAM_NAV_GROUP,
+    ];
+    if (showConstructionGroup) groups.push(EXECUTION_NAV_GROUP);
     return groups;
   })();
   return applyScopeGating(base, dealScope, showInDevelopment).sort((a, b) => {
@@ -508,11 +528,11 @@ export default function DealLayout({
                       // Phase groups pick up their accent tint (same
                       // mechanism used by AppShell); all other labels
                       // stay on the neutral muted scale.
-                      group.label === "Command" && "text-primary/80 hover:text-primary",
-                      group.label === "Analyze" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
-                      group.label === "Development" && "text-[hsl(var(--phase-dev))]/80 hover:text-[hsl(var(--phase-dev))]",
-                      group.label === "Construction" && "text-[hsl(var(--phase-con))]/80 hover:text-[hsl(var(--phase-con))]",
-                      !["Command", "Analyze", "Development", "Construction"].includes(group.label) &&
+                      group.label === "Overview" && "text-primary/80 hover:text-primary",
+                      group.label === "Feasibility" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
+                      group.label === "Schedule" && "text-[hsl(var(--phase-dev))]/80 hover:text-[hsl(var(--phase-dev))]",
+                      group.label === "Execution" && "text-[hsl(var(--phase-con))]/80 hover:text-[hsl(var(--phase-con))]",
+                      !["Overview", "Feasibility", "Schedule", "Execution"].includes(group.label) &&
                         "text-muted-foreground/60 hover:text-muted-foreground",
                       sidebarCollapsed && "md:hidden"
                     )}
