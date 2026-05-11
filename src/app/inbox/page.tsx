@@ -25,9 +25,8 @@ import { INVESTMENT_THESIS_LABELS } from "@/lib/types";
 
 // AI Deal Sourcing inbox. Polls a watched Dropbox folder on demand and
 // auto-creates draft deals for any new OM files it finds. Each card shows
-// the extracted headline (name, address, price, units) and lets the analyst
-// Open (review in the deal detail page) or Dismiss (mark reviewed + move to
-// dead stage).
+// the extracted headline, supports a lightweight BOE review, then lets the
+// analyst start the real deal workspace or dismiss it.
 
 interface InboxItem {
   id: string;
@@ -48,6 +47,14 @@ interface InboxItem {
   // Surfaced by the inbox query — present only if analysis has been started
   analysis_id: string | null;
   analysis_status: "pending" | "processing" | "complete" | "error" | null;
+  analysis_summary: string | null;
+  analysis_recommendations: string[] | null;
+  analysis_red_flags: Array<{
+    severity: "critical" | "high" | "medium" | "low";
+    category: string;
+    description: string;
+    recommendation: string;
+  }> | null;
 }
 
 const PROPERTY_TYPE_OPTIONS: { value: PropertyType; label: string }[] = [
@@ -120,7 +127,7 @@ export default function InboxPage() {
       const json = await res.json();
       setPlans(json.data || []);
     } catch {
-      // Non-fatal — the Start Analysis card will show a prompt to create one.
+      // Non-fatal — the Start Quick BOE card will show a prompt to create one.
     }
   }, []);
 
@@ -129,6 +136,17 @@ export default function InboxPage() {
       setLoading(false)
     );
   }, [loadItems, loadSettings, loadPlans]);
+
+  useEffect(() => {
+    const hasRunningBoe = items.some(
+      (item) => item.analysis_status === "pending" || item.analysis_status === "processing"
+    );
+    if (!hasRunningBoe) return;
+    const timer = window.setInterval(() => {
+      loadItems();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [items, loadItems]);
 
   async function handlePoll(opts: { silent?: boolean } = {}) {
     setPolling(true);
@@ -235,7 +253,7 @@ export default function InboxPage() {
                   Inbox
                 </span>
                 <span className="text-2xs uppercase tracking-[0.15em] text-muted-foreground/70 hidden sm:inline">
-                  AI Deal Sourcing · {items.length} pending
+                  BOE Intake · {items.length} pending
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -292,7 +310,7 @@ export default function InboxPage() {
                       </div>
                       <div className="text-muted-foreground">
                         Connect a Dropbox account to watch a folder for
-                        incoming OMs.
+                        incoming OMs and run quick BOE screens.
                       </div>
                       <a
                         href="/api/dropbox/auth?return=inbox"
@@ -490,7 +508,7 @@ function InboxCard({
             >
               <Button size="sm" variant="outline">
                 <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-                Review
+                Full review
               </Button>
             </Link>
           ) : null}
@@ -509,6 +527,12 @@ function InboxCard({
           item={item}
           plans={plans}
           onStarted={onAnalysisStarted}
+        />
+      )}
+      {analysisStarted && (
+        <QuickBoePanel
+          item={item}
+          onStartDeal={() => onOpen(item.id)}
         />
       )}
     </div>
@@ -531,20 +555,20 @@ function StatusBadge({
     return (
       <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 font-medium uppercase tracking-wide inline-flex items-center gap-1">
         <Loader2 className="h-2.5 w-2.5 animate-spin" />
-        Analyzing
+        BOE Running
       </span>
     );
   }
   if (status === "complete") {
     return (
       <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 font-medium uppercase tracking-wide">
-        Ready
+        BOE Ready
       </span>
     );
   }
   return (
     <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-300 font-medium uppercase tracking-wide">
-      Error
+      BOE Error
     </span>
   );
 }
@@ -596,13 +620,13 @@ function StartAnalysisPanel({
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(json.error || "Failed to start analysis");
+        toast.error(json.error || "Failed to start quick BOE");
         return;
       }
-      toast.success("Analysis started — it'll appear here when ready");
+      toast.success("Quick BOE started — it will appear here when ready");
       onStarted();
     } catch {
-      toast.error("Failed to start analysis");
+      toast.error("Failed to start quick BOE");
     } finally {
       setStarting(false);
     }
@@ -653,7 +677,7 @@ function StartAnalysisPanel({
           </Link>
         ) : (
           <div className="text-[11px] text-muted-foreground">
-            Pick a plan, property type, and strategy to calibrate analysis.
+            Pick a plan, property type, and strategy to calibrate the quick BOE.
           </div>
         )}
         <Button size="sm" onClick={handleStart} disabled={!canStart}>
@@ -662,11 +686,158 @@ function StartAnalysisPanel({
           ) : (
             <Sparkles className="h-3.5 w-3.5 mr-1.5" />
           )}
-          Start Analysis
+          Start Quick BOE
         </Button>
       </div>
     </div>
   );
+}
+
+function QuickBoePanel({
+  item,
+  onStartDeal,
+}: {
+  item: InboxItem;
+  onStartDeal: () => void;
+}) {
+  const summaryBullets = parseBoeSummary(item.analysis_summary).slice(0, 4);
+  const redFlags = item.analysis_red_flags || [];
+  const urgentFlags = redFlags.filter(
+    (flag) => flag.severity === "critical" || flag.severity === "high"
+  );
+  const recommendations = (item.analysis_recommendations || []).slice(0, 3);
+
+  if (item.analysis_status === "pending" || item.analysis_status === "processing") {
+    return (
+      <div className="mt-4 pt-4 border-t border-border/40">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          Running quick BOE. You can leave this page open; it refreshes automatically.
+        </div>
+      </div>
+    );
+  }
+
+  if (item.analysis_status === "error") {
+    return (
+      <div className="mt-4 pt-4 border-t border-border/40">
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-200">
+          Quick BOE failed. Open the full review to inspect the source document or retry analysis.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 pt-4 border-t border-border/40 space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-3">
+        <div className="rounded-lg border border-border/50 bg-background/40 p-3">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="text-xs font-semibold">Quick BOE</div>
+            {urgentFlags.length > 0 ? (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/10 text-red-300 border border-red-500/20">
+                {urgentFlags.length} high-risk flag{urgentFlags.length === 1 ? "" : "s"}
+              </span>
+            ) : (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                No high-risk flags
+              </span>
+            )}
+          </div>
+          {summaryBullets.length > 0 ? (
+            <ul className="space-y-1.5 text-xs leading-5 text-muted-foreground">
+              {summaryBullets.map((line, index) => (
+                <li key={`${line}-${index}`} className="flex gap-2">
+                  <span className="mt-2 h-1 w-1 rounded-full bg-primary/70 shrink-0" />
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              BOE complete. Open the full review for extracted metrics and recommendations.
+            </p>
+          )}
+        </div>
+        <div className="rounded-lg border border-border/50 bg-background/40 p-3 space-y-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Extracted assumptions
+          </div>
+          <AssumptionRow
+            label="Ask"
+            value={item.asking_price != null ? formatCurrency(item.asking_price) : "TBD"}
+          />
+          <AssumptionRow
+            label="Units"
+            value={item.units != null && item.units > 0 ? item.units.toLocaleString() : "TBD"}
+          />
+          <AssumptionRow
+            label="Size"
+            value={
+              item.square_footage != null && item.square_footage > 0
+                ? `${Math.round(item.square_footage).toLocaleString()} SF`
+                : "TBD"
+            }
+          />
+          <AssumptionRow
+            label="Built"
+            value={item.year_built != null && item.year_built > 0 ? String(item.year_built) : "TBD"}
+          />
+        </div>
+      </div>
+
+      {recommendations.length > 0 && (
+        <div className="rounded-lg border border-border/50 bg-muted/10 p-3">
+          <div className="mb-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+            Recommended next checks
+          </div>
+          <div className="grid gap-1.5 text-xs text-muted-foreground">
+            {recommendations.map((rec, index) => (
+              <div key={`${rec}-${index}`} className="line-clamp-2">
+                {rec}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[11px] text-muted-foreground">
+          Keep it here for triage, or start the full workspace when it is worth real time.
+        </div>
+        <div className="flex items-center gap-2">
+          <Link href={`/deals/${item.id}/om-analysis`}>
+            <Button size="sm" variant="outline">
+              Full review
+            </Button>
+          </Link>
+          <Link href={`/deals/${item.id}`} onClick={onStartDeal}>
+            <Button size="sm">
+              <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+              Start deal workspace
+            </Button>
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssumptionRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium text-foreground tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+function parseBoeSummary(summary?: string | null): string[] {
+  if (!summary) return [];
+  return summary
+    .split(/\n|(?<=\.)\s+/)
+    .map((line) => line.trim().replace(/^[-*]\s*/, ""))
+    .filter((line) => line.length > 4);
 }
 
 function DropdownField({
@@ -732,7 +903,7 @@ function EmptyState({
       <p className="text-sm text-muted-foreground leading-relaxed">
         Drop offering memorandums into your watched Dropbox folder and
         they&apos;ll appear here as draft deals with auto-extracted fields.
-        Review each one, then the deal moves into your pipeline.
+        Run a quick BOE, then decide whether it deserves a real deal workspace.
       </p>
       <div className="flex items-center justify-center gap-2">
         {!connected || !hasFolder ? (

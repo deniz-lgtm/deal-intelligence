@@ -2231,8 +2231,8 @@ export const dealQueries = {
    * The LEFT JOIN on `om_analyses` surfaces the latest analysis state
    * (when one exists) so the inbox UI can decide whether to render the
    * "pick business plan + property type + investment strategy + Start
-   * Analysis" card or the "Review" card for a deal whose analysis is
-   * already processing or complete.
+   * Quick BOE" card, an in-progress state, or the inline quick review
+   * for a deal whose analysis is complete.
    */
   getPendingInboxItems: async (limit = 50, userId?: string) => {
     const pool = getPool();
@@ -2250,12 +2250,15 @@ export const dealQueries = {
       `SELECT DISTINCT d.*,
               u.data                AS underwriting_data,
               oa.id                 AS analysis_id,
-              oa.status             AS analysis_status
+              oa.status             AS analysis_status,
+              oa.summary            AS analysis_summary,
+              oa.recommendations    AS analysis_recommendations,
+              oa.red_flags          AS analysis_red_flags
        FROM deals d
        LEFT JOIN underwriting u ON u.deal_id = d.id
        LEFT JOIN deal_shares ds ON d.id = ds.deal_id AND ds.user_id = $2
        LEFT JOIN LATERAL (
-         SELECT id, status
+         SELECT id, status, summary, recommendations, red_flags
          FROM om_analyses
          WHERE deal_id = d.id
          ORDER BY created_at DESC
