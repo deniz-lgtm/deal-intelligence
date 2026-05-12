@@ -886,6 +886,7 @@ export interface UniversalChatAction {
     | "deal_updated"
     | "underwriting_updated"
     | "note_created"
+    | "decision_created"
     | "schedule_item_created"
     | "schedule_action_failed"
     | "mini_schedule_draft"
@@ -895,6 +896,14 @@ export interface UniversalChatAction {
   note_id?: string;
   fields?: Record<string, unknown>;
   category?: string;
+  decision?: {
+    id?: string;
+    title: string;
+    body?: string | null;
+    category?: string | null;
+    due_date?: string | null;
+    deep_link?: string;
+  };
   checklist_item?: {
     id?: string;
     category: string;
@@ -1171,17 +1180,29 @@ const UNIVERSAL_CHAT_TOOLS: Anthropic.Tool[] = [
   {
     name: "record_decision",
     description:
-      "Record a decision, unresolved decision, or open item in deal memory. Use when the user says something was decided, needs approval, needs owner follow-up, or should be visible in handoffs. Requires an active editable deal.",
+      "Record a decision, unresolved decision, RFI, approval, or open item in the deal's decision log. Use when the item should carry through handoffs. Requires an active editable deal.",
     input_schema: {
       type: "object" as const,
       properties: {
-        note: {
+        title: {
+          type: "string",
+          description: "Short decision/open item title.",
+        },
+        body: {
           type: "string",
           description:
-            "Clear handoff-ready note. Include the decision/open item, owner if known, and why it matters.",
+            "Clear handoff-ready context. Include owner if known, why it matters, and what would close it.",
+        },
+        category: {
+          type: "string",
+          description: "Category such as diligence, design, construction, legal, finance, or owner.",
+        },
+        due_date: {
+          type: "string",
+          description: "Due date as YYYY-MM-DD if explicitly known.",
         },
       },
-      required: ["note"],
+      required: ["title"],
     },
   },
 ];
@@ -1289,6 +1310,7 @@ Guidance:
 - For Playbook questions, answer in 2-5 bullets by default, under 120 words unless the user asks for detail. Start with the answer. Do not use headings or tables unless the user asks.
 - If the Playbook excerpts do not answer the question, say that plainly and give only the closest relevant guidance. Do not stretch weak citations.
 - When the user asks to create a single follow-up, schedule task, deadline, milestone, or action item, use create_schedule_item if an editable deal is active.
+- When the user asks to scan documents and create multiple follow-ups, do not directly create a pile of rows from chat. Tell them to use Documents -> Create follow-up work, which drafts schedule, decision/RFI, and checklist actions for review before apply.
 - For focused task plans, ask prep questions if needed, then use propose_mini_schedule_tasks to show an approval card. Do not stop with a plain text list when the user is trying to build a focused task plan.
 - When the user explicitly says create/add it now, use create_mini_schedule_tasks. Prefer parent_phase_id from Schedule Context; if unavailable, use parent_phase_label exactly.
 - When the user asks to verify, check, diligence, document, or track a requirement without a date, use create_checklist_item if an editable deal is active.
@@ -1456,12 +1478,21 @@ Guidance:
         display: `Created checklist item: ${input.item}`,
       });
     } else if (tool.name === "record_decision" && ctx.deal && ctx.can_edit_deal) {
-      const input = tool.input as { note: string };
+      const input = tool.input as {
+        title: string;
+        body?: string | null;
+        category?: string | null;
+        due_date?: string | null;
+      };
       actions.push({
-        type: "note_created",
-        note: input.note,
-        category: "review",
-        display: `Recorded decision/open item: ${input.note.slice(0, 100)}${input.note.length > 100 ? "..." : ""}`,
+        type: "decision_created",
+        decision: {
+          title: input.title,
+          body: input.body || null,
+          category: input.category || "assistant",
+          due_date: input.due_date || null,
+        },
+        display: `Recorded decision/open item: ${input.title.slice(0, 100)}${input.title.length > 100 ? "..." : ""}`,
       });
     }
   }

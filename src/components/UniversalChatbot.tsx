@@ -68,6 +68,11 @@ interface Message {
       category?: string;
       item?: string;
     };
+    decision?: {
+      id?: string;
+      title?: string;
+      deep_link?: string;
+    };
   }> | null;
   created_at: string;
 }
@@ -778,6 +783,11 @@ function getActionCardConfig(
       category?: string;
       deep_link?: string;
     };
+    decision?: {
+      id?: string;
+      title?: string;
+      deep_link?: string;
+    };
   },
   dealId?: string | null
 ): {
@@ -817,6 +827,18 @@ function getActionCardConfig(
       href: dealId ? `/notes?deal=${dealId}` : "/notes",
       hrefLabel: "Open notes",
       undoUrl: dealId && action.note_id ? `/api/deals/${dealId}/notes?noteId=${action.note_id}` : null,
+    };
+  }
+  if (action.type === "decision_created") {
+    return {
+      title: action.decision?.title
+        ? `Recorded: ${action.decision.title}`
+        : "Recorded decision",
+      icon: CheckCircle2,
+      className: "bg-emerald-500/10 border-emerald-500/20 text-emerald-300",
+      href: action.decision?.deep_link || (dealId ? `/deals/${dealId}/decisions` : null),
+      hrefLabel: "Open decisions",
+      undoUrl: null,
     };
   }
   if (action.type === "schedule_item_created") {

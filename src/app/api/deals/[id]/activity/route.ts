@@ -40,7 +40,7 @@ export async function GET(
       }
     };
 
-    const [omRows, chatRows, uwRows, docRows, loiRows, photoRows, checklistRows, ddAbstractRows, ipRows, scheduleRows] = await Promise.all([
+    const [omRows, chatRows, uwRows, docRows, loiRows, photoRows, checklistRows, ddAbstractRows, ipRows, scheduleRows, docActionRows] = await Promise.all([
       pool.query(
         `SELECT id, status, model_used, tokens_used, cost_estimate, created_at
          FROM om_analyses WHERE deal_id = $1 ORDER BY created_at DESC`,
@@ -94,6 +94,12 @@ export async function GET(
          FROM deal_dev_phases
          WHERE deal_id = $1
          ORDER BY COALESCE(completed_at, created_at) DESC LIMIT 50`,
+        [dealId]
+      ),
+      safeQuery<{ text: string; created_at: string }>(
+        `SELECT text, created_at FROM deal_notes
+         WHERE deal_id = $1 AND source = 'document_actions'
+         ORDER BY created_at DESC LIMIT 25`,
         [dealId]
       ),
     ]);
@@ -206,6 +212,14 @@ export async function GET(
           timestamp: row.completed_at,
         });
       }
+    }
+
+    for (const row of docActionRows.rows) {
+      events.push({
+        type: "document_actions",
+        description: row.text,
+        timestamp: row.created_at,
+      });
     }
 
     // Sort by timestamp descending

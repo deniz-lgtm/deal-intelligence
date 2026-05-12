@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import {
   chatQueries,
+  decisionQueries,
   documentQueries,
   dealQueries,
   dealNoteQueries,
@@ -180,6 +181,27 @@ export async function POST(req: NextRequest) {
             source: "chat",
           });
           action.note_id = noteId;
+        } else if (action.type === "decision_created" && action.decision && canEditDeal) {
+          const decisionId = uuidv4();
+          const dueDate =
+            typeof action.decision.due_date === "string" &&
+            /^\d{4}-\d{2}-\d{2}$/.test(action.decision.due_date)
+              ? action.decision.due_date
+              : null;
+          await decisionQueries.create({
+            id: decisionId,
+            deal_id: dealId,
+            title: action.decision.title,
+            body: action.decision.body || null,
+            category: action.decision.category || "assistant",
+            status: "open",
+            asked_by: userId,
+            due_date: dueDate,
+            linked_document_id: null,
+          });
+          action.decision.id = decisionId;
+          action.decision.deep_link = `/deals/${dealId}/decisions`;
+          action.display = action.display ?? `Recorded decision/open item: ${action.decision.title}`;
         } else if (action.type === "deal_updated" && action.fields && canEditDeal) {
           await dealQueries.update(dealId, action.fields);
         } else if (action.type === "underwriting_updated" && action.fields && canEditDeal) {

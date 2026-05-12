@@ -41,7 +41,7 @@ import { toast } from "sonner";
 
 type ViewMode = "grid" | "folders";
 type DocumentActionIntent = "ask" | "schedule" | "decision" | "checklist";
-type DraftableDocumentActionIntent = Exclude<DocumentActionIntent, "ask">;
+type DraftableDocumentActionIntent = "all" | Exclude<DocumentActionIntent, "ask">;
 
 type DocumentDraftAction = {
   client_id?: string;
@@ -57,12 +57,14 @@ type DocumentDraftAction = {
   confidence?: "high" | "medium" | "low";
   source_excerpt?: string | null;
   rationale?: string | null;
+  source_document_ids?: string[] | null;
 };
 
 type DocumentActionDraft = {
   summary: string;
   gaps: string[];
   actions: DocumentDraftAction[];
+  source_documents?: Array<{ id: string; original_name?: string | null; category?: string | null }>;
 };
 
 type DocumentActionApplyResult = {
@@ -116,7 +118,11 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
   const [versionsForDoc, setVersionsForDoc] = useState<Document | null>(null);
   const [draftingAction, setDraftingAction] = useState<string | null>(null);
   const [actionReview, setActionReview] = useState<{
-    doc: Document;
+    source: {
+      title: string;
+      subtitle: string;
+      endpoint: string;
+    };
     intent: DraftableDocumentActionIntent;
     draft: DocumentActionDraft;
     selectedIds: string[];
@@ -238,7 +244,16 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           .filter((action) => action.confidence !== "low")
           .map((action, index) => action.client_id || `${action.type}-${index}`);
         setActionCreated(null);
-        setActionReview({ doc, intent, draft, selectedIds });
+        setActionReview({
+          source: {
+            title: doc.original_name,
+            subtitle: DOCUMENT_CATEGORIES[doc.category as DocumentCategory]?.label || doc.category,
+            endpoint: `/api/deals/${params.id}/documents/${doc.id}/actions`,
+          },
+          intent,
+          draft,
+          selectedIds,
+        });
         if (draft.actions.length === 0) {
           toast.message("No clear actions found in that document");
         }
@@ -251,6 +266,48 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
     [params.id]
   );
 
+  const draftBatchDocumentActions = useCallback(async () => {
+    setDraftingAction("batch:all");
+    try {
+      const res = await fetch(`/api/deals/${params.id}/documents/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "draft", intent: "all" }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(json.error || "Could not draft actions from these documents");
+        return;
+      }
+      const draft = (json.data || { summary: "", gaps: [], actions: [] }) as DocumentActionDraft;
+      const sourceCount = draft.source_documents?.length ?? 0;
+      const selectedIds = draft.actions
+        .filter((action) => action.confidence !== "low")
+        .map((action, index) => action.client_id || `${action.type}-${index}`);
+      setActionCreated(null);
+      setActionReview({
+        source: {
+          title: "Key document review",
+          subtitle:
+            sourceCount > 0
+              ? `${sourceCount} source document${sourceCount === 1 ? "" : "s"} reviewed`
+              : "Source documents reviewed",
+          endpoint: `/api/deals/${params.id}/documents/actions`,
+        },
+        intent: "all",
+        draft,
+        selectedIds,
+      });
+      if (draft.actions.length === 0) {
+        toast.message("No clear actions found in those documents");
+      }
+    } catch {
+      toast.error("Could not draft actions from these documents");
+    } finally {
+      setDraftingAction(null);
+    }
+  }, [params.id]);
+
   const applyDraftActions = useCallback(async () => {
     if (!actionReview) return;
     const selected = actionReview.draft.actions.filter((action, index) =>
@@ -262,7 +319,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
     }
     setApplyingActions(true);
     try {
-      const res = await fetch(`/api/deals/${params.id}/documents/${actionReview.doc.id}/actions`, {
+      const res = await fetch(actionReview.source.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "apply", actions: selected }),
@@ -285,7 +342,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
     } finally {
       setApplyingActions(false);
     }
-  }, [actionReview, params.id]);
+  }, [actionReview]);
 
   const handleUploadComplete = () => {
     setShowUpload(false);
@@ -480,7 +537,12 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      <DocumentsWorkflowHub dealId={params.id} documents={documents} />
+      <DocumentsWorkflowHub
+        dealId={params.id}
+        documents={documents}
+        draftingAction={draftingAction}
+        onDraftBatchAction={draftBatchDocumentActions}
+      />
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -547,9 +609,13 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
 function DocumentsWorkflowHub({
   dealId,
   documents,
+  draftingAction,
+  onDraftBatchAction,
 }: {
   dealId: string;
   documents: Document[];
+  draftingAction: string | null;
+  onDraftBatchAction: () => void;
 }) {
   const countByCategory = (category: DocumentCategory) =>
     documents.filter((doc) => doc.category === category).length;
@@ -564,8 +630,6 @@ function DocumentsWorkflowHub({
     countByCategory("investment_package") + countByCategory("ic_package");
   const sourceReviewPrompt =
     "Review this deal's source files. Give me the key points, missing information, conflicting assumptions, and the next three useful actions. Keep it concise and say when the files do not answer something.";
-  const createWorkPrompt =
-    "Review this deal's documents and identify useful work to create. Group it into schedule items, decisions/RFIs, and diligence checklist items. Ask prep questions before creating anything that needs judgment.";
   const sharePrepPrompt =
     "Review the deal documents and tell me what is ready to share externally, what should stay internal, and what missing files would make the share room more complete. Keep it concise.";
 
@@ -640,10 +704,14 @@ function DocumentsWorkflowHub({
 
   const workActions = [
     {
-      href: `/deals/${dealId}/chat?prompt=${encodeURIComponent(createWorkPrompt)}`,
+      onClick: onDraftBatchAction,
       label: "Create follow-up work",
-      body: "Find schedule items, decisions/RFIs, and checklist tasks from the files.",
+      body:
+        keyCount > 0
+          ? "Review key files and draft schedule, decision/RFI, and checklist work."
+          : "Review source files and draft schedule, decision/RFI, and checklist work.",
       icon: CalendarPlus,
+      loading: draftingAction === "batch:all",
     },
     {
       href: `/deals/${dealId}/decisions`,
@@ -737,22 +805,44 @@ function DocumentsWorkflowHub({
           <div className="grid grid-cols-1 gap-px bg-border/50 md:grid-cols-2 xl:grid-cols-4">
             {workActions.map((action) => {
               const Icon = action.icon;
+              const isButton = "onClick" in action;
+              const isLoading = Boolean("loading" in action && action.loading);
+              const content = (
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      {isLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      ) : (
+                        <Icon className="h-4 w-4 text-primary" />
+                      )}
+                      <span className="text-sm font-medium">{action.label}</span>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">{action.body}</p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+                </div>
+              );
+              if (isButton) {
+                return (
+                  <button
+                    key={action.label}
+                    type="button"
+                    onClick={action.onClick}
+                    disabled={isLoading || sourceCount === 0}
+                    className="group bg-card p-4 text-left transition-colors hover:bg-muted/30 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {content}
+                  </button>
+                );
+              }
               return (
                 <Link
                   key={action.label}
                   href={action.href}
                   className="group bg-card p-4 transition-colors hover:bg-muted/30"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Icon className="h-4 w-4 text-primary" />
-                        <span className="text-sm font-medium">{action.label}</span>
-                      </div>
-                      <p className="mt-2 text-xs leading-5 text-muted-foreground">{action.body}</p>
-                    </div>
-                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-                  </div>
+                  {content}
                 </Link>
               );
             })}
@@ -1398,6 +1488,7 @@ function actionId(action: DocumentDraftAction, index: number) {
 }
 
 function actionLabel(type: DraftableDocumentActionIntent) {
+  if (type === "all") return "Follow-Up";
   if (type === "schedule") return "Schedule";
   if (type === "decision") return "Decision";
   return "Task";
@@ -1413,7 +1504,11 @@ function DocumentActionReviewModal({
   onApply,
 }: {
   review: {
-    doc: Document;
+    source: {
+      title: string;
+      subtitle: string;
+      endpoint: string;
+    };
     intent: DraftableDocumentActionIntent;
     draft: DocumentActionDraft;
     selectedIds: string[];
@@ -1448,7 +1543,8 @@ function DocumentActionReviewModal({
               <Sparkles className="h-3.5 w-3.5" />
               Draft {actionLabel(review.intent)} Actions
             </div>
-            <h3 className="mt-1 truncate text-lg font-semibold">{review.doc.original_name}</h3>
+            <h3 className="mt-1 truncate text-lg font-semibold">{review.source.title}</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">{review.source.subtitle}</p>
             <p className="mt-1 text-sm text-muted-foreground">{review.draft.summary}</p>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose}>
@@ -1468,7 +1564,7 @@ function DocumentActionReviewModal({
                     Created {created.total} action{created.total === 1 ? "" : "s"}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    The selected items are now linked back to this document as source context.
+                    The selected items are now linked back to their source documents as context.
                   </p>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {createdLinks.map((link) => (

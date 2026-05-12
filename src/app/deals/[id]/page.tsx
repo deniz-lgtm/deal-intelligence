@@ -38,6 +38,7 @@ import {
   ScrollText,
   CheckCircle2,
   Compass,
+  HardHat,
 } from "lucide-react";
 import { DocCoverageChip } from "@/components/ai";
 import { Button } from "@/components/ui/button";
@@ -1581,10 +1582,10 @@ function DealCommandCenter({
         <div>
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
-            <h2 className="font-display text-sm">Deal Command Center</h2>
+            <h2 className="font-display text-sm">Start Here</h2>
           </div>
           <p className="mt-1 text-2xs text-muted-foreground">
-            The shortest path to what changed, what needs attention, and where to act next.
+            One place for the next action, live work surfaces, and recent movement.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1631,6 +1632,55 @@ function DealCommandCenter({
             <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-primary" />
           </div>
         </Link>
+        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+          {[
+            {
+              href: `/deals/${dealId}/schedule`,
+              label: "Schedule",
+              meta: `${stats.scheduleOpen} open`,
+              icon: <Calendar className="h-3.5 w-3.5 text-primary" />,
+            },
+            {
+              href: `/deals/${dealId}/decisions`,
+              label: "Decisions",
+              meta: `${stats.openDecisions} open`,
+              icon: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />,
+            },
+            {
+              href: `/deals/${dealId}/documents`,
+              label: "Documents",
+              meta: `${stats.documents} files`,
+              icon: <FileText className="h-3.5 w-3.5 text-blue-400" />,
+            },
+            {
+              href: `/deals/${dealId}/underwriting`,
+              label: "Underwriting",
+              meta: "Model",
+              icon: <Calculator className="h-3.5 w-3.5 text-amber-400" />,
+            },
+            {
+              href: `/deals/${dealId}/construction`,
+              label: "Construction",
+              meta: "Precon",
+              icon: <HardHat className="h-3.5 w-3.5 text-orange-400" />,
+            },
+          ].map((surface) => (
+            <Link
+              key={surface.href}
+              href={surface.href}
+              className="group rounded-lg border border-border/50 bg-card/70 px-3 py-2 transition-colors hover:bg-muted/30"
+            >
+              <div className="flex items-center gap-2">
+                {surface.icon}
+                <span className="truncate text-xs font-medium">{surface.label}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="truncate text-2xs text-muted-foreground">{surface.meta}</span>
+                <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground/40 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+              </div>
+            </Link>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-px bg-border/60 lg:grid-cols-3">
