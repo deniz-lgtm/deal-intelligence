@@ -1163,6 +1163,28 @@ export const CLOSEOUT_CHECKLIST_TEMPLATE: Array<{
 export type TaskPriority = "low" | "medium" | "high" | "critical";
 export type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
 
+/**
+ * Unified kind discriminator for rows in deal_dev_phases. The first three
+ * are real schedule rows (gantt bars, milestones, scheduled tasks). The
+ * latter three are task-shaped rows that may or may not be scheduled —
+ * `diligence` replaces the legacy checklist_items semantics, `decision`
+ * replaces deal_decisions, and `general` is the catch-all for ad-hoc work.
+ */
+export type DevPhaseKind = "phase" | "milestone" | "task" | "diligence" | "decision" | "general";
+
+/**
+ * Subset of DevPhaseKind that the unified Tasks UI surfaces. Real schedule
+ * phases stay in the Schedule tab.
+ */
+export const TASK_KINDS: DevPhaseKind[] = ["task", "diligence", "decision", "general"];
+
+export const TASK_KIND_CONFIG: Record<Exclude<DevPhaseKind, "phase" | "milestone">, { label: string; accent: string }> = {
+  task: { label: "Task", accent: "text-blue-300" },
+  general: { label: "General", accent: "text-zinc-300" },
+  diligence: { label: "Diligence", accent: "text-amber-300" },
+  decision: { label: "Decision", accent: "text-violet-300" },
+};
+
 export interface DealTask {
   id: string;
   deal_id: string;
@@ -1648,7 +1670,24 @@ export interface DevPhase {
    * legacy `is_milestone` flag is kept synced for back-compat. NULL on
    * very old rows; the migration backfills based on is_milestone.
    */
-  kind: "phase" | "milestone" | "task" | null;
+  kind: DevPhaseKind | null;
+  /**
+   * Long-form task description. Only meaningful for task-shaped kinds
+   * (task / diligence / decision / general); on real schedule rows we
+   * use `notes` instead and leave this null.
+   */
+  description: string | null;
+  /**
+   * Task priority chip. NULL means unset (rendered as "normal").
+   */
+  priority: TaskPriority | null;
+  /**
+   * For kind='decision': the options the decision is between. The
+   * resolved decision_choice is one of these keys. Both stay NULL on
+   * non-decision rows.
+   */
+  decision_options: { key: string; label: string }[] | null;
+  decision_choice: string | null;
   /**
    * Optional Clerk user id of the person responsible for this row.
    * NULL means no one assigned. The free-text `task_owner` above stays

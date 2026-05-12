@@ -1460,6 +1460,22 @@ export async function ensureColumns(): Promise<void> {
     // view (admin) without touching backups.
     `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
     `CREATE INDEX IF NOT EXISTS idx_dev_phases_active ON deal_dev_phases(deal_id, deleted_at) WHERE deleted_at IS NULL`,
+    // ── Unified Tasks (Phase 1) ─────────────────────────────────────────
+    // deal_dev_phases is the canonical task store. Three new kinds extend
+    // its meaning: 'diligence' (replaces checklist_items semantically),
+    // 'decision' (replaces deal_decisions), and 'general' (catch-all for
+    // ad-hoc tasks that aren't on a schedule). All three share the
+    // task-shape columns below; date columns stay optional so a task
+    // becomes "scheduled" simply by gaining a start_date.
+    `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS description TEXT`,
+    `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS priority TEXT`,
+    // For kind='decision': JSONB array of { key, label } options the
+    // decision is between. decision_choice holds the selected key once
+    // resolved. Both NULL for other kinds.
+    `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS decision_options JSONB`,
+    `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS decision_choice TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_dev_phases_kind ON deal_dev_phases(deal_id, kind) WHERE deleted_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_dev_phases_due_active ON deal_dev_phases(end_date) WHERE deleted_at IS NULL AND status <> 'complete' AND end_date IS NOT NULL`,
     // Threaded comments on checklist items — separate from the
     // single-block description (the existing `notes` column).
     `CREATE TABLE IF NOT EXISTS checklist_item_comments (
@@ -6763,11 +6779,13 @@ export const devPhaseQueries = {
          pct_complete, budget, status, notes, sort_order,
          is_milestone, kind, assignee_user_id, completed_at,
          source_legacy_type, source_legacy_id, linked_checklist_item_id,
+         description, priority, decision_options, decision_choice,
          created_at, updated_at
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                $14::jsonb, $15, $16, $17, $18, $19,
-               $20, $21, $22, $23, $24, $25, $26, NOW(), NOW())
+               $20, $21, $22, $23, $24, $25, $26,
+               $27, $28, $29::jsonb, $30, NOW(), NOW())
        RETURNING *`,
       [
         phase.id,
@@ -6798,6 +6816,10 @@ export const devPhaseQueries = {
         phase.source_legacy_type ?? null,
         phase.source_legacy_id ?? null,
         phase.linked_checklist_item_id ?? null,
+        phase.description ?? null,
+        phase.priority ?? null,
+        phase.decision_options != null ? JSON.stringify(phase.decision_options) : null,
+        phase.decision_choice ?? null,
       ]
     );
     return res.rows[0];
@@ -6852,7 +6874,7 @@ export const devPhaseQueries = {
     }
 
     for (const [key, value] of Object.entries(normalized)) {
-      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order", "track", "is_milestone"].includes(key)) {
+      if (["label", "start_date", "end_date", "duration_days", "predecessor_id", "lag_days", "parent_phase_id", "task_category", "task_owner", "pct_complete", "budget", "status", "notes", "sort_order", "track", "is_milestone", "kind", "assignee_user_id", "description", "priority", "decision_choice"].includes(key)) {
         setClauses.push(`${key} = $${idx}`);
         values.push(value);
         idx++;
@@ -6862,7 +6884,20 @@ export const devPhaseQueries = {
         setClauses.push(`linked_document_ids = $${idx}::jsonb`);
         values.push(value == null ? null : JSON.stringify(value));
         idx++;
+      } else if (key === "decision_options") {
+        setClauses.push(`decision_options = $${idx}::jsonb`);
+        values.push(value == null ? null : JSON.stringify(value));
+        idx++;
+      } else if (key === "completed_at") {
+        setClauses.push(`completed_at = $${idx}`);
+        values.push(value);
+        idx++;
       }
+    }
+    // Auto-stamp completed_at when status flips to complete and the
+    // caller didn't pass an explicit value.
+    if (normalized.status === "complete" && normalized.completed_at === undefined) {
+      setClauses.push(`completed_at = COALESCE(completed_at, NOW())`);
     }
     if (setClauses.length === 0) return null;
 
