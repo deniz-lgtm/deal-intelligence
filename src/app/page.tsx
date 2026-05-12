@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/AppShell";
 import { ScheduleHero } from "@/components/home/ScheduleHero";
 import { DealCommandCenter } from "@/components/home/DealCommandCenter";
+import { DecisionsDueStrip } from "@/components/home/DecisionsDueStrip";
 import { TodayStrip } from "@/components/today/TodayStrip";
 import { usePermissions } from "@/lib/usePermissions";
 import type { PhaseSignals } from "@/lib/phase-classification";
@@ -110,6 +111,7 @@ export default function HomePage() {
           </div>
         </header>
 
+        <DecisionsDueStrip />
         <ScheduleHero />
 
         <div className="shrink-0 border-b border-border/30 bg-card/20 px-6 py-2.5 md:hidden">
