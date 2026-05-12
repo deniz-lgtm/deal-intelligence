@@ -95,39 +95,40 @@ const OVERVIEW_NAV_GROUP: NavGroup = {
   ],
 };
 
-const FEASIBILITY_NAV_GROUP: NavGroup = {
-  label: "Feasibility",
+// Analysis (formerly Feasibility) collapses Site Plan / Zoning / Location /
+// Site Walk / Photos into a single "Site" hub entry that lands on a card
+// directory. Underwriting and Comps stay top-level because they're the
+// daily analytical surfaces.
+const ANALYSIS_NAV_GROUP: NavGroup = {
+  label: "Analysis",
   items: [
     { href: "/underwriting", label: "Underwriting", icon: Calculator },
-    { href: "/programming", label: "Site Plan", icon: Layers },
-    { href: "/site-zoning", label: "Zoning", icon: MapPin },
-    { href: "/location", label: "Location", icon: Globe },
+    { href: "/site", label: "Site", icon: Layers },
     { href: "/comps", label: "Comps", icon: BarChart3 },
   ],
 };
 
 const SCHEDULE_BASE_ITEMS: NavItem[] = [
   { href: "/schedule", label: "Master Schedule", icon: Flag },
-  { href: "/schedule/acquisition", label: "Acquisition Schedule", icon: CalendarDays },
 ];
 
+// Development Schedule sub-tabs (Design / Entitlements / CEQA / Procurement)
+// move inside the Development Schedule page itself rather than living on
+// the sidebar. Keeps the sidebar quiet for analysts who don't context-switch
+// between those four sub-views every click.
 const DEVELOPMENT_SCHEDULE_ITEMS: NavItem[] = [
   { href: "/project", label: "Development Schedule", icon: GanttChart },
-  { href: "/project/design", label: "Design", icon: PencilRuler },
-  { href: "/project/entitlements", label: "Entitlements", icon: Stamp },
-  { href: "/project/ceqa", label: "CEQA", icon: Leaf },
-  { href: "/project/procurement", label: "Procurement", icon: Handshake },
 ];
 
+// Docs collapses the prior six-item Docs & Outputs group into three:
+// Documents (raw files), Outputs (a hub for OM / Diligence Summary / IC /
+// Output Library / Share Room), and Photos (kept top-level because it's
+// part of the daily walking-the-site flow).
 const DOCS_NAV_GROUP: NavGroup = {
-  label: "Docs & Outputs",
+  label: "Docs",
   items: [
     { href: "/documents", label: "Documents", icon: FileText },
-    { href: "/om-analysis", label: "Offering Memo", icon: FileSearch },
-    { href: "/dd-abstract", label: "Diligence Summary", icon: ScrollText },
-    { href: "/investment-package", label: "IC Package", icon: Presentation },
-    { href: "/reports", label: "Output Library", icon: FolderArchive },
-    { href: "/room", label: "Share Room", icon: Share2 },
+    { href: "/outputs", label: "Outputs", icon: FolderArchive },
   ],
 };
 
@@ -164,9 +165,9 @@ const EXECUTION_NAV_GROUP: NavGroup = {
 
 const NAV_GROUP_ORDER = new Map<string, number>([
   ["Overview", 1],
-  ["Feasibility", 2],
+  ["Analysis", 2],
   ["Schedule", 3],
-  ["Docs & Outputs", 4],
+  ["Docs", 4],
   ["Team", 5],
   ["Execution", 6],
 ]);
@@ -179,8 +180,10 @@ const NAV_GROUP_ORDER = new Map<string, number>([
 const MASSING_AWARE_HREFS = new Set([
   "/underwriting",
   "/programming",
+  "/site",
   "/dd-abstract",
   "/investment-package",
+  "/outputs",
   "/reports",
 ]);
 
@@ -192,8 +195,10 @@ const ALWAYS_VISIBLE_HREFS = new Set([
   "/tasks",
   "/chat",
   "/underwriting",
+  "/site",
   "/schedule",
   "/documents",
+  "/outputs",
 ]);
 
 
@@ -248,7 +253,7 @@ function getNavGroups(
   const base = (() => {
     const groups = [
       OVERVIEW_NAV_GROUP,
-      FEASIBILITY_NAV_GROUP,
+      ANALYSIS_NAV_GROUP,
       scheduleGroup,
       DOCS_NAV_GROUP,
       TEAM_NAV_GROUP,
@@ -262,6 +267,14 @@ function getNavGroups(
     return aOrder - bOrder;
   });
 }
+
+// Hub-page parents recognise their sub-routes as "active" too. Without
+// this, navigating from /deals/[id]/site to /deals/[id]/site-zoning would
+// drop the highlight in the sidebar.
+const HUB_ROUTE_MAP: Record<string, string[]> = {
+  "/site": ["/programming", "/site-zoning", "/location", "/site-walk", "/photos"],
+  "/outputs": ["/om-analysis", "/dd-abstract", "/investment-package", "/reports", "/room"],
+};
 
 const STATUS_COLORS: Record<string, string> = {
   sourcing: "bg-zinc-500/20 text-zinc-300",
@@ -403,7 +416,15 @@ export default function DealLayout({
 
   const isActiveHref = (href: string) => {
     const fullPath = `${basePath}${href}`;
-    return href === "" ? pathname === basePath : pathname.startsWith(fullPath);
+    if (href === "") return pathname === basePath;
+    if (pathname.startsWith(fullPath)) return true;
+    // Hub parents (Site, Outputs) light up when any of their member
+    // routes are active.
+    const members = HUB_ROUTE_MAP[href];
+    if (members) {
+      return members.some((m) => pathname.startsWith(`${basePath}${m}`));
+    }
+    return false;
   };
 
   // Stage filter: keep core tools, the active deep-linked route, and
@@ -618,10 +639,7 @@ export default function DealLayout({
                   const fullPath = activeMassingId && MASSING_AWARE_HREFS.has(item.href)
                     ? `${baseHref}?massing=${encodeURIComponent(activeMassingId)}`
                     : baseHref;
-                  const isActive =
-                    item.href === ""
-                      ? pathname === basePath
-                      : pathname.startsWith(baseHref);
+                  const isActive = isActiveHref(item.href);
                   const Icon = item.icon;
 
                   const linkTitle = sidebarCollapsed ? item.label : undefined;
