@@ -103,7 +103,7 @@ export async function POST(
     if (accessError) return accessError;
 
     const body = await req.json();
-    const { phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, linked_document_ids, pct_complete, budget, status, notes, sort_order, track, is_milestone } = body;
+    const { phase_key, label, start_date, end_date, duration_days, predecessor_id, lag_days, parent_phase_id, task_category, task_owner, linked_document_ids, pct_complete, budget, status, notes, sort_order, track, is_milestone, linked_checklist_item_id } = body;
 
     if (!label?.trim()) {
       return NextResponse.json({ error: "label is required" }, { status: 400 });
@@ -132,6 +132,7 @@ export async function POST(
       notes: notes || null,
       sort_order: sort_order ?? 0,
       is_milestone: is_milestone === true,
+      linked_checklist_item_id: linked_checklist_item_id || null,
     };
 
     let phase;

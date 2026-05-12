@@ -322,22 +322,45 @@ export function ChecklistItemDrawer({
                 )}
               </section>
 
-              {/* Linked schedule tasks — interactive add comes in PR B */}
+              {/* Linked schedule tasks — mini-schedule for this item */}
               <section>
-                <SectionLabel>
-                  <GanttChart className="h-3 w-3" />
-                  Mini-schedule
-                </SectionLabel>
+                <div className="flex items-center justify-between">
+                  <SectionLabel>
+                    <GanttChart className="h-3 w-3" />
+                    Mini-schedule
+                  </SectionLabel>
+                  <AddScheduledTaskButton
+                    dealId={dealId}
+                    checklistItemId={detail.id}
+                    defaultDue={detail.due_date}
+                    onCreated={(task) => {
+                      setDetail((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              linked_schedule_tasks: [task, ...prev.linked_schedule_tasks],
+                            }
+                          : prev
+                      );
+                    }}
+                  />
+                </div>
                 {detail.linked_schedule_tasks.length === 0 ? (
                   <p className="mt-1 text-xs text-muted-foreground/70">
-                    No scheduled tasks for this item yet. Linking to the deal schedule comes next.
+                    No scheduled tasks yet. Add one to put this on the deal&apos;s master schedule.
                   </p>
                 ) : (
                   <ul className="mt-1 divide-y divide-border/30 rounded-md border border-border/40 bg-background/40">
                     {detail.linked_schedule_tasks.map((t) => (
                       <li key={t.id} className="px-3 py-2 text-sm">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-foreground/90">{t.label}</span>
+                          <Link
+                            href={`/deals/${dealId}/schedule`}
+                            className="truncate text-foreground/90 hover:text-primary"
+                          >
+                            {t.is_milestone ? "◆ " : ""}
+                            {t.label}
+                          </Link>
                           {t.track && (
                             <span className="rounded-full border border-border/40 bg-muted/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
                               {t.track}
@@ -497,6 +520,169 @@ function AttachmentAddButton({
                 ))}
               </ul>
             )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Inline mini-form to create a new deal_dev_phases row linked back to
+ * this checklist item. Posts to /api/deals/[id]/dev-schedule with the
+ * new linked_checklist_item_id column.
+ */
+function AddScheduledTaskButton({
+  dealId,
+  checklistItemId,
+  defaultDue,
+  onCreated,
+}: {
+  dealId: string;
+  checklistItemId: string;
+  defaultDue: string | null;
+  onCreated: (task: {
+    id: string;
+    label: string;
+    track: string | null;
+    start_date: string | null;
+    end_date: string | null;
+    status: string | null;
+    pct_complete: number | null;
+    is_milestone: boolean | null;
+  }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState("");
+  const [track, setTrack] = useState<"acquisition" | "development" | "construction">("development");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState(defaultDue ? String(defaultDue).slice(0, 10) : "");
+  const [isMilestone, setIsMilestone] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setEndDate(defaultDue ? String(defaultDue).slice(0, 10) : "");
+    }
+  }, [open, defaultDue]);
+
+  const submit = async () => {
+    if (!label.trim()) {
+      toast.error("Label required");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/dev-schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: label.trim(),
+          track,
+          start_date: startDate || null,
+          end_date: endDate || null,
+          is_milestone: isMilestone,
+          linked_checklist_item_id: checklistItemId,
+        }),
+      });
+      if (!res.ok) {
+        toast.error("Failed to add scheduled task");
+        return;
+      }
+      const json = await res.json();
+      if (json?.data) {
+        onCreated({
+          id: json.data.id,
+          label: json.data.label,
+          track: json.data.track,
+          start_date: json.data.start_date,
+          end_date: json.data.end_date,
+          status: json.data.status,
+          pct_complete: json.data.pct_complete,
+          is_milestone: json.data.is_milestone,
+        });
+        toast.success("Added to schedule");
+        setLabel("");
+        setOpen(false);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 gap-1.5 text-xs"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Plus className="h-3 w-3" />
+        Add scheduled task
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-8 z-10 w-80 space-y-2 rounded-lg border border-border/60 bg-card p-3 shadow-xl">
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Task label — e.g. Order title commitment"
+            maxLength={200}
+            autoFocus
+            className="w-full rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5 text-sm placeholder:text-muted-foreground/50 focus:border-primary/45 focus:outline-none focus:ring-2 focus:ring-primary/15"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5 text-xs focus:border-primary/45 focus:outline-none focus:ring-2 focus:ring-primary/15"
+              title="Start"
+            />
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5 text-xs focus:border-primary/45 focus:outline-none focus:ring-2 focus:ring-primary/15"
+              title="End / due"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <select
+              value={track}
+              onChange={(e) =>
+                setTrack(e.target.value as "acquisition" | "development" | "construction")
+              }
+              className="rounded-md border border-border/50 bg-background/60 px-2 py-1 text-xs focus:border-primary/45 focus:outline-none focus:ring-2 focus:ring-primary/15"
+            >
+              <option value="acquisition">Acquisition</option>
+              <option value="development">Development</option>
+              <option value="construction">Construction</option>
+            </select>
+            <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={isMilestone}
+                onChange={(e) => setIsMilestone(e.target.checked)}
+              />
+              Milestone
+            </label>
+          </div>
+          <div className="flex justify-end gap-1.5">
+            <Button size="sm" variant="ghost" onClick={() => setOpen(false)} className="h-7 text-xs">
+              Cancel
+            </Button>
+            <Button size="sm" disabled={saving} onClick={submit} className="h-7 text-xs">
+              {saving ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
+              Add
+            </Button>
           </div>
         </div>
       )}

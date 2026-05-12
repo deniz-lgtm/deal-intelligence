@@ -900,6 +900,9 @@ export interface UniversalChatAction {
     category: string;
     item: string;
     notes?: string | null;
+    /** Set by the universal-chat handler post-create so the chat card can
+     *  link straight to the new item's drawer instead of the bare list. */
+    deep_link?: string;
   };
   schedule_item?: {
     id?: string;

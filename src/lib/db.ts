@@ -4142,14 +4142,15 @@ export const checklistQueries = {
     const pool = getPool();
     await pool.query(
       `INSERT INTO checklist_items
-        (id, deal_id, category, item, status, notes, ai_filled, source_document_ids, phase, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+        (id, deal_id, category, item, status, notes, ai_filled, source_document_ids, phase, source_context, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
        ON CONFLICT(id) DO UPDATE SET
          status = EXCLUDED.status,
          notes = EXCLUDED.notes,
          ai_filled = EXCLUDED.ai_filled,
          source_document_ids = EXCLUDED.source_document_ids,
          phase = EXCLUDED.phase,
+         source_context = COALESCE(EXCLUDED.source_context, checklist_items.source_context),
          updated_at = NOW()`,
       [
         item.id,
@@ -4163,6 +4164,7 @@ export const checklistQueries = {
           ? JSON.stringify(item.source_document_ids)
           : null,
         item.phase ?? "diligence",
+        item.source_context ?? null,
       ]
     );
   },
@@ -6698,12 +6700,12 @@ export const devPhaseQueries = {
          task_category, task_owner, linked_document_ids,
          pct_complete, budget, status, notes, sort_order,
          is_milestone, kind, assignee_user_id, completed_at,
-         source_legacy_type, source_legacy_id,
+         source_legacy_type, source_legacy_id, linked_checklist_item_id,
          created_at, updated_at
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                $14::jsonb, $15, $16, $17, $18, $19,
-               $20, $21, $22, $23, $24, $25, NOW(), NOW())
+               $20, $21, $22, $23, $24, $25, $26, NOW(), NOW())
        RETURNING *`,
       [
         phase.id,
@@ -6733,6 +6735,7 @@ export const devPhaseQueries = {
         completedAt,
         phase.source_legacy_type ?? null,
         phase.source_legacy_id ?? null,
+        phase.linked_checklist_item_id ?? null,
       ]
     );
     return res.rows[0];

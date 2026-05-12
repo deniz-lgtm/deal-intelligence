@@ -771,6 +771,9 @@ function getActionCardConfig(
     };
     checklist_item?: {
       id?: string;
+      item?: string;
+      category?: string;
+      deep_link?: string;
     };
   },
   dealId?: string | null
@@ -785,12 +788,21 @@ function getActionCardConfig(
 } {
   if (action.type === "checklist_item_created") {
     const itemId = action.checklist_item?.id;
+    // Deep-link straight to the drawer for the just-created item so the
+    // user doesn't have to hunt for it.
+    const href = dealId && itemId
+      ? `/deals/${dealId}/checklist?item=${itemId}`
+      : dealId
+        ? `/deals/${dealId}/checklist`
+        : null;
     return {
-      title: "Created checklist item",
+      title: action.checklist_item?.item
+        ? `Created: ${action.checklist_item.item}`
+        : "Created checklist item",
       icon: ListChecks,
       className: "bg-amber-500/10 border-amber-500/20 text-amber-300",
-      href: dealId ? `/deals/${dealId}/checklist` : null,
-      hrefLabel: "Open checklist",
+      href,
+      hrefLabel: "Open task",
       undoUrl: itemId ? `/api/checklist?id=${itemId}` : null,
     };
   }
