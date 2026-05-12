@@ -2386,10 +2386,17 @@ export const dealNoteQueries = {
 
   create: async (note: { id: string; deal_id: string; text: string; category: string; source?: string }) => {
     const pool = getPool();
+    let stageAt: string | null = null;
+    try {
+      const dealRes = await pool.query("SELECT status FROM deals WHERE id = $1", [note.deal_id]);
+      stageAt = (dealRes.rows[0]?.status as string) ?? null;
+    } catch {
+      stageAt = null;
+    }
     await pool.query(
-      `INSERT INTO deal_notes (id, deal_id, text, category, source, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [note.id, note.deal_id, note.text, note.category, note.source ?? "manual"]
+      `INSERT INTO deal_notes (id, deal_id, text, category, source, stage_at_creation, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [note.id, note.deal_id, note.text, note.category, note.source ?? "manual", stageAt]
     );
     // Also sync to legacy context_notes if it's a memory category
     if (MEMORY_CATEGORIES.includes(note.category)) {
@@ -2838,12 +2845,24 @@ export const documentQueries = {
 
   create: async (doc: Record<string, unknown>) => {
     const pool = getPool();
+    let stageAt: string | null = null;
+    if (doc.deal_id) {
+      try {
+        const dealRes = await pool.query(
+          "SELECT status FROM deals WHERE id = $1",
+          [doc.deal_id]
+        );
+        stageAt = (dealRes.rows[0]?.status as string) ?? null;
+      } catch {
+        stageAt = null;
+      }
+    }
     await pool.query(
       `INSERT INTO documents
         (id, deal_id, name, original_name, category, file_path,
          file_size, mime_type, content_text, ai_summary, ai_tags,
-         parent_document_id, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         parent_document_id, version, stage_at_creation)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         doc.id,
         doc.deal_id,
@@ -2858,6 +2877,7 @@ export const documentQueries = {
         doc.ai_tags ? JSON.stringify(doc.ai_tags) : null,
         doc.parent_document_id ?? null,
         (doc.version as number | undefined) ?? 1,
+        stageAt,
       ]
     );
     return documentQueries.getById(doc.id as string);
@@ -3085,16 +3105,23 @@ export const artifactQueries = {
     const version = input.previousId
       ? await nextVersionForChain(pool, input.previousId)
       : 1;
+    let stageAt: string | null = null;
+    try {
+      const dealRes = await pool.query("SELECT status FROM deals WHERE id = $1", [input.deal_id]);
+      stageAt = (dealRes.rows[0]?.status as string) ?? null;
+    } catch {
+      stageAt = null;
+    }
     await pool.query(
       `INSERT INTO documents
         (id, deal_id, name, original_name, category, kind, is_generated,
          file_path, file_size, mime_type, content_text, ai_summary, ai_tags,
          parent_document_id, version, input_hash, input_snapshot,
-         status, source_artifact_id, uploaded_at)
+         status, source_artifact_id, stage_at_creation, uploaded_at)
        VALUES ($1,$2,$3,$4,$5,$6,true,
                $7,$8,$9,$10,$11,$12,
                $13,$14,$15,$16::jsonb,
-               'current',$17, NOW())`,
+               'current',$17,$18, NOW())`,
       [
         input.id,
         input.deal_id,
@@ -3113,6 +3140,7 @@ export const artifactQueries = {
         input.input_hash,
         JSON.stringify(input.input_snapshot),
         input.source_artifact_id ?? null,
+        stageAt,
       ]
     );
     const row = await artifactQueries.getById(input.id);
@@ -5776,16 +5804,27 @@ export const decisionQueries = {
       [input.deal_id]
     );
     const nextNumber = numRes.rows[0].next as number;
+    // Stamp the deal's pipeline status at the moment of creation so the
+    // Deal Brief can render "raised during diligence" etc. Best-effort —
+    // if the lookup fails we just leave it null.
+    let stageAt: string | null = null;
+    try {
+      const dealRes = await pool.query("SELECT status FROM deals WHERE id = $1", [input.deal_id]);
+      stageAt = (dealRes.rows[0]?.status as string) ?? null;
+    } catch {
+      stageAt = null;
+    }
     const res = await pool.query(
       `INSERT INTO deal_decisions
-         (id, deal_id, number, title, body, category, status, asked_by, assigned_to, due_date, linked_document_id, linked_phase_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         (id, deal_id, number, title, body, category, status, asked_by, assigned_to, due_date, linked_document_id, linked_phase_id, stage_at_creation)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         input.id, input.deal_id, nextNumber, input.title,
         input.body ?? null, input.category ?? null, input.status ?? "open",
         input.asked_by ?? null, input.assigned_to ?? null,
         input.due_date ?? null, input.linked_document_id ?? null, input.linked_phase_id ?? null,
+        stageAt,
       ]
     );
     return res.rows[0];
