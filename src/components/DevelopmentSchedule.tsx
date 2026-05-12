@@ -1090,6 +1090,29 @@ export default function DevelopmentSchedule({
   };
 
   const handleDeletePhase = async (id: string) => {
+    // Count descendants so the user knows exactly what gets dropped.
+    // Sub-tree delete is recursive (parent + every child + grandchild),
+    // mirroring the server-side soft-delete cascade.
+    const visited = new Set<string>();
+    const queue: string[] = [id];
+    while (queue.length > 0) {
+      const next = queue.shift()!;
+      if (visited.has(next)) continue;
+      visited.add(next);
+      for (const p of phases) {
+        if (p.parent_phase_id === next && !visited.has(p.id)) queue.push(p.id);
+      }
+    }
+    const row = phases.find((p) => p.id === id);
+    const descendantCount = visited.size - 1;
+    const tail =
+      descendantCount > 0
+        ? `\n\nThis will also remove ${descendantCount} sub-task${descendantCount === 1 ? "" : "s"}.`
+        : "";
+    const ok = window.confirm(
+      `Delete "${row?.label ?? "this row"}"?${tail}\n\nThe row is soft-deleted and can be restored from the admin trash view.`
+    );
+    if (!ok) return;
     try {
       await fetch(`/api/deals/${dealId}/dev-schedule/${id}`, { method: "DELETE" });
       loadAll();
