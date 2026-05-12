@@ -40,11 +40,7 @@ import {
   Stamp,
   Leaf,
   Handshake,
-  ListChecks,
-  ClipboardSignature,
   FileQuestion,
-  Truck,
-  Hammer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
@@ -143,18 +139,15 @@ const TEAM_NAV_GROUP: NavGroup = {
   ],
 };
 
-// Construction group holds the GC-team workflow end-to-end: pre-con prep
-// (bid leveling, VE, constructability, long-lead, buyout) at the top,
-// then operational construction below the divider. Keeping them in one
-// collapsible section reflects how the same team owns both phases.
+// Construction now contains both pre-con prep and operational items.
+// Pre-con (bids, VE, constructability, long-lead, buyout) is one item
+// — it lands on /pre-construction/bids and the sub-tabs live inside
+// that layout. The divider then separates pre-con from operational
+// construction below.
 const EXECUTION_NAV_GROUP: NavGroup = {
   label: "Execution",
   items: [
-    { href: "/pre-construction/bids", label: "Bid Leveler", icon: Handshake },
-    { href: "/pre-construction/value-engineering", label: "VE Log", icon: ListChecks },
-    { href: "/pre-construction/constructability", label: "Constructability & GMP", icon: ClipboardSignature },
-    { href: "/pre-construction/long-lead", label: "Long-Lead", icon: Truck },
-    { href: "/pre-construction/buyout", label: "Buyout", icon: Hammer, dividerAfter: true },
+    { href: "/pre-construction/bids", label: "Pre-Construction", icon: Handshake, dividerAfter: true },
     { href: "/construction", label: "Dashboard", icon: HardHat },
     { href: "/construction/schedule", label: "Construction Schedule", icon: CalendarDays },
     { href: "/construction/budget", label: "Hard Costs", icon: DollarSign },
