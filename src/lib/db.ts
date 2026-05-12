@@ -1455,6 +1455,11 @@ export async function ensureColumns(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_checklist_items_assignee ON checklist_items(assignee_user_id) WHERE assignee_user_id IS NOT NULL`,
     `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS linked_checklist_item_id TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_dev_phases_linked_checklist ON deal_dev_phases(linked_checklist_item_id) WHERE linked_checklist_item_id IS NOT NULL`,
+    // Soft-delete: instead of dropping schedule rows, stamp deleted_at.
+    // Reads filter WHERE deleted_at IS NULL. Restorable from a trash
+    // view (admin) without touching backups.
+    `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
+    `CREATE INDEX IF NOT EXISTS idx_dev_phases_active ON deal_dev_phases(deal_id, deleted_at) WHERE deleted_at IS NULL`,
     // Threaded comments on checklist items — separate from the
     // single-block description (the existing `notes` column).
     `CREATE TABLE IF NOT EXISTS checklist_item_comments (
@@ -4281,6 +4286,7 @@ export const checklistQueries = {
               status, pct_complete, is_milestone
        FROM deal_dev_phases
        WHERE linked_checklist_item_id = $1
+         AND deleted_at IS NULL
        ORDER BY start_date ASC NULLS LAST, sort_order ASC`,
       [id]
     );
@@ -5884,7 +5890,7 @@ export const scheduleCommentQueries = {
          (id, deal_id, phase_id, author_user_id, body)
        SELECT $1, $2, p.id, $4, $5
        FROM deal_dev_phases p
-       WHERE p.id = $3 AND p.deal_id = $2
+       WHERE p.id = $3 AND p.deal_id = $2 AND p.deleted_at IS NULL
        RETURNING *`,
       [input.id, input.deal_id, input.phase_id, input.author_user_id ?? null, input.body]
     );
@@ -6673,7 +6679,7 @@ export const devPhaseQueries = {
   getByDealId: async (dealId: string) => {
     const pool = getPool();
     const res = await pool.query(
-      "SELECT * FROM deal_dev_phases WHERE deal_id = $1 ORDER BY sort_order, start_date NULLS LAST",
+      "SELECT * FROM deal_dev_phases WHERE deal_id = $1 AND deleted_at IS NULL ORDER BY sort_order, start_date NULLS LAST",
       [dealId]
     );
     return res.rows;
@@ -6696,7 +6702,7 @@ export const devPhaseQueries = {
     parent_phase_id?: string | null;
   }) => {
     const pool = getPool();
-    const clauses: string[] = ["deal_id = $1"];
+    const clauses: string[] = ["deal_id = $1", "deleted_at IS NULL"];
     const values: unknown[] = [filters.deal_id];
     if (filters.track) {
       values.push(filters.track);
@@ -6897,9 +6903,27 @@ export const devPhaseQueries = {
     }
   },
 
+  /**
+   * Soft-delete a phase. Stamps deleted_at = NOW() on the row itself
+   * and on every descendant (children, grandchildren) so the whole
+   * sub-tree leaves the schedule together. The data stays in the
+   * table — a restore path can unset deleted_at later.
+   */
   delete: async (id: string) => {
     const pool = getPool();
-    await pool.query("DELETE FROM deal_dev_phases WHERE id = $1", [id]);
+    await pool.query(
+      `WITH RECURSIVE descendants AS (
+         SELECT id FROM deal_dev_phases WHERE id = $1
+         UNION ALL
+         SELECT c.id FROM deal_dev_phases c
+         JOIN descendants d ON c.parent_phase_id = d.id
+         WHERE c.deleted_at IS NULL
+       )
+       UPDATE deal_dev_phases SET deleted_at = NOW()
+       WHERE id IN (SELECT id FROM descendants)
+         AND deleted_at IS NULL`,
+      [id]
+    );
   },
 
   // Deal-scoped variants for route handlers that accept a user-provided
@@ -6990,7 +7014,16 @@ export const devPhaseQueries = {
   deleteInDeal: async (id: string, dealId: string) => {
     const pool = getPool();
     const res = await pool.query(
-      "DELETE FROM deal_dev_phases WHERE id = $1 AND deal_id = $2",
+      `WITH RECURSIVE descendants AS (
+         SELECT id FROM deal_dev_phases WHERE id = $1 AND deal_id = $2
+         UNION ALL
+         SELECT c.id FROM deal_dev_phases c
+         JOIN descendants d ON c.parent_phase_id = d.id
+         WHERE c.deal_id = $2 AND c.deleted_at IS NULL
+       )
+       UPDATE deal_dev_phases SET deleted_at = NOW()
+       WHERE id IN (SELECT id FROM descendants)
+         AND deleted_at IS NULL`,
       [id, dealId]
     );
     return (res.rowCount ?? 0) > 0;
