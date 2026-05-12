@@ -51,6 +51,8 @@ import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
 import type { DealStatus, DealScope, ExecutionPhase } from "@/lib/types";
 import { useAuth } from "@clerk/nextjs";
 import ShareDealDialog from "@/components/ShareDealDialog";
+import { StageStepper } from "@/components/deals/StageStepper";
+import { deriveDealStage, isStageAllowed } from "@/lib/deal-stage";
 import { usePermissions } from "@/lib/usePermissions";
 
 interface Deal {
@@ -318,6 +320,11 @@ export default function DealLayout({
   // Per-group collapse state keyed by group label. Everything starts open
   // so a deal page does not feel like a set of hidden drawers.
   const [navGroupsCollapsed, setNavGroupsCollapsed] = useState<Record<string, boolean>>({});
+  // When false, sidebar items are filtered to the current stage's
+  // allowlist (defined in lib/deal-stage). Toggle to true to reveal the
+  // entire deal navigation — useful for power users and deep-link
+  // discovery. Persisted to localStorage.
+  const [showAllRoutes, setShowAllRoutes] = useState(false);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeMassingId = searchParams?.get("massing") || null;
@@ -333,7 +340,16 @@ export default function DealLayout({
         setNavGroupsCollapsed((prev) => ({ ...prev, ...parsed }));
       } catch {}
     }
+    if (localStorage.getItem("dealShowAllRoutes") === "1") setShowAllRoutes(true);
   }, []);
+
+  const toggleShowAll = () => {
+    setShowAllRoutes((prev) => {
+      const next = !prev;
+      localStorage.setItem("dealShowAllRoutes", next ? "1" : "0");
+      return next;
+    });
+  };
 
   const toggleSidebar = () => {
     // Below the `md` breakpoint (768px) we toggle the mobile drawer;
@@ -373,6 +389,21 @@ export default function DealLayout({
   }, [params.id]);
 
   const basePath = `/deals/${params.id}`;
+  const currentStage = deriveDealStage(deal?.status, deal?.execution_phase);
+
+  // Stage filter: drop items that don't belong to the current stage's
+  // allowlist. Groups whose items all get filtered out are dropped too,
+  // so empty headers don't render. The user can toggle "Show all" to
+  // restore the full list.
+  const filterByStage = (groups: ReturnType<typeof getNavGroups>) => {
+    if (showAllRoutes) return groups;
+    return groups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => isStageAllowed(currentStage, item.href)),
+      }))
+      .filter((group) => group.items.length > 0);
+  };
 
   return (
     <div className="min-h-screen bg-background noise flex flex-col">
@@ -476,6 +507,8 @@ export default function DealLayout({
 
       </header>
 
+      {deal && <StageStepper current={currentStage} basePath={basePath} />}
+
       <div className="flex-1 flex min-h-0">
         {/* Mobile drawer backdrop — visible only when the drawer is open
             on a narrow viewport. Tapping it closes the drawer. */}
@@ -505,11 +538,13 @@ export default function DealLayout({
           )}
         >
           <nav className="py-3 px-2 flex flex-col gap-4 min-h-full">
-            {getNavGroups(
-              deal?.execution_phase ?? null,
-              deal?.deal_scope ?? null,
-              deal?.show_in_development ?? false,
-              deal?.show_in_construction ?? false,
+            {filterByStage(
+              getNavGroups(
+                deal?.execution_phase ?? null,
+                deal?.deal_scope ?? null,
+                deal?.show_in_development ?? false,
+                deal?.show_in_construction ?? false,
+              )
             ).map((group, gi) => {
               // Groups with a label can be collapsed by the user. When the
               // whole sidebar is in icon-only mode we ignore per-group
@@ -594,6 +629,22 @@ export default function DealLayout({
               </div>
               );
             })}
+
+            {!sidebarCollapsed && (
+              <button
+                type="button"
+                onClick={toggleShowAll}
+                className={cn(
+                  "mx-2 mt-2 rounded-md border border-dashed border-border/50 px-2 py-1.5 text-2xs font-medium uppercase tracking-wider transition-colors",
+                  showAllRoutes
+                    ? "border-primary/35 bg-primary/10 text-primary hover:bg-primary/15"
+                    : "text-muted-foreground/70 hover:border-border hover:text-foreground"
+                )}
+                title="Toggle full deal navigation"
+              >
+                {showAllRoutes ? "Showing all · click to focus" : "Show all routes"}
+              </button>
+            )}
 
             {isAdmin && (
               <div className="mt-auto flex flex-col gap-0.5 pt-3 border-t border-border/30">
