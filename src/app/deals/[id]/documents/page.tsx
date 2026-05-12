@@ -41,6 +41,29 @@ import { toast } from "sonner";
 
 type ViewMode = "grid" | "folders";
 type DocumentActionIntent = "ask" | "schedule" | "decision" | "checklist";
+type DraftableDocumentActionIntent = Exclude<DocumentActionIntent, "ask">;
+
+type DocumentDraftAction = {
+  client_id?: string;
+  type: DraftableDocumentActionIntent;
+  title: string;
+  body?: string | null;
+  category?: string | null;
+  due_date?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  duration_days?: number | null;
+  track?: "acquisition" | "development" | "construction" | null;
+  confidence?: "high" | "medium" | "low";
+  source_excerpt?: string | null;
+  rationale?: string | null;
+};
+
+type DocumentActionDraft = {
+  summary: string;
+  gaps: string[];
+  actions: DocumentDraftAction[];
+};
 
 /** Parse an AI summary string into bullet points (split on ". " or newlines) */
 function parseSummaryBullets(summary: string): string[] {
@@ -84,6 +107,14 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
   const [recategorizing, setRecategorizing] = useState<string | null>(null);
   const [showDropbox, setShowDropbox] = useState(false);
   const [versionsForDoc, setVersionsForDoc] = useState<Document | null>(null);
+  const [draftingAction, setDraftingAction] = useState<string | null>(null);
+  const [actionReview, setActionReview] = useState<{
+    doc: Document;
+    intent: DraftableDocumentActionIntent;
+    draft: DocumentActionDraft;
+    selectedIds: string[];
+  } | null>(null);
+  const [applyingActions, setApplyingActions] = useState(false);
 
   useEffect(() => {
     loadDocuments();
@@ -179,6 +210,69 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
     [params.id]
   );
 
+  const draftDocumentActions = useCallback(
+    async (doc: Document, intent: DraftableDocumentActionIntent) => {
+      const key = `${doc.id}:${intent}`;
+      setDraftingAction(key);
+      try {
+        const res = await fetch(`/api/deals/${params.id}/documents/${doc.id}/actions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "draft", intent }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          toast.error(json.error || "Could not draft actions from this document");
+          return;
+        }
+        const draft = (json.data || { summary: "", gaps: [], actions: [] }) as DocumentActionDraft;
+        const selectedIds = draft.actions
+          .filter((action) => action.confidence !== "low")
+          .map((action, index) => action.client_id || `${action.type}-${index}`);
+        setActionReview({ doc, intent, draft, selectedIds });
+        if (draft.actions.length === 0) {
+          toast.message("No clear actions found in that document");
+        }
+      } catch {
+        toast.error("Could not draft actions from this document");
+      } finally {
+        setDraftingAction(null);
+      }
+    },
+    [params.id]
+  );
+
+  const applyDraftActions = useCallback(async () => {
+    if (!actionReview) return;
+    const selected = actionReview.draft.actions.filter((action, index) =>
+      actionReview.selectedIds.includes(action.client_id || `${action.type}-${index}`)
+    );
+    if (selected.length === 0) {
+      toast.error("Select at least one action to create");
+      return;
+    }
+    setApplyingActions(true);
+    try {
+      const res = await fetch(`/api/deals/${params.id}/documents/${actionReview.doc.id}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "apply", actions: selected }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(json.error || "Could not create selected actions");
+        return;
+      }
+      const count = json.data?.created?.length ?? selected.length;
+      toast.success(`Created ${count} action${count === 1 ? "" : "s"}`);
+      setActionReview(null);
+    } catch {
+      toast.error("Could not create selected actions");
+    } finally {
+      setApplyingActions(false);
+    }
+  }, [actionReview, params.id]);
+
   const handleUploadComplete = () => {
     setShowUpload(false);
     loadDocuments();
@@ -258,6 +352,24 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
             )}
           </div>
         </div>
+      )}
+
+      {actionReview && (
+        <DocumentActionReviewModal
+          review={actionReview}
+          applying={applyingActions}
+          onClose={() => setActionReview(null)}
+          onToggle={(id) =>
+            setActionReview((current) => {
+              if (!current) return current;
+              const selected = new Set(current.selectedIds);
+              if (selected.has(id)) selected.delete(id);
+              else selected.add(id);
+              return { ...current, selectedIds: Array.from(selected) };
+            })
+          }
+          onApply={applyDraftActions}
+        />
       )}
 
       {/* Header */}
@@ -382,6 +494,8 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           recategorizing={recategorizing}
           deleting={deleting}
           reExtracting={reExtracting}
+          draftingAction={draftingAction}
+          onDraftAction={draftDocumentActions}
         />
       ) : (
         <GridView
@@ -394,6 +508,8 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           onRecategorize={recategorize}
           recategorizing={recategorizing}
           deleting={deleting}
+          draftingAction={draftingAction}
+          onDraftAction={draftDocumentActions}
         />
       )}
 
@@ -672,6 +788,8 @@ function FolderView({
   recategorizing,
   deleting,
   reExtracting,
+  draftingAction,
+  onDraftAction,
 }: {
   dealId: string;
   byCategory: Record<string, Document[]>;
@@ -686,6 +804,8 @@ function FolderView({
   recategorizing: string | null;
   deleting: string | null;
   reExtracting?: string | null;
+  draftingAction?: string | null;
+  onDraftAction: (doc: Document, intent: DraftableDocumentActionIntent) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(filledCategories));
 
@@ -744,6 +864,8 @@ function FolderView({
                     recategorizing={recategorizing}
                     deleting={deleting}
                     reExtracting={reExtracting}
+                    draftingAction={draftingAction}
+                    onDraftAction={onDraftAction}
                   />
                 ))}
               </div>
@@ -765,6 +887,8 @@ function GridView({
   onRecategorize,
   recategorizing,
   deleting,
+  draftingAction,
+  onDraftAction,
 }: {
   dealId: string;
   documents: Document[];
@@ -775,6 +899,8 @@ function GridView({
   onRecategorize: (docId: string, cat: DocumentCategory) => void;
   recategorizing: string | null;
   deleting: string | null;
+  draftingAction?: string | null;
+  onDraftAction: (doc: Document, intent: DraftableDocumentActionIntent) => void;
 }) {
   return (
     <div>
@@ -802,6 +928,8 @@ function GridView({
             onRecategorize={onRecategorize}
             recategorizing={recategorizing}
             deleting={deleting}
+            draftingAction={draftingAction}
+            onDraftAction={onDraftAction}
           />
         ))}
       </div>
@@ -821,6 +949,8 @@ function DocRow({
   recategorizing,
   deleting,
   reExtracting,
+  draftingAction,
+  onDraftAction,
 }: {
   dealId: string;
   doc: Document & { is_key?: boolean };
@@ -833,6 +963,8 @@ function DocRow({
   recategorizing: string | null;
   deleting: string | null;
   reExtracting?: string | null;
+  draftingAction?: string | null;
+  onDraftAction: (doc: Document, intent: DraftableDocumentActionIntent) => void;
 }) {
   const [showCatMenu, setShowCatMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -954,9 +1086,24 @@ function DocRow({
         )}
         <div className="mt-2 flex flex-wrap gap-1.5">
           <DocActionLink href={documentActionHref(dealId, doc, "ask")} icon={<MessageSquare className="h-3 w-3" />} label="Ask" />
-          <DocActionLink href={documentActionHref(dealId, doc, "schedule")} icon={<CalendarPlus className="h-3 w-3" />} label="Schedule" />
-          <DocActionLink href={documentActionHref(dealId, doc, "decision")} icon={<CheckCircle2 className="h-3 w-3" />} label="Decision" />
-          <DocActionLink href={documentActionHref(dealId, doc, "checklist")} icon={<ListChecks className="h-3 w-3" />} label="Task" />
+          <DocActionButton
+            icon={<CalendarPlus className="h-3 w-3" />}
+            label="Schedule"
+            loading={draftingAction === `${doc.id}:schedule`}
+            onClick={() => onDraftAction(doc, "schedule")}
+          />
+          <DocActionButton
+            icon={<CheckCircle2 className="h-3 w-3" />}
+            label="Decision"
+            loading={draftingAction === `${doc.id}:decision`}
+            onClick={() => onDraftAction(doc, "decision")}
+          />
+          <DocActionButton
+            icon={<ListChecks className="h-3 w-3" />}
+            label="Task"
+            loading={draftingAction === `${doc.id}:checklist`}
+            onClick={() => onDraftAction(doc, "checklist")}
+          />
         </div>
       </div>
       <div className="flex items-center gap-1 shrink-0">
@@ -1046,6 +1193,8 @@ function GridDocCard({
   onRecategorize,
   recategorizing,
   deleting,
+  draftingAction,
+  onDraftAction,
 }: {
   dealId: string;
   doc: Document;
@@ -1054,6 +1203,8 @@ function GridDocCard({
   onRecategorize: (docId: string, cat: DocumentCategory) => void;
   recategorizing: string | null;
   deleting: string | null;
+  draftingAction?: string | null;
+  onDraftAction: (doc: Document, intent: DraftableDocumentActionIntent) => void;
 }) {
   const [showCatMenu, setShowCatMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1104,8 +1255,24 @@ function GridDocCard({
         )}
         <div className="mt-3 flex flex-wrap gap-1.5">
           <DocActionLink href={documentActionHref(dealId, doc, "ask")} icon={<MessageSquare className="h-3 w-3" />} label="Ask" />
-          <DocActionLink href={documentActionHref(dealId, doc, "schedule")} icon={<CalendarPlus className="h-3 w-3" />} label="Schedule" />
-          <DocActionLink href={documentActionHref(dealId, doc, "decision")} icon={<CheckCircle2 className="h-3 w-3" />} label="Decision" />
+          <DocActionButton
+            icon={<CalendarPlus className="h-3 w-3" />}
+            label="Schedule"
+            loading={draftingAction === `${doc.id}:schedule`}
+            onClick={() => onDraftAction(doc, "schedule")}
+          />
+          <DocActionButton
+            icon={<CheckCircle2 className="h-3 w-3" />}
+            label="Decision"
+            loading={draftingAction === `${doc.id}:decision`}
+            onClick={() => onDraftAction(doc, "decision")}
+          />
+          <DocActionButton
+            icon={<ListChecks className="h-3 w-3" />}
+            label="Task"
+            loading={draftingAction === `${doc.id}:checklist`}
+            onClick={() => onDraftAction(doc, "checklist")}
+          />
         </div>
       </div>
       <div className="flex items-center gap-1 shrink-0">
@@ -1180,6 +1347,173 @@ function DocActionLink({
       {icon}
       {label}
     </Link>
+  );
+}
+
+function DocActionButton({
+  icon,
+  label,
+  loading,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  loading: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-background/50 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:cursor-wait disabled:opacity-70"
+    >
+      {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : icon}
+      {label}
+    </button>
+  );
+}
+
+function actionId(action: DocumentDraftAction, index: number) {
+  return action.client_id || `${action.type}-${index}`;
+}
+
+function actionLabel(type: DraftableDocumentActionIntent) {
+  if (type === "schedule") return "Schedule";
+  if (type === "decision") return "Decision";
+  return "Task";
+}
+
+function DocumentActionReviewModal({
+  review,
+  applying,
+  onClose,
+  onToggle,
+  onApply,
+}: {
+  review: {
+    doc: Document;
+    intent: DraftableDocumentActionIntent;
+    draft: DocumentActionDraft;
+    selectedIds: string[];
+  };
+  applying: boolean;
+  onClose: () => void;
+  onToggle: (id: string) => void;
+  onApply: () => void;
+}) {
+  const selectedCount = review.selectedIds.length;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 p-4">
+      <div className="mx-auto flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border bg-card shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+              <Sparkles className="h-3.5 w-3.5" />
+              Draft {actionLabel(review.intent)} Actions
+            </div>
+            <h3 className="mt-1 truncate text-lg font-semibold">{review.doc.original_name}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{review.draft.summary}</p>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {review.draft.gaps.length > 0 && (
+            <div className="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+              <p className="text-xs font-medium text-amber-200">Missing or unclear</p>
+              <ul className="mt-2 space-y-1">
+                {review.draft.gaps.map((gap, index) => (
+                  <li key={index} className="text-xs text-muted-foreground">
+                    {gap}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {review.draft.actions.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-8 text-center">
+              <p className="text-sm font-medium">No supported actions found</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                The document may still be useful context, but the AI did not find enough evidence to create work.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {review.draft.actions.map((action, index) => {
+                const id = actionId(action, index);
+                const checked = review.selectedIds.includes(id);
+                return (
+                  <label
+                    key={id}
+                    className={`block cursor-pointer rounded-lg border p-3 transition-colors ${
+                      checked ? "border-primary/40 bg-primary/5" : "hover:bg-muted/30"
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 h-4 w-4"
+                        checked={checked}
+                        onChange={() => onToggle(id)}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="secondary" className="text-[10px]">
+                            {actionLabel(action.type)}
+                          </Badge>
+                          {action.track && (
+                            <Badge variant="outline" className="text-[10px] capitalize">
+                              {action.track}
+                            </Badge>
+                          )}
+                          <Badge variant="outline" className="text-[10px] capitalize">
+                            {action.confidence || "medium"} confidence
+                          </Badge>
+                        </div>
+                        <p className="mt-2 text-sm font-medium">{action.title}</p>
+                        {action.body && (
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">{action.body}</p>
+                        )}
+                        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                          {action.category && <span>{action.category}</span>}
+                          {action.due_date && <span>Due {action.due_date}</span>}
+                          {action.start_date && <span>Start {action.start_date}</span>}
+                          {action.end_date && <span>End {action.end_date}</span>}
+                        </div>
+                        {action.source_excerpt && (
+                          <p className="mt-2 border-l-2 border-border pl-2 text-[11px] leading-4 text-muted-foreground">
+                            {action.source_excerpt}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t px-5 py-4">
+          <p className="text-xs text-muted-foreground">
+            {selectedCount} selected. Review before creating; low-confidence items start unchecked.
+          </p>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={onClose} disabled={applying}>
+              Cancel
+            </Button>
+            <Button onClick={onApply} disabled={applying || selectedCount === 0}>
+              {applying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Create selected
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
