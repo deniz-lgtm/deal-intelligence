@@ -879,8 +879,17 @@ export interface ChecklistAttachment {
   created_at: string;
 }
 
+export interface ChecklistItemComment {
+  id: string;
+  checklist_item_id: string;
+  author_user_id: string | null;
+  body: string;
+  created_at: string;
+}
+
 export interface ChecklistItemDetail extends ChecklistItem {
   attachments: ChecklistAttachment[];
+  comments: ChecklistItemComment[];
   linked_schedule_tasks: Array<{
     id: string;
     label: string;

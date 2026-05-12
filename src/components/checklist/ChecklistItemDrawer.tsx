@@ -10,8 +10,10 @@ import {
   FileText,
   GanttChart,
   Loader2,
+  MessageSquare,
   Paperclip,
   Plus,
+  Send,
   Sparkles,
   Trash2,
   User as UserIcon,
@@ -23,6 +25,7 @@ import { cn, titleCase } from "@/lib/utils";
 import { toast } from "sonner";
 import type {
   ChecklistAttachment,
+  ChecklistItemComment,
   ChecklistItemDetail,
   ChecklistStatus,
   Document,
@@ -265,18 +268,43 @@ export function ChecklistItemDrawer({
                 </div>
               </section>
 
-              {/* Notes */}
+              {/* Description — the persistent context block. Stored in
+                  checklist_items.notes for back-compat. */}
               <section>
-                <SectionLabel>Notes</SectionLabel>
+                <SectionLabel>Description</SectionLabel>
                 <textarea
                   value={notesDraft}
                   onChange={(e) => setNotesDraft(e.target.value)}
                   onBlur={() => {
                     if (notesDraft !== (detail.notes ?? "")) patch({ notes: notesDraft });
                   }}
-                  rows={4}
-                  placeholder="Context, evidence, links…"
-                  className="mt-1 w-full resize-y rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5 text-sm placeholder:text-muted-foreground/50 focus:border-primary/45 focus:outline-none focus:ring-2 focus:ring-primary/15"
+                  rows={6}
+                  placeholder="What this task covers — scope, context, key questions…"
+                  className="mt-1 min-h-[6rem] w-full resize-y rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5 text-sm leading-6 placeholder:text-muted-foreground/50 focus:border-primary/45 focus:outline-none focus:ring-2 focus:ring-primary/15"
+                />
+              </section>
+
+              {/* Threaded comments — append-only running log. */}
+              <section>
+                <SectionLabel>
+                  <MessageSquare className="h-3 w-3" />
+                  Comments
+                </SectionLabel>
+                <CommentsThread
+                  itemId={detail.id}
+                  comments={detail.comments ?? []}
+                  onAdded={(c) =>
+                    setDetail((prev) =>
+                      prev ? { ...prev, comments: [...(prev.comments ?? []), c] } : prev
+                    )
+                  }
+                  onDeleted={(commentId) =>
+                    setDetail((prev) =>
+                      prev
+                        ? { ...prev, comments: (prev.comments ?? []).filter((c) => c.id !== commentId) }
+                        : prev
+                    )
+                  }
                 />
               </section>
 
@@ -523,6 +551,131 @@ function AttachmentAddButton({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function relativeTime(iso: string) {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86_400 * 14) return `${Math.floor(diff / 86_400)}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/**
+ * Append-only thread under each checklist item. Each comment renders
+ * as its own bordered bullet with author + relative time. Cmd/Ctrl+Enter
+ * (or click Send) posts the entry.
+ */
+function CommentsThread({
+  itemId,
+  comments,
+  onAdded,
+  onDeleted,
+}: {
+  itemId: string;
+  comments: ChecklistItemComment[];
+  onAdded: (comment: ChecklistItemComment) => void;
+  onDeleted: (commentId: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [posting, setPosting] = useState(false);
+
+  const submit = async () => {
+    const body = draft.trim();
+    if (!body) return;
+    setPosting(true);
+    try {
+      const res = await fetch(`/api/checklist/${itemId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      });
+      if (!res.ok) {
+        toast.error("Failed to post comment");
+        return;
+      }
+      const json = await res.json();
+      if (json?.data) onAdded(json.data);
+      setDraft("");
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const remove = async (commentId: string) => {
+    const res = await fetch(`/api/checklist/${itemId}/comments/${commentId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      toast.error("Failed to delete comment");
+      return;
+    }
+    onDeleted(commentId);
+  };
+
+  return (
+    <div className="mt-1 space-y-2">
+      {comments.length === 0 ? (
+        <p className="text-xs text-muted-foreground/70">
+          No comments yet. Drop a note for yourself or the team below.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {comments.map((c) => (
+            <li
+              key={c.id}
+              className="group flex gap-2 rounded-md border border-border/40 bg-background/40 px-3 py-2 text-sm"
+            >
+              <span className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60" />
+              <div className="min-w-0 flex-1">
+                <p className="whitespace-pre-wrap break-words text-foreground/90">{c.body}</p>
+                <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/70">
+                  <span>{c.author_user_id ? c.author_user_id : "anon"}</span>
+                  <span>·</span>
+                  <span title={new Date(c.created_at).toLocaleString()}>
+                    {relativeTime(c.created_at)}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => remove(c.id)}
+                className="opacity-0 transition-opacity group-hover:opacity-100 text-muted-foreground hover:text-rose-500"
+                aria-label="Delete comment"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex items-start gap-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          rows={2}
+          maxLength={4000}
+          placeholder="Add a comment — ⌘↵ to post"
+          className="min-h-[2.5rem] flex-1 resize-y rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5 text-sm placeholder:text-muted-foreground/50 focus:border-primary/45 focus:outline-none focus:ring-2 focus:ring-primary/15"
+        />
+        <Button
+          size="sm"
+          disabled={posting || !draft.trim()}
+          onClick={submit}
+          className="h-9 shrink-0 px-3"
+        >
+          {posting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
     </div>
   );
 }
