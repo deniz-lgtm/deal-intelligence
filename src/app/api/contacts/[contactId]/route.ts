@@ -44,6 +44,9 @@ export async function PATCH(
     if (body.title !== undefined) updates.title = body.title ? String(body.title).trim() : null;
     if (body.notes !== undefined) updates.notes = body.notes ? String(body.notes).trim() : null;
     if (body.tags !== undefined) updates.tags = Array.isArray(body.tags) ? body.tags : [];
+    if (body.next_action_at !== undefined) updates.next_action_at = body.next_action_at || null;
+    if (body.next_action_note !== undefined) updates.next_action_note = body.next_action_note ? String(body.next_action_note).trim() : null;
+    if (body.relationship_stage !== undefined) updates.relationship_stage = body.relationship_stage;
 
     const row = await contactQueries.update(params.contactId, updates);
     if (!row) {
