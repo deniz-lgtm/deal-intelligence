@@ -1,15 +1,21 @@
 /**
  * Stylized schedule PDF renderer.
  *
- * Mirrors the columns of the Excel export (WBS, Track, Phase/Task,
- * Start, Finish, Days, Float, Critical, Progress, Status, Owner,
- * Predecessor, Budget) and renders a real CSS-drawn progress bar
- * plus a per-row mini-Gantt strip showing the bar position within
- * the deal's overall date range. Critical-path rows are tinted red
- * to match the in-app + Excel treatments.
+ * Three view presets shape the column set so the PDF reads well in
+ * landscape Letter:
  *
- * The output is HTML — wrap it with `renderReportHtml` and run it
- * through `htmlToPdf` from the route handler.
+ *   • gantt     — Gantt-first: WBS, Phase / Task, Gantt strip dominates
+ *                 (~60% width), Progress, Status. Minimal text columns.
+ *   • executive — Briefing read: WBS, Phase / Task, Start, Finish, Gantt,
+ *                 Progress, Status, Owner.
+ *   • detail    — Everything: WBS, Phase / Task, Start, Finish, Days,
+ *                 Float, Critical, Gantt, Progress, Status, Owner,
+ *                 Predecessor, Budget. Equivalent to the previous
+ *                 portrait layout.
+ *
+ * A monthly time-axis is rendered inside the Gantt column header so the
+ * per-row bars align to a shared scale rather than just floating
+ * unlabeled.
  */
 
 import {
@@ -17,6 +23,75 @@ import {
   type DevPhase,
   type ScheduleTrack,
 } from "@/lib/types";
+
+export type ScheduleView = "gantt" | "executive" | "detail";
+
+type ColumnId =
+  | "wbs"
+  | "label"
+  | "start"
+  | "finish"
+  | "days"
+  | "float"
+  | "crit"
+  | "gantt"
+  | "progress"
+  | "status"
+  | "owner"
+  | "pred"
+  | "budget";
+
+const VIEW_COLUMNS: Record<ScheduleView, ColumnId[]> = {
+  gantt: ["wbs", "label", "gantt", "progress", "status"],
+  executive: ["wbs", "label", "start", "finish", "gantt", "progress", "status", "owner"],
+  detail: [
+    "wbs",
+    "label",
+    "start",
+    "finish",
+    "days",
+    "float",
+    "crit",
+    "gantt",
+    "progress",
+    "status",
+    "owner",
+    "pred",
+    "budget",
+  ],
+};
+
+const COLUMN_LABEL: Record<ColumnId, string> = {
+  wbs: "WBS",
+  label: "Phase / Task",
+  start: "Start",
+  finish: "Finish",
+  days: "Days",
+  float: "Float",
+  crit: "Crit",
+  gantt: "Gantt",
+  progress: "Progress",
+  status: "Status",
+  owner: "Owner",
+  pred: "Predecessor",
+  budget: "Budget",
+};
+
+const COLUMN_WIDTH_CSS: Record<ColumnId, string> = {
+  wbs: "width:32px",
+  label: "min-width:170px",
+  start: "width:62px",
+  finish: "width:62px",
+  days: "width:38px",
+  float: "width:42px",
+  crit: "width:30px",
+  gantt: "", // gantt soaks up remainder via table-layout:fixed + the others having widths
+  progress: "width:96px",
+  status: "width:78px",
+  owner: "width:80px",
+  pred: "width:78px",
+  budget: "width:74px",
+};
 
 function esc(s: unknown): string {
   return String(s ?? "")
@@ -58,10 +133,13 @@ interface ScheduleBodyOpts {
   phases: DevPhase[];
   /** When true, group by track and emit section headers. */
   withTrackSections?: boolean;
+  /** Column preset. Defaults to "executive" — good for landscape Letter. */
+  view?: ScheduleView;
 }
 
 export function renderScheduleBodyHtml(opts: ScheduleBodyOpts): string {
-  const { phases, withTrackSections = true } = opts;
+  const { phases, withTrackSections = true, view = "executive" } = opts;
+  const cols = VIEW_COLUMNS[view] ?? VIEW_COLUMNS.executive;
   const byId = new Map(phases.map((p) => [p.id, p]));
 
   const roots = phases
@@ -105,33 +183,53 @@ export function renderScheduleBodyHtml(opts: ScheduleBodyOpts): string {
     seedWbs(roots);
   }
 
-  // Timeline range for the mini-Gantt strip.
+  // Timeline range. Pad 1 week on each side so end-of-window bars don't kiss
+  // the edge of the column.
   const dated = allRows.filter((p) => p.start_date && p.end_date);
-  const minMs = dated.length
+  const MS_PER_DAY = 86_400_000;
+  const rawMin = dated.length
     ? Math.min(...dated.map((p) => new Date(p.start_date!).getTime()))
     : 0;
-  const maxMs = dated.length
+  const rawMax = dated.length
     ? Math.max(...dated.map((p) => new Date(p.end_date!).getTime()))
     : 0;
+  const minMs = rawMin - 7 * MS_PER_DAY;
+  const maxMs = rawMax + 7 * MS_PER_DAY;
   const rangeMs = Math.max(1, maxMs - minMs);
+  const pctAt = (ms: number) => ((ms - minMs) / rangeMs) * 100;
 
-  // KPI summary.
-  const completeRows = allRows.filter((p) => p.status === "complete").length;
-  const delayedRows = allRows.filter((p) => p.status === "delayed").length;
-  const avgProgress =
-    allRows.length > 0
-      ? Math.round(allRows.reduce((s, p) => s + Number(p.pct_complete ?? 0), 0) / allRows.length)
-      : 0;
-  const firstStart = dated.length ? fmtDate(new Date(minMs).toISOString()) : "—";
-  const lastFinish = dated.length ? fmtDate(new Date(maxMs).toISOString()) : "—";
-  const criticalCount = allRows.filter((p) => p.is_critical).length;
+  // Month ticks for the Gantt column header. One label per month inside
+  // the [minMs, maxMs] window, with year stamped on Jan + the leftmost
+  // tick.
+  const monthTicks: { left: number; label: string; major: boolean }[] = [];
+  if (dated.length) {
+    const cursor = new Date(minMs);
+    cursor.setUTCDate(1);
+    let first = true;
+    while (cursor.getTime() <= maxMs + MS_PER_DAY) {
+      const left = pctAt(cursor.getTime());
+      const isJan = cursor.getUTCMonth() === 0;
+      monthTicks.push({
+        left,
+        label: cursor.toLocaleDateString("en-US", {
+          month: "short",
+          year: first || isJan ? "2-digit" : undefined,
+        }),
+        major: first || isJan,
+      });
+      first = false;
+      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    }
+  }
+  const todayPct =
+    dated.length && Date.now() >= minMs && Date.now() <= maxMs ? pctAt(Date.now()) : null;
 
   const ganttCell = (p: DevPhase) => {
     if (!p.start_date || !p.end_date || rangeMs === 0) return "";
     const s = new Date(p.start_date).getTime();
     const e = new Date(p.end_date).getTime();
-    const left = ((s - minMs) / rangeMs) * 100;
-    const width = Math.max(1.5, ((e - s) / rangeMs) * 100);
+    const left = pctAt(s);
+    const width = Math.max(1.5, pctAt(e) - left);
     const pct = Math.max(0, Math.min(100, Math.round(Number(p.pct_complete ?? 0))));
     const tone = p.is_critical
       ? "background:#FCA5A5;border-color:#B91C1C;"
@@ -142,10 +240,21 @@ export function renderScheduleBodyHtml(opts: ScheduleBodyOpts): string {
           : p.status === "delayed"
             ? "background:#FCA5A5;border-color:#B91C1C;"
             : "background:#E2E8F0;border-color:#64748B;";
+    const milestone = p.is_milestone || p.kind === "milestone"
+      ? `<div class="gantt-diamond" style="left:${left.toFixed(2)}%"></div>`
+      : "";
     return `<div class="gantt-track">
+      ${monthTicks
+        .map(
+          (t) =>
+            `<div class="gantt-tick${t.major ? " major" : ""}" style="left:${t.left.toFixed(2)}%"></div>`
+        )
+        .join("")}
+      ${todayPct !== null ? `<div class="gantt-today" style="left:${todayPct.toFixed(2)}%"></div>` : ""}
       <div class="gantt-bar" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;${tone}">
         <div class="gantt-fill" style="width:${pct}%"></div>
       </div>
+      ${milestone}
     </div>`;
   };
 
@@ -171,26 +280,47 @@ export function renderScheduleBodyHtml(opts: ScheduleBodyOpts): string {
     return "chip chip-open";
   };
 
+  const cellFor = (id: ColumnId, p: DevPhase, isChild: boolean, wbs: string): string => {
+    switch (id) {
+      case "wbs":
+        return `<td class="wbs">${esc(wbs)}</td>`;
+      case "label": {
+        const kindGlyph = p.is_milestone || p.kind === "milestone" ? "◆ " : "";
+        return `<td class="label">${isChild ? "<span class=\"indent\">└</span>" : ""}${kindGlyph}${esc(p.label)}</td>`;
+      }
+      case "start":
+        return `<td>${fmtDate(p.start_date)}</td>`;
+      case "finish":
+        return `<td>${fmtDate(p.end_date)}</td>`;
+      case "days":
+        return `<td class="num">${p.duration_days ?? ""}</td>`;
+      case "float": {
+        const f = p.total_slack_days == null ? "" : `${Math.round(Number(p.total_slack_days))}d`;
+        return `<td class="num">${esc(f)}</td>`;
+      }
+      case "crit":
+        return `<td class="num crit">${p.is_critical ? "★" : ""}</td>`;
+      case "gantt":
+        return `<td class="gantt">${ganttCell(p)}</td>`;
+      case "progress":
+        return `<td class="prog">${progressCell(Number(p.pct_complete ?? 0))}</td>`;
+      case "status":
+        return `<td><span class="${statusChipClass(p.status)}">${esc(STATUS_LABEL(p.status))}</span></td>`;
+      case "owner":
+        return `<td>${esc(p.task_owner || "")}</td>`;
+      case "pred":
+        return `<td class="pred">${esc(predecessorLabel(p))}</td>`;
+      case "budget":
+        return `<td class="money">${esc(fmtMoney(p.budget == null ? null : Number(p.budget)))}</td>`;
+    }
+  };
+
   const renderRow = (p: DevPhase, isChild: boolean, wbs: string) => {
     const critClass = p.is_critical ? " row-critical" : "";
     const childClass = isChild ? " row-child" : "";
-    const floatStr = p.total_slack_days == null ? "" : `${Math.round(Number(p.total_slack_days))}d`;
-    const kindGlyph = p.is_milestone || p.kind === "milestone" ? "◆ " : "";
-    return `<tr class="row${critClass}${childClass}">
-      <td class="wbs">${esc(wbs)}</td>
-      <td class="label">${isChild ? "<span class=\"indent\">└</span>" : ""}${kindGlyph}${esc(p.label)}</td>
-      <td>${fmtDate(p.start_date)}</td>
-      <td>${fmtDate(p.end_date)}</td>
-      <td class="num">${p.duration_days ?? ""}</td>
-      <td class="num">${esc(floatStr)}</td>
-      <td class="num crit">${p.is_critical ? "★" : ""}</td>
-      <td class="gantt">${ganttCell(p)}</td>
-      <td class="prog">${progressCell(Number(p.pct_complete ?? 0))}</td>
-      <td><span class="${statusChipClass(p.status)}">${esc(STATUS_LABEL(p.status))}</span></td>
-      <td>${esc(p.task_owner || "")}</td>
-      <td class="pred">${esc(predecessorLabel(p))}</td>
-      <td class="money">${esc(fmtMoney(p.budget == null ? null : Number(p.budget)))}</td>
-    </tr>`;
+    return `<tr class="row${critClass}${childClass}">${cols
+      .map((c) => cellFor(c, p, isChild, wbs))
+      .join("")}</tr>`;
   };
 
   const renderRoots = (rs: DevPhase[]) =>
@@ -209,46 +339,94 @@ export function renderScheduleBodyHtml(opts: ScheduleBodyOpts): string {
         .map((t) => {
           const rs = roots.filter((r) => (r.track ?? "development") === t);
           if (rs.length === 0) return "";
-          return `<tr class="track-section"><td colspan="13">${esc(SCHEDULE_TRACK_LABELS[t])}</td></tr>${renderRoots(rs)}`;
+          return `<tr class="track-section"><td colspan="${cols.length}">${esc(SCHEDULE_TRACK_LABELS[t])}</td></tr>${renderRoots(rs)}`;
         })
         .join("")
     : renderRoots(roots);
+
+  // KPI summary.
+  const completeRows = allRows.filter((p) => p.status === "complete").length;
+  const delayedRows = allRows.filter((p) => p.status === "delayed").length;
+  const avgProgress =
+    allRows.length > 0
+      ? Math.round(allRows.reduce((s, p) => s + Number(p.pct_complete ?? 0), 0) / allRows.length)
+      : 0;
+  const firstStart = dated.length ? fmtDate(new Date(rawMin).toISOString()) : "—";
+  const lastFinish = dated.length ? fmtDate(new Date(rawMax).toISOString()) : "—";
+  const criticalCount = allRows.filter((p) => p.is_critical).length;
+
+  const ganttHeader = cols.includes("gantt")
+    ? `<div class="time-axis">
+        ${monthTicks
+          .map(
+            (t) =>
+              `<div class="axis-tick${t.major ? " major" : ""}" style="left:${t.left.toFixed(2)}%"><span>${esc(t.label)}</span></div>`
+          )
+          .join("")}
+        ${todayPct !== null ? `<div class="axis-today" style="left:${todayPct.toFixed(2)}%"><span>Today</span></div>` : ""}
+      </div>`
+    : "";
+
+  const headerCells = cols
+    .map((c) => {
+      const w = COLUMN_WIDTH_CSS[c];
+      const label = c === "gantt" && ganttHeader ? ganttHeader : esc(COLUMN_LABEL[c]);
+      return `<th${w ? ` style="${w}"` : ""}${c === "gantt" ? ' class="gantt-header"' : ""}>${label}</th>`;
+    })
+    .join("");
 
   return `
   <style>
     .kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.5rem; margin: 0.5rem 0 1rem; }
     .kpi { border: 1px solid #E5E7EB; padding: 0.5rem 0.6rem; border-radius: 4px; background: #F8FAFC; }
-    .kpi .v { font-size: 1.15rem; font-weight: 600; color: #0F172A; font-variant-numeric: tabular-nums; }
-    .kpi .l { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; color: #64748B; margin-top: 2px; }
-    table.schedule { width: 100%; border-collapse: collapse; font-size: 0.7rem; table-layout: fixed; }
-    table.schedule th, table.schedule td { border-bottom: 1px solid #E5E7EB; padding: 4px 6px; vertical-align: middle; text-align: left; }
-    table.schedule thead th { background: #0F172A; color: #fff; font-weight: 600; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 6px; }
-    table.schedule tr.track-section td { background: #1F2937; color: #F1F5F9; font-weight: 700; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.12em; padding: 6px 8px; }
+    .kpi .v { font-size: 1.05rem; font-weight: 600; color: #0F172A; font-variant-numeric: tabular-nums; }
+    .kpi .l { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em; color: #64748B; margin-top: 2px; }
+
+    table.schedule { width: 100%; border-collapse: collapse; font-size: 0.68rem; table-layout: fixed; }
+    table.schedule th, table.schedule td { border-bottom: 1px solid #E5E7EB; padding: 4px 6px; vertical-align: middle; text-align: left; overflow: hidden; }
+    table.schedule thead th { background: #0F172A; color: #fff; font-weight: 600; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 6px; }
+    table.schedule tr.track-section td { background: #1F2937; color: #F1F5F9; font-weight: 700; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.12em; padding: 6px 8px; }
     table.schedule tr.row.row-critical td { background: #FEE2E2; color: #7F1D1D; }
     table.schedule tr.row.row-critical.row-child td { background: #FEF2F2; }
     table.schedule tr.row.row-child td { background: #FAFAFA; }
-    table.schedule td.wbs { font-variant-numeric: tabular-nums; color: #64748B; width: 32px; }
-    table.schedule td.label { font-weight: 600; }
+
+    table.schedule td.wbs { font-variant-numeric: tabular-nums; color: #64748B; }
+    table.schedule td.label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     table.schedule td.label .indent { color: #94A3B8; margin-right: 4px; }
-    table.schedule .num { font-variant-numeric: tabular-nums; text-align: right; width: 38px; }
+    table.schedule .num { font-variant-numeric: tabular-nums; text-align: right; }
     table.schedule .crit { text-align: center; color: #B91C1C; font-weight: 700; }
-    table.schedule .money { font-variant-numeric: tabular-nums; text-align: right; width: 70px; color: #0F172A; }
-    table.schedule .pred { color: #475569; font-variant-numeric: tabular-nums; }
-    table.schedule .gantt { width: 22%; min-width: 140px; padding: 4px; }
-    .gantt-track { position: relative; height: 12px; background: #F1F5F9; border-radius: 2px; }
+    table.schedule .money { font-variant-numeric: tabular-nums; text-align: right; color: #0F172A; }
+    table.schedule .pred { color: #475569; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+    /* Gantt — the dominant column. */
+    table.schedule .gantt-header { padding: 0 4px; position: relative; vertical-align: bottom; }
+    .time-axis { position: relative; height: 28px; }
+    .axis-tick { position: absolute; bottom: 0; height: 28px; border-left: 1px solid rgba(255,255,255,0.18); padding-left: 3px; color: rgba(255,255,255,0.75); }
+    .axis-tick.major { border-left-color: rgba(255,255,255,0.55); color: #fff; }
+    .axis-tick span { display: inline-block; padding-top: 4px; font-size: 0.58rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+    .axis-today { position: absolute; bottom: 0; height: 28px; border-left: 2px solid #EF4444; padding-left: 3px; color: #EF4444; }
+    .axis-today span { display: inline-block; padding-top: 4px; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+    table.schedule td.gantt { padding: 5px 6px; }
+    .gantt-track { position: relative; height: 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 2px; overflow: hidden; }
+    .gantt-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(15,23,42,0.05); }
+    .gantt-tick.major { background: rgba(15,23,42,0.18); }
+    .gantt-today { position: absolute; top: 0; bottom: 0; width: 1.5px; background: #EF4444; opacity: 0.85; z-index: 2; }
     .gantt-bar { position: absolute; top: 1px; bottom: 1px; border-radius: 2px; border: 1px solid; overflow: hidden; }
     .gantt-fill { height: 100%; background: rgba(15,118,110,0.55); }
-    table.schedule .prog { width: 110px; }
-    .pbar { position: relative; height: 12px; background: #F1F5F9; border-radius: 2px; overflow: hidden; }
+    .gantt-diamond { position: absolute; top: 50%; width: 9px; height: 9px; background: #F59E0B; border: 1px solid #B45309; transform: translate(-50%, -50%) rotate(45deg); z-index: 3; }
+
+    table.schedule .prog { padding: 5px 6px; }
+    .pbar { position: relative; height: 14px; background: #F1F5F9; border-radius: 2px; overflow: hidden; }
     .pbar-fill { height: 100%; background: linear-gradient(90deg,#10B981,#0F766E); }
     .pbar-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; font-weight: 600; color: #0F172A; }
-    .chip { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 0.6rem; font-weight: 600; }
+    .chip { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 0.58rem; font-weight: 600; white-space: nowrap; }
     .chip-complete { background: #D1FAE5; color: #065F46; }
     .chip-progress { background: #DBEAFE; color: #1E40AF; }
     .chip-delayed { background: #FEE2E2; color: #991B1B; }
     .chip-open { background: #F1F5F9; color: #475569; }
-    .legend { display: flex; gap: 1rem; align-items: center; font-size: 0.65rem; color: #64748B; margin-top: 0.5rem; }
+    .legend { display: flex; gap: 1rem; align-items: center; font-size: 0.62rem; color: #64748B; margin-top: 0.5rem; flex-wrap: wrap; }
     .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; border: 1px solid #94a3b8; }
+    .legend .diamond { display: inline-block; width: 8px; height: 8px; background: #F59E0B; border: 1px solid #B45309; transform: rotate(45deg); margin-right: 6px; vertical-align: middle; }
   </style>
 
   <div class="kpi-grid">
@@ -261,23 +439,7 @@ export function renderScheduleBodyHtml(opts: ScheduleBodyOpts): string {
   </div>
 
   <table class="schedule">
-    <thead>
-      <tr>
-        <th style="width:32px">WBS</th>
-        <th>Phase / Task</th>
-        <th style="width:60px">Start</th>
-        <th style="width:60px">Finish</th>
-        <th style="width:38px">Days</th>
-        <th style="width:38px">Float</th>
-        <th style="width:28px">Crit</th>
-        <th style="width:22%">Gantt</th>
-        <th style="width:110px">Progress</th>
-        <th style="width:74px">Status</th>
-        <th style="width:80px">Owner</th>
-        <th style="width:80px">Predecessor</th>
-        <th style="width:70px">Budget</th>
-      </tr>
-    </thead>
+    <thead><tr>${headerCells}</tr></thead>
     <tbody>${sections}</tbody>
   </table>
 
@@ -286,6 +448,8 @@ export function renderScheduleBodyHtml(opts: ScheduleBodyOpts): string {
     <span><span class="swatch" style="background:#93C5FD"></span>In progress</span>
     <span><span class="swatch" style="background:#86EFAC"></span>Complete</span>
     <span><span class="swatch" style="background:#E2E8F0"></span>Not started</span>
+    <span><span class="diamond"></span>Milestone</span>
+    <span><span class="swatch" style="background:#EF4444;border-color:#B91C1C"></span>Today</span>
   </div>
   `;
 }
