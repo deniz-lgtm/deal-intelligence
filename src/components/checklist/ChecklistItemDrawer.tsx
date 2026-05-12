@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -712,11 +712,17 @@ function AddScheduledTaskButton({
   const [endDate, setEndDate] = useState(defaultDue ? String(defaultDue).slice(0, 10) : "");
   const [isMilestone, setIsMilestone] = useState(false);
   const [saving, setSaving] = useState(false);
+  const prevOpenRef = useRef(false);
 
+  // Only seed endDate from defaultDue when the popover transitions
+  // from closed → open. If we re-seed on every defaultDue change,
+  // any background patch on the parent drawer (status, assignee, etc.)
+  // that refreshes `detail` would wipe the date the user just typed.
   useEffect(() => {
-    if (open) {
+    if (open && !prevOpenRef.current) {
       setEndDate(defaultDue ? String(defaultDue).slice(0, 10) : "");
     }
+    prevOpenRef.current = open;
   }, [open, defaultDue]);
 
   const submit = async () => {

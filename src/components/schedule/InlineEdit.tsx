@@ -324,8 +324,8 @@ export function InlineDate({
     }
   }, [editing]);
 
-  const commit = async () => {
-    const next = draft.trim();
+  const commit = async (nextValue?: string) => {
+    const next = (nextValue ?? draft).trim();
     setEditing(false);
     if (next === (value ?? "")) return;
     await onSave(next === "" ? null : next);
@@ -342,12 +342,22 @@ export function InlineDate({
         ref={inputRef}
         type="date"
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
+        // Commit on change. <input type="date"> only fires onChange when
+        // the user actually picks a valid date (or clears it), so this
+        // is safe and avoids the well-known native-picker-blur bug
+        // where the picker popup briefly steals focus, fires onBlur,
+        // and resets the editor before the user can confirm.
+        onChange={(e) => {
+          setDraft(e.target.value);
+          commit(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") commit();
           if (e.key === "Escape") cancel();
         }}
+        // onBlur only closes the editor — never saves — so picker
+        // dismissal doesn't clobber unsaved drafts.
+        onBlur={() => setEditing(false)}
         className={`bg-background border border-primary/40 rounded px-1 py-0 text-2xs tabular-nums focus:outline-none focus:ring-1 focus:ring-primary ${className}`}
         onClick={(e) => e.stopPropagation()}
       />
