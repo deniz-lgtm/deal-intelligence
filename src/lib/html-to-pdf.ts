@@ -28,6 +28,8 @@ export interface HtmlToPdfOptions {
   format?: "Letter" | "A4" | "Legal" | "Tabloid";
   /** CSS margins (e.g. "0.5in"). Applied to all four sides. */
   margin?: string;
+  /** Render in landscape orientation (default false / portrait). */
+  landscape?: boolean;
   /**
    * puppeteer networkidle signal — "networkidle0" waits for no network
    * activity for 500ms (safer for dynamic content), "load" fires earlier.
@@ -80,6 +82,7 @@ export async function htmlToPdf(
     const pdf = await page.pdf({
       format,
       printBackground: true,
+      landscape: opts.landscape ?? false,
       margin: { top: margin, bottom: margin, left: margin, right: margin },
     });
     return Buffer.from(pdf);

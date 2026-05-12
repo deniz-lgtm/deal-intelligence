@@ -1493,13 +1493,18 @@ export default function DevelopmentSchedule({
    */
   const handleExportSchedule = (
     format: "csv" | "ics" | "xls" | "pdf",
-    scope: "track" | "all" = "track"
+    scope: "track" | "all" = "track",
+    pdfView: "executive" | "gantt" | "detail" = "executive"
   ) => {
     // Browser navigates to the export route with the proper Content-
     // Disposition header — simplest cross-client path to "download file".
     const trackQs = scope === "track" && track !== "all" ? `?track=${track}` : "";
     if (format === "pdf") {
-      window.open(`/api/deals/${dealId}/dev-schedule/pdf${trackQs}`, "_blank");
+      const sep = trackQs ? "&" : "?";
+      window.open(
+        `/api/deals/${dealId}/dev-schedule/pdf${trackQs}${sep}view=${pdfView}`,
+        "_blank"
+      );
       return;
     }
     const trackParam = trackQs ? `&${trackQs.slice(1)}` : "";
@@ -2133,11 +2138,14 @@ export default function DevelopmentSchedule({
                       const v = e.target.value;
                       e.target.value = "";
                       if (v === "xls") handleExportSchedule("xls", "track");
-                      else if (v === "pdf") handleExportSchedule("pdf", "track");
+                      else if (v === "pdf-exec") handleExportSchedule("pdf", "track", "executive");
+                      else if (v === "pdf-gantt") handleExportSchedule("pdf", "track", "gantt");
+                      else if (v === "pdf-detail") handleExportSchedule("pdf", "track", "detail");
                       else if (v === "csv") handleExportSchedule("csv", "track");
                       else if (v === "ics") handleExportSchedule("ics", "track");
                       else if (v === "xls-all") handleExportSchedule("xls", "all");
-                      else if (v === "pdf-all") handleExportSchedule("pdf", "all");
+                      else if (v === "pdf-exec-all") handleExportSchedule("pdf", "all", "executive");
+                      else if (v === "pdf-gantt-all") handleExportSchedule("pdf", "all", "gantt");
                       else if (v === "csv-all") handleExportSchedule("csv", "all");
                       else if (v === "ics-all") handleExportSchedule("ics", "all");
                     }}
@@ -2146,13 +2154,16 @@ export default function DevelopmentSchedule({
                   >
                     <option value="">Export…</option>
                     <optgroup label={isMasterTrack ? "Master schedule" : `This track (${scheduleScopeLabel(track)})`}>
-                      <option value="pdf">PDF schedule packet</option>
+                      <option value="pdf-exec">PDF — Executive view</option>
+                      <option value="pdf-gantt">PDF — Gantt view</option>
+                      <option value="pdf-detail">PDF — Detail view</option>
                       <option value="xls">Excel schedule packet</option>
                       <option value="csv">CSV data</option>
                       <option value="ics">ICS (Calendar)</option>
                     </optgroup>
                     <optgroup label="All tracks">
-                      <option value="pdf-all">PDF packet — all tracks</option>
+                      <option value="pdf-exec-all">PDF Executive — all tracks</option>
+                      <option value="pdf-gantt-all">PDF Gantt — all tracks</option>
                       <option value="xls-all">Excel packet - all tracks</option>
                       <option value="csv-all">CSV — all tracks</option>
                       <option value="ics-all">ICS — all tracks</option>

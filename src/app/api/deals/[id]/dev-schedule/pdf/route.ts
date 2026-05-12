@@ -8,7 +8,7 @@ import { requireAuth, requireDealAccess } from "@/lib/auth";
 import { renderReportHtml } from "@/lib/report-html-shell";
 import { resolveBranding } from "@/lib/export-markdown";
 import { htmlToPdf } from "@/lib/html-to-pdf";
-import { renderScheduleBodyHtml } from "@/lib/pdf-exports/schedule";
+import { renderScheduleBodyHtml, type ScheduleView } from "@/lib/pdf-exports/schedule";
 import {
   SCHEDULE_TRACK_LABELS,
   type DevPhase,
@@ -80,7 +80,16 @@ export async function GET(
   const focusPhase = focusId ? allPhases.find((p) => p.id === focusId) ?? null : null;
   const withTrackSections = !focusPhase && trackFilter == null;
 
-  const bodyHtml = renderScheduleBodyHtml({ phases, withTrackSections });
+  // ?view=gantt | executive | detail   (default: executive)
+  // ?orientation=landscape | portrait  (default: landscape)
+  const viewParam = url.searchParams.get("view");
+  const view: ScheduleView =
+    viewParam === "gantt" || viewParam === "detail" || viewParam === "executive"
+      ? viewParam
+      : "executive";
+  const orientation = url.searchParams.get("orientation") === "portrait" ? "portrait" : "landscape";
+
+  const bodyHtml = renderScheduleBodyHtml({ phases, withTrackSections, view });
 
   const dealName = (deal as { name?: string }).name ?? "Deal";
   const html = renderReportHtml({
@@ -97,7 +106,11 @@ export async function GET(
     theme,
   });
 
-  const pdf = await htmlToPdf(html, { format: "Letter", margin: "0.4in" });
+  const pdf = await htmlToPdf(html, {
+    format: "Letter",
+    margin: "0.4in",
+    landscape: orientation === "landscape",
+  });
   const safe = dealName.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60) || "deal";
   const trackSlug = trackFilter ? `-${trackFilter}` : "";
   const focusSlug = focusPhase
