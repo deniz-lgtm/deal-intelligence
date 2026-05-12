@@ -6,9 +6,6 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   BookOpen,
-  Building,
-  Compass,
-  HardHat,
   Home,
   Inbox,
   Kanban,
@@ -37,11 +34,8 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
     label: "Command",
     items: [
-      { href: "/", label: "Command Center", icon: Home },
+      { href: "/", label: "Deal Pipeline", icon: Home },
       { href: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" },
-      { href: "/acquisition", label: "Deal Pipeline", icon: Compass },
-      { href: "/development", label: "Development", icon: Building },
-      { href: "/construction", label: "Construction", icon: HardHat },
     ],
   },
   {
