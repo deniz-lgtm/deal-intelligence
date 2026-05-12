@@ -65,6 +65,13 @@ type DocumentActionDraft = {
   actions: DocumentDraftAction[];
 };
 
+type DocumentActionApplyResult = {
+  total: number;
+  schedule: number;
+  decision: number;
+  checklist: number;
+};
+
 /** Parse an AI summary string into bullet points (split on ". " or newlines) */
 function parseSummaryBullets(summary: string): string[] {
   // Split on newlines first, then periods
@@ -115,6 +122,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
     selectedIds: string[];
   } | null>(null);
   const [applyingActions, setApplyingActions] = useState(false);
+  const [actionCreated, setActionCreated] = useState<DocumentActionApplyResult | null>(null);
 
   useEffect(() => {
     loadDocuments();
@@ -229,6 +237,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         const selectedIds = draft.actions
           .filter((action) => action.confidence !== "low")
           .map((action, index) => action.client_id || `${action.type}-${index}`);
+        setActionCreated(null);
         setActionReview({ doc, intent, draft, selectedIds });
         if (draft.actions.length === 0) {
           toast.message("No clear actions found in that document");
@@ -264,8 +273,13 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         return;
       }
       const count = json.data?.created?.length ?? selected.length;
+      setActionCreated({
+        total: count,
+        schedule: selected.filter((action) => action.type === "schedule").length,
+        decision: selected.filter((action) => action.type === "decision").length,
+        checklist: selected.filter((action) => action.type === "checklist").length,
+      });
       toast.success(`Created ${count} action${count === 1 ? "" : "s"}`);
-      setActionReview(null);
     } catch {
       toast.error("Could not create selected actions");
     } finally {
@@ -357,8 +371,13 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
       {actionReview && (
         <DocumentActionReviewModal
           review={actionReview}
+          dealId={params.id}
           applying={applyingActions}
-          onClose={() => setActionReview(null)}
+          created={actionCreated}
+          onClose={() => {
+            setActionReview(null);
+            setActionCreated(null);
+          }}
           onToggle={(id) =>
             setActionReview((current) => {
               if (!current) return current;
@@ -1386,7 +1405,9 @@ function actionLabel(type: DraftableDocumentActionIntent) {
 
 function DocumentActionReviewModal({
   review,
+  dealId,
   applying,
+  created,
   onClose,
   onToggle,
   onApply,
@@ -1397,12 +1418,27 @@ function DocumentActionReviewModal({
     draft: DocumentActionDraft;
     selectedIds: string[];
   };
+  dealId: string;
   applying: boolean;
+  created: DocumentActionApplyResult | null;
   onClose: () => void;
   onToggle: (id: string) => void;
   onApply: () => void;
 }) {
   const selectedCount = review.selectedIds.length;
+  const createdLinks = created
+    ? [
+        created.schedule > 0
+          ? { href: `/deals/${dealId}/schedule`, label: "Open schedule", count: created.schedule }
+          : null,
+        created.decision > 0
+          ? { href: `/deals/${dealId}/decisions`, label: "Open decisions", count: created.decision }
+          : null,
+        created.checklist > 0
+          ? { href: `/deals/${dealId}/checklist`, label: "Open checklist", count: created.checklist }
+          : null,
+      ].filter(Boolean) as Array<{ href: string; label: string; count: number }>
+    : [];
   return (
     <div className="fixed inset-0 z-50 bg-black/70 p-4">
       <div className="mx-auto flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border bg-card shadow-2xl">
@@ -1421,7 +1457,35 @@ function DocumentActionReviewModal({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {review.draft.gaps.length > 0 && (
+          {created ? (
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-300">
+                  <CheckCircle2 className="h-5 w-5" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold">
+                    Created {created.total} action{created.total === 1 ? "" : "s"}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    The selected items are now linked back to this document as source context.
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {createdLinks.map((link) => (
+                      <Button key={link.href} asChild variant="outline" size="sm">
+                        <Link href={link.href} onClick={onClose}>
+                          {link.label}
+                          <Badge variant="secondary" className="ml-2 text-[10px]">
+                            {link.count}
+                          </Badge>
+                        </Link>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : review.draft.gaps.length > 0 ? (
             <div className="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
               <p className="text-xs font-medium text-amber-200">Missing or unclear</p>
               <ul className="mt-2 space-y-1">
@@ -1432,16 +1496,16 @@ function DocumentActionReviewModal({
                 ))}
               </ul>
             </div>
-          )}
+          ) : null}
 
-          {review.draft.actions.length === 0 ? (
+          {!created && review.draft.actions.length === 0 ? (
             <div className="rounded-lg border border-dashed p-8 text-center">
               <p className="text-sm font-medium">No supported actions found</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 The document may still be useful context, but the AI did not find enough evidence to create work.
               </p>
             </div>
-          ) : (
+          ) : !created ? (
             <div className="space-y-2">
               {review.draft.actions.map((action, index) => {
                 const id = actionId(action, index);
@@ -1495,21 +1559,29 @@ function DocumentActionReviewModal({
                 );
               })}
             </div>
-          )}
+          ) : null}
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t px-5 py-4">
           <p className="text-xs text-muted-foreground">
-            {selectedCount} selected. Review before creating; low-confidence items start unchecked.
+            {created
+              ? "Done. Use the links to jump into the created work."
+              : `${selectedCount} selected. Review before creating; low-confidence items start unchecked.`}
           </p>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={onClose} disabled={applying}>
-              Cancel
-            </Button>
-            <Button onClick={onApply} disabled={applying || selectedCount === 0}>
-              {applying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Create selected
-            </Button>
+            {created ? (
+              <Button onClick={onClose}>Close</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={onClose} disabled={applying}>
+                  Cancel
+                </Button>
+                <Button onClick={onApply} disabled={applying || selectedCount === 0}>
+                  {applying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Create selected
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </div>
