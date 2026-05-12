@@ -1,9 +1,10 @@
 // Stage derivation + per-stage route filtering for the deal workspace.
 //
 // The deal sidebar used to render ~30 routes across 6 collapsible groups.
-// Each stage of a deal really only touches 4–8 of those at a time, so we
-// derive the current stage from `status` + `execution_phase` and hide
-// everything else by default. The "More" disclosure restores the full list.
+// Each stage of a deal really only touches 4-8 extra routes at a time, so
+// we derive the current stage from `status` + `execution_phase` and use it
+// to recommend the next tools. Core surfaces like Assistant, Schedule,
+// Documents, Decisions, and Underwriting stay visible in the layout.
 
 import type { DealStatus, ExecutionPhase } from "@/lib/types";
 
@@ -69,10 +70,9 @@ export function deriveDealStage(
   }
 }
 
-// Allowed sidebar hrefs (relative to /deals/[id]) for each stage. Any
-// item not in this set is hidden when the user is on this stage and
-// "More" is not expanded. Deep links to hidden routes still resolve —
-// the user simply has to click "More" to see them in the sidebar.
+// Recommended sidebar hrefs (relative to /deals/[id]) for each stage.
+// The layout unions these with always-visible core tools and the active
+// deep-linked route, then "More tools" restores the full route list.
 //
 // "" means the deal home (Deal Brief canvas).
 export const STAGE_ALLOWED_HREFS: Record<DealStage, ReadonlyArray<string>> = {

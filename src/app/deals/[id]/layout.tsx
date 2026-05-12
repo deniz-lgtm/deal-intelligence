@@ -183,6 +183,18 @@ const MASSING_AWARE_HREFS = new Set([
   "/reports",
 ]);
 
+// These are the deal's daily operating surfaces. They should stay one
+// click away regardless of stage; the stage model curates the rest of
+// the sidebar around the current workflow.
+const ALWAYS_VISIBLE_HREFS = new Set([
+  "",
+  "/chat",
+  "/underwriting",
+  "/schedule",
+  "/documents",
+  "/decisions",
+]);
+
 
 function applyScopeGating(
   groups: NavGroup[],
@@ -206,7 +218,9 @@ function getNavGroups(
   executionPhase: ExecutionPhase | null,
   dealScope: DealScope | null,
   showInDevelopment: boolean,
-  showInConstruction: boolean
+  showInConstruction: boolean,
+  forceDevelopmentSchedule = false,
+  forceExecutionGroup = false
 ): NavGroup[] {
   // Construction now contains both pre-con prep and operational items.
   // We show it as soon as any of these signal that the construction track
@@ -219,8 +233,10 @@ function getNavGroups(
     executionPhase != null ||
     showInConstruction ||
     showInDevelopment ||
-    dealScope !== "acquisition";
-  const showDevelopmentSchedule = dealScope !== "acquisition" || showInDevelopment;
+    dealScope !== "acquisition" ||
+    forceExecutionGroup;
+  const showDevelopmentSchedule =
+    dealScope !== "acquisition" || showInDevelopment || forceDevelopmentSchedule;
   const scheduleGroup: NavGroup = {
     label: "Schedule",
     items: [
@@ -313,10 +329,10 @@ export default function DealLayout({
   // Per-group collapse state keyed by group label. Everything starts open
   // so a deal page does not feel like a set of hidden drawers.
   const [navGroupsCollapsed, setNavGroupsCollapsed] = useState<Record<string, boolean>>({});
-  // When false, sidebar items are filtered to the current stage's
-  // allowlist (defined in lib/deal-stage). Toggle to true to reveal the
-  // entire deal navigation — useful for power users and deep-link
-  // discovery. Persisted to localStorage.
+  // When false, sidebar items are curated around the current stage's
+  // allowlist (defined in lib/deal-stage), while the core deal tools
+  // remain visible. Toggle to true to reveal the entire deal navigation.
+  // Persisted to localStorage.
   const [showAllRoutes, setShowAllRoutes] = useState(false);
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -384,19 +400,33 @@ export default function DealLayout({
   const basePath = `/deals/${params.id}`;
   const currentStage = deriveDealStage(deal?.status, deal?.execution_phase);
 
-  // Stage filter: drop items that don't belong to the current stage's
-  // allowlist. Groups whose items all get filtered out are dropped too,
-  // so empty headers don't render. The user can toggle "Show all" to
-  // restore the full list.
+  const isActiveHref = (href: string) => {
+    const fullPath = `${basePath}${href}`;
+    return href === "" ? pathname === basePath : pathname.startsWith(fullPath);
+  };
+
+  // Stage filter: keep core tools, the active deep-linked route, and
+  // the current stage's recommended routes. Groups whose items all get
+  // filtered out are dropped so empty headers don't render. The user can
+  // toggle "More tools" to restore the full list.
   const filterByStage = (groups: ReturnType<typeof getNavGroups>) => {
     if (showAllRoutes) return groups;
     return groups
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => isStageAllowed(currentStage, item.href)),
+        items: group.items.filter(
+          (item) =>
+            ALWAYS_VISIBLE_HREFS.has(item.href) ||
+            isStageAllowed(currentStage, item.href) ||
+            isActiveHref(item.href)
+        ),
       }))
       .filter((group) => group.items.length > 0);
   };
+  const forceDevelopmentSchedule = pathname.startsWith(`${basePath}/project`);
+  const forceExecutionGroup =
+    pathname.startsWith(`${basePath}/construction`) ||
+    pathname.startsWith(`${basePath}/pre-construction`);
 
   return (
     <div className="min-h-screen bg-background noise flex flex-col">
@@ -537,6 +567,8 @@ export default function DealLayout({
                 deal?.deal_scope ?? null,
                 deal?.show_in_development ?? false,
                 deal?.show_in_construction ?? false,
+                forceDevelopmentSchedule,
+                forceExecutionGroup,
               )
             ).map((group, gi) => {
               // Groups with a label can be collapsed by the user. When the
@@ -635,7 +667,7 @@ export default function DealLayout({
                 )}
                 title="Toggle full deal navigation"
               >
-                {showAllRoutes ? "Showing all · click to focus" : "Show all routes"}
+                {showAllRoutes ? "Focused tools" : "More tools"}
               </button>
             )}
 

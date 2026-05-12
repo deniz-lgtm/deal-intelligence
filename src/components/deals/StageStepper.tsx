@@ -20,10 +20,8 @@ const STAGE_ENTRY_HREF: Record<DealStage, string> = {
 };
 
 /**
- * A six-step pipeline header — Screen → Underwrite → LOI/DD → Close →
- * Build → Stabilize — showing the current stage. Each step is a link
- * that jumps to the canonical entry page for that stage so a power
- * user can hop forward to set up the next phase without changing the
+ * A six-step pipeline header showing the current stage. Each step jumps
+ * to the canonical workspace for that stage; it does not change the
  * deal's status.
  */
 export function StageStepper({ current, basePath }: StageStepperProps) {
@@ -34,6 +32,12 @@ export function StageStepper({ current, basePath }: StageStepperProps) {
       aria-label="Deal stage"
       className="border-b border-border/40 bg-card/60 backdrop-blur-sm"
     >
+      <div className="mx-auto flex max-w-7xl items-center justify-between px-4 pt-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/65">
+        <span>Stage workspace</span>
+        <span className="hidden sm:inline normal-case tracking-normal">
+          Jump only; status changes happen on Deal Home.
+        </span>
+      </div>
       <ol className="mx-auto flex max-w-7xl items-stretch gap-0 overflow-x-auto px-2 sm:px-4">
         {DEAL_STAGES.map((stage, i) => {
           const isCurrent = stage === current;
@@ -44,6 +48,7 @@ export function StageStepper({ current, basePath }: StageStepperProps) {
               <Link
                 href={href}
                 aria-current={isCurrent ? "step" : undefined}
+                title={`Jump to ${DEAL_STAGE_LABELS[stage]} workspace. This does not change status.`}
                 className={cn(
                   "group relative flex flex-1 items-center justify-center gap-2 px-3 py-2 text-xs font-medium transition-colors",
                   isCurrent && "text-foreground",
