@@ -198,8 +198,11 @@ function assignLanes<T extends { start: number; end: number }>(items: T[]): Arra
 export function ScheduleHero() {
   const [data, setData] = useState<TimelinePayload | null>(null);
   const [loading, setLoading] = useState(true);
-  const [weeks, setWeeks] = useState<4 | 12 | 26 | 52>(12);
-  const [showLabels, setShowLabels] = useState(true);
+  // Glanceable defaults: a 4-week horizon and no per-bar labels keeps the
+  // home page calm. Users can widen the window or turn labels back on; the
+  // choice is persisted to localStorage below.
+  const [weeks, setWeeks] = useState<4 | 12 | 26 | 52>(4);
+  const [showLabels, setShowLabels] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
 
   // Persisted UI prefs — duration, labels, collapsed
@@ -208,7 +211,7 @@ export function ScheduleHero() {
       const w = Number(localStorage.getItem("schedHeroWeeks"));
       if (w === 4 || w === 12 || w === 26 || w === 52) setWeeks(w);
       const l = localStorage.getItem("schedHeroLabels.v2");
-      if (l === "0") setShowLabels(false);
+      if (l === "1") setShowLabels(true);
       const c = localStorage.getItem("schedHeroCollapsed");
       if (c === "1") setCollapsed(true);
     } catch {
