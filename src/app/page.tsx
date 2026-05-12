@@ -25,6 +25,7 @@ export default function HomePage() {
   const { can } = usePermissions();
   const [deals, setDeals] = useState<DealWithStats[]>([]);
   const [signals, setSignals] = useState<Record<string, PhaseSignals>>({});
+  const [thesis, setThesis] = useState<Record<string, { thesis: string | null; next_decision: { title: string; due_date: string | null } | null }>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
@@ -32,15 +33,18 @@ export default function HomePage() {
     let cancelled = false;
     const load = async () => {
       try {
-        const [dealsRes, sigRes] = await Promise.all([
+        const [dealsRes, sigRes, thesisRes] = await Promise.all([
           fetch("/api/deals"),
           fetch("/api/deals/phase-signals").catch(() => null),
+          fetch("/api/deals/thesis-lines").catch(() => null),
         ]);
         const dealsJson = await dealsRes.json();
         const sigJson = sigRes ? await sigRes.json().catch(() => ({ data: {} })) : { data: {} };
+        const thesisJson = thesisRes ? await thesisRes.json().catch(() => ({ data: {} })) : { data: {} };
         if (cancelled) return;
         if (dealsJson.data) setDeals(dealsJson.data);
         if (sigJson.data) setSignals(sigJson.data);
+        if (thesisJson.data) setThesis(thesisJson.data);
       } catch (err) {
         console.error("Failed to load home data:", err);
       } finally {
@@ -130,7 +134,7 @@ export default function HomePage() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          <DealCommandCenter deals={filtered} signals={signals} loading={loading} search={search} />
+          <DealCommandCenter deals={filtered} signals={signals} thesis={thesis} loading={loading} search={search} />
           <TodayStrip />
         </div>
       </div>

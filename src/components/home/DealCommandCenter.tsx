@@ -31,9 +31,15 @@ export interface CommandCenterDeal extends Deal {
   total_project_cost?: number | null;
 }
 
+interface DealThesisRow {
+  thesis: string | null;
+  next_decision: { title: string; due_date: string | null } | null;
+}
+
 interface DealCommandCenterProps {
   deals: CommandCenterDeal[];
   signals: Record<string, PhaseSignals>;
+  thesis?: Record<string, DealThesisRow>;
   loading?: boolean;
   search?: string;
 }
@@ -159,7 +165,7 @@ function compareExecute(a: CommandCenterDeal, b: CommandCenterDeal, signals: Rec
   return compareUnderwrite(a, b, signals);
 }
 
-export function DealCommandCenter({ deals, signals, loading = false, search = "" }: DealCommandCenterProps) {
+export function DealCommandCenter({ deals, signals, thesis = {}, loading = false, search = "" }: DealCommandCenterProps) {
   const grouped = useMemo(() => {
     const buckets: Record<StageBand, CommandCenterDeal[]> = {
       screen: [],
@@ -238,6 +244,7 @@ export function DealCommandCenter({ deals, signals, loading = false, search = ""
                       const classification = classifyDealPhase(deal);
                       const signal = signals[deal.id];
                       const nextDate = formatDate(signal?.next_milestone_at);
+                      const thesisRow = thesis[deal.id];
                       const metric = getPrimaryMetric(deal);
                       const chips = signalChips(signal);
                       const scheduleLink = scheduleHref(deal, classification.phases);
@@ -253,6 +260,11 @@ export function DealCommandCenter({ deals, signals, loading = false, search = ""
                             >
                               {deal.name}
                             </Link>
+                            {thesisRow?.thesis && (
+                              <p className="mt-0.5 line-clamp-1 text-[11px] italic text-muted-foreground/85">
+                                &ldquo;{thesisRow.thesis}&rdquo;
+                              </p>
+                            )}
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                               <span className="inline-flex items-center gap-1">
                                 <Building2 className="h-3.5 w-3.5" />
@@ -338,6 +350,19 @@ export function DealCommandCenter({ deals, signals, loading = false, search = ""
                                   {chip}
                                 </span>
                               ))
+                            ) : thesisRow?.next_decision ? (
+                              <span
+                                className="inline-flex max-w-[260px] items-center gap-1.5 truncate rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-600 dark:text-amber-300"
+                                title={thesisRow.next_decision.title}
+                              >
+                                <ClipboardCheck className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">
+                                  {thesisRow.next_decision.title}
+                                  {thesisRow.next_decision.due_date
+                                    ? ` · ${formatDate(thesisRow.next_decision.due_date)}`
+                                    : ""}
+                                </span>
+                              </span>
                             ) : band !== "screen" ? (
                               <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/25 px-2.5 py-1 text-xs text-muted-foreground">
                                 <ShieldAlert className="h-3.5 w-3.5" />
