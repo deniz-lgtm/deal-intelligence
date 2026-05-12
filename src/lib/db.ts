@@ -1476,6 +1476,14 @@ export async function ensureColumns(): Promise<void> {
     `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS decision_choice TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_dev_phases_kind ON deal_dev_phases(deal_id, kind) WHERE deleted_at IS NULL`,
     `CREATE INDEX IF NOT EXISTS idx_dev_phases_due_active ON deal_dev_phases(end_date) WHERE deleted_at IS NULL AND status <> 'complete' AND end_date IS NOT NULL`,
+    // Per-user persisted home dashboard layout. One row per user; payload
+    // is the full DashboardLayoutState (widgets[] + layouts.lg[]). Stored
+    // as JSONB so future widget config tweaks don't require schema bumps.
+    `CREATE TABLE IF NOT EXISTS dashboard_layouts (
+      user_id TEXT PRIMARY KEY,
+      layout JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
     // Threaded comments on checklist items — separate from the
     // single-block description (the existing `notes` column).
     `CREATE TABLE IF NOT EXISTS checklist_item_comments (
