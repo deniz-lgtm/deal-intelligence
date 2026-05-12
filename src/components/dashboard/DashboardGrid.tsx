@@ -57,7 +57,7 @@ import "react-resizable/css/styles.css";
 
 const STORAGE_KEY = "dashboard:layout:v1";
 
-function loadState(): DashboardLayoutState {
+function loadLocal(): DashboardLayoutState {
   if (typeof window === "undefined") return DEFAULT_DASHBOARD as DashboardLayoutState;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -70,11 +70,36 @@ function loadState(): DashboardLayoutState {
   }
 }
 
-function saveState(state: DashboardLayoutState) {
+function saveLocal(state: DashboardLayoutState) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // ignore
+  }
+}
+
+async function loadRemote(): Promise<DashboardLayoutState | null> {
+  try {
+    const res = await fetch("/api/dashboard/layout");
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (!json.data || !json.data.widgets || !json.data.layouts) return null;
+    return json.data as DashboardLayoutState;
+  } catch {
+    return null;
+  }
+}
+
+async function saveRemote(state: DashboardLayoutState): Promise<void> {
+  try {
+    await fetch("/api/dashboard/layout", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    });
+  } catch {
+    // best effort — localStorage is the write-through cache so the user
+    // doesn't lose their layout if the network round trip fails.
   }
 }
 
@@ -90,13 +115,32 @@ export function DashboardGrid({ data }: DashboardGridProps) {
   const [showAdd, setShowAdd] = useState(false);
   const { width, containerRef, mounted } = useContainerWidth({ measureBeforeMount: true, initialWidth: 1200 });
 
+  // Hydrate with localStorage immediately for fast first paint, then
+  // reconcile with the server in the background. If the server has a
+  // saved layout it wins; otherwise we treat the local copy as canonical
+  // and push it up.
   useEffect(() => {
-    setState(loadState());
+    let cancelled = false;
+    setState(loadLocal());
     setHydrated(true);
+    (async () => {
+      const remote = await loadRemote();
+      if (!cancelled && remote) setState(remote);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // Debounced write-through: localStorage on every change (instant),
+  // server every 800ms idle (resilient to rapid drag/resize).
   useEffect(() => {
-    if (hydrated) saveState(state);
+    if (!hydrated) return;
+    saveLocal(state);
+    const t = setTimeout(() => {
+      saveRemote(state);
+    }, 800);
+    return () => clearTimeout(t);
   }, [state, hydrated]);
 
   const onLayoutChange = useCallback((layout: Layout[]) => {
@@ -145,6 +189,9 @@ export function DashboardGrid({ data }: DashboardGridProps) {
   const resetLayout = () => {
     if (!confirm("Reset dashboard to default layout?")) return;
     setState(DEFAULT_DASHBOARD as DashboardLayoutState);
+    // Clear server-side too so the next device load gets defaults instead
+    // of the stale layout that just got reset.
+    fetch("/api/dashboard/layout", { method: "DELETE" }).catch(() => {});
   };
 
   const configuringWidget = useMemo(
