@@ -465,10 +465,6 @@ export default function DevelopmentSchedule({
   const [columns, setColumns] =
     useState<ScheduleColumnVisibility>(colDefaults);
   const [columnWidths, setColumnWidths] = useState<ScheduleColumnWidths>(DEFAULT_SCHEDULE_COLUMN_WIDTHS);
-  // Per-parent toggle for the "add subtask" inline form. Master view
-  // stays clean by default — tasks are added explicitly via this
-  // affordance or via the mini-schedule module on a checklist item.
-  const [openSubAddFor, setOpenSubAddFor] = useState<string | null>(null);
   // Timeline zoom: pixels per day. 28 → week-level detail, 8 → month,
   // 2.5 → quarter overview. Persisted to localStorage per deal+track.
   const [pxPerDay, setPxPerDay] = useState<number>(8);
@@ -2547,7 +2543,36 @@ export default function DevelopmentSchedule({
                       wbs = ""
                     ) => {
                       const cfg = DEV_PHASE_STATUS_CONFIG[p.status];
-                      const barStyle = getBarStyle(p.start_date, p.end_date);
+                      // Parent rows roll up from their children when they
+                      // have any: bar span is min-start → max-end, and
+                      // % complete is the duration-weighted average. The
+                      // persisted columns stay intact; this is a display
+                      // override so the master schedule reads as a true
+                      // summary of its mini-schedule.
+                      const rollupKids = !isChild ? childrenByParent.get(p.id) ?? [] : [];
+                      const hasRollup = rollupKids.length > 0;
+                      const rollup = hasRollup ? (() => {
+                        let minStart: string | null = null;
+                        let maxEnd: string | null = null;
+                        let durSum = 0;
+                        let weightedPct = 0;
+                        for (const c of rollupKids) {
+                          if (c.start_date && (!minStart || c.start_date < minStart)) minStart = c.start_date;
+                          if (c.end_date && (!maxEnd || c.end_date > maxEnd)) maxEnd = c.end_date;
+                          const dur = typeof c.duration_days === "number" && c.duration_days > 0 ? c.duration_days : 1;
+                          durSum += dur;
+                          weightedPct += dur * Number(c.pct_complete ?? 0);
+                        }
+                        return {
+                          start: minStart,
+                          end: maxEnd,
+                          pct: durSum > 0 ? Math.round(weightedPct / durSum) : 0,
+                        };
+                      })() : null;
+                      const displayStart = rollup?.start ?? p.start_date;
+                      const displayEnd = rollup?.end ?? p.end_date;
+                      const displayPct = rollup ? rollup.pct : Number(p.pct_complete ?? 0);
+                      const barStyle = getBarStyle(displayStart, displayEnd);
                       const predLabel = p.predecessor_id
                         ? phases.find((x) => x.id === p.predecessor_id)?.label
                         : null;
@@ -2698,16 +2723,40 @@ export default function DevelopmentSchedule({
                                 )}
                             </div>
 
-                            {/* Duration cell */}
+                            {/* Duration cell — rolled up from children
+                                when present; otherwise inline-editable. */}
                             <div className="text-xs">
-                              <InlineNumber
-                                value={p.duration_days}
-                                suffix="d"
-                                onSave={(v) =>
-                                  updatePhaseField(p.id, { duration_days: v })
-                                }
-                                title="Click to edit duration"
-                              />
+                              {hasRollup ? (() => {
+                                const days =
+                                  displayStart && displayEnd
+                                    ? Math.max(
+                                        0,
+                                        Math.round(
+                                          (new Date(displayEnd).getTime() -
+                                            new Date(displayStart).getTime()) /
+                                            86_400_000
+                                        ) + 1
+                                      )
+                                    : null;
+                                return (
+                                  <span
+                                    className="inline-flex items-center gap-1 text-2xs tabular-nums text-muted-foreground"
+                                    title="Rolled up from children"
+                                  >
+                                    <span className="opacity-60">Σ</span>
+                                    {days != null ? `${days}d` : "—"}
+                                  </span>
+                                );
+                              })() : (
+                                <InlineNumber
+                                  value={p.duration_days}
+                                  suffix="d"
+                                  onSave={(v) =>
+                                    updatePhaseField(p.id, { duration_days: v })
+                                  }
+                                  title="Click to edit duration"
+                                />
+                              )}
                             </div>
 
                             {/* Predecessor cell — root rows only. Children
@@ -2745,7 +2794,15 @@ export default function DevelopmentSchedule({
                                 would be confusing. */}
                             {columns.start && (
                               <div className="text-xs">
-                                {!isChild && !p.predecessor_id ? (
+                                {hasRollup ? (
+                                  <span
+                                    className="inline-flex items-center gap-1 text-2xs tabular-nums text-muted-foreground"
+                                    title="Rolled up from children"
+                                  >
+                                    <span className="opacity-60">Σ</span>
+                                    {displayStart ?? "—"}
+                                  </span>
+                                ) : !isChild && !p.predecessor_id ? (
                                   <InlineDate
                                     value={p.start_date ?? null}
                                     onSave={(d) =>
@@ -2765,8 +2822,12 @@ export default function DevelopmentSchedule({
                             {/* Finish cell — always computed (end_date) */}
                             {columns.finish && (
                               <div className="text-xs">
-                                <span className="text-2xs text-muted-foreground tabular-nums">
-                                  {p.end_date ?? "—"}
+                                <span
+                                  className="inline-flex items-center gap-1 text-2xs text-muted-foreground tabular-nums"
+                                  title={hasRollup ? "Rolled up from children" : undefined}
+                                >
+                                  {hasRollup && <span className="opacity-60">Σ</span>}
+                                  {(hasRollup ? displayEnd : p.end_date) ?? "—"}
                                 </span>
                                 {varianceSuffix}
                               </div>
@@ -2811,6 +2872,21 @@ export default function DevelopmentSchedule({
                                   : "h-7 bg-muted/20 border-border/40"
                               )}
                             >
+                              {/* Per-row gridlines that align to the
+                                  timeline header ticks above. Makes the
+                                  page read as one continuous Gantt sheet
+                                  instead of disconnected rows. */}
+                              {timelineTicks.map((t, ti) => (
+                                <div
+                                  key={`tick-${ti}`}
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "pointer-events-none absolute top-0 h-full w-px",
+                                    t.major ? "bg-border/40" : "bg-border/15"
+                                  )}
+                                  style={{ left: t.left }}
+                                />
+                              ))}
                               {showToday && todayPct !== null && todayPct >= 0 && todayPct <= 100 && (
                                 <div
                                   className="absolute top-0 h-full w-0.5 bg-red-500/80 z-10 shadow-[0_0_0_1px_rgba(239,68,68,0.25)]"
@@ -2829,12 +2905,12 @@ export default function DevelopmentSchedule({
                                         : cfg.bg + " border-foreground/15"
                                 )}
                                 style={barStyle}
-                                title={`${p.label}: ${p.start_date || "?"} → ${p.end_date || "?"} (${p.pct_complete}%)${predLabel ? ` | After: ${predLabel}` : ""}${isCritical ? " [CRITICAL PATH]" : ""}${delayed ? " [DELAYED]" : ""}`}
+                                title={`${p.label}: ${displayStart || "?"} → ${displayEnd || "?"} (${displayPct}%${hasRollup ? " — rolled up" : ""})${predLabel ? ` | After: ${predLabel}` : ""}${isCritical ? " [CRITICAL PATH]" : ""}${delayed ? " [DELAYED]" : ""}`}
                               >
-                                {p.pct_complete > 0 && (
+                                {displayPct > 0 && (
                                   <div
                                     className="absolute top-0 left-0 h-full rounded-sm bg-emerald-500/65"
-                                    style={{ width: `${p.pct_complete}%` }}
+                                    style={{ width: `${displayPct}%` }}
                                   />
                                 )}
                                 {!isChild && (
@@ -3093,30 +3169,11 @@ export default function DevelopmentSchedule({
                               </SortableContext>
                             </DndContext>
                           )}
-                          {openSubAddFor === p.id ? (
-                            <div className="space-y-1">
-                              {renderChildQuickAdd(p)}
-                              <div className="pl-8">
-                                <button
-                                  type="button"
-                                  onClick={() => setOpenSubAddFor(null)}
-                                  className="text-[10px] text-muted-foreground/70 hover:text-foreground"
-                                >
-                                  Done
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setOpenSubAddFor(p.id)}
-                              className="ml-8 inline-flex items-center gap-1 rounded-md border border-dashed border-border/40 bg-transparent px-2 py-0.5 text-[10px] text-muted-foreground/70 transition-colors hover:border-primary/35 hover:text-foreground"
-                              title="Add a subtask under this phase. For richer mini-schedules tied to a diligence item, open the item drawer instead."
-                            >
-                              <Plus className="h-2.5 w-2.5" />
-                              Add subtask
-                            </button>
-                          )}
+                          {/* Add-subtask affordance was removed. Mini-
+                              schedules are owned by the yellow-arrow
+                              focused-plan view (and by the checklist
+                              item drawer). Master schedule stays a
+                              roll-up reader. */}
                           {sortedChildren.length > 0 && (childBudgetTotal > 0 || plannedTotalDays > 0) && (
                             <div className="flex items-center gap-3 pl-6 text-2xs text-muted-foreground">
                               <span>
