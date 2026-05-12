@@ -620,6 +620,9 @@ function ActionCard({
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Failed to create task plan");
       const created = Array.isArray(json.data?.tasks) ? json.data.tasks : [];
+      if (created.length === 0) {
+        throw new Error("No schedule tasks were created. Pick a parent schedule row and try again.");
+      }
       const ids = created.map((task: { id?: string }) => task.id).filter(Boolean);
       setApprovedIds(ids);
       const parentId =
@@ -830,7 +833,7 @@ function getActionCardConfig(
   }
   if (action.type === "schedule_action_failed") {
     return {
-      title: "Schedule action needs a parent",
+      title: "Schedule action needs attention",
       icon: AlertTriangle,
       className: "bg-amber-500/10 border-amber-500/20 text-amber-300",
       href: dealId ? `/deals/${dealId}/schedule` : null,

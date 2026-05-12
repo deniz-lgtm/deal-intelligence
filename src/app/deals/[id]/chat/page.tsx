@@ -59,7 +59,7 @@ export default function ChatPage({ params }: { params: { id: string } }) {
       label: "Schedule Gaps",
       icon: CalendarDays,
       prompt:
-        "Review the schedule and ask any prep questions needed before suggesting missing tasks, owners, and dates.",
+        "Review the schedule and ask any prep questions needed before suggesting missing tasks, owners, and dates. If you create anything, confirm the exact rows and link me to them.",
     },
     {
       label: "IC Prep",
@@ -71,7 +71,7 @@ export default function ChatPage({ params }: { params: { id: string } }) {
       label: "Playbook Check",
       icon: BookOpen,
       prompt:
-        "Compare this deal to the Development Playbook. What best practices or lessons learned apply, and what follow-up items should we consider?",
+        "Compare this deal to the Development Playbook. Keep it concise, say when the playbook does not answer something, and identify any follow-up item worth turning into a schedule task or decision.",
     },
   ];
 

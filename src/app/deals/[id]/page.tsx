@@ -107,6 +107,19 @@ type DealNote = {
   created_at: string;
 };
 
+type DealDecision = {
+  id: string;
+  number?: number | null;
+  title: string;
+  body?: string | null;
+  category?: string | null;
+  status: string;
+  assigned_to?: string | null;
+  due_date?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+};
+
 export default function DealOverviewPage({
   params,
 }: {
@@ -119,6 +132,7 @@ export default function DealOverviewPage({
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [questions, setQuestions] = useState<DealQuestion[]>([]);
   const [notes, setNotes] = useState<DealNote[]>([]);
+  const [decisions, setDecisions] = useState<DealDecision[]>([]);
   const [businessPlan, setBusinessPlan] = useState<BusinessPlan | null>(null);
   const [allPlans, setAllPlans] = useState<BusinessPlan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string>("");
@@ -141,6 +155,7 @@ export default function DealOverviewPage({
   const [underwriting, setUnderwriting] = useState<UnderwritingData | null>(null);
   const [editingProperty, setEditingProperty] = useState(false);
   const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null; deal_scope: DealScope | null }>({ year_built: null, land_acres: null, investment_strategy: null, deal_scope: null });
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const [recentActivity, setRecentActivity] = useState<ActivityEvent[]>([]);
   // Dev/Con schedule rows feed the per-phase progress strip. Fetched
@@ -191,7 +206,8 @@ export default function DealOverviewPage({
       fetch(`/api/deals/${params.id}/activity`).then((r) => r.json()).catch(() => ({ events: [] })),
       fetch(`/api/deals/${params.id}/questions`).then((r) => r.json()).catch(() => ({ data: [] })),
       fetch(`/api/deals/${params.id}/notes`).then((r) => r.json()).catch(() => ({ data: [] })),
-    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, activityRes, questionsRes, notesRes]) => {
+      fetch(`/api/deals/${params.id}/decisions`).then((r) => r.json()).catch(() => ({ data: [] })),
+    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, activityRes, questionsRes, notesRes, decisionsRes]) => {
       setRecentActivity(((activityRes.events || []) as ActivityEvent[]).slice(0, 5));
       const d = dealRes.data;
       setDeal(d);
@@ -199,6 +215,7 @@ export default function DealOverviewPage({
       setChecklist(checklistRes.data || []);
       setQuestions(questionsRes.data || []);
       setNotes(notesRes.data || []);
+      setDecisions(decisionsRes.data || []);
       setPhotos(photosRes.data || []);
       if (uwRes.data?.data) {
         try {
@@ -386,6 +403,17 @@ export default function DealOverviewPage({
     if (track === "construction") return `/deals/${params.id}/construction/schedule`;
     return `/deals/${params.id}/project`;
   };
+  const openDecisions = decisions
+    .filter((decision) => !["resolved", "closed"].includes(decision.status))
+    .sort((a, b) => {
+      const aDue = a.due_date || "";
+      const bDue = b.due_date || "";
+      if (aDue && bDue && aDue !== bDue) return aDue.localeCompare(bDue);
+      if (aDue) return -1;
+      if (bDue) return 1;
+      return new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime();
+    });
+  const overdueDecisions = openDecisions.filter((decision) => isPastDate(decision.due_date));
   const pendingChecklistItems = checklist
     .filter((item) => item.status === "pending")
     .slice(0, 4);
@@ -402,11 +430,17 @@ export default function DealOverviewPage({
     })
     .slice(0, 4);
   const nextFocusItems: CommandCenterItem[] = [
-    ...upcomingScheduleItems.map((item) => ({
+    ...upcomingScheduleItems.slice(0, 3).map((item) => ({
       title: item.label,
       meta: `${titleCase(item.track || "development")} schedule${item.earliest_start || item.start_date ? ` - ${formatShortDate(item.earliest_start || item.start_date)}` : " - unscheduled"}`,
       href: scheduleHrefForItem(item),
       tone: item.is_critical ? "danger" as const : "default" as const,
+    })),
+    ...openDecisions.slice(0, 3).map((decision) => ({
+      title: decision.title,
+      meta: `${decision.category ? `${titleCase(decision.category)} - ` : ""}${decision.due_date ? `Due ${formatShortDate(decision.due_date)}` : "Decision / RFI open"}`,
+      href: `/deals/${params.id}/decisions`,
+      tone: isPastDate(decision.due_date) ? "warning" as const : "default" as const,
     })),
     ...openQuestions.map((question) => ({
       title: question.question,
@@ -420,8 +454,14 @@ export default function DealOverviewPage({
       href: `/deals/${params.id}/checklist`,
       tone: "default" as const,
     })),
-  ].slice(0, 4);
+  ].slice(0, 5);
   const watchoutItems: CommandCenterItem[] = [
+    ...overdueDecisions.slice(0, 2).map((decision) => ({
+      title: decision.title,
+      meta: `Decision/RFI overdue${decision.due_date ? ` since ${formatShortDate(decision.due_date)}` : ""}`,
+      href: `/deals/${params.id}/decisions`,
+      tone: "danger" as const,
+    })),
     ...issueChecklistItems.map((item) => ({
       title: item.item,
       meta: `${titleCase(item.category)} flagged`,
@@ -825,16 +865,25 @@ export default function DealOverviewPage({
         nextItems={nextFocusItems}
         watchouts={watchoutItems}
         recentActivity={recentActivity}
+        stats={{
+          scheduleOpen: devPhases.filter((p) => p.status !== "complete").length,
+          openDecisions: openDecisions.length,
+          documents: documents.length,
+          checklistIssues,
+        }}
       />
+
+      <ScheduleContinuityPanel dealId={params.id} phases={devPhases} />
 
       <DecisionsOpenItemsPanel
         dealId={params.id}
+        openDecisions={openDecisions}
         decisionNotes={decisionNotes}
         openQuestions={openQuestions}
         ownerTasks={openOwnerTasks}
       />
 
-      {/* Documents & Outputs (collapsible). Surfaces source docs and
+      {/* Documents & Intelligence (collapsible). Surfaces source docs and
           generated outputs in a compact bar so they're one click away
           without taking over the page. */}
       <div className="border border-border/40 rounded-lg bg-card/40 overflow-hidden">
@@ -848,7 +897,7 @@ export default function DealOverviewPage({
             <ChevronRight className="h-3 w-3 text-muted-foreground/60 shrink-0" />
           )}
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Documents & outputs
+            Documents & intelligence
           </span>
           {!materialsOpen && (
             <span className="text-[11px] text-muted-foreground/80 truncate">
@@ -866,10 +915,10 @@ export default function DealOverviewPage({
                 status: `${documents.length} source${documents.length === 1 ? "" : "s"}`,
               },
               {
-                href: `/deals/${params.id}/loi`,
-                icon: <FileSignature className="h-4 w-4 text-orange-400" />,
-                label: "LOI",
-                status: deal.loi_executed ? "Executed" : "Draft",
+                href: `/deals/${params.id}/om-analysis`,
+                icon: <Sparkles className="h-4 w-4 text-orange-400" />,
+                label: "OM Review",
+                status: "High-level analysis",
               },
               {
                 href: `/deals/${params.id}/dd-abstract`,
@@ -905,13 +954,38 @@ export default function DealOverviewPage({
         )}
       </div>
 
-      {/* Deal Score (factor model + Monte Carlo) */}
-      <QuantScoreCard
-        dealId={params.id}
-        businessPlanId={deal.business_plan_id ?? null}
-        businessPlanName={businessPlan?.name ?? null}
-        initialStage={deal.quant_stage ?? "uw"}
-      />
+      <section className="rounded-xl border border-border/60 bg-card/60 shadow-card overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setDetailsOpen((open) => !open)}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/20"
+        >
+          <div>
+            <div className="flex items-center gap-2">
+              {detailsOpen ? (
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+              <h2 className="font-display text-sm">Deal Details & References</h2>
+            </div>
+            <p className="mt-1 text-2xs text-muted-foreground">
+              Score, underwriting highlights, property details, notes, business plan, and phase cards.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full border border-border/50 px-2 py-1 text-2xs text-muted-foreground">
+            {detailsOpen ? "Hide" : "Open"}
+          </span>
+        </button>
+        {detailsOpen && (
+          <div className="space-y-4 border-t border-border/40 p-3 sm:p-4">
+            {/* Deal Score (factor model + Monte Carlo) */}
+            <QuantScoreCard
+              dealId={params.id}
+              businessPlanId={deal.business_plan_id ?? null}
+              businessPlanName={businessPlan?.name ?? null}
+              initialStage={deal.quant_stage ?? "uw"}
+            />
 
       {/* ═══ KEY METRICS STRIP ═══ */}
       {highlights ? (
@@ -1391,6 +1465,9 @@ export default function DealOverviewPage({
 
         </div>
       </div>
+          </div>
+        )}
+      </section>
 
       {/* Core work areas: keep the overview oriented around the few places
           a deal team actually needs to go every day. */}
@@ -1480,6 +1557,7 @@ function DealCommandCenter({
   nextItems,
   watchouts,
   recentActivity,
+  stats,
 }: {
   dealId: string;
   recommendedAction: CommandCenterItem;
@@ -1487,6 +1565,12 @@ function DealCommandCenter({
   nextItems: CommandCenterItem[];
   watchouts: CommandCenterItem[];
   recentActivity: ActivityEvent[];
+  stats: {
+    scheduleOpen: number;
+    openDecisions: number;
+    documents: number;
+    checklistIssues: number;
+  };
 }) {
   const hasSignal = nextItems.length > 0 || watchouts.length > 0 || recentActivity.length > 0;
   const prepHref = `/deals/${dealId}/chat?prompt=${encodeURIComponent("Ask me the few key prep questions you need before creating or changing this deal plan. Focus on schedule, owner, documents, approvals, and underwriting assumptions.")}`;
@@ -1520,6 +1604,23 @@ function DealCommandCenter({
       </div>
 
       <div className="border-b border-border/40 bg-background/35 p-4">
+        <div className="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+          {[
+            { label: "Schedule open", value: stats.scheduleOpen, href: `/deals/${dealId}/schedule` },
+            { label: "Decisions / RFIs", value: stats.openDecisions, href: `/deals/${dealId}/decisions` },
+            { label: "Documents", value: stats.documents, href: `/deals/${dealId}/documents` },
+            { label: "Diligence issues", value: stats.checklistIssues, href: `/deals/${dealId}/checklist` },
+          ].map((stat) => (
+            <Link
+              key={stat.label}
+              href={stat.href}
+              className="rounded-lg border border-border/50 bg-card/70 px-3 py-2 transition-colors hover:bg-muted/30"
+            >
+              <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{stat.label}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{stat.value}</p>
+            </Link>
+          ))}
+        </div>
         <Link href={recommendedAction.href} className="block rounded-lg border border-primary/20 bg-primary/10 p-3 transition-colors hover:bg-primary/15">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -1568,19 +1669,128 @@ function DealCommandCenter({
   );
 }
 
+function ScheduleContinuityPanel({
+  dealId,
+  phases,
+}: {
+  dealId: string;
+  phases: DevPhase[];
+}) {
+  const tracks: Array<{
+    key: "acquisition" | "development" | "construction";
+    label: string;
+    href: string;
+    className: string;
+  }> = [
+    {
+      key: "acquisition",
+      label: "Acquisition",
+      href: `/deals/${dealId}/schedule/acquisition`,
+      className: "bg-[hsl(var(--phase-acq))]/10 text-[hsl(var(--phase-acq))] border-[hsl(var(--phase-acq))]/25",
+    },
+    {
+      key: "development",
+      label: "Development",
+      href: `/deals/${dealId}/project`,
+      className: "bg-[hsl(var(--phase-dev))]/10 text-[hsl(var(--phase-dev))] border-[hsl(var(--phase-dev))]/25",
+    },
+    {
+      key: "construction",
+      label: "Construction",
+      href: `/deals/${dealId}/construction/schedule`,
+      className: "bg-[hsl(var(--phase-con))]/10 text-[hsl(var(--phase-con))] border-[hsl(var(--phase-con))]/25",
+    },
+  ];
+  const openPhases = phases.filter((phase) => phase.status !== "complete");
+  const next = [...openPhases].sort((a, b) => {
+    const aDate = a.earliest_start || a.start_date;
+    const bDate = b.earliest_start || b.start_date;
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return aDate.localeCompare(bDate);
+  })[0];
+
+  return (
+    <section className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-border/40 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-primary" />
+            <h2 className="font-display text-sm">Master Schedule</h2>
+          </div>
+          <p className="mt-1 text-2xs text-muted-foreground">
+            One schedule across the deal lifecycle. Use focused views for the handoff work.
+          </p>
+        </div>
+        <Link href={`/deals/${dealId}/schedule`}>
+          <Button size="sm" className="h-7 gap-1.5 text-2xs">
+            Open master
+            <ArrowRight className="h-3 w-3" />
+          </Button>
+        </Link>
+      </div>
+      <div className="grid grid-cols-1 gap-px bg-border/60 lg:grid-cols-[1.2fr_2fr]">
+        <div className="bg-card p-4">
+          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Next schedule item</p>
+          {next ? (
+            <Link
+              href={next.parent_phase_id ? `/deals/${dealId}/schedule/focus/${next.parent_phase_id}` : `/deals/${dealId}/schedule/focus/${next.id}`}
+              className="mt-2 block rounded-lg border border-border/50 bg-background/50 p-3 transition-colors hover:bg-muted/30"
+            >
+              <p className="line-clamp-2 text-sm font-semibold">{next.label}</p>
+              <p className="mt-1 text-2xs text-muted-foreground">
+                {titleCase(next.track || "development")} - {next.earliest_start || next.start_date ? formatShortDate(next.earliest_start || next.start_date) : "Unscheduled"}
+              </p>
+            </Link>
+          ) : (
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              No open schedule items yet. Seed the master schedule to make handoffs visible.
+            </p>
+          )}
+        </div>
+        <div className="grid grid-cols-1 gap-px bg-border/60 md:grid-cols-3">
+          {tracks.map((track) => {
+            const rows = phases.filter((phase) => (phase.track || "development") === track.key);
+            const open = rows.filter((phase) => phase.status !== "complete").length;
+            return (
+              <Link key={track.key} href={track.href} className="bg-card p-4 transition-colors hover:bg-muted/25">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <span className={cn("rounded-full border px-2 py-1 text-2xs font-medium", track.className)}>
+                      {track.label}
+                    </span>
+                    <p className="mt-3 text-lg font-semibold tabular-nums">{open}</p>
+                    <p className="text-2xs text-muted-foreground">
+                      open of {rows.length || 0} item{rows.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground/50" />
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function DecisionsOpenItemsPanel({
   dealId,
+  openDecisions,
   decisionNotes,
   openQuestions,
   ownerTasks,
 }: {
   dealId: string;
+  openDecisions: DealDecision[];
   decisionNotes: DealNote[];
   openQuestions: DealQuestion[];
   ownerTasks: DevPhase[];
 }) {
   const assistantPrompt = "Review this deal's decisions, open questions, schedule owners, and playbook guidance. What should we decide next, who owns it, and what should become a schedule item?";
-  const hasItems = decisionNotes.length > 0 || openQuestions.length > 0 || ownerTasks.length > 0;
+  const hasItems = openDecisions.length > 0 || decisionNotes.length > 0 || openQuestions.length > 0 || ownerTasks.length > 0;
 
   return (
     <section id="decisions-open-items" className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
@@ -1617,6 +1827,15 @@ function DecisionsOpenItemsPanel({
       ) : (
         <div className="grid grid-cols-1 gap-px bg-border/60 lg:grid-cols-3">
           <DecisionColumn title="Decisions / Notes" emptyText="No decision notes yet.">
+            {openDecisions.slice(0, 4).map((decision) => (
+              <Link key={decision.id} href={`/deals/${dealId}/decisions`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
+                <p className="line-clamp-2 text-xs font-medium leading-5">{decision.title}</p>
+                <p className="mt-1 text-2xs text-muted-foreground">
+                  {decision.category ? `${titleCase(decision.category)} - ` : ""}
+                  {decision.due_date ? `Due ${formatShortDate(decision.due_date)}` : titleCase(decision.status)}
+                </p>
+              </Link>
+            ))}
             {decisionNotes.slice(0, 4).map((note) => (
               <Link key={note.id} href={`/notes?deal=${dealId}`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
                 <p className="line-clamp-3 text-xs font-medium leading-5">{note.text}</p>
@@ -1721,6 +1940,16 @@ function formatShortDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "TBD";
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
+
+function isPastDate(value?: string | null) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime() < today.getTime();
 }
 
 function relativeTime(value?: string | null) {

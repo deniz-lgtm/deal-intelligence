@@ -322,8 +322,14 @@ export async function POST(req: NextRequest) {
             action.display = action.mini_schedule.parent_phase_label
               ? `I couldn't find "${action.mini_schedule.parent_phase_label}" in this deal's schedule, so I did not create the task plan.`
               : "I couldn't identify the parent phase, so I did not create the task plan.";
+            action.type = "schedule_action_failed";
             action.mini_schedule.tasks = [];
           } else {
+            if (action.mini_schedule.tasks.length === 0) {
+              action.display = `I did not create a task plan for ${parent.label} because no task rows were provided.`;
+              action.type = "schedule_action_failed";
+              continue;
+            }
             const existingChildren = phases.filter((phase) => phase.parent_phase_id === parent.id);
             const baseSort = existingChildren.reduce(
               (max, phase) => Math.max(max, Number(phase.sort_order ?? 0)),
