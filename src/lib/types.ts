@@ -1397,6 +1397,54 @@ export const STAGE_QUESTION_TEMPLATES: Record<
 
 // ─── Contacts (CRM) ────────────────────────────────────────────────────────
 
+export type RelationshipStage = "cold" | "warm" | "active" | "source" | "partner";
+
+export const RELATIONSHIP_STAGE_LABELS: Record<RelationshipStage, string> = {
+  cold: "Cold",
+  warm: "Warm",
+  active: "Active",
+  source: "Source",
+  partner: "Partner",
+};
+
+/** Order used by the contact kanban (left → right). */
+export const RELATIONSHIP_STAGE_ORDER: RelationshipStage[] = [
+  "cold",
+  "warm",
+  "active",
+  "source",
+  "partner",
+];
+
+export type ContactActivityKind =
+  | "call"
+  | "email"
+  | "meeting"
+  | "note"
+  | "intro"
+  | "send";
+
+export const CONTACT_ACTIVITY_LABELS: Record<ContactActivityKind, string> = {
+  call: "Call",
+  email: "Email",
+  meeting: "Meeting",
+  note: "Note",
+  intro: "Intro",
+  send: "Sent",
+};
+
+export interface ContactActivity {
+  id: string;
+  contact_id: string;
+  deal_id: string | null;
+  kind: ContactActivityKind;
+  subject: string | null;
+  body: string | null;
+  occurred_at: string;
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface Contact {
   id: string;
   name: string;
@@ -1408,6 +1456,10 @@ export interface Contact {
   notes: string | null;
   tags: string[];
   owner_id: string | null;
+  last_touched_at: string | null;
+  next_action_at: string | null;
+  next_action_note: string | null;
+  relationship_stage: RelationshipStage;
   created_at: string;
   updated_at: string;
 }
@@ -1422,6 +1474,7 @@ export interface ContactWithDeals extends Contact {
     state: string;
     role_on_deal: string | null;
     link_notes: string | null;
+    is_source: boolean;
     linked_at: string;
   }>;
 }
@@ -1431,7 +1484,27 @@ export interface DealContactLink extends Contact {
   link_id: string;
   role_on_deal: string | null;
   link_notes: string | null;
+  is_source: boolean;
   linked_at: string;
+}
+
+// ─── Screening decisions (inbox → LOI / park / kill) ───────────────────────
+
+export type ScreenDecisionKind = "send_to_loi" | "park" | "kill";
+
+export const SCREEN_DECISION_LABELS: Record<ScreenDecisionKind, string> = {
+  send_to_loi: "Send to LOI",
+  park: "Park",
+  kill: "Kill",
+};
+
+export interface ScreenDecision {
+  id: string;
+  deal_id: string;
+  thesis: string | null;
+  decision: ScreenDecisionKind;
+  decided_at: string;
+  decided_by: string | null;
 }
 
 // ─── Development Schedule ──────────────────────────────────────────────────
