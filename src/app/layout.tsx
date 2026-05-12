@@ -4,6 +4,8 @@ import { Toaster } from "sonner";
 import { ClerkProvider, UserButton } from "@clerk/nextjs";
 import { PageContextProvider } from "@/lib/page-context";
 import UniversalChatbot from "@/components/UniversalChatbot";
+import { CommandPalette } from "@/components/CommandPalette";
+import { QuickLogActivity } from "@/components/QuickLogActivity";
 
 export const metadata: Metadata = {
   title: "Deal Intelligence",
@@ -43,6 +45,9 @@ export default async function RootLayout({
             {children}
             {/* Universal chatbot widget — lives on every page */}
             <UniversalChatbot />
+            {/* Global keyboard shortcuts — ⌘K palette, ⌘L log activity */}
+            <CommandPalette />
+            <QuickLogActivity />
             <Toaster
               position="bottom-right"
               theme="dark"
