@@ -465,6 +465,10 @@ export default function DevelopmentSchedule({
   const [columns, setColumns] =
     useState<ScheduleColumnVisibility>(colDefaults);
   const [columnWidths, setColumnWidths] = useState<ScheduleColumnWidths>(DEFAULT_SCHEDULE_COLUMN_WIDTHS);
+  // Timeline zoom: pixels per day. 28 → week-level detail, 8 → month,
+  // 2.5 → quarter overview. Persisted to localStorage per deal+track.
+  const [pxPerDay, setPxPerDay] = useState<number>(8);
+  const zoomStorageKey = `dealSchedule:${dealId}:${track}:zoom`;
   const colsStorageKey = `dealSchedule:${dealId}:${track}:cols`;
   const widthsStorageKey = `dealSchedule:${dealId}:${track}:widths:v1`;
   const sortStorageKey = `dealSchedule:${dealId}:${track}:sort`;
@@ -506,7 +510,18 @@ export default function DevelopmentSchedule({
     } catch {
       setSortBy(null);
     }
-  }, [colsStorageKey, widthsStorageKey, sortStorageKey, colDefaults]);
+    try {
+      const rawZoom = window.localStorage.getItem(zoomStorageKey);
+      const z = rawZoom ? Number(rawZoom) : NaN;
+      if (Number.isFinite(z) && z >= 1 && z <= 60) setPxPerDay(z);
+    } catch { /* swallow */ }
+  }, [colsStorageKey, widthsStorageKey, sortStorageKey, zoomStorageKey, colDefaults]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(zoomStorageKey, String(pxPerDay));
+    } catch { /* swallow */ }
+  }, [zoomStorageKey, pxPerDay]);
   // Persist column visibility on change.
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1720,6 +1735,82 @@ export default function DevelopmentSchedule({
   const todayPct = minDate && maxDate && timelineRangeMs > 0
     ? ((todayMs - new Date(minDate).getTime()) / timelineRangeMs) * 100
     : null;
+
+  // ── Timeline pixel width + tick generation ──────────────────────────
+  // The bar column is now a fixed pixel width (days * pxPerDay) so the
+  // whole grid scrolls horizontally inside an overflow wrapper. Ticks
+  // are computed from the same min/max date range so the header lines
+  // up with the bars below.
+  const MS_PER_DAY = 86_400_000;
+  const daysInRange =
+    minDate && maxDate
+      ? Math.max(1, Math.round(timelineRangeMs / MS_PER_DAY) + 1)
+      : 0;
+  const timelinePixelWidth = Math.max(360, Math.round(daysInRange * pxPerDay));
+
+  // Tick granularity follows the zoom level: tight zoom shows weeks,
+  // mid shows months, wide shows quarters.
+  type TimelineTick = { left: number; label: string; major: boolean };
+  const buildTicks = (): TimelineTick[] => {
+    if (!minDate || !maxDate) return [];
+    const base = new Date(minDate + "T00:00:00").getTime();
+    const end = new Date(maxDate + "T00:00:00").getTime();
+    const ticks: TimelineTick[] = [];
+    const pxAt = (ms: number) => ((ms - base) / MS_PER_DAY) * pxPerDay;
+
+    if (pxPerDay >= 18) {
+      // Week ticks; label every 2 weeks; major on month boundaries.
+      let cursor = new Date(base);
+      cursor.setUTCDate(cursor.getUTCDate() - cursor.getUTCDay());
+      let i = 0;
+      while (cursor.getTime() <= end) {
+        const isMonthStart = cursor.getUTCDate() <= 7;
+        ticks.push({
+          left: pxAt(cursor.getTime()),
+          label: isMonthStart
+            ? cursor.toLocaleDateString("en-US", { month: "short", year: "2-digit" })
+            : i % 2 === 0
+              ? cursor.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+              : "",
+          major: isMonthStart,
+        });
+        cursor = new Date(cursor.getTime() + 7 * MS_PER_DAY);
+        i += 1;
+      }
+    } else if (pxPerDay >= 4) {
+      // Month ticks; label every month; major on quarter boundaries.
+      const cursor = new Date(base);
+      cursor.setUTCDate(1);
+      while (cursor.getTime() <= end + MS_PER_DAY) {
+        const isQuarter = cursor.getUTCMonth() % 3 === 0;
+        ticks.push({
+          left: pxAt(cursor.getTime()),
+          label: cursor.toLocaleDateString("en-US", {
+            month: "short",
+            year: isQuarter ? "numeric" : undefined,
+          }),
+          major: isQuarter,
+        });
+        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+      }
+    } else {
+      // Quarter ticks; label every quarter with year.
+      const cursor = new Date(base);
+      cursor.setUTCDate(1);
+      cursor.setUTCMonth(Math.floor(cursor.getUTCMonth() / 3) * 3);
+      while (cursor.getTime() <= end + MS_PER_DAY) {
+        const q = Math.floor(cursor.getUTCMonth() / 3) + 1;
+        ticks.push({
+          left: pxAt(cursor.getTime()),
+          label: `Q${q} ${cursor.getUTCFullYear()}`,
+          major: true,
+        });
+        cursor.setUTCMonth(cursor.getUTCMonth() + 3);
+      }
+    }
+    return ticks.filter((t) => t.left >= -1 && t.left <= timelinePixelWidth + 1);
+  };
+  const timelineTicks = buildTicks();
   const showToday = todayPct !== null && todayPct >= 0 && todayPct <= 100;
 
   // Critical-path detection used to live here as a local longest-chain
@@ -1781,7 +1872,7 @@ export default function DevelopmentSchedule({
     if (columns.finish) cols.push(`${columnWidths.finish}px`);
     if (columns.budget) cols.push(`${columnWidths.budget}px`);
     if (columns.owner) cols.push(`${columnWidths.owner}px`);
-    cols.push(`minmax(${columnWidths.bar}px, 1fr)`); // bar (always)
+    cols.push(`${timelinePixelWidth}px`); // bar — fixed pixel width drives scroll
     cols.push(`${columnWidths.actions}px`); // status + actions (always)
     return cols.join(" ");
   })();
@@ -1800,7 +1891,7 @@ export default function DevelopmentSchedule({
     (columns.finish ? columnWidths.finish : 0) +
     (columns.budget ? columnWidths.budget : 0) +
     (columns.owner ? columnWidths.owner : 0) +
-    columnWidths.bar +
+    timelinePixelWidth +
     columnWidths.actions +
     (visibleGridColumnCount - 1) * 8;
 
@@ -2091,17 +2182,95 @@ export default function DevelopmentSchedule({
                 No phases yet. Click &quot;Seed Default Phases&quot; to start with a typical CRE timeline.
               </p>
             ) : (
-              <div className="min-w-full space-y-3" style={{ minWidth: gridMinWidth }}>
-                {/* Timeline range header */}
+              <>
+              {/* Timeline zoom toolbar */}
+              <div className="mb-2 flex items-center gap-2 text-2xs text-muted-foreground">
+                <span className="font-semibold uppercase tracking-[0.14em]">Zoom</span>
+                {[
+                  { px: 28, label: "Week" },
+                  { px: 12, label: "Month" },
+                  { px: 4, label: "Quarter" },
+                  { px: 1.5, label: "Year" },
+                ].map((z) => {
+                  const active = Math.abs(pxPerDay - z.px) < 0.5;
+                  return (
+                    <button
+                      key={z.label}
+                      type="button"
+                      onClick={() => setPxPerDay(z.px)}
+                      className={cn(
+                        "rounded-full border px-2.5 py-0.5 transition-colors",
+                        active
+                          ? "border-primary/45 bg-primary/10 text-primary"
+                          : "border-border/60 bg-background/50 hover:border-primary/30 hover:text-foreground"
+                      )}
+                    >
+                      {z.label}
+                    </button>
+                  );
+                })}
+                <span className="ml-auto tabular-nums">
+                  {minDate && maxDate
+                    ? `${new Date(minDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} → ${new Date(maxDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} · ${daysInRange}d`
+                    : ""}
+                </span>
+              </div>
+
+              {/* Schedule scroll container — horizontal scroll on the
+                  entire grid (left meta columns + timeline). Bars stay
+                  percent-positioned within the timeline cell so they
+                  scale with the pxPerDay zoom. */}
+              <div className="overflow-x-auto overflow-y-visible">
+              <div className="space-y-3" style={{ minWidth: gridMinWidth }}>
+                {/* Timeline ruled header — month/week/quarter ticks
+                    rendered absolutely above the bar column, aligned by
+                    the same gridTemplateColumns as the row grid. */}
                 {minDate && maxDate && (
-                  <div className="flex justify-between text-2xs text-muted-foreground border-b border-border/30 pb-1 relative">
-                    <span>{new Date(minDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}</span>
-                    {showToday && (
-                      <span className="absolute text-[9px] text-red-400 font-medium" style={{ left: `calc(25% + ${todayPct! * 0.583}%)`, transform: "translateX(-50%)" }}>
-                        Today
-                      </span>
-                    )}
-                    <span>{new Date(maxDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}</span>
+                  <div
+                    className="grid items-stretch border-b border-border/40 pb-1"
+                    style={{ gridTemplateColumns: gridTemplate, gap: 8 }}
+                  >
+                    {/* Empty cells matching the left meta columns. */}
+                    {Array.from({ length: visibleGridColumnCount - 1 }).map((_, i) => (
+                      <div key={`hdr-spacer-${i}`} />
+                    ))}
+                    {/* Tick canvas for the bar column. */}
+                    <div
+                      className="relative h-7"
+                      style={{ width: timelinePixelWidth }}
+                    >
+                      {/* Today marker label (renders only if in range). */}
+                      {showToday && todayPct !== null && todayPct >= 0 && todayPct <= 100 && (
+                        <div
+                          className="absolute -top-0.5 z-10 -translate-x-1/2 rounded-sm bg-red-500/90 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white shadow"
+                          style={{ left: `${todayPct}%` }}
+                        >
+                          Today
+                        </div>
+                      )}
+                      {timelineTicks.map((t, i) => (
+                        <div
+                          key={`tick-${i}`}
+                          className={cn(
+                            "absolute bottom-0 flex flex-col items-start text-[10px]",
+                            t.major ? "text-foreground/85 font-medium" : "text-muted-foreground/70"
+                          )}
+                          style={{ left: t.left }}
+                        >
+                          <span
+                            className={cn(
+                              "block w-px",
+                              t.major ? "h-3 bg-border" : "h-2 bg-border/50"
+                            )}
+                          />
+                          {t.label && (
+                            <span className="mt-0.5 whitespace-nowrap px-1">{t.label}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {/* Empty cell matching actions column. */}
+                    <div />
                   </div>
                 )}
 
@@ -2598,38 +2767,48 @@ export default function DevelopmentSchedule({
                               </div>
                             )}
 
-                            {/* Bar */}
+                            {/* Bar — taller and outlined for prominence,
+                                tinted track behind it so empty time is
+                                visible at high zoom. */}
                             <div
                               className={cn(
-                                "relative rounded",
-                                isChild ? "h-3 bg-muted/20" : "h-5 bg-muted/30"
+                                "relative rounded border",
+                                isChild
+                                  ? "h-4 bg-muted/15 border-border/30"
+                                  : "h-7 bg-muted/20 border-border/40"
                               )}
                             >
-                              {showToday && (
+                              {showToday && todayPct !== null && todayPct >= 0 && todayPct <= 100 && (
                                 <div
-                                  className="absolute top-0 h-full w-px bg-red-500/50 z-10"
+                                  className="absolute top-0 h-full w-0.5 bg-red-500/80 z-10 shadow-[0_0_0_1px_rgba(239,68,68,0.25)]"
                                   style={{ left: `${todayPct}%` }}
                                 />
                               )}
                               <div
                                 className={cn(
-                                  "absolute top-0 h-full rounded",
+                                  "absolute top-0 h-full rounded-sm border shadow-sm",
                                   delayed
-                                    ? "bg-red-500/30 ring-1 ring-red-500/40"
+                                    ? "bg-red-500/45 border-red-500/60"
                                     : isCritical
-                                      ? "ring-1 ring-red-500/30 " + cfg.bg
+                                      ? "border-red-500/55 " + cfg.bg
                                       : isChild
-                                        ? "bg-primary/30"
-                                        : cfg.bg
+                                        ? "bg-primary/45 border-primary/55"
+                                        : cfg.bg + " border-foreground/15"
                                 )}
                                 style={barStyle}
                                 title={`${p.label}: ${p.start_date || "?"} → ${p.end_date || "?"} (${p.pct_complete}%)${predLabel ? ` | After: ${predLabel}` : ""}${isCritical ? " [CRITICAL PATH]" : ""}${delayed ? " [DELAYED]" : ""}`}
                               >
                                 {p.pct_complete > 0 && (
                                   <div
-                                    className="absolute top-0 left-0 h-full bg-emerald-500/40 rounded"
+                                    className="absolute top-0 left-0 h-full rounded-sm bg-emerald-500/65"
                                     style={{ width: `${p.pct_complete}%` }}
                                   />
+                                )}
+                                {!isChild && (
+                                  <div className="pointer-events-none absolute inset-y-0 left-1.5 right-1.5 flex items-center text-[10px] font-medium text-foreground/85 truncate">
+                                    {p.is_milestone ? "◆ " : ""}
+                                    {p.label}
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -3142,6 +3321,8 @@ export default function DevelopmentSchedule({
                   ⚓ = anchor phase (manually set start date) · linked phases auto-shift when their predecessor moves
                 </div>
               </div>
+              </div>
+              </>
             )}
           </div>
         )}
