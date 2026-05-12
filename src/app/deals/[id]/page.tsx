@@ -54,6 +54,7 @@ import { QuantScoreCard } from "@/components/QuantScoreCard";
 import DealNotes from "@/components/DealNotes";
 import { PhasePinControl } from "@/components/deals/PhasePinControl";
 import { PhaseProgressStrip } from "@/components/deals/PhaseProgressStrip";
+import { DealBrief } from "@/components/deals/brief/DealBrief";
 import { classifyDealPhase } from "@/lib/phase-classification";
 import { formatCurrency, formatNumber, titleCase, cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
@@ -586,6 +587,12 @@ export default function DealOverviewPage({
           )}
         </DialogContent>
       </Dialog>
+
+      {/* ═══ DEAL BRIEF — the daily canvas for this deal ═══
+          Read-only summary of thesis, headline metrics, open decisions,
+          pinned people, and risks. Everything below this is the legacy
+          deal home which will be progressively migrated in. */}
+      {deal && <DealBrief deal={deal} />}
 
       {/* ═══ HERO: Photo + Deal Info + Pipeline ═══ */}
       <div className="relative rounded-2xl overflow-hidden border border-border/60 shadow-card z-0">
