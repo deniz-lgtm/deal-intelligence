@@ -845,16 +845,52 @@ export interface LOI {
 
 export type ChecklistStatus = "pending" | "complete" | "na" | "issue";
 
+export type ChecklistSourceContext = "manual" | "assistant" | "autofill" | "template";
+
 export interface ChecklistItem {
   id: string;
   deal_id: string;
   category: string;
   item: string;
+  /** Optional short title that overrides `item` for the drawer header. */
+  title: string | null;
   status: ChecklistStatus;
   notes: string | null;
   ai_filled: boolean;
   source_document_ids: string | null; // JSON array string
+  /** Who/what created the item: manual / assistant / autofill / template. */
+  source_context: ChecklistSourceContext | null;
+  assignee_user_id: string | null;
+  due_date: string | null;
   updated_at: string;
+}
+
+export interface ChecklistAttachment {
+  id: string;
+  checklist_item_id: string;
+  document_id: string;
+  document_name?: string | null;
+  document_mime?: string | null;
+  uploaded_by: string | null;
+  ai_verdict: string | null;
+  ai_summary: string | null;
+  ai_confidence: number | null;
+  verified_at: string | null;
+  created_at: string;
+}
+
+export interface ChecklistItemDetail extends ChecklistItem {
+  attachments: ChecklistAttachment[];
+  linked_schedule_tasks: Array<{
+    id: string;
+    label: string;
+    track: string | null;
+    start_date: string | null;
+    end_date: string | null;
+    status: string | null;
+    pct_complete: number | null;
+    is_milestone: boolean | null;
+  }>;
 }
 
 // Standard diligence checklist template

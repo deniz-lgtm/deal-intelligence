@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { DOCUMENT_CATEGORIES, type DocumentCategory } from "@/lib/types";
 import type { ChecklistItem, ChecklistStatus } from "@/lib/types";
+import { ChecklistItemDrawer } from "@/components/checklist/ChecklistItemDrawer";
 
 interface ChecklistItemRow extends ChecklistItem {
   ai_filled: boolean;
@@ -74,6 +75,7 @@ export default function DiligenceChecklist({ dealId, phase = "diligence" }: Dili
   const [uploadingCategory, setUploadingCategory] = useState<string | null>(null);
   const [uploadingFiles, setUploadingFiles] = useState<Record<string, boolean>>({});
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [openItemId, setOpenItemId] = useState<string | null>(null);
 
   useEffect(() => {
     loadAll();
@@ -347,6 +349,7 @@ export default function DiligenceChecklist({ dealId, phase = "diligence" }: Dili
                       onNotesChange={setNotesValue}
                       onNotesSave={() => { updateStatus(item.id, item.status, notesValue); setEditingNotes(null); }}
                       onNotesCancel={() => setEditingNotes(null)}
+                      onOpen={() => setOpenItemId(item.id)}
                     />
                   ))}
                 </div>
@@ -355,6 +358,26 @@ export default function DiligenceChecklist({ dealId, phase = "diligence" }: Dili
           </div>
         );
       })}
+      <ChecklistItemDrawer
+        itemId={openItemId}
+        dealId={dealId}
+        open={openItemId !== null}
+        onClose={() => setOpenItemId(null)}
+        onMutated={(next) => {
+          if (!next) return;
+          setItems((prev) =>
+            prev.map((it) =>
+              it.id === next.id
+                ? {
+                    ...it,
+                    status: (next.status ?? it.status) as ChecklistStatus,
+                    notes: next.notes !== undefined ? next.notes : it.notes,
+                  }
+                : it
+            )
+          );
+        }}
+      />
     </div>
   );
 }
@@ -368,6 +391,7 @@ interface ChecklistRowProps {
   onNotesChange: (v: string) => void;
   onNotesSave: () => void;
   onNotesCancel: () => void;
+  onOpen: () => void;
 }
 
 const STATUS_CYCLE: ChecklistStatus[] = ["pending", "complete", "issue", "na"];
@@ -381,6 +405,7 @@ function ChecklistRow({
   onNotesChange,
   onNotesSave,
   onNotesCancel,
+  onOpen,
 }: ChecklistRowProps) {
   const config = STATUS_CONFIG[item.status];
   const Icon = config.icon;
@@ -407,13 +432,18 @@ function ChecklistRow({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <p className={cn(
-              "text-sm leading-relaxed",
-              item.status === "na" && "line-through text-muted-foreground/50",
-              item.status === "complete" && "text-muted-foreground"
-            )}>
+            <button
+              type="button"
+              onClick={onOpen}
+              className={cn(
+                "text-left text-sm leading-relaxed hover:text-primary",
+                item.status === "na" && "line-through text-muted-foreground/50",
+                item.status === "complete" && "text-muted-foreground"
+              )}
+              title="Open task detail"
+            >
               {item.item}
-            </p>
+            </button>
             <div className="flex items-center gap-1.5 shrink-0">
               {item.ai_filled && (
                 <span title="AI filled">
