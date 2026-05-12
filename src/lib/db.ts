@@ -1455,6 +1455,16 @@ export async function ensureColumns(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_checklist_items_assignee ON checklist_items(assignee_user_id) WHERE assignee_user_id IS NOT NULL`,
     `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS linked_checklist_item_id TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_dev_phases_linked_checklist ON deal_dev_phases(linked_checklist_item_id) WHERE linked_checklist_item_id IS NOT NULL`,
+    // Threaded comments on checklist items — separate from the
+    // single-block description (the existing `notes` column).
+    `CREATE TABLE IF NOT EXISTS checklist_item_comments (
+      id TEXT PRIMARY KEY,
+      checklist_item_id TEXT NOT NULL REFERENCES checklist_items(id) ON DELETE CASCADE,
+      author_user_id TEXT,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_checklist_comments_item ON checklist_item_comments(checklist_item_id, created_at DESC)`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -4274,9 +4284,17 @@ export const checklistQueries = {
        ORDER BY start_date ASC NULLS LAST, sort_order ASC`,
       [id]
     );
+    const comments = await pool.query(
+      `SELECT id, checklist_item_id, author_user_id, body, created_at
+       FROM checklist_item_comments
+       WHERE checklist_item_id = $1
+       ORDER BY created_at ASC`,
+      [id]
+    );
     return {
       ...item,
       attachments: attachments.rows,
+      comments: comments.rows,
       linked_schedule_tasks: linked.rows,
     };
   },
@@ -4298,6 +4316,44 @@ export const checklistQueries = {
   detachDocument: async (attachmentId: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM deal_checklist_attachments WHERE id = $1", [attachmentId]);
+  },
+
+  listComments: async (checklistItemId: string) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT id, checklist_item_id, author_user_id, body, created_at
+       FROM checklist_item_comments
+       WHERE checklist_item_id = $1
+       ORDER BY created_at ASC`,
+      [checklistItemId]
+    );
+    return res.rows;
+  },
+
+  addComment: async (args: {
+    id: string;
+    checklist_item_id: string;
+    author_user_id: string | null;
+    body: string;
+  }) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO checklist_item_comments (id, checklist_item_id, author_user_id, body)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [args.id, args.checklist_item_id, args.author_user_id, args.body]
+    );
+    // Touch the parent item's updated_at so list views reflect recent
+    // activity without an extra round-trip.
+    await pool.query(
+      "UPDATE checklist_items SET updated_at = NOW() WHERE id = $1",
+      [args.checklist_item_id]
+    );
+    return res.rows[0];
+  },
+
+  deleteComment: async (commentId: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM checklist_item_comments WHERE id = $1", [commentId]);
   },
 
   /**
