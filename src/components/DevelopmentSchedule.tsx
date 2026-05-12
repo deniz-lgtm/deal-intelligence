@@ -1492,12 +1492,17 @@ export default function DevelopmentSchedule({
    * acquisition rows only.
    */
   const handleExportSchedule = (
-    format: "csv" | "ics" | "xls",
+    format: "csv" | "ics" | "xls" | "pdf",
     scope: "track" | "all" = "track"
   ) => {
     // Browser navigates to the export route with the proper Content-
     // Disposition header — simplest cross-client path to "download file".
-    const trackParam = scope === "track" && track !== "all" ? `&track=${track}` : "";
+    const trackQs = scope === "track" && track !== "all" ? `?track=${track}` : "";
+    if (format === "pdf") {
+      window.open(`/api/deals/${dealId}/dev-schedule/pdf${trackQs}`, "_blank");
+      return;
+    }
+    const trackParam = trackQs ? `&${trackQs.slice(1)}` : "";
     const url = `/api/deals/${dealId}/dev-schedule/export?format=${format}${trackParam}`;
     window.open(url, "_blank");
   };
@@ -2128,9 +2133,11 @@ export default function DevelopmentSchedule({
                       const v = e.target.value;
                       e.target.value = "";
                       if (v === "xls") handleExportSchedule("xls", "track");
+                      else if (v === "pdf") handleExportSchedule("pdf", "track");
                       else if (v === "csv") handleExportSchedule("csv", "track");
                       else if (v === "ics") handleExportSchedule("ics", "track");
                       else if (v === "xls-all") handleExportSchedule("xls", "all");
+                      else if (v === "pdf-all") handleExportSchedule("pdf", "all");
                       else if (v === "csv-all") handleExportSchedule("csv", "all");
                       else if (v === "ics-all") handleExportSchedule("ics", "all");
                     }}
@@ -2139,11 +2146,13 @@ export default function DevelopmentSchedule({
                   >
                     <option value="">Export…</option>
                     <optgroup label={isMasterTrack ? "Master schedule" : `This track (${scheduleScopeLabel(track)})`}>
+                      <option value="pdf">PDF schedule packet</option>
                       <option value="xls">Excel schedule packet</option>
                       <option value="csv">CSV data</option>
                       <option value="ics">ICS (Calendar)</option>
                     </optgroup>
                     <optgroup label="All tracks">
+                      <option value="pdf-all">PDF packet — all tracks</option>
                       <option value="xls-all">Excel packet - all tracks</option>
                       <option value="csv-all">CSV — all tracks</option>
                       <option value="ics-all">ICS — all tracks</option>
