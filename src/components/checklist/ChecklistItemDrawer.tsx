@@ -274,9 +274,9 @@ export function ChecklistItemDrawer({
                   onBlur={() => {
                     if (notesDraft !== (detail.notes ?? "")) patch({ notes: notesDraft });
                   }}
-                  rows={4}
+                  rows={10}
                   placeholder="Context, evidence, links…"
-                  className="mt-1 w-full resize-y rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5 text-sm placeholder:text-muted-foreground/50 focus:border-primary/45 focus:outline-none focus:ring-2 focus:ring-primary/15"
+                  className="mt-1 min-h-[10rem] w-full resize-y rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5 text-sm leading-6 placeholder:text-muted-foreground/50 focus:border-primary/45 focus:outline-none focus:ring-2 focus:ring-primary/15"
                 />
               </section>
 
