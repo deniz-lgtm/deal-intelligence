@@ -8177,6 +8177,10 @@ const CONTACT_FIELDS = [
   "title",
   "notes",
   "tags",
+  "last_touched_at",
+  "next_action_at",
+  "next_action_note",
+  "relationship_stage",
 ];
 
 export const contactQueries = {
@@ -8282,6 +8286,109 @@ export const contactQueries = {
   delete: async (id: string) => {
     const pool = getPool();
     await pool.query("DELETE FROM contacts WHERE id = $1", [id]);
+  },
+
+  /** Contacts whose next_action_at is today or earlier. Sorted by overdue first. */
+  followUps: async (limit = 50) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM contacts
+       WHERE next_action_at IS NOT NULL
+         AND next_action_at <= (CURRENT_TIMESTAMP + INTERVAL '1 day')
+       ORDER BY next_action_at ASC
+       LIMIT $1`,
+      [limit]
+    );
+    return res.rows;
+  },
+
+  /**
+   * Sourcing rollup — for every contact linked to a deal with is_source=true,
+   * return deal count + avg quant_composite. Drives the "where do our deals
+   * come from" rollup at /contacts/sources.
+   */
+  sourceRollup: async () => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT c.id, c.name, c.email, c.company, c.role,
+              COUNT(dc.deal_id)::int                      AS deal_count,
+              ROUND(AVG(d.quant_composite)::numeric, 1)    AS avg_quant,
+              COUNT(*) FILTER (WHERE d.status = 'closed')::int AS closed_count
+       FROM deal_contacts dc
+       JOIN contacts c ON c.id = dc.contact_id
+       JOIN deals d    ON d.id = dc.deal_id
+       WHERE dc.is_source = true
+       GROUP BY c.id, c.name, c.email, c.company, c.role
+       ORDER BY deal_count DESC, avg_quant DESC NULLS LAST
+       LIMIT 100`
+    );
+    return res.rows;
+  },
+};
+
+// ─── Contact activity queries ─────────────────────────────────────────────────
+
+export const contactActivityQueries = {
+  listByContact: async (contactId: string, limit = 100) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT a.*, d.name AS deal_name
+       FROM contact_activities a
+       LEFT JOIN deals d ON d.id = a.deal_id
+       WHERE a.contact_id = $1
+       ORDER BY a.occurred_at DESC
+       LIMIT $2`,
+      [contactId, limit]
+    );
+    return res.rows;
+  },
+
+  /** Cross-deal activity feed for /contacts (global view). */
+  recent: async (limit = 50) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT a.*, c.name AS contact_name, c.company AS contact_company,
+              d.name AS deal_name
+       FROM contact_activities a
+       JOIN contacts c ON c.id = a.contact_id
+       LEFT JOIN deals d ON d.id = a.deal_id
+       ORDER BY a.occurred_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return res.rows;
+  },
+
+  create: async (a: Record<string, unknown>) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO contact_activities (id, contact_id, deal_id, kind, subject, body, occurred_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()), $8)
+       RETURNING *`,
+      [
+        a.id,
+        a.contact_id,
+        a.deal_id ?? null,
+        a.kind ?? "note",
+        a.subject ?? null,
+        a.body ?? null,
+        a.occurred_at ?? null,
+        a.created_by ?? null,
+      ]
+    );
+    // Bump last_touched_at on the parent contact so the kanban + follow-ups
+    // queries stay accurate without an extra round-trip from the caller.
+    await pool.query(
+      `UPDATE contacts SET last_touched_at = GREATEST(COALESCE(last_touched_at, '1970-01-01'::timestamptz), $1::timestamptz)
+       WHERE id = $2`,
+      [a.occurred_at ?? new Date().toISOString(), a.contact_id]
+    );
+    return res.rows[0];
+  },
+
+  delete: async (id: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM contact_activities WHERE id = $1", [id]);
   },
 };
 

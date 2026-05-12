@@ -23,7 +23,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { STAKEHOLDER_LABELS } from "@/lib/types";
+import {
+  STAKEHOLDER_LABELS,
+  RELATIONSHIP_STAGE_LABELS,
+  RELATIONSHIP_STAGE_ORDER,
+  type RelationshipStage,
+} from "@/lib/types";
 import type { Contact, StakeholderType } from "@/lib/types";
 
 export default function ContactsPage() {
@@ -31,6 +36,7 @@ export default function ContactsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<StakeholderType | "all">("all");
+  const [stageFilter, setStageFilter] = useState<RelationshipStage | "all">("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Contact | null>(null);
   const [saving, setSaving] = useState(false);
@@ -148,11 +154,19 @@ export default function ContactsPage() {
       </header>
 
       <main className="max-w-6xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
-        <div>
-          <h1 className="font-nameplate text-3xl leading-none tracking-tight">Contacts</h1>
-          <p className="text-sm text-muted-foreground mt-2">
-            Workspace-shared directory of brokers, sellers, lenders, attorneys, and other stakeholders.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="font-nameplate text-3xl leading-none tracking-tight">Contacts</h1>
+            <p className="text-sm text-muted-foreground mt-2">
+              Workspace-shared directory of brokers, sellers, lenders, attorneys, and other stakeholders.
+            </p>
+          </div>
+          <Link
+            href="/contacts/sources"
+            className="rounded-full border border-border/60 bg-muted/35 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/35 hover:text-foreground"
+          >
+            Sourcing rollup →
+          </Link>
         </div>
 
         {/* Toolbar */}
@@ -176,6 +190,18 @@ export default function ContactsPage() {
             {Object.entries(STAKEHOLDER_LABELS).map(([k, v]) => (
               <option key={k} value={k}>
                 {v}
+              </option>
+            ))}
+          </select>
+          <select
+            value={stageFilter}
+            onChange={(e) => setStageFilter(e.target.value as RelationshipStage | "all")}
+            className="h-9 rounded-lg border border-border bg-background px-2.5 text-sm"
+          >
+            <option value="all">All stages</option>
+            {RELATIONSHIP_STAGE_ORDER.map((s) => (
+              <option key={s} value={s}>
+                {RELATIONSHIP_STAGE_LABELS[s]}
               </option>
             ))}
           </select>
@@ -314,7 +340,9 @@ export default function ContactsPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {contacts.map((c) => (
+            {contacts
+              .filter((c) => stageFilter === "all" || (c.relationship_stage ?? "warm") === stageFilter)
+              .map((c) => (
               <ContactCard
                 key={c.id}
                 contact={c}
@@ -352,9 +380,19 @@ function ContactCard({
               .toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold truncate">{contact.name}</div>
-            <div className="text-2xs uppercase tracking-wider text-muted-foreground">
-              {STAKEHOLDER_LABELS[contact.role]}
+            <Link
+              href={`/contacts/${contact.id}`}
+              className="text-sm font-semibold truncate hover:text-primary"
+            >
+              {contact.name}
+            </Link>
+            <div className="flex items-center gap-1.5 text-2xs uppercase tracking-wider text-muted-foreground">
+              <span>{STAKEHOLDER_LABELS[contact.role]}</span>
+              {contact.relationship_stage && contact.relationship_stage !== "warm" && (
+                <span className="rounded-full bg-muted/40 px-1.5 py-0.5 normal-case tracking-normal text-[10px]">
+                  {RELATIONSHIP_STAGE_LABELS[contact.relationship_stage as RelationshipStage]}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -423,8 +461,39 @@ function ContactCard({
           {contact.notes}
         </p>
       )}
+
+      {(contact.last_touched_at || contact.next_action_at) && (
+        <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-border/30 pt-2 text-[10px] text-muted-foreground">
+          {contact.last_touched_at && (
+            <span title={new Date(contact.last_touched_at).toLocaleString()}>
+              Touched {relativeShort(contact.last_touched_at)}
+            </span>
+          )}
+          {contact.next_action_at && (
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5",
+                new Date(contact.next_action_at) <= new Date()
+                  ? "bg-rose-500/15 text-rose-500"
+                  : "bg-amber-500/15 text-amber-500"
+              )}
+            >
+              Next: {new Date(contact.next_action_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              {contact.next_action_note ? ` · ${contact.next_action_note}` : ""}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function relativeShort(iso: string) {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 3600) return `${Math.max(1, Math.floor(diff / 60))}m ago`;
+  if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86_400 * 14) return `${Math.floor(diff / 86_400)}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function FormField({
