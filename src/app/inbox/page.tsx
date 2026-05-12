@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/AppShell";
+import { ScreeningPanel } from "@/components/inbox/ScreeningPanel";
+import { OmViewerDrawer } from "@/components/inbox/OmViewerDrawer";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 import type { BusinessPlan, InvestmentThesis, PropertyType } from "@/lib/types";
@@ -448,6 +450,7 @@ function InboxCard({
 }) {
   const loc = [item.city, item.state].filter(Boolean).join(", ");
   const analysisStarted = item.analysis_status != null;
+  const [omOpen, setOmOpen] = useState(false);
 
   return (
     <div className="border border-border/40 rounded-xl bg-card p-4 hover:border-border/70 transition-colors">
@@ -535,6 +538,19 @@ function InboxCard({
           onStartDeal={() => onOpen(item.id)}
         />
       )}
+      <div className="mt-3">
+        <ScreeningPanel
+          itemId={item.id}
+          onDecided={onAnalysisStarted}
+          onViewOm={() => setOmOpen(true)}
+        />
+      </div>
+      <OmViewerDrawer
+        open={omOpen}
+        inboxItemId={item.id}
+        itemLabel={item.name}
+        onClose={() => setOmOpen(false)}
+      />
     </div>
   );
 }
