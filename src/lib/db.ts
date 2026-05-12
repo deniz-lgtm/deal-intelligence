@@ -1442,7 +1442,19 @@ export async function ensureColumns(): Promise<void> {
     // the Deal Brief can render "OM uploaded during screening" etc.
     `ALTER TABLE documents ADD COLUMN IF NOT EXISTS stage_at_creation TEXT`,
     `ALTER TABLE deal_decisions ADD COLUMN IF NOT EXISTS stage_at_creation TEXT`,
-    `ALTER TABLE deal_notes ADD COLUMN IF NOT EXISTS stage_at_creation TEXT`,
+    // ─── Checklist as task system ──────────────────────────────────────────
+    // Promote checklist_items into a richer task abstraction: assignee,
+    // due date, origin context. A schedule task can also point back to
+    // a checklist item via deal_dev_phases.linked_checklist_item_id so
+    // the per-item drawer can render its mini-schedule.
+    `ALTER TABLE checklist_items ADD COLUMN IF NOT EXISTS assignee_user_id TEXT`,
+    `ALTER TABLE checklist_items ADD COLUMN IF NOT EXISTS due_date DATE`,
+    `ALTER TABLE checklist_items ADD COLUMN IF NOT EXISTS source_context TEXT`,
+    `ALTER TABLE checklist_items ADD COLUMN IF NOT EXISTS title TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_checklist_items_due ON checklist_items(due_date) WHERE due_date IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_checklist_items_assignee ON checklist_items(assignee_user_id) WHERE assignee_user_id IS NOT NULL`,
+    `ALTER TABLE deal_dev_phases ADD COLUMN IF NOT EXISTS linked_checklist_item_id TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_dev_phases_linked_checklist ON deal_dev_phases(linked_checklist_item_id) WHERE linked_checklist_item_id IS NOT NULL`,
   ];
 
   // Run each statement individually so one failure doesn't block the rest
@@ -4208,6 +4220,82 @@ export const checklistQueries = {
     } finally {
       client.release();
     }
+  },
+
+  /** Partial update of editable task-like fields on a checklist item. */
+  update: async (id: string, updates: Record<string, unknown>) => {
+    const pool = getPool();
+    const allowed = ["title", "notes", "status", "assignee_user_id", "due_date"];
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(updates)) {
+      if (!allowed.includes(k)) continue;
+      setClauses.push(`${k} = $${idx}`);
+      values.push(v ?? null);
+      idx++;
+    }
+    if (setClauses.length === 0) return null;
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+    const res = await pool.query(
+      `UPDATE checklist_items SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return res.rows[0] ?? null;
+  },
+
+  /**
+   * Detail bundle for the drawer — the row plus its attachments (joined
+   * with the documents table for name/mime) plus any deal_dev_phases
+   * rows that point back via linked_checklist_item_id.
+   */
+  getByIdWithDetail: async (id: string) => {
+    const pool = getPool();
+    const item = await checklistQueries.getById(id);
+    if (!item) return null;
+    const attachments = await pool.query(
+      `SELECT a.id, a.checklist_item_id, a.document_id, a.uploaded_by,
+              a.ai_verdict, a.ai_summary, a.ai_confidence, a.verified_at, a.created_at,
+              d.name AS document_name, d.mime_type AS document_mime
+       FROM deal_checklist_attachments a
+       LEFT JOIN documents d ON d.id = a.document_id
+       WHERE a.checklist_item_id = $1
+       ORDER BY a.created_at DESC`,
+      [id]
+    );
+    const linked = await pool.query(
+      `SELECT id, label, track, start_date::text, end_date::text,
+              status, pct_complete, is_milestone
+       FROM deal_dev_phases
+       WHERE linked_checklist_item_id = $1
+       ORDER BY start_date ASC NULLS LAST, sort_order ASC`,
+      [id]
+    );
+    return {
+      ...item,
+      attachments: attachments.rows,
+      linked_schedule_tasks: linked.rows,
+    };
+  },
+
+  /** Link an existing document to a checklist item. */
+  attachDocument: async (
+    id: string,
+    args: { checklist_item_id: string; document_id: string; uploaded_by: string | null }
+  ) => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO deal_checklist_attachments (id, checklist_item_id, document_id, uploaded_by)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [id, args.checklist_item_id, args.document_id, args.uploaded_by]
+    );
+    return res.rows[0];
+  },
+
+  detachDocument: async (attachmentId: string) => {
+    const pool = getPool();
+    await pool.query("DELETE FROM deal_checklist_attachments WHERE id = $1", [attachmentId]);
   },
 
   /**

@@ -52,6 +52,23 @@ export async function POST(
   const { errorResponse: accessError } = await requireDealEditAccess(item.deal_id, userId);
   if (accessError) return accessError;
 
+  // JSON branch: link an existing document by id (no new upload). The
+  // multipart upload path below still handles new files.
+  const contentType = req.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const body = await req.json().catch(() => ({}));
+    if (!body.document_id) {
+      return NextResponse.json({ error: "document_id is required" }, { status: 400 });
+    }
+    const created = await checklistAttachmentQueries.create({
+      id: uuidv4(),
+      checklist_item_id: params.itemId,
+      document_id: String(body.document_id),
+      uploaded_by: userId,
+    });
+    return NextResponse.json({ data: created });
+  }
+
   const fd = await req.formData();
   const file = fd.get("file");
   if (!file || !(file instanceof File) || file.size === 0) {
