@@ -25,6 +25,10 @@ import {
   Presentation,
   FolderArchive,
   Share2,
+  ListChecks,
+  CalendarPlus,
+  CheckCircle2,
+  ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +40,7 @@ import { formatBytes } from "@/lib/utils";
 import { toast } from "sonner";
 
 type ViewMode = "grid" | "folders";
+type DocumentActionIntent = "ask" | "schedule" | "decision" | "checklist";
 
 /** Parse an AI summary string into bullet points (split on ". " or newlines) */
 function parseSummaryBullets(summary: string): string[] {
@@ -45,6 +50,23 @@ function parseSummaryBullets(summary: string): string[] {
     .map((s) => s.trim().replace(/^[-•*]\s*/, ""))
     .filter((s) => s.length > 4);
   return lines.length > 1 ? lines : [summary];
+}
+
+function documentActionHref(
+  dealId: string,
+  doc: Pick<Document, "original_name" | "category">,
+  intent: DocumentActionIntent
+) {
+  const categoryLabel =
+    DOCUMENT_CATEGORIES[doc.category as DocumentCategory]?.label || doc.category;
+  const base = `Use the document "${doc.original_name}" (${categoryLabel}) as the source.`;
+  const prompts: Record<DocumentActionIntent, string> = {
+    ask: `${base} Give me the key points, missing information, and recommended next action. Keep it concise and say if the document does not answer something.`,
+    schedule: `${base} Identify any dates, obligations, or follow-up tasks that should become schedule items. Ask prep questions first if needed, then create only the rows you can support.`,
+    decision: `${base} Identify any unresolved decision, RFI, or owner question this document creates. Keep it concise and tell me what should be logged.`,
+    checklist: `${base} Identify any diligence checklist item this document creates or helps verify. Keep it concise and only suggest useful items.`,
+  };
+  return `/deals/${dealId}/chat?prompt=${encodeURIComponent(prompts[intent])}`;
 }
 
 export default function DocumentsPage({ params }: { params: { id: string } }) {
@@ -241,9 +263,9 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold">Documents</h2>
+          <h2 className="text-xl font-bold">Documents & Intelligence</h2>
           <p className="text-sm text-muted-foreground">
-            {documents.length} document{documents.length !== 1 ? "s" : ""} — drag to move between folders
+            {documents.length} document{documents.length !== 1 ? "s" : ""} - upload, review, act, and share
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -347,6 +369,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         </div>
       ) : viewMode === "folders" ? (
         <FolderView
+          dealId={params.id}
           byCategory={byCategory}
           filledCategories={filledCategories}
           emptyCategories={emptyCategories}
@@ -362,6 +385,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         />
       ) : (
         <GridView
+          dealId={params.id}
           documents={visibleDocs}
           activeCategory={activeCategory}
           onCategoryChange={setActiveCategory}
@@ -397,9 +421,48 @@ function DocumentsWorkflowHub({
   const sourceCount = documents.filter((doc) => !AI_REPORT_CATEGORIES.includes(doc.category)).length;
   const outputCount = documents.filter((doc) => AI_REPORT_CATEGORIES.includes(doc.category)).length;
   const omCount = countByCategory("om");
+  const financialCount = countByCategory("financial");
+  const marketCount = countByCategory("market");
+  const keyCount = documents.filter((doc) => doc.is_key).length;
   const ddCount = countByCategory("dd_abstract");
   const packageCount =
     countByCategory("investment_package") + countByCategory("ic_package");
+  const sourceReviewPrompt =
+    "Review this deal's source files. Give me the key points, missing information, conflicting assumptions, and the next three useful actions. Keep it concise and say when the files do not answer something.";
+  const createWorkPrompt =
+    "Review this deal's documents and identify useful work to create. Group it into schedule items, decisions/RFIs, and diligence checklist items. Ask prep questions before creating anything that needs judgment.";
+  const sharePrepPrompt =
+    "Review the deal documents and tell me what is ready to share externally, what should stay internal, and what missing files would make the share room more complete. Keep it concise.";
+
+  const workflowSteps = [
+    {
+      label: "Upload",
+      body: sourceCount > 0 ? `${sourceCount} source file${sourceCount === 1 ? "" : "s"} collected` : "Add OM, rent roll, reports, plans, or diligence files",
+      complete: sourceCount > 0,
+    },
+    {
+      label: "Extract",
+      body: omCount > 0 || financialCount > 0 || marketCount > 0
+        ? `${omCount} OM / ${financialCount} financial / ${marketCount} market`
+        : "Classify files and pull high-level assumptions",
+      complete: omCount > 0 || financialCount > 0 || marketCount > 0,
+    },
+    {
+      label: "Review",
+      body: ddCount > 0 ? `${ddCount} diligence summary saved` : "Generate or refresh the diligence summary",
+      complete: ddCount > 0,
+    },
+    {
+      label: "Act",
+      body: keyCount > 0 ? `${keyCount} key file${keyCount === 1 ? "" : "s"} marked for decisions` : "Turn findings into schedule, decisions, or checklist",
+      complete: keyCount > 0,
+    },
+    {
+      label: "Package",
+      body: packageCount > 0 ? `${packageCount} package output${packageCount === 1 ? "" : "s"} saved` : "Build IC package or share room",
+      complete: packageCount > 0,
+    },
+  ];
 
   const actions = [
     {
@@ -433,20 +496,47 @@ function DocumentsWorkflowHub({
       icon: Share2,
     },
     {
-      href: `/deals/${dealId}/chat?prompt=${encodeURIComponent("Review this deal's files. What matters, what is missing, and what should be updated next? Keep it concise.")}`,
+      href: `/deals/${dealId}/chat?prompt=${encodeURIComponent(sourceReviewPrompt)}`,
       label: "Assistant",
       meta: "Ask",
       icon: MessageSquare,
     },
   ];
 
+  const workActions = [
+    {
+      href: `/deals/${dealId}/chat?prompt=${encodeURIComponent(createWorkPrompt)}`,
+      label: "Create follow-up work",
+      body: "Find schedule items, decisions/RFIs, and checklist tasks from the files.",
+      icon: CalendarPlus,
+    },
+    {
+      href: `/deals/${dealId}/decisions`,
+      label: "Open decisions / RFIs",
+      body: "Track questions raised by diligence, design, legal, or construction docs.",
+      icon: CheckCircle2,
+    },
+    {
+      href: `/deals/${dealId}/checklist`,
+      label: "Open diligence tasks",
+      body: "Verify uploaded backup and attach schedule items where needed.",
+      icon: ListChecks,
+    },
+    {
+      href: `/deals/${dealId}/chat?prompt=${encodeURIComponent(sharePrepPrompt)}`,
+      label: "Prep share room",
+      body: "Check what is safe and useful to send outside the team.",
+      icon: Share2,
+    },
+  ];
+
   return (
     <section className="border rounded-xl bg-card/70 overflow-hidden">
-      <div className="grid grid-cols-1 md:grid-cols-[220px_1fr]">
+      <div className="grid grid-cols-1 md:grid-cols-[240px_1fr]">
         <div className="p-4 border-b md:border-b-0 md:border-r border-border/60">
           <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
             <FileText className="h-3.5 w-3.5" />
-            Documents & Outputs
+            Document workflow
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <div>
@@ -458,29 +548,80 @@ function DocumentsWorkflowHub({
               <div className="text-[11px] text-muted-foreground">Outputs</div>
             </div>
           </div>
+          <Link
+            href={`/deals/${dealId}/chat?prompt=${encodeURIComponent(sourceReviewPrompt)}`}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1.5 text-xs transition-colors hover:bg-muted/30"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            Ask about files
+          </Link>
         </div>
-        <div className="grid grid-cols-2 lg:grid-cols-3">
-          {actions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <Link
-                key={action.href}
-                href={action.href}
-                className="group flex items-center gap-3 p-4 border-b border-r border-border/50 hover:bg-muted/40 transition-colors min-h-[76px]"
-              >
-                <span className="flex h-9 w-9 items-center justify-center rounded-md bg-muted/60 text-muted-foreground group-hover:text-foreground">
-                  <Icon className="h-4 w-4" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium truncate">{action.label}</span>
-                  <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                    {action.meta}
-                    <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+        <div className="min-w-0">
+          <div className="grid grid-cols-1 gap-px bg-border/50 lg:grid-cols-5">
+            {workflowSteps.map((step, index) => (
+              <div key={step.label} className="bg-card p-3">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold ${
+                      step.complete
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                        : "border-border bg-muted/30 text-muted-foreground"
+                    }`}
+                  >
+                    {step.complete ? <CheckCircle2 className="h-3 w-3" /> : index + 1}
                   </span>
-                </span>
-              </Link>
-            );
-          })}
+                  <span className="text-xs font-medium">{step.label}</span>
+                </div>
+                <p className="mt-2 text-[11px] leading-4 text-muted-foreground">{step.body}</p>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-3">
+            {actions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <Link
+                  key={action.href}
+                  href={action.href}
+                  className="group flex items-center gap-3 p-4 border-b border-r border-border/50 hover:bg-muted/40 transition-colors min-h-[76px]"
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-md bg-muted/60 text-muted-foreground group-hover:text-foreground">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium truncate">{action.label}</span>
+                    <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                      {action.meta}
+                      <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </span>
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-1 gap-px bg-border/50 md:grid-cols-2 xl:grid-cols-4">
+            {workActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <Link
+                  key={action.label}
+                  href={action.href}
+                  className="group bg-card p-4 transition-colors hover:bg-muted/30"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Icon className="h-4 w-4 text-primary" />
+                        <span className="text-sm font-medium">{action.label}</span>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-muted-foreground">{action.body}</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
         </div>
       </div>
     </section>
@@ -518,6 +659,7 @@ function DropFolder({
 }
 
 function FolderView({
+  dealId,
   byCategory,
   filledCategories,
   emptyCategories,
@@ -531,6 +673,7 @@ function FolderView({
   deleting,
   reExtracting,
 }: {
+  dealId: string;
   byCategory: Record<string, Document[]>;
   filledCategories: DocumentCategory[];
   emptyCategories: DocumentCategory[];
@@ -590,6 +733,7 @@ function FolderView({
                 {docs.map((doc) => (
                   <DocRow
                     key={doc.id}
+                    dealId={dealId}
                     doc={doc}
                     onDelete={onDelete}
                     onView={onView}
@@ -612,6 +756,7 @@ function FolderView({
 }
 
 function GridView({
+  dealId,
   documents,
   activeCategory,
   onCategoryChange,
@@ -621,6 +766,7 @@ function GridView({
   recategorizing,
   deleting,
 }: {
+  dealId: string;
   documents: Document[];
   activeCategory: DocumentCategory | "all";
   onCategoryChange: (c: DocumentCategory | "all") => void;
@@ -649,6 +795,7 @@ function GridView({
         {documents.map((doc) => (
           <GridDocCard
             key={doc.id}
+            dealId={dealId}
             doc={doc}
             onDelete={onDelete}
             onView={onView}
@@ -663,6 +810,7 @@ function GridView({
 }
 
 function DocRow({
+  dealId,
   doc,
   onDelete,
   onView,
@@ -674,6 +822,7 @@ function DocRow({
   deleting,
   reExtracting,
 }: {
+  dealId: string;
   doc: Document & { is_key?: boolean };
   onDelete: (id: string) => void;
   onView: (doc: Document) => void;
@@ -803,6 +952,12 @@ function DocRow({
             ))}
           </ul>
         )}
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <DocActionLink href={documentActionHref(dealId, doc, "ask")} icon={<MessageSquare className="h-3 w-3" />} label="Ask" />
+          <DocActionLink href={documentActionHref(dealId, doc, "schedule")} icon={<CalendarPlus className="h-3 w-3" />} label="Schedule" />
+          <DocActionLink href={documentActionHref(dealId, doc, "decision")} icon={<CheckCircle2 className="h-3 w-3" />} label="Decision" />
+          <DocActionLink href={documentActionHref(dealId, doc, "checklist")} icon={<ListChecks className="h-3 w-3" />} label="Task" />
+        </div>
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <button
@@ -884,6 +1039,7 @@ function DocRow({
 }
 
 function GridDocCard({
+  dealId,
   doc,
   onDelete,
   onView,
@@ -891,6 +1047,7 @@ function GridDocCard({
   recategorizing,
   deleting,
 }: {
+  dealId: string;
   doc: Document;
   onDelete: (id: string) => void;
   onView: (doc: Document) => void;
@@ -945,6 +1102,11 @@ function GridDocCard({
             ))}
           </ul>
         )}
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <DocActionLink href={documentActionHref(dealId, doc, "ask")} icon={<MessageSquare className="h-3 w-3" />} label="Ask" />
+          <DocActionLink href={documentActionHref(dealId, doc, "schedule")} icon={<CalendarPlus className="h-3 w-3" />} label="Schedule" />
+          <DocActionLink href={documentActionHref(dealId, doc, "decision")} icon={<CheckCircle2 className="h-3 w-3" />} label="Decision" />
+        </div>
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <button
@@ -998,6 +1160,26 @@ function GridDocCard({
         </button>
       </div>
     </div>
+  );
+}
+
+function DocActionLink({
+  href,
+  icon,
+  label,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-background/50 px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+    >
+      {icon}
+      {label}
+    </Link>
   );
 }
 
