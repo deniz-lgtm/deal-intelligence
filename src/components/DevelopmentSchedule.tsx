@@ -465,6 +465,10 @@ export default function DevelopmentSchedule({
   const [columns, setColumns] =
     useState<ScheduleColumnVisibility>(colDefaults);
   const [columnWidths, setColumnWidths] = useState<ScheduleColumnWidths>(DEFAULT_SCHEDULE_COLUMN_WIDTHS);
+  // Per-parent toggle for the "add subtask" inline form. Master view
+  // stays clean by default — tasks are added explicitly via this
+  // affordance or via the mini-schedule module on a checklist item.
+  const [openSubAddFor, setOpenSubAddFor] = useState<string | null>(null);
   // Timeline zoom: pixels per day. 28 → week-level detail, 8 → month,
   // 2.5 → quarter overview. Persisted to localStorage per deal+track.
   const [pxPerDay, setPxPerDay] = useState<number>(8);
@@ -2519,7 +2523,8 @@ export default function DevelopmentSchedule({
                         setActivatorNodeRef: (el: HTMLElement | null) => void;
                         listeners: Record<string, unknown> | undefined;
                         attributes: Record<string, unknown>;
-                      }
+                      },
+                      wbs = ""
                     ) => {
                       const cfg = DEV_PHASE_STATUS_CONFIG[p.status];
                       const barStyle = getBarStyle(p.start_date, p.end_date);
@@ -2631,6 +2636,14 @@ export default function DevelopmentSchedule({
                                   title={catCfg.label}
                                 >
                                   {catCfg.label}
+                                </span>
+                              )}
+                              {wbs && (
+                                <span
+                                  className="shrink-0 tabular-nums text-[10px] font-medium text-muted-foreground/80"
+                                  title="Work breakdown number — derives from row order"
+                                >
+                                  {wbs}
                                 </span>
                               )}
                               <InlineText
@@ -2991,7 +3004,8 @@ export default function DevelopmentSchedule({
                       );
                     };
 
-                    const renderRoot = (p: DevPhase) => {
+                    const renderRoot = (p: DevPhase, rootIdx: number) => {
+                      const rootWbs = String(rootIdx + 1);
                       const children = childrenByParent.get(p.id) || [];
                       const isEntitlement = p.phase_key === "entitlements";
                       // Children are stored by sort_order so up/down
@@ -3029,7 +3043,7 @@ export default function DevelopmentSchedule({
                       );
                       return (
                         <div key={p.id} className="space-y-1">
-                          {renderRow(p, false)}
+                          {renderRow(p, false, 0, 0, undefined, rootWbs)}
                           {sortedChildren.length > 0 && (
                             <DndContext
                               sensors={dndSensors}
@@ -3044,7 +3058,14 @@ export default function DevelopmentSchedule({
                                   {sortedChildren.map((c, i) => (
                                     <SortableChild key={c.id} id={c.id}>
                                       {(drag) =>
-                                        renderRow(c, true, i, sortedChildren.length, drag)
+                                        renderRow(
+                                          c,
+                                          true,
+                                          i,
+                                          sortedChildren.length,
+                                          drag,
+                                          `${rootWbs}.${i + 1}`
+                                        )
                                       }
                                     </SortableChild>
                                   ))}
@@ -3052,7 +3073,30 @@ export default function DevelopmentSchedule({
                               </SortableContext>
                             </DndContext>
                           )}
-                          {renderChildQuickAdd(p)}
+                          {openSubAddFor === p.id ? (
+                            <div className="space-y-1">
+                              {renderChildQuickAdd(p)}
+                              <div className="pl-8">
+                                <button
+                                  type="button"
+                                  onClick={() => setOpenSubAddFor(null)}
+                                  className="text-[10px] text-muted-foreground/70 hover:text-foreground"
+                                >
+                                  Done
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setOpenSubAddFor(p.id)}
+                              className="ml-8 inline-flex items-center gap-1 rounded-md border border-dashed border-border/40 bg-transparent px-2 py-0.5 text-[10px] text-muted-foreground/70 transition-colors hover:border-primary/35 hover:text-foreground"
+                              title="Add a subtask under this phase. For richer mini-schedules tied to a diligence item, open the item drawer instead."
+                            >
+                              <Plus className="h-2.5 w-2.5" />
+                              Add subtask
+                            </button>
+                          )}
                           {sortedChildren.length > 0 && (childBudgetTotal > 0 || plannedTotalDays > 0) && (
                             <div className="flex items-center gap-3 pl-6 text-2xs text-muted-foreground">
                               <span>
