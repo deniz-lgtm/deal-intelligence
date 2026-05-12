@@ -25,7 +25,7 @@ export default function HomePage() {
         const [dealsRes, sigRes, decRes, followRes] = await Promise.all([
           fetch("/api/deals"),
           fetch("/api/deals/phase-signals").catch(() => null),
-          fetch("/api/home/decisions-due").catch(() => null),
+          fetch("/api/home/tasks-due").catch(() => null),
           fetch("/api/contacts/follow-ups").catch(() => null),
         ]);
         const dealsJson = await dealsRes.json();

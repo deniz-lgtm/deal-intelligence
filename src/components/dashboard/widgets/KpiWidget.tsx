@@ -31,7 +31,7 @@ type KpiMetric =
 const METRIC_LABEL: Record<KpiMetric, string> = {
   active_deals: "Active Deals",
   pipeline_value: "Pipeline Value",
-  decisions_due: "Decisions Due",
+  decisions_due: "Tasks Due",
   follow_ups: "Follow-Ups",
   total_units: "Total Units",
   total_sf: "Total SF",

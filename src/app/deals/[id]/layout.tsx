@@ -41,6 +41,7 @@ import {
   Leaf,
   Handshake,
   FileQuestion,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
@@ -89,6 +90,7 @@ const OVERVIEW_NAV_GROUP: NavGroup = {
   label: "Overview",
   items: [
     { href: "", label: "Deal Home", icon: LayoutDashboard },
+    { href: "/tasks", label: "Tasks", icon: ClipboardList },
     { href: "/chat", label: "Assistant", icon: MessageSquare },
   ],
 };
@@ -132,7 +134,6 @@ const DOCS_NAV_GROUP: NavGroup = {
 const TEAM_NAV_GROUP: NavGroup = {
   label: "Team",
   items: [
-    { href: "/decisions", label: "Decisions / RFIs", icon: FileWarning },
     { href: "/communication", label: "Communication", icon: Mailbox },
     { href: "/contacts", label: "Contacts", icon: Users },
     { href: "/deal-log", label: "Deal Log", icon: Activity },
@@ -188,11 +189,11 @@ const MASSING_AWARE_HREFS = new Set([
 // the sidebar around the current workflow.
 const ALWAYS_VISIBLE_HREFS = new Set([
   "",
+  "/tasks",
   "/chat",
   "/underwriting",
   "/schedule",
   "/documents",
-  "/decisions",
 ]);
 
 
