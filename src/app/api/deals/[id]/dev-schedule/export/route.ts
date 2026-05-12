@@ -161,10 +161,18 @@ function excelColor(value: unknown, fallback: string): string {
   return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toUpperCase() : fallback;
 }
 
+// Investment-grade progress bar: full-block / light-shade Unicode
+// characters render as a real bar in any font, and look much closer
+// to the P6 / MS Project look than ASCII hashes. The block characters
+// are kept at 20 cells wide so the bar has visible resolution at the
+// 5% level. Pair with the "Progress" style (Consolas) so columns
+// align across rows.
+const PROGRESS_WIDTH = 20;
 function progressBar(value: number | null | undefined): string {
   const pct = Math.max(0, Math.min(100, Math.round(Number(value ?? 0))));
-  const filled = Math.round(pct / 10);
-  return `[${"#".repeat(filled)}${"-".repeat(10 - filled)}] ${pct}%`;
+  const filled = Math.round((pct / 100) * PROGRESS_WIDTH);
+  const pctLabel = String(pct).padStart(3, " ");
+  return `${"█".repeat(filled)}${"░".repeat(PROGRESS_WIDTH - filled)} ${pctLabel}%`;
 }
 
 function excelDate(value: string | null | undefined): string {
@@ -273,8 +281,46 @@ function buildExcelXml(
     if (counts.open_comment_count === 0) return `${counts.comment_count} resolved`;
     return `${counts.open_comment_count} open / ${counts.comment_count} total`;
   };
+  // Build a phase-id → WBS lookup so the Predecessor cell can render as
+  // "1.2 FS+3" the way P6 does, rather than the bare phase label.
+  const wbsById = new Map<string, string>();
+  const seedWbs = (rows: DevPhase[], prefix = "") => {
+    rows.forEach((r, i) => {
+      const rWbs = prefix ? `${prefix}.${i + 1}` : String(i + 1);
+      wbsById.set(r.id, rWbs);
+      const kids = childrenFor(r.id);
+      kids.forEach((c, j) => wbsById.set(c.id, `${rWbs}.${j + 1}`));
+    });
+  };
+  if (includeTrackSections) {
+    (["acquisition", "development", "construction"] as ScheduleTrack[]).forEach((t, idx) => {
+      const trackRoots = roots.filter((r) => (r.track ?? "development") === t);
+      seedWbs(trackRoots, String(idx + 1));
+    });
+  } else {
+    seedWbs(roots);
+  }
+  const predecessorLabel = (p: DevPhase) => {
+    if (!p.predecessor_id) return "";
+    const pred = byId.get(p.predecessor_id);
+    if (!pred) return "";
+    const wbs = wbsById.get(pred.id) ?? "";
+    const lag = p.lag_days ?? 0;
+    const lagTag = lag === 0 ? "FS" : `FS${lag > 0 ? "+" : ""}${lag}d`;
+    return wbs ? `${wbs} ${lagTag}` : `${pred.label} ${lagTag}`;
+  };
+  const floatLabel = (p: DevPhase) => {
+    if (p.total_slack_days == null) return "";
+    const n = Math.round(Number(p.total_slack_days));
+    if (Number.isNaN(n)) return "";
+    return `${n}d`;
+  };
+
   const rowFor = (p: DevPhase, isChild: boolean, wbs: string) => {
-    const style = isChild ? "Child" : "Phase";
+    // Critical-path tinting overrides the standard Phase / Child styles
+    // so the row stands out on print — P6 convention.
+    const baseStyle = isChild ? "Child" : "Phase";
+    const style = p.is_critical ? `${baseStyle}Critical` : baseStyle;
     const linkedDocCount = Array.isArray(p.linked_document_ids) ? p.linked_document_ids.length : 0;
     return `<Row ss:AutoFitHeight="1">
       ${cell(wbs, style)}
@@ -284,17 +330,20 @@ function buildExcelXml(
       ${cell(excelDate(p.start_date), style)}
       ${cell(excelDate(p.end_date), style)}
       ${numberCell(p.duration_days, style)}
-      ${cell(progressBar(p.pct_complete), style)}
+      ${cell(floatLabel(p), style)}
+      ${cell(p.is_critical ? "★" : "", p.is_critical ? "CriticalMark" : style)}
+      ${cell(progressBar(p.pct_complete), "Progress")}
       ${cell(statusLabel(p.status), statusStyle(p.status))}
       ${cell(p.task_owner || "", style)}
-      ${cell(p.predecessor_id ? byId.get(p.predecessor_id)?.label || "" : "", style)}
+      ${cell(predecessorLabel(p), style)}
+      ${cell(excelDate(p.latest_finish), style)}
       ${moneyCell(p.budget == null ? null : Number(p.budget))}
       ${numberCell(linkedDocCount, style)}
       ${cell(commentLabel(p), style)}
       ${cell(p.notes || "", style)}
     </Row>`;
   };
-  const sectionRow = (label: string) => `<Row ss:Height="22">${cell(label, "TrackSection", "String", 14)}</Row>`;
+  const sectionRow = (label: string) => `<Row ss:Height="22">${cell(label, "TrackSection", "String", 17)}</Row>`;
   const rowsForRoots = (rows: DevPhase[], prefix = "") => rows.flatMap((root, rootIndex) => {
     const rootWbs = String(rootIndex + 1);
     const wbs = prefix ? `${prefix}.${rootWbs}` : rootWbs;
@@ -379,6 +428,10 @@ function buildExcelXml(
   <Style ss:ID="TrackSection"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#${primary}" ss:Pattern="Solid"/></Style>
   <Style ss:ID="Phase"><Font ss:Bold="1" ss:Color="#111827"/><Interior ss:Color="#EAF2F8" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D1D5DB"/></Borders></Style>
   <Style ss:ID="Child"><Font ss:Color="#111827"/><Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E5E7EB"/></Borders></Style>
+  <Style ss:ID="PhaseCritical"><Font ss:Bold="1" ss:Color="#7F1D1D"/><Interior ss:Color="#FEE2E2" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#FCA5A5"/></Borders></Style>
+  <Style ss:ID="ChildCritical"><Font ss:Color="#7F1D1D"/><Interior ss:Color="#FEF2F2" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#FCA5A5"/></Borders></Style>
+  <Style ss:ID="CriticalMark"><Font ss:Bold="1" ss:Color="#B91C1C"/><Interior ss:Color="#FEE2E2" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center"/></Style>
+  <Style ss:ID="Progress"><Font ss:FontName="Consolas" ss:Color="#0F766E"/><Interior ss:Color="#F0FDF4" ss:Pattern="Solid"/><Alignment ss:Horizontal="Left" ss:Vertical="Center"/></Style>
   <Style ss:ID="Body"><Font ss:Color="#111827"/></Style>
   <Style ss:ID="Kpi"><Font ss:Bold="1" ss:Size="14" ss:Color="#111827"/><Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CBD5E1"/></Borders></Style>
   <Style ss:ID="Currency"><Font ss:Color="#111827"/><NumberFormat ss:Format="$#,##0"/></Style>
@@ -412,13 +465,13 @@ function buildExcelXml(
 
  <Worksheet ss:Name="Schedule">
   <Table ss:DefaultRowHeight="18">
-   <Column ss:Width="45"/><Column ss:Width="95"/><Column ss:Width="260"/><Column ss:Width="90"/><Column ss:Width="85"/><Column ss:Width="85"/><Column ss:Width="60"/><Column ss:Width="135"/><Column ss:Width="95"/><Column ss:Width="120"/><Column ss:Width="170"/><Column ss:Width="85"/><Column ss:Width="55"/><Column ss:Width="120"/><Column ss:Width="300"/>
-   <Row ss:Height="32">${cell(reportTitle, "Title", "String", 14)}</Row>
-   <Row>${cell(`${company}${trackLabel ? ` - ${trackLabel}` : ""}`, "Subtitle", "String", 14)}</Row>
-   <Row>${cell(`Exported ${new Date().toLocaleDateString("en-US")} | ${footer}`, "Meta", "String", 14)}</Row>
-   <Row>${cell("WBS", "Header")}${cell("Track", "Header")}${cell("Phase / Task", "Header")}${cell("Type", "Header")}${cell("Start", "Header")}${cell("Finish", "Header")}${cell("Days", "Header")}${cell("Progress", "Header")}${cell("Status", "Header")}${cell("Owner", "Header")}${cell("Predecessor", "Header")}${cell("Budget", "Header")}${cell("Docs", "Header")}${cell("Comments", "Header")}${cell("Notes", "Header")}</Row>
+   <Column ss:Width="45"/><Column ss:Width="95"/><Column ss:Width="260"/><Column ss:Width="80"/><Column ss:Width="85"/><Column ss:Width="85"/><Column ss:Width="55"/><Column ss:Width="55"/><Column ss:Width="40"/><Column ss:Width="200"/><Column ss:Width="95"/><Column ss:Width="120"/><Column ss:Width="140"/><Column ss:Width="85"/><Column ss:Width="85"/><Column ss:Width="50"/><Column ss:Width="120"/><Column ss:Width="280"/>
+   <Row ss:Height="32">${cell(reportTitle, "Title", "String", 17)}</Row>
+   <Row>${cell(`${company}${trackLabel ? ` - ${trackLabel}` : ""}`, "Subtitle", "String", 17)}</Row>
+   <Row>${cell(`Exported ${new Date().toLocaleDateString("en-US")} | ${footer}`, "Meta", "String", 17)}</Row>
+   <Row>${cell("WBS", "Header")}${cell("Track", "Header")}${cell("Phase / Task", "Header")}${cell("Type", "Header")}${cell("Start", "Header")}${cell("Finish", "Header")}${cell("Days", "Header")}${cell("Float", "Header")}${cell("Crit", "Header")}${cell("Progress", "Header")}${cell("Status", "Header")}${cell("Owner", "Header")}${cell("Predecessor", "Header")}${cell("Late Finish", "Header")}${cell("Budget", "Header")}${cell("Docs", "Header")}${cell("Comments", "Header")}${cell("Notes", "Header")}</Row>
    ${scheduleRows.join("\n")}
-   <Row>${cell(footer, "Footer", "String", 14)}</Row>
+   <Row>${cell(footer, "Footer", "String", 17)}</Row>
   </Table>
   <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
    <FreezePanes/><FrozenNoSplit/><SplitHorizontal>4</SplitHorizontal><TopRowBottomPane>4</TopRowBottomPane>
