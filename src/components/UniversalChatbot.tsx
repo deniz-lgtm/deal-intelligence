@@ -816,6 +816,16 @@ function getActionCardConfig(
       undoUrl: dealId && itemId ? `/api/deals/${dealId}/schedule/${itemId}` : null,
     };
   }
+  if (action.type === "schedule_action_failed") {
+    return {
+      title: "Schedule action needs a parent",
+      icon: AlertTriangle,
+      className: "bg-amber-500/10 border-amber-500/20 text-amber-300",
+      href: dealId ? `/deals/${dealId}/schedule` : null,
+      hrefLabel: "Open schedule",
+      undoUrl: null,
+    };
+  }
   if (action.type === "mini_schedule_created") {
     const parentId = action.mini_schedule?.parent_phase_id;
     const ids = action.mini_schedule?.tasks?.map((task) => task.id).filter(Boolean) as string[] | undefined;

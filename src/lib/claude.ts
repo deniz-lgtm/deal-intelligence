@@ -887,6 +887,7 @@ export interface UniversalChatAction {
     | "underwriting_updated"
     | "note_created"
     | "schedule_item_created"
+    | "schedule_action_failed"
     | "mini_schedule_draft"
     | "mini_schedule_created"
     | "checklist_item_created";

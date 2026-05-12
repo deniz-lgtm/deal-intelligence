@@ -329,6 +329,19 @@ export default function DevelopmentSchedule({
   // the schedule once anything is selected.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const selectedRows = useMemo(
+    () => phases.filter((phase) => selectedIds.has(phase.id)),
+    [phases, selectedIds]
+  );
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const validIds = new Set(phases.map((phase) => phase.id));
+      const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [phases]);
   const toggleRowSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -338,6 +351,66 @@ export default function DevelopmentSchedule({
     });
   };
   const clearSelection = () => setSelectedIds(new Set());
+  const selectAllRows = () => setSelectedIds(new Set(phases.map((phase) => phase.id)));
+  const patchSelectedRows = async (
+    buildUpdates: (phase: DevPhase) => Record<string, unknown>,
+    successLabel: string
+  ) => {
+    const rows = selectedRows;
+    if (rows.length === 0 || bulkUpdating) return;
+    setBulkUpdating(true);
+    try {
+      const results = await Promise.all(
+        rows.map(async (phase) => {
+          const res = await fetch(`/api/deals/${dealId}/schedule/${phase.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(buildUpdates(phase)),
+          });
+          if (!res.ok) throw new Error(phase.label);
+          return phase.id;
+        })
+      );
+      clearSelection();
+      await loadAll();
+      toast.success(`${successLabel} for ${results.length} row${results.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      await loadAll();
+      toast.error(err instanceof Error ? `Failed on ${err.message}` : "Bulk update failed");
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
+  const handleBulkStatus = (status: DevPhaseStatus) => {
+    patchSelectedRows(
+      (phase) => ({
+        status,
+        pct_complete:
+          status === "complete"
+            ? 100
+            : status === "not_started"
+              ? 0
+              : status === "in_progress"
+                ? Math.max(Number(phase.pct_complete ?? 0), 25)
+                : phase.pct_complete,
+      }),
+      `Marked ${DEV_PHASE_STATUS_CONFIG[status].label.toLowerCase()}`
+    );
+  };
+  const handleBulkOwner = () => {
+    const owner = window.prompt("Set owner for selected rows:", selectedRows[0]?.task_owner || "");
+    if (owner == null) return;
+    patchSelectedRows(
+      () => ({ task_owner: owner.trim() || null }),
+      owner.trim() ? `Assigned to ${owner.trim()}` : "Cleared owner"
+    );
+  };
+  const handleBulkTrack = (nextTrack: ScheduleTrack) => {
+    patchSelectedRows(
+      () => ({ track: nextTrack }),
+      `Moved to ${SCHEDULE_TRACK_LABELS[nextTrack]}`
+    );
+  };
   const handleBulkDelete = async () => {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
@@ -345,9 +418,10 @@ export default function DevelopmentSchedule({
       return;
     setBulkDeleting(true);
     const results = await Promise.allSettled(
-      ids.map((id) =>
-        fetch(`/api/deals/${dealId}/dev-schedule/${id}`, { method: "DELETE" }),
-      ),
+      ids.map(async (id) => {
+        const res = await fetch(`/api/deals/${dealId}/schedule/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(id);
+      }),
     );
     const failed = results.filter((r) => r.status === "rejected").length;
     setBulkDeleting(false);
@@ -1833,17 +1907,63 @@ export default function DevelopmentSchedule({
                 visible regardless of how far the user has scrolled
                 down the row list. */}
             {selectedIds.size > 0 && (
-              <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-primary/30 bg-primary/[0.06]">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-primary/30 bg-primary/[0.06]">
                 <span className="text-xs tabular-nums">
-                  <span className="font-medium text-foreground">{selectedIds.size}</span>{" "}
+                  <span className="font-medium text-foreground">{selectedRows.length}</span>{" "}
                   <span className="text-muted-foreground">
-                    {selectedIds.size === 1 ? "row" : "rows"} selected
+                    {selectedRows.length === 1 ? "row" : "rows"} selected
                   </span>
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleBulkStatus("in_progress")}
+                    disabled={bulkUpdating || bulkDeleting}
+                    className="h-7 gap-1.5 text-xs"
+                  >
+                    <TrendingUp className="h-3 w-3" />
+                    In Progress
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleBulkStatus("complete")}
+                    disabled={bulkUpdating || bulkDeleting}
+                    className="h-7 gap-1.5 text-xs"
+                  >
+                    <Check className="h-3 w-3" />
+                    Complete
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleBulkOwner}
+                    disabled={bulkUpdating || bulkDeleting}
+                    className="h-7 text-xs"
+                  >
+                    Set owner
+                  </Button>
+                  {isMasterTrack && (
+                    <select
+                      value=""
+                      disabled={bulkUpdating || bulkDeleting}
+                      onChange={(event) => {
+                        const nextTrack = event.target.value as ScheduleTrack;
+                        event.target.value = "";
+                        if (nextTrack) handleBulkTrack(nextTrack);
+                      }}
+                      className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none hover:border-primary/40 disabled:opacity-50"
+                    >
+                      <option value="">Move track...</option>
+                      <option value="acquisition">Acquisition</option>
+                      <option value="development">Development</option>
+                      <option value="construction">Construction</option>
+                    </select>
+                  )}
                   <button
                     onClick={clearSelection}
-                    disabled={bulkDeleting}
+                    disabled={bulkDeleting || bulkUpdating}
                     className="text-xs text-muted-foreground/80 hover:text-foreground transition-colors disabled:opacity-50"
                   >
                     Cancel
@@ -1852,7 +1972,7 @@ export default function DevelopmentSchedule({
                     size="sm"
                     variant="destructive"
                     onClick={handleBulkDelete}
-                    disabled={bulkDeleting}
+                    disabled={bulkDeleting || bulkUpdating}
                     className="gap-1.5 h-7"
                   >
                     {bulkDeleting ? (
@@ -1860,7 +1980,7 @@ export default function DevelopmentSchedule({
                     ) : (
                       <Trash2 className="h-3 w-3" />
                     )}
-                    Delete {selectedIds.size}
+                    Delete {selectedRows.length}
                   </Button>
                 </div>
               </div>
@@ -1872,6 +1992,16 @@ export default function DevelopmentSchedule({
               <Button size="sm" variant="outline" className="text-xs" onClick={() => setPasteOpen(true)}>
                 <ClipboardPaste className="h-3 w-3 mr-1" /> Paste rows
               </Button>
+              {phases.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-xs"
+                  onClick={selectedRows.length === phases.length ? clearSelection : selectAllRows}
+                >
+                  {selectedRows.length === phases.length ? "Clear selection" : "Select all"}
+                </Button>
+              )}
               {/* Always available — the wizard dedupes by phase_key,
                   so a user who seeded "Purchase" only can come back
                   later and layer in "Diligence" or "IC" without

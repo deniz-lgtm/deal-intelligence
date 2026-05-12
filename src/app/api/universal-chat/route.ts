@@ -210,24 +210,51 @@ export async function POST(req: NextRequest) {
           canEditDeal
         ) {
           const item = action.schedule_item;
+          const phases = await devPhaseQueries.getByDealId(dealId);
           let resolvedTrack = item.track || "development";
           let resolvedParentId = item.parent_phase_id ?? null;
+          let parentRequestedButMissing = false;
           if (item.parent_phase_id) {
-            const phases = await devPhaseQueries.getByDealId(dealId);
             const parent = resolveScheduleParent(phases, item.parent_phase_id, item.parent_phase_label);
             if (parent) {
               resolvedTrack = parent.track || resolvedTrack;
               resolvedParentId = parent.id;
             } else {
               resolvedParentId = null;
+              parentRequestedButMissing = true;
             }
           } else if (item.parent_phase_label) {
-            const phases = await devPhaseQueries.getByDealId(dealId);
             const parent = resolveScheduleParent(phases, null, item.parent_phase_label);
             if (parent) {
               resolvedTrack = parent.track || resolvedTrack;
               resolvedParentId = parent.id;
+            } else {
+              parentRequestedButMissing = true;
             }
+          }
+          if (parentRequestedButMissing) {
+            action.display = item.parent_phase_label
+              ? `I couldn't find "${item.parent_phase_label}" in this deal's schedule, so I did not create the item. Open the schedule, pick the parent row, and I can try again.`
+              : "I couldn't find that parent row in this deal's schedule, so I did not create the item.";
+            action.type = "schedule_action_failed";
+            action.schedule_item.id = undefined;
+            continue;
+          }
+          const siblings = phases.filter((phase) =>
+            resolvedParentId ? phase.parent_phase_id === resolvedParentId : !phase.parent_phase_id
+          );
+          const baseSort = siblings.reduce(
+            (max, phase) => Math.max(max, Number(phase.sort_order ?? 0)),
+            siblings.length
+          );
+          const duplicate = siblings.find(
+            (phase) => normalizeScheduleLabel(phase.label) === normalizeScheduleLabel(item.label)
+          );
+          if (duplicate) {
+            action.schedule_item.id = duplicate.id;
+            action.schedule_item.parent_phase_id = resolvedParentId;
+            action.display = `That schedule item already exists: ${duplicate.label}`;
+            continue;
           }
           const itemId = uuidv4();
           await devPhaseQueries.create({
@@ -248,7 +275,7 @@ export async function POST(req: NextRequest) {
             notes: item.notes ?? null,
             status: "not_started",
             pct_complete: 0,
-            sort_order: 0,
+            sort_order: baseSort + 1,
             is_milestone: item.kind === "milestone",
           });
           action.schedule_item.id = itemId;
