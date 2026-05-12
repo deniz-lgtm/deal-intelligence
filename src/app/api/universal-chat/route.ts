@@ -377,8 +377,13 @@ export async function POST(req: NextRequest) {
             notes: action.checklist_item.notes ?? null,
             ai_filled: true,
             source_document_ids: null,
+            source_context: "assistant",
           });
           action.checklist_item.id = checklistId;
+          action.checklist_item.deep_link = `/deals/${dealId}/checklist?item=${checklistId}`;
+          action.display =
+            action.display ??
+            `Created checklist item: ${action.checklist_item.item}`;
         }
       }
     }

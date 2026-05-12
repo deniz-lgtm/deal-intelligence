@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
   Circle,
@@ -76,6 +77,15 @@ export default function DiligenceChecklist({ dealId, phase = "diligence" }: Dili
   const [uploadingFiles, setUploadingFiles] = useState<Record<string, boolean>>({});
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [openItemId, setOpenItemId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+
+  // Deep link support: /deals/[id]/checklist?item=<id> auto-opens the
+  // drawer for that item. Used by the assistant when it creates a new
+  // item so the chat link drops the user straight on it.
+  useEffect(() => {
+    const id = searchParams?.get("item");
+    if (id) setOpenItemId(id);
+  }, [searchParams]);
 
   useEffect(() => {
     loadAll();
