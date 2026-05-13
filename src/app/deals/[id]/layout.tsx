@@ -75,6 +75,10 @@ type NavItem = {
    *  Construction group into pre-con prep vs. operational items without
    *  splitting them into two collapsible groups. */
   dividerAfter?: boolean;
+  /** Key the layout reads a live count from. Currently only `tasks` is
+   *  wired — surfaces the number of open task-shaped rows on this deal
+   *  as a small badge next to the sidebar item. */
+  badgeKey?: "tasks";
 };
 
 type NavGroup = {
@@ -90,7 +94,7 @@ const OVERVIEW_NAV_GROUP: NavGroup = {
   label: "Overview",
   items: [
     { href: "", label: "Deal Home", icon: LayoutDashboard },
-    { href: "/tasks", label: "Tasks", icon: ClipboardList },
+    { href: "/tasks", label: "Tasks", icon: ClipboardList, badgeKey: "tasks" },
     { href: "/chat", label: "Assistant", icon: MessageSquare },
   ],
 };
@@ -406,6 +410,26 @@ export default function DealLayout({
       .catch(console.error);
   }, [params.id]);
 
+  // Live count of open task-shaped rows on this deal — surfaced as a
+  // badge on the Tasks sidebar item. Refreshes whenever the user
+  // navigates within the deal so creates/completes elsewhere reflect.
+  const [openTaskCount, setOpenTaskCount] = useState<number>(0);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/deals/${params.id}/unified-tasks?kind=task,diligence,decision,general`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (cancelled || !Array.isArray(j?.data)) return;
+        setOpenTaskCount(
+          (j.data as { status: string }[]).filter((t) => t.status !== "complete").length,
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, pathname]);
+
   const basePath = `/deals/${params.id}`;
   const currentStage = deriveDealStage(deal?.status, deal?.execution_phase);
 
@@ -639,12 +663,13 @@ export default function DealLayout({
 
                   const linkTitle = sidebarCollapsed ? item.label : undefined;
 
+                  const badgeCount = item.badgeKey === "tasks" ? openTaskCount : 0;
                   return (
                     <div key={item.href}>
                       <Link href={fullPath} title={linkTitle}>
                         <button
                           className={cn(
-                            "w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
+                            "relative w-full flex items-center gap-2.5 px-2.5 py-2 text-xs font-medium rounded-md transition-all duration-150",
                             // Center icons only on desktop-collapsed; mobile
                             // drawer is always w-56 so labels stay inline.
                             sidebarCollapsed && "md:justify-center",
@@ -654,9 +679,24 @@ export default function DealLayout({
                           )}
                         >
                           <Icon className="h-4 w-4 flex-shrink-0" />
-                          <span className={cn("truncate", sidebarCollapsed && "md:hidden")}>
+                          {sidebarCollapsed && badgeCount > 0 && (
+                            <span className="absolute right-1 top-1 hidden h-1.5 w-1.5 rounded-full bg-primary md:block" />
+                          )}
+                          <span className={cn("truncate flex-1 text-left", sidebarCollapsed && "md:hidden")}>
                             {item.label}
                           </span>
+                          {!sidebarCollapsed && badgeCount > 0 && (
+                            <span
+                              className={cn(
+                                "min-w-[18px] rounded-full px-1.5 py-0.5 text-center text-[9px] font-semibold",
+                                isActive
+                                  ? "bg-primary-foreground/20 text-primary-foreground"
+                                  : "bg-primary/20 text-primary",
+                              )}
+                            >
+                              {badgeCount > 99 ? "99+" : badgeCount}
+                            </span>
+                          )}
                         </button>
                       </Link>
                       {item.dividerAfter && (
