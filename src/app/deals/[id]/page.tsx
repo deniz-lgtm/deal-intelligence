@@ -876,84 +876,7 @@ export default function DealOverviewPage({
 
       <ScheduleContinuityPanel dealId={params.id} phases={devPhases} />
 
-      <DecisionsOpenItemsPanel
-        dealId={params.id}
-        openDecisions={openDecisions}
-        decisionNotes={decisionNotes}
-        openQuestions={openQuestions}
-        ownerTasks={openOwnerTasks}
-      />
-
-      {/* Documents & Intelligence (collapsible). Surfaces source docs and
-          generated outputs in a compact bar so they're one click away
-          without taking over the page. */}
-      <div className="border border-border/40 rounded-lg bg-card/40 overflow-hidden">
-        <button
-          onClick={() => setMaterialsOpen((o) => !o)}
-          className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted/20 transition-colors text-left"
-        >
-          {materialsOpen ? (
-            <ChevronDown className="h-3 w-3 text-muted-foreground/60 shrink-0" />
-          ) : (
-            <ChevronRight className="h-3 w-3 text-muted-foreground/60 shrink-0" />
-          )}
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Documents & intelligence
-          </span>
-          {!materialsOpen && (
-            <span className="text-[11px] text-muted-foreground/80 truncate">
-              Docs · OM · Diligence Summary · IC Package · Share Room
-            </span>
-          )}
-        </button>
-        {materialsOpen && (
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2 p-2 border-t border-border/40">
-            {[
-              {
-                href: `/deals/${params.id}/documents`,
-                icon: <FileText className="h-4 w-4 text-sky-400" />,
-                label: "Documents",
-                status: `${documents.length} source${documents.length === 1 ? "" : "s"}`,
-              },
-              {
-                href: `/deals/${params.id}/om-analysis`,
-                icon: <Sparkles className="h-4 w-4 text-orange-400" />,
-                label: "OM Review",
-                status: "High-level analysis",
-              },
-              {
-                href: `/deals/${params.id}/dd-abstract`,
-                icon: <ScrollText className="h-4 w-4 text-amber-400" />,
-                label: "Diligence Summary",
-                status: "Open to view",
-              },
-              {
-                href: `/deals/${params.id}/investment-package`,
-                icon: <Presentation className="h-4 w-4 text-blue-400" />,
-                label: "IC Package",
-                status: "Open to view",
-              },
-              {
-                href: `/deals/${params.id}/room`,
-                icon: <Share2 className="h-4 w-4 text-emerald-400" />,
-                label: "Share Room",
-                status: "Share externally",
-              },
-            ].map((m) => (
-              <Link key={m.href} href={m.href}>
-                <div className="flex items-center gap-2 p-2 rounded-md border border-border/40 bg-card hover:bg-muted/20 transition-colors">
-                  <div className="shrink-0">{m.icon}</div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium truncate">{m.label}</p>
-                    <p className="text-2xs text-muted-foreground truncate">{m.status}</p>
-                  </div>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground/50 shrink-0" />
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </div>
+      <OpenTasksPreview dealId={params.id} />
 
       <section className="rounded-xl border border-border/60 bg-card/60 shadow-card overflow-hidden">
         <button
@@ -1233,77 +1156,6 @@ export default function DealOverviewPage({
             </div>
           </div>
 
-          {/* Diligence Progress — per-category breakdown. Hidden once the
-              deal closes since diligence is an acquisition workstream. */}
-          {showAcqCards && (
-          <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
-              <div className="flex items-center gap-2.5">
-                <h3 className="font-display text-sm">Diligence</h3>
-                <span className="text-2xs font-bold tabular-nums px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  {progressPct}%
-                </span>
-              </div>
-              <Link href={`/deals/${params.id}/checklist`}>
-                <Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">
-                  Checklist <ArrowRight className="h-3 w-3" />
-                </Button>
-              </Link>
-            </div>
-            <div className="px-4 pt-3 pb-1">
-              <Progress value={progressPct} className="h-1.5" />
-              <div className="flex gap-3 mt-1.5 mb-3 text-2xs text-muted-foreground">
-                <span className="text-emerald-400 font-medium">{checklistComplete} complete</span>
-                <span>{checklistTotal - checklistComplete - checklistIssues - checklistNA} pending</span>
-                {checklistIssues > 0 && <span className="text-red-400 font-medium">{checklistIssues} issues</span>}
-                {checklistNA > 0 && <span>{checklistNA} n/a</span>}
-              </div>
-            </div>
-            {Object.keys(checklistByCategory).length > 0 ? (
-              <div className="px-4 pb-4 space-y-2">
-                {Object.entries(checklistByCategory)
-                  .sort(([, a], [, b]) => {
-                    const aPct = a.total > 0 ? a.complete / a.total : 0;
-                    const bPct = b.total > 0 ? b.complete / b.total : 0;
-                    return aPct - bPct;
-                  })
-                  .map(([cat, stats]) => {
-                    const catPct = stats.total > 0 ? Math.round((stats.complete / stats.total) * 100) : 0;
-                    return (
-                      <div key={cat}>
-                        <div className="flex items-center justify-between mb-0.5">
-                          <span className="text-xs font-medium truncate">{titleCase(cat)}</span>
-                          <span className="text-2xs text-muted-foreground tabular-nums ml-2 shrink-0">
-                            {stats.complete}/{stats.total}
-                            {stats.issues > 0 && (
-                              <span className="text-red-400 ml-1">({stats.issues}⚠)</span>
-                            )}
-                          </span>
-                        </div>
-                        <div className="h-1.5 bg-muted/50 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all duration-500 ${
-                              stats.issues > 0
-                                ? "bg-gradient-to-r from-red-500/80 to-red-400/60"
-                                : catPct === 100
-                                ? "bg-gradient-to-r from-emerald-500 to-emerald-400"
-                                : "gradient-gold"
-                            }`}
-                            style={{ width: `${catPct}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-            ) : (
-              <div className="px-4 pb-4 text-center">
-                <p className="text-2xs text-muted-foreground">No checklist items yet</p>
-              </div>
-            )}
-          </div>
-          )}
-
           {/* Development Milestones — next three upcoming Dev-track phases
               by earliest_start, with a critical-path tag. Shows up once
               the owner toggles Dev on via the header badge. */}
@@ -1441,112 +1293,12 @@ export default function DealOverviewPage({
           </div>
           )}
 
-          {/* Documents Summary — kept as the footer card so analysts can
-              jump into the file library from the overview regardless of
-              which phase is active. */}
-          <Link href={`/deals/${params.id}/documents`} className="block">
-            <div className="border border-border/60 rounded-xl p-4 bg-card shadow-card hover:bg-muted/20 transition-colors">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-display text-sm">Documents</h3>
-                <span className="text-xs font-bold tabular-nums">{documents.length}</span>
-              </div>
-              {documents.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {Object.entries(docsByCategory).map(([cat, count]) => (
-                    <span key={cat} className="text-2xs px-2 py-0.5 rounded-md bg-muted/50 text-muted-foreground border border-border/30">
-                      {titleCase(cat)} <span className="font-semibold tabular-nums">{count}</span>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-2xs text-muted-foreground">No documents uploaded yet</p>
-              )}
-            </div>
-          </Link>
-
         </div>
       </div>
           </div>
         )}
       </section>
 
-      {/* Core work areas: keep the overview oriented around the few places
-          a deal team actually needs to go every day. */}
-      <section className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-border/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <Compass className="h-4 w-4 text-primary" />
-              <h2 className="font-display text-sm">Work Areas</h2>
-            </div>
-            <p className="mt-1 text-2xs text-muted-foreground">
-              Four places to do the work. The assistant ties them together.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Link href="#decisions-open-items">
-              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-2xs">
-                <CheckCircle2 className="h-3 w-3" />
-                Decisions
-              </Button>
-            </Link>
-            <Link href={`/deals/${params.id}/chat`}>
-              <Button size="sm" className="h-7 gap-1.5 text-2xs">
-                <MessageSquare className="h-3 w-3" />
-                Assistant
-              </Button>
-            </Link>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-px bg-border/60 md:grid-cols-2 xl:grid-cols-4">
-          {[
-            {
-              href: `/deals/${params.id}/underwriting`,
-              icon: <Calculator className="h-4 w-4 text-emerald-400" />,
-              label: "Underwrite",
-              description: "Returns, rents, financing, sensitivities.",
-              meta: deal.asking_price ? formatCurrency(deal.asking_price) : "Model inputs",
-            },
-            {
-              href: `/deals/${params.id}/schedule`,
-              icon: <Calendar className="h-4 w-4 text-primary" />,
-              label: "Schedule",
-              description: "Source of truth for deadlines and handoffs.",
-              meta: `${devPhases.filter((p) => p.status !== "complete").length} open items`,
-            },
-            {
-              href: `/deals/${params.id}/project/design`,
-              icon: <Building2 className="h-4 w-4 text-sky-400" />,
-              label: "Design",
-              description: "Programming, plan checks, design coordination.",
-              meta: deal.deal_scope ? DEAL_SCOPE_LABELS[deal.deal_scope] : "Project scope",
-            },
-            {
-              href: `/deals/${params.id}/documents`,
-              icon: <FileText className="h-4 w-4 text-amber-400" />,
-              label: "Documents",
-              description: "Source files, diligence, reports, rooms.",
-              meta: `${documents.length} file${documents.length === 1 ? "" : "s"}`,
-            },
-          ].map((area) => (
-            <Link key={area.href} href={area.href} className="group bg-card p-4 transition-colors hover:bg-muted/25">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    {area.icon}
-                    <h3 className="text-sm font-semibold">{area.label}</h3>
-                  </div>
-                  <p className="mt-2 text-xs leading-5 text-muted-foreground">{area.description}</p>
-                  <p className="mt-3 text-2xs font-medium uppercase tracking-[0.12em] text-muted-foreground/80">
-                    {area.meta}
-                  </p>
-                </div>
-                <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
@@ -1826,114 +1578,93 @@ function ScheduleContinuityPanel({
   );
 }
 
-function DecisionsOpenItemsPanel({
-  dealId,
-  openDecisions,
-  decisionNotes,
-  openQuestions,
-  ownerTasks,
-}: {
-  dealId: string;
-  openDecisions: DealDecision[];
-  decisionNotes: DealNote[];
-  openQuestions: DealQuestion[];
-  ownerTasks: DevPhase[];
-}) {
-  const assistantPrompt = "Review this deal's decisions, open questions, schedule owners, and playbook guidance. What should we decide next, who owns it, and what should become a schedule item?";
-  const hasItems = openDecisions.length > 0 || decisionNotes.length > 0 || openQuestions.length > 0 || ownerTasks.length > 0;
+// Slim preview of the deal's open tasks — replaces the old Decisions &
+// Open Items panel now that decisions live as tasks on /tasks?kind=decision.
+// Fetches the unified tasks feed directly so the home page doesn't have
+// to thread a fresh prop down from the parent.
+function OpenTasksPreview({ dealId }: { dealId: string }) {
+  const [tasks, setTasks] = useState<DevPhase[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/deals/${dealId}/unified-tasks?kind=task,diligence,decision,general`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (cancelled) return;
+        const list = Array.isArray(j?.data) ? (j.data as DevPhase[]).filter((t) => t.status !== "complete") : [];
+        setTasks(list);
+      })
+      .catch(() => {})
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [dealId]);
+
+  const sorted = tasks
+    .slice()
+    .sort((a, b) => {
+      const aDue = a.end_date ? new Date(a.end_date).getTime() : Infinity;
+      const bDue = b.end_date ? new Date(b.end_date).getTime() : Infinity;
+      return aDue - bDue;
+    })
+    .slice(0, 6);
 
   return (
-    <section id="decisions-open-items" className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
-      <div className="flex flex-col gap-3 border-b border-border/40 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            <h2 className="font-display text-sm">Decisions & Open Items</h2>
-          </div>
-          <p className="mt-1 text-2xs text-muted-foreground">
-            The lightweight handoff layer: what was decided, what is unresolved, and who owns the next move.
-          </p>
+    <section className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-border/40 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+          <h2 className="font-display text-sm">Open Tasks</h2>
+          <span className="text-2xs font-bold tabular-nums px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+            {tasks.length}
+          </span>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link href={`/deals/${dealId}/chat?prompt=${encodeURIComponent(assistantPrompt)}`}>
-            <Button size="sm" variant="outline" className="h-7 gap-1.5 text-2xs">
-              <MessageSquare className="h-3 w-3" />
-              Ask assistant
-            </Button>
-          </Link>
-          <Link href={`/notes?deal=${dealId}`}>
-            <Button size="sm" variant="ghost" className="h-7 gap-1.5 text-2xs">
-              <FileText className="h-3 w-3" />
-              Notes
-            </Button>
-          </Link>
-        </div>
+        <Link href={`/deals/${dealId}/tasks`}>
+          <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-2xs">
+            All tasks <ArrowRight className="h-3 w-3" />
+          </Button>
+        </Link>
       </div>
-
-      {!hasItems ? (
-        <div className="px-4 py-5 text-xs leading-5 text-muted-foreground">
-          No decisions or owner-tagged open items yet. Use the assistant to turn meeting notes, design comments, and underwriting concerns into tracked follow-ups.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-px bg-border/60 lg:grid-cols-3">
-          <DecisionColumn title="Decisions / Notes" emptyText="No decision notes yet.">
-            {openDecisions.slice(0, 4).map((decision) => (
-              <Link key={decision.id} href={`/deals/${dealId}/decisions`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
-                <p className="line-clamp-2 text-xs font-medium leading-5">{decision.title}</p>
-                <p className="mt-1 text-2xs text-muted-foreground">
-                  {decision.category ? `${titleCase(decision.category)} - ` : ""}
-                  {decision.due_date ? `Due ${formatShortDate(decision.due_date)}` : titleCase(decision.status)}
-                </p>
-              </Link>
-            ))}
-            {decisionNotes.slice(0, 4).map((note) => (
-              <Link key={note.id} href={`/notes?deal=${dealId}`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
-                <p className="line-clamp-3 text-xs font-medium leading-5">{note.text}</p>
-                <p className="mt-1 text-2xs text-muted-foreground">{titleCase(note.category)} · {relativeTime(note.created_at)}</p>
-              </Link>
-            ))}
-          </DecisionColumn>
-          <DecisionColumn title="Questions" emptyText="No open questions.">
-            {openQuestions.slice(0, 4).map((question) => (
-              <Link key={question.id} href={`/deals/${dealId}/communication`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
-                <p className="line-clamp-2 text-xs font-medium leading-5">{question.question}</p>
-                <p className="mt-1 text-2xs text-muted-foreground">
-                  {STAKEHOLDER_LABELS[question.target_role] || titleCase(question.target_role)} · {titleCase(question.status)}
-                </p>
-              </Link>
-            ))}
-          </DecisionColumn>
-          <DecisionColumn title="Owned Schedule Items" emptyText="No owner-tagged schedule items.">
-            {ownerTasks.slice(0, 4).map((task) => (
-              <Link key={task.id} href={`/deals/${dealId}/schedule/focus/${task.parent_phase_id || task.id}`} className="block rounded-lg border border-border/50 bg-background/50 p-2.5 transition-colors hover:bg-muted/30">
-                <p className="line-clamp-2 text-xs font-medium leading-5">{task.label}</p>
-                <p className="mt-1 text-2xs text-muted-foreground">
-                  {task.task_owner || "No owner"} · {titleCase(task.track || "development")}
-                </p>
-              </Link>
-            ))}
-          </DecisionColumn>
-        </div>
-      )}
+      <div className="px-4 py-3">
+        {loading ? (
+          <p className="text-2xs text-muted-foreground">Loading…</p>
+        ) : sorted.length === 0 ? (
+          <p className="text-2xs text-muted-foreground">
+            No open tasks. Create one on the Tasks tab to capture diligence items, open decisions,
+            or ad-hoc work.
+          </p>
+        ) : (
+          <ul className="grid grid-cols-1 gap-1.5 md:grid-cols-2">
+            {sorted.map((t) => {
+              const overdue = t.end_date != null && new Date(t.end_date) < new Date(new Date().toDateString());
+              return (
+                <li key={t.id}>
+                  <Link
+                    href={`/deals/${dealId}/tasks`}
+                    className="flex items-start justify-between gap-2 rounded-md border border-border/40 bg-background/40 px-2.5 py-1.5 transition-colors hover:bg-muted/30"
+                  >
+                    <div className="min-w-0">
+                      <p className="line-clamp-1 text-xs font-medium">{t.label}</p>
+                      <p className="mt-0.5 text-2xs text-muted-foreground">
+                        {t.kind ? titleCase(t.kind) : "General"}
+                        {t.end_date && (
+                          <span className={cn("ml-2", overdue && "text-rose-400 font-medium")}>
+                            {overdue ? "Overdue · " : "Due "}
+                            {formatShortDate(t.end_date)}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </section>
-  );
-}
-
-function DecisionColumn({
-  title,
-  emptyText,
-  children,
-}: {
-  title: string;
-  emptyText: string;
-  children: ReactNode;
-}) {
-  const hasChildren = Array.isArray(children) ? children.length > 0 : Boolean(children);
-  return (
-    <div className="bg-card p-4">
-      <h3 className="mb-3 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{title}</h3>
-      {hasChildren ? <div className="space-y-2">{children}</div> : <p className="text-xs leading-5 text-muted-foreground">{emptyText}</p>}
-    </div>
   );
 }
 
