@@ -24,6 +24,7 @@ interface GridProps {
   isResizable?: boolean;
   draggableCancel?: string;
   compactType?: "vertical" | "horizontal" | null;
+  preventCollision?: boolean;
   className?: string;
   children?: React.ReactNode;
 }
@@ -247,7 +248,12 @@ export function DashboardGrid({ data }: DashboardGridProps) {
           isDraggable={editMode}
           isResizable={editMode}
           draggableCancel=".widget-no-drag"
-          compactType="vertical"
+          // Freeform placement: widgets stay exactly where the user drops
+          // them — no automatic compaction, no neighbors getting pushed
+          // out of the way during drag/resize. This matches the "place
+          // and size to your liking" workflow.
+          compactType={null}
+          preventCollision={true}
         >
           {state.widgets.map((instance) => {
             const def = WIDGETS[instance.type];
