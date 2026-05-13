@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import type { WidgetDefinition, WidgetRenderProps } from "./types";
 import { KpiWidget, KpiConfig } from "./widgets/KpiWidget";
 import { ChartWidget, ChartConfig } from "./widgets/ChartWidget";
@@ -7,6 +8,13 @@ import { PhaseKanbanWidget } from "./widgets/PhaseKanbanWidget";
 import { TasksDueWidget } from "./widgets/TasksDueWidget";
 import { UpcomingScheduleWidget } from "./widgets/UpcomingScheduleWidget";
 import { RecentActivityWidget } from "./widgets/RecentActivityWidget";
+
+// Leaflet pulls `window` at import time, so the map widget is loaded
+// client-side only. The surrounding widget tile reserves its own height,
+// so no explicit loading fallback is needed.
+const DealMapWidget = dynamic(() => import("./widgets/DealMapWidget").then((m) => m.DealMapWidget), {
+  ssr: false,
+});
 
 export const WIDGETS: Record<string, WidgetDefinition> = {
   kpi: {
@@ -56,6 +64,14 @@ export const WIDGETS: Record<string, WidgetDefinition> = {
     category: "list",
     defaultSize: { w: 4, h: 8, minW: 3, minH: 5 },
     render: () => <RecentActivityWidget />,
+  },
+  deal_map: {
+    type: "deal_map",
+    label: "Deal Locations",
+    description: "Map of every deal with geocoded coordinates, colored by phase family.",
+    category: "list",
+    defaultSize: { w: 6, h: 10, minW: 4, minH: 6 },
+    render: (p) => <DealMapWidget {...p} />,
   },
 };
 
