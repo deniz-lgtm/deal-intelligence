@@ -141,25 +141,20 @@ const TEAM_NAV_GROUP: NavGroup = {
   ],
 };
 
-// Construction now contains both pre-con prep and operational items.
-// Pre-con (bids, VE, constructability, long-lead, buyout) is one item
-// — it lands on /pre-construction/bids and the sub-tabs live inside
-// that layout. The divider then separates pre-con from operational
-// construction below.
+// Construction collapses the prior 11-item operational group down to
+// five: Pre-Construction, Dashboard, Schedule, Closeout, Reports. The
+// Hard Costs / Draws / Permits / Vendors / Change Orders / RFIs pages
+// stay reachable from the Construction Dashboard's Quick Links card —
+// they're per-section deep dives that don't need to live in the daily
+// sidebar.
 const EXECUTION_NAV_GROUP: NavGroup = {
   label: "Execution",
   items: [
     { href: "/pre-construction/bids", label: "Pre-Construction", icon: Handshake, dividerAfter: true },
     { href: "/construction", label: "Dashboard", icon: HardHat },
     { href: "/construction/schedule", label: "Construction Schedule", icon: CalendarDays },
-    { href: "/construction/budget", label: "Hard Costs", icon: DollarSign },
-    { href: "/construction/draws", label: "Draws", icon: Wallet },
-    { href: "/construction/permits", label: "Permits", icon: FileCheck },
-    { href: "/construction/vendors", label: "Vendors", icon: Users },
-    { href: "/construction/change-orders", label: "Change Orders", icon: FileWarning },
-    { href: "/construction/rfis", label: "RFIs", icon: FileQuestion },
     { href: "/construction/closeout", label: "Closeout", icon: ClipboardCheck },
-    { href: "/construction/reports", label: "Reports", icon: ClipboardCheck },
+    { href: "/construction/reports", label: "Reports", icon: ClipboardList },
   ],
 };
 

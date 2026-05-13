@@ -15,6 +15,8 @@ import {
   ArrowUpRight,
   ClipboardCheck,
   FileWarning,
+  FileQuestion,
+  ClipboardList,
   Camera,
   Sparkles,
   Calendar,
@@ -342,8 +344,10 @@ export default function ConstructionDashboard({ params }: { params: { id: string
                 { href: `${basePath}/draws`, label: "Draws", icon: Wallet, color: "text-blue-400 bg-blue-500/10" },
                 { href: `${basePath}/permits`, label: "Permits", icon: FileCheck, color: "text-amber-400 bg-amber-500/10" },
                 { href: `${basePath}/vendors`, label: "Vendors", icon: Users, color: "text-cyan-400 bg-cyan-500/10" },
-                { href: `${basePath}/reports`, label: "Reports", icon: ClipboardCheck, color: "text-purple-400 bg-purple-500/10" },
                 { href: `${basePath}/change-orders`, label: "Change Orders", icon: FileWarning, color: "text-orange-400 bg-orange-500/10" },
+                { href: `${basePath}/rfis`, label: "RFIs", icon: FileQuestion, color: "text-rose-400 bg-rose-500/10" },
+                { href: `${basePath}/closeout`, label: "Closeout", icon: ClipboardList, color: "text-violet-400 bg-violet-500/10" },
+                { href: `${basePath}/reports`, label: "Reports", icon: ClipboardCheck, color: "text-purple-400 bg-purple-500/10" },
               ].map((link) => {
                 const Icon = link.icon;
                 return (
