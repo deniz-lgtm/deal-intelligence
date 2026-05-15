@@ -1558,7 +1558,7 @@ function parseDocumentReviewNote(note: DealNote) {
         .slice(questionIndex + 1)
         .filter((line) => line.startsWith("- "))
         .map((line) => line.replace(/^-\s*/, ""))
-        .slice(0, 2)
+        .slice(0, 3)
     : [];
 
   return { title, bottom, questions };
@@ -1573,11 +1573,42 @@ function DocumentReviewsPanel({
   reviews: DealNote[];
   documents: Document[];
 }) {
+  const [taskState, setTaskState] = useState<Record<string, "saving" | "saved">>({});
   const latestDocument = [...documents].sort((a, b) => {
     const aTime = new Date(a.uploaded_at || 0).getTime();
     const bTime = new Date(b.uploaded_at || 0).getTime();
     return bTime - aTime;
   })[0];
+
+  async function createTaskFromQuestion(question: string, reviewTitle: string) {
+    const key = `${reviewTitle}:${question}`;
+    setTaskState((prev) => ({ ...prev, [key]: "saving" }));
+    try {
+      const res = await fetch(`/api/deals/${dealId}/unified-tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: question,
+          kind: "diligence",
+          priority: "normal",
+          status: "not_started",
+          task_category: "document_review",
+          notes: `Created from document review: ${reviewTitle}`,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Could not create task");
+      setTaskState((prev) => ({ ...prev, [key]: "saved" }));
+      toast.success("Task created");
+    } catch (error) {
+      setTaskState((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      toast.error(error instanceof Error ? error.message : "Could not create task");
+    }
+  }
 
   return (
     <section className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
@@ -1627,10 +1658,9 @@ function DocumentReviewsPanel({
           {reviews.map((note) => {
             const parsed = parseDocumentReviewNote(note);
             return (
-              <Link
+              <article
                 key={note.id}
-                href={`/notes?deal=${dealId}`}
-                className="bg-card p-4 transition-colors hover:bg-muted/25"
+                className="bg-card p-4"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -1645,17 +1675,48 @@ function DocumentReviewsPanel({
                         </p>
                         <ul className="mt-1 space-y-1">
                           {parsed.questions.map((question, index) => (
-                            <li key={index} className="line-clamp-2 text-2xs leading-4 text-amber-100/90">
-                              {question}
+                            <li key={index} className="flex items-start justify-between gap-2 text-2xs leading-4 text-amber-100/90">
+                              <span className="line-clamp-2 min-w-0">{question}</span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={taskState[`${parsed.title}:${question}`] === "saving" || taskState[`${parsed.title}:${question}`] === "saved"}
+                                onClick={() => createTaskFromQuestion(question, parsed.title)}
+                                className="h-6 shrink-0 gap-1 border-amber-500/30 bg-background/50 px-2 text-[10px] text-amber-100 hover:bg-amber-500/10"
+                              >
+                                {taskState[`${parsed.title}:${question}`] === "saving" ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : taskState[`${parsed.title}:${question}`] === "saved" ? (
+                                  <CheckCircle2 className="h-3 w-3" />
+                                ) : (
+                                  <ArrowRight className="h-3 w-3" />
+                                )}
+                                {taskState[`${parsed.title}:${question}`] === "saved" ? "Task" : "Add task"}
+                              </Button>
                             </li>
                           ))}
                         </ul>
                       </div>
                     )}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Link href={`/notes?deal=${dealId}`}>
+                        <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-0 text-2xs text-muted-foreground hover:text-foreground">
+                          Full review
+                          <ArrowRight className="h-3 w-3" />
+                        </Button>
+                      </Link>
+                      <Link href={`/deals/${dealId}/tasks`}>
+                        <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-0 text-2xs text-muted-foreground hover:text-foreground">
+                          Tasks
+                          <ArrowRight className="h-3 w-3" />
+                        </Button>
+                      </Link>
+                    </div>
                   </div>
                   <span className="shrink-0 text-2xs text-muted-foreground">{relativeTime(note.created_at)}</span>
                 </div>
-              </Link>
+              </article>
             );
           })}
         </div>

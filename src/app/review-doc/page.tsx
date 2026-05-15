@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -456,12 +457,43 @@ function ReviewCard({
   onApplyCategory: (docId: string, category: string) => void;
 }) {
   const review = row.review;
+  const [taskState, setTaskState] = useState<Record<string, "saving" | "saved">>({});
   const suggestedCategory = review?.filing_suggestion.category as DocumentCategory | undefined;
   const currentCategory = row.doc.category as DocumentCategory;
   const canApplyCategory =
     suggestedCategory &&
     suggestedCategory !== currentCategory &&
     Boolean(DOCUMENT_CATEGORIES[suggestedCategory]);
+
+  async function createTaskFromQuestion(question: string) {
+    const key = question;
+    setTaskState((prev) => ({ ...prev, [key]: "saving" }));
+    try {
+      const res = await fetch(`/api/deals/${dealId}/unified-tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: question,
+          kind: "diligence",
+          priority: "normal",
+          status: "not_started",
+          task_category: "document_review",
+          notes: `Created from document review: ${row.doc.original_name || row.doc.name}`,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Could not create task");
+      setTaskState((prev) => ({ ...prev, [key]: "saved" }));
+      toast.success("Task created");
+    } catch (error) {
+      setTaskState((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      toast.error(error instanceof Error ? error.message : "Could not create task");
+    }
+  }
 
   return (
     <article className="rounded-xl border border-border/60 bg-card shadow-card">
@@ -524,7 +556,29 @@ function ReviewCard({
 
           <div className="grid gap-3 lg:grid-cols-2">
             <ListBlock title="Key points" items={review.key_points} />
-            <ListBlock title="Questions to ask" items={review.questions_to_ask} />
+            <ListBlock
+              title="Questions to ask"
+              items={review.questions_to_ask}
+              renderAction={(question) => (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={taskState[question] === "saving" || taskState[question] === "saved"}
+                  onClick={() => createTaskFromQuestion(question)}
+                  className="h-6 shrink-0 gap-1 px-2 text-[10px]"
+                >
+                  {taskState[question] === "saving" ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : taskState[question] === "saved" ? (
+                    <CheckCircle2 className="h-3 w-3" />
+                  ) : (
+                    <Plus className="h-3 w-3" />
+                  )}
+                  {taskState[question] === "saved" ? "Task" : "Add task"}
+                </Button>
+              )}
+            />
             <ListBlock title="Red flags" items={review.red_flags} tone="warning" />
             <ListBlock title="Missing items" items={review.missing_items} />
           </div>
@@ -591,10 +645,12 @@ function ListBlock({
   title,
   items,
   tone = "default",
+  renderAction,
 }: {
   title: string;
   items: string[];
   tone?: "default" | "warning";
+  renderAction?: (item: string) => ReactNode;
 }) {
   return (
     <div className="rounded-lg border border-border/50 bg-background/40 p-3">
@@ -608,9 +664,10 @@ function ListBlock({
           {items.map((item, index) => (
             <li
               key={`${title}-${index}`}
-              className={`text-xs leading-5 ${tone === "warning" ? "text-amber-200" : "text-muted-foreground"}`}
+              className={`flex items-start justify-between gap-2 text-xs leading-5 ${tone === "warning" ? "text-amber-200" : "text-muted-foreground"}`}
             >
-              {item}
+              <span>{item}</span>
+              {renderAction?.(item)}
             </li>
           ))}
         </ul>
