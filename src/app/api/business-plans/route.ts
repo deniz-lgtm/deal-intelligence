@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { businessPlanQueries } from "@/lib/db";
-import { requireAuth, requirePermission, syncCurrentUser } from "@/lib/auth";
+import { requireAuth, syncCurrentUser } from "@/lib/auth";
 
 // Opt out of static analysis at `next build`. Routes that call requireAuth()
 // hit Clerk's auth() which reads headers(), which fails Next.js's static-page
@@ -8,8 +8,9 @@ import { requireAuth, requirePermission, syncCurrentUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const { userId, errorResponse } = await requirePermission("business_plans.access");
+  const { userId, errorResponse } = await requireAuth();
   if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
 
   try {
     const plans = await businessPlanQueries.getAll(userId);
@@ -22,8 +23,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { userId, errorResponse } = await requirePermission("business_plans.access");
+  const { userId, errorResponse } = await requireAuth();
   if (errorResponse) return errorResponse;
+  await syncCurrentUser(userId);
 
   try {
     const body = await req.json();
