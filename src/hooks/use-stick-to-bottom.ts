@@ -80,7 +80,9 @@ export function useStickToBottom(
     if (!stickRef.current) return;
     // Instant scroll — smooth animations from prior chunks would still be
     // running on the next chunk and fight any user gesture mid-flight.
-    sentinelRef.current?.scrollIntoView({ block: "end" });
+    const container = sentinelRef.current?.parentElement;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 }
