@@ -46,6 +46,13 @@ type ReviewedDoc = {
   saved_note_id?: string | null;
 };
 
+type PlaybookDocument = {
+  id: string;
+  title: string;
+  category: string;
+  chunk_count: number;
+};
+
 const REVIEW_PRESETS = [
   {
     label: "Prelim site plan",
@@ -80,6 +87,8 @@ export default function ReviewDocPage() {
   const [focus, setFocus] = useState(
     "Review for scope gaps, red flags, missing questions, and a concise email response."
   );
+  const [reviewFrameworks, setReviewFrameworks] = useState<PlaybookDocument[]>([]);
+  const [selectedFrameworkId, setSelectedFrameworkId] = useState("");
   const [uploading, setUploading] = useState(false);
   const [reviewedDocs, setReviewedDocs] = useState<ReviewedDoc[]>([]);
   const [updatingCategory, setUpdatingCategory] = useState<string | null>(null);
@@ -106,6 +115,27 @@ export default function ReviewDocPage() {
       cancelled = true;
     };
   }, [selectedDealId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFrameworks() {
+      try {
+        const res = await fetch("/api/playbook/documents");
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) return;
+        const rows = ((json.data || []) as PlaybookDocument[]).filter((doc) =>
+          ["review_framework", "design_standard", "handbook"].includes(doc.category)
+        );
+        if (!cancelled) setReviewFrameworks(rows);
+      } catch {
+        // Review frameworks are optional; document review still works without them.
+      }
+    }
+    loadFrameworks();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selectedDeal = deals.find((deal) => deal.id === selectedDealId) || null;
   const visibleDeals = useMemo(() => {
@@ -187,7 +217,7 @@ export default function ReviewDocPage() {
           const reviewRes = await fetch(`/api/documents/${doc.id}/review`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ focus }),
+            body: JSON.stringify({ focus, review_playbook_id: selectedFrameworkId || undefined }),
           });
           const reviewJson = await reviewRes.json().catch(() => ({}));
           if (!reviewRes.ok) throw new Error(reviewJson.error || "Review failed");
@@ -389,6 +419,26 @@ export default function ReviewDocPage() {
                 <label className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
                   Review focus
                 </label>
+                <div className="mt-2 grid gap-2 md:grid-cols-[1fr_auto]">
+                  <select
+                    value={selectedFrameworkId}
+                    onChange={(event) => setSelectedFrameworkId(event.target.value)}
+                    className="min-w-0 rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-xs outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+                  >
+                    <option value="">No saved review framework</option>
+                    {reviewFrameworks.map((framework) => (
+                      <option key={framework.id} value={framework.id}>
+                        {framework.title} ({framework.category.replace(/_/g, " ")})
+                      </option>
+                    ))}
+                  </select>
+                  <Button asChild variant="outline" size="sm" className="gap-1.5">
+                    <Link href="/playbook">
+                      Add framework
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                </div>
                 <textarea
                   value={focus}
                   onChange={(event) => setFocus(event.target.value)}

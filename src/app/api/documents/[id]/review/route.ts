@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { dealNoteQueries, documentQueries } from "@/lib/db";
+import { dealNoteQueries, documentQueries, playbookQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
 import { getActiveModel } from "@/lib/claude";
 import { DOCUMENT_CATEGORIES, type DocumentCategory } from "@/lib/types";
@@ -145,6 +145,13 @@ export async function POST(
     const focus = typeof body.focus === "string" && body.focus.trim()
       ? body.focus.trim().slice(0, 500)
       : "Review this as my personal real estate development associate before I respond or file it.";
+    const reviewPlaybookId = typeof body.review_playbook_id === "string" ? body.review_playbook_id : "";
+    const reviewPlaybook = reviewPlaybookId
+      ? await playbookQueries.getDocumentById(reviewPlaybookId).catch(() => null)
+      : null;
+    const reviewPlaybookText = reviewPlaybook?.content_text
+      ? reviewPlaybook.content_text.slice(0, 16000)
+      : "";
     const category = String(doc.category || "other") as DocumentCategory;
     const content = typeof doc.content_text === "string" && doc.content_text.trim()
       ? doc.content_text.slice(0, 18000)
@@ -185,6 +192,12 @@ Keep lists short. If you do not know, say so plainly. Do not invent facts.`,
 Document name: ${doc.original_name || doc.name || "Untitled"}
 Current category: ${DOCUMENT_CATEGORIES[category]?.label || category}
 Existing summary: ${summary || "None"}
+${reviewPlaybookText ? `
+Selected review framework: ${reviewPlaybook?.title || "Review framework"}
+Use this framework as the primary review lens. Do not mention every item; surface only what matters for this document and phase.
+
+${reviewPlaybookText}
+` : ""}
 
 Document text:
 ${content}`,

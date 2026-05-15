@@ -35,6 +35,7 @@ const CATEGORIES = [
   { value: "underwriting", label: "Underwriting" },
   { value: "construction", label: "Construction" },
   { value: "entitlement", label: "Entitlement" },
+  { value: "review_framework", label: "Review framework" },
   { value: "template", label: "Template" },
   { value: "other", label: "Other" },
 ];
@@ -56,6 +57,7 @@ export default function PlaybookPage() {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("handbook");
   const [file, setFile] = useState<File | null>(null);
+  const [pastedContent, setPastedContent] = useState("");
   const [assistantPrompt, setAssistantPrompt] = useState<string | null>(null);
 
   useSetPageContext(
@@ -103,16 +105,17 @@ export default function PlaybookPage() {
 
   const uploadDocument = async (event: FormEvent) => {
     event.preventDefault();
-    if (!file) return;
+    if (!file && !pastedContent.trim()) return;
     setUploading(true);
     setError(null);
     setNotice(null);
 
     try {
       const form = new FormData();
-      form.append("file", file);
+      if (file) form.append("file", file);
       form.append("title", title);
       form.append("category", category);
+      form.append("content_text", pastedContent);
       const res = await fetch("/api/playbook/documents", { method: "POST", body: form });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Upload failed");
@@ -120,6 +123,7 @@ export default function PlaybookPage() {
       setTitle("");
       setCategory("handbook");
       setFile(null);
+      setPastedContent("");
       const input = document.getElementById("playbook-file") as HTMLInputElement | null;
       if (input) input.value = "";
       setNotice("Source indexed into the Playbook.");
@@ -157,10 +161,10 @@ export default function PlaybookPage() {
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 <BookOpen className="h-4 w-4 text-primary" />
-                <h1 className="font-nameplate text-xl leading-none tracking-tight">Development Playbook</h1>
+                <h1 className="font-nameplate text-xl leading-none tracking-tight">Playbook Repository</h1>
               </div>
               <p className="mt-1 text-xs text-muted-foreground truncate">
-                Institutional memory for underwriting, design, entitlement, and construction decisions.
+                Store handbooks, lessons learned, and reusable review frameworks for the assistant.
               </p>
             </div>
             <div className="hidden sm:flex items-center gap-4 text-xs text-muted-foreground">
@@ -190,7 +194,7 @@ export default function PlaybookPage() {
                 <div>
                   <h2 className="text-base font-semibold">Add source material</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Upload PDFs, Markdown, or text files. Good first candidates are your handbook, DD checklist, basis notes, and design standards.
+                    Upload a file or paste a repeatable review framework. Review frameworks can be selected in Review Doc.
                   </p>
                 </div>
 
@@ -230,9 +234,20 @@ export default function PlaybookPage() {
                   />
                 </label>
 
-                <Button type="submit" disabled={!file || uploading} className="w-full gap-2">
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">Paste framework or notes</span>
+                  <textarea
+                    value={pastedContent}
+                    onChange={(e) => setPastedContent(e.target.value)}
+                    rows={8}
+                    placeholder="Paste a Claude/Codex skill, checklist, review standard, or lessons learned note..."
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+                  />
+                </label>
+
+                <Button type="submit" disabled={(!file && !pastedContent.trim()) || uploading} className="w-full gap-2">
                   {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                  {uploading ? "Indexing" : "Upload to Playbook"}
+                  {uploading ? "Indexing" : "Save to Playbook"}
                 </Button>
               </form>
 
@@ -245,7 +260,7 @@ export default function PlaybookPage() {
                     ))
                   ) : documents.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
-                      No playbook sources yet. Add your handbook to give the assistant a real house view.
+                      No sources yet. Add a handbook or paste a review framework to give the assistant a real house view.
                     </p>
                   ) : (
                     documents.map((doc) => (
