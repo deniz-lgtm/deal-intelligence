@@ -54,6 +54,7 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     items: [
       { href: "/playbook", label: "Playbook", icon: BookOpen },
       { href: "/floor-plans", label: "Design Scratchpad", icon: Compass },
+      { href: "/business-plans", label: "Business Plans", icon: BookOpen },
     ],
   },
 ];
