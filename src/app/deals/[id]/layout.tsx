@@ -48,7 +48,6 @@ import { DEAL_STAGE_LABELS, EXECUTION_PHASE_CONFIG } from "@/lib/types";
 import type { DealStatus, DealScope, ExecutionPhase } from "@/lib/types";
 import { useAuth } from "@clerk/nextjs";
 import ShareDealDialog from "@/components/ShareDealDialog";
-import { StageStepper } from "@/components/deals/StageStepper";
 import { deriveDealStage, isStageAllowed } from "@/lib/deal-stage";
 import { usePermissions } from "@/lib/usePermissions";
 
@@ -86,28 +85,24 @@ type NavGroup = {
   items: NavItem[];
 };
 
-// Deal-level navigation is organized around the few places people work:
-// understand the deal, schedule it, document it, coordinate it, and
-// execute it. Existing routes stay intact; the sidebar gives them a
-// calmer workflow model.
+// Deal-level navigation is intentionally narrow. The app is moving back
+// toward a personal deal assistant: review the material, underwrite the
+// BOE, capture follow-ups, and draft the memo. Legacy project-management
+// surfaces still exist behind "More tools" where needed.
 const OVERVIEW_NAV_GROUP: NavGroup = {
-  label: "Overview",
+  label: "Deal",
   items: [
-    { href: "", label: "Deal Home", icon: LayoutDashboard },
-    { href: "/tasks", label: "Tasks", icon: ClipboardList, badgeKey: "tasks" },
+    { href: "", label: "Workspace", icon: LayoutDashboard },
     { href: "/chat", label: "Assistant", icon: MessageSquare },
+    { href: "/tasks", label: "Follow-ups", icon: ClipboardList, badgeKey: "tasks" },
   ],
 };
 
-// Analysis (formerly Feasibility) collapses Site Plan / Zoning / Location /
-// Site Walk / Photos into a single "Site" hub entry that lands on a card
-// directory. Underwriting and Comps stay top-level because they're the
-// daily analytical surfaces.
 const ANALYSIS_NAV_GROUP: NavGroup = {
-  label: "Analysis",
+  label: "Analyze",
   items: [
-    { href: "/underwriting", label: "Underwriting", icon: Calculator },
-    { href: "/site", label: "Site", icon: Layers },
+    { href: "/underwriting", label: "BOE", icon: Calculator },
+    { href: "/site", label: "Site Review", icon: FileSearch },
     { href: "/comps", label: "Comps", icon: BarChart3 },
   ],
 };
@@ -129,19 +124,18 @@ const DEVELOPMENT_SCHEDULE_ITEMS: NavItem[] = [
 // Output Library / Share Room), and Photos (kept top-level because it's
 // part of the daily walking-the-site flow).
 const DOCS_NAV_GROUP: NavGroup = {
-  label: "Docs",
+  label: "Materials",
   items: [
     { href: "/documents", label: "Documents", icon: FileText },
-    { href: "/outputs", label: "Outputs", icon: FolderArchive },
+    { href: "/investment-package", label: "Memo", icon: Presentation },
   ],
 };
 
-const TEAM_NAV_GROUP: NavGroup = {
-  label: "Team",
+const ADVANCED_NAV_GROUP: NavGroup = {
+  label: "Advanced",
   items: [
-    { href: "/communication", label: "Communication", icon: Mailbox },
+    { href: "/schedule", label: "Schedule", icon: Flag },
     { href: "/contacts", label: "Contacts", icon: Users },
-    { href: "/deal-log", label: "Deal Log", icon: Activity },
   ],
 };
 
@@ -163,12 +157,11 @@ const EXECUTION_NAV_GROUP: NavGroup = {
 };
 
 const NAV_GROUP_ORDER = new Map<string, number>([
-  ["Overview", 1],
-  ["Analysis", 2],
-  ["Schedule", 3],
-  ["Docs", 4],
-  ["Team", 5],
-  ["Execution", 6],
+  ["Deal", 1],
+  ["Analyze", 2],
+  ["Materials", 3],
+  ["Advanced", 4],
+  ["Execution", 5],
 ]);
 
 // Massing-aware routes read the active project from `?massing=<id>`.
@@ -249,22 +242,26 @@ function getNavGroups(
       ...(showDevelopmentSchedule ? DEVELOPMENT_SCHEDULE_ITEMS : []),
     ],
   };
-  const base = (() => {
-    const groups = [
-      OVERVIEW_NAV_GROUP,
-      ANALYSIS_NAV_GROUP,
-      scheduleGroup,
-      DOCS_NAV_GROUP,
-      TEAM_NAV_GROUP,
-    ];
-    if (showConstructionGroup) groups.push(EXECUTION_NAV_GROUP);
-    return groups;
-  })();
+  const base: NavGroup[] = [
+    OVERVIEW_NAV_GROUP,
+    ANALYSIS_NAV_GROUP,
+    DOCS_NAV_GROUP,
+    ADVANCED_NAV_GROUP,
+  ];
+  if (showAllExecutionTools(showConstructionGroup, forceExecutionGroup)) {
+    base.push(EXECUTION_NAV_GROUP);
+  }
   return applyScopeGating(base, dealScope, showInDevelopment).sort((a, b) => {
     const aOrder = a.label ? NAV_GROUP_ORDER.get(a.label) ?? 99 : 0;
     const bOrder = b.label ? NAV_GROUP_ORDER.get(b.label) ?? 99 : 0;
     return aOrder - bOrder;
   });
+}
+
+function showAllExecutionTools(showConstructionGroup: boolean, forceExecutionGroup: boolean) {
+  // Construction pages are still available, but they should not dominate
+  // a front-end deal review unless the user is already inside that flow.
+  return showConstructionGroup && forceExecutionGroup;
 }
 
 // Hub-page parents recognise their sub-routes as "active" too. Without
@@ -571,8 +568,6 @@ export default function DealLayout({
 
       </header>
 
-      {deal && <StageStepper current={currentStage} basePath={basePath} />}
-
       <div className="flex-1 flex min-h-0">
         {/* Mobile drawer backdrop — visible only when the drawer is open
             on a narrow viewport. Tapping it closes the drawer. */}
@@ -630,11 +625,11 @@ export default function DealLayout({
                       // Phase groups pick up their accent tint (same
                       // mechanism used by AppShell); all other labels
                       // stay on the neutral muted scale.
-                      group.label === "Overview" && "text-primary/80 hover:text-primary",
-                      group.label === "Feasibility" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
+                      group.label === "Deal" && "text-primary/80 hover:text-primary",
+                      group.label === "Analyze" && "text-[hsl(var(--phase-acq))]/80 hover:text-[hsl(var(--phase-acq))]",
                       group.label === "Schedule" && "text-[hsl(var(--phase-dev))]/80 hover:text-[hsl(var(--phase-dev))]",
                       group.label === "Execution" && "text-[hsl(var(--phase-con))]/80 hover:text-[hsl(var(--phase-con))]",
-                      !["Overview", "Feasibility", "Schedule", "Execution"].includes(group.label) &&
+                      !["Deal", "Analyze", "Schedule", "Execution"].includes(group.label) &&
                         "text-muted-foreground/60 hover:text-muted-foreground",
                       sidebarCollapsed && "md:hidden"
                     )}

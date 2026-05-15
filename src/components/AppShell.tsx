@@ -34,15 +34,15 @@ interface NavItem {
 
 const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
-    label: "Deal desk",
+    label: "Work",
     items: [
       { href: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" },
-      { href: "/", label: "Deals", icon: Home },
-      { href: "/review-doc", label: "Review Doc", icon: FileSearch },
+      { href: "/", label: "Deal Desk", icon: Home },
+      { href: "/review-doc", label: "Doc Review", icon: FileSearch },
     ],
   },
   {
-    label: "Underwrite",
+    label: "Analyze",
     items: [
       { href: "/deals/new", label: "New BOE", icon: Calculator, permission: "deals.create" },
       { href: "/comps-library", label: "Comps", icon: BarChart3 },
@@ -50,11 +50,10 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     ],
   },
   {
-    label: "Reference",
+    label: "Library",
     items: [
-      { href: "/playbook", label: "Playbook", icon: BookOpen },
+      { href: "/playbook", label: "Playbooks", icon: BookOpen },
       { href: "/floor-plans", label: "Design Scratchpad", icon: Compass },
-      { href: "/business-plans", label: "Business Plans", icon: BookOpen },
     ],
   },
 ];

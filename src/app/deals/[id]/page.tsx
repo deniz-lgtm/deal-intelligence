@@ -56,7 +56,6 @@ import {
 import { QuantScoreCard } from "@/components/QuantScoreCard";
 import DealNotes from "@/components/DealNotes";
 import { PhasePinControl } from "@/components/deals/PhasePinControl";
-import { DealBrief } from "@/components/deals/brief/DealBrief";
 import { classifyDealPhase } from "@/lib/phase-classification";
 import { formatCurrency, formatNumber, titleCase, cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
@@ -70,7 +69,6 @@ import {
   INVESTMENT_THESIS_LABELS,
   DEAL_SCOPE_LABELS,
   EXECUTION_PHASE_CONFIG,
-  STAKEHOLDER_LABELS,
 } from "@/lib/types";
 import type { DealScope } from "@/lib/types";
 import { calc, getDefaultsForPropertyType, type UWData } from "@/lib/underwriting-calc";
@@ -88,6 +86,14 @@ const STATUS_BADGE_VARIANT: Record<DealStatus, "default" | "secondary" | "destru
   archived: "outline",
 };
 
+type DealNote = {
+  id: string;
+  text: string;
+  category: string;
+  source?: string | null;
+  created_at: string;
+};
+
 type ActivityEvent = {
   type: string;
   description: string;
@@ -99,14 +105,6 @@ type CommandCenterItem = {
   meta: string;
   href: string;
   tone?: "default" | "warning" | "danger" | "success";
-};
-
-type DealNote = {
-  id: string;
-  text: string;
-  category: string;
-  source?: string | null;
-  created_at: string;
 };
 
 type DealDecision = {
@@ -159,7 +157,6 @@ export default function DealOverviewPage({
   const [editFields, setEditFields] = useState<{ year_built: number | null; land_acres: number | null; investment_strategy: string | null; deal_scope: DealScope | null }>({ year_built: null, land_acres: null, investment_strategy: null, deal_scope: null });
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  const [recentActivity, setRecentActivity] = useState<ActivityEvent[]>([]);
   // Dev/Con schedule rows feed the per-phase progress strip. Fetched
   // separately so the overview can render ACQ progress immediately
   // without waiting on the schedule query.
@@ -200,12 +197,10 @@ export default function DealOverviewPage({
       fetch("/api/business-plans").then((r) => r.json()),
       fetch(`/api/deals/${params.id}/photos`).then((r) => r.json()),
       fetch(`/api/underwriting?deal_id=${params.id}`).then((r) => r.json()),
-      fetch(`/api/deals/${params.id}/activity`).then((r) => r.json()).catch(() => ({ events: [] })),
       fetch(`/api/deals/${params.id}/questions`).then((r) => r.json()).catch(() => ({ data: [] })),
       fetch(`/api/deals/${params.id}/notes`).then((r) => r.json()).catch(() => ({ data: [] })),
       fetch(`/api/deals/${params.id}/decisions`).then((r) => r.json()).catch(() => ({ data: [] })),
-    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, activityRes, questionsRes, notesRes, decisionsRes]) => {
-      setRecentActivity(((activityRes.events || []) as ActivityEvent[]).slice(0, 5));
+    ]).then(async ([dealRes, docsRes, checklistRes, plansRes, photosRes, uwRes, questionsRes, notesRes, decisionsRes]) => {
       const d = dealRes.data;
       setDeal(d);
       setDocuments(docsRes.data || []);
@@ -319,20 +314,6 @@ export default function DealOverviewPage({
   const checklistNA = checklist.filter((i) => i.status === "na").length;
   const progressPct = checklistTotal > 0 ? Math.round((checklistComplete / checklistTotal) * 100) : 0;
 
-  const checklistByCategory = checklist.reduce<Record<string, { total: number; complete: number; issues: number; na: number }>>((acc, item) => {
-    if (!acc[item.category]) acc[item.category] = { total: 0, complete: 0, issues: 0, na: 0 };
-    acc[item.category].total++;
-    if (item.status === "complete") acc[item.category].complete++;
-    if (item.status === "issue") acc[item.category].issues++;
-    if (item.status === "na") acc[item.category].na++;
-    return acc;
-  }, {});
-
-  const docsByCategory = documents.reduce<Record<string, number>>((acc, d) => {
-    acc[d.category] = (acc[d.category] || 0) + 1;
-    return acc;
-  }, {});
-
   const currentPipelineIdx = DEAL_PIPELINE.indexOf(deal.status);
   const isDead = deal.status === "dead";
   const isArchived = deal.status === "archived";
@@ -348,8 +329,11 @@ export default function DealOverviewPage({
   // the overview can focus on execution work.
   const { phases: activePhases } = classifyDealPhase(deal);
   const showAcqCards = activePhases.includes("acquisition") && deal.status !== "closed";
-  const showDevCards = deal.show_in_development === true;
-  const showConCards = deal.show_in_construction === true;
+  // The old role-specific right-rail cards made the deal home feel like
+  // a project-management console. Keep those routes alive, but let the
+  // personal workspace, doc reviews, and follow-ups own the overview.
+  const showDevCards = false;
+  const showConCards = false;
 
   // Next 3 upcoming Dev / Con phases by earliest_start — feeds the two
   // new phase-conditional cards. Completed phases are excluded; rows
@@ -378,28 +362,6 @@ export default function DealOverviewPage({
 
   // Compute financial highlights from underwriting data
   const highlights = computeHighlights(underwriting, deal);
-  const upcomingScheduleItems = devPhases
-    .filter((p) => (p.pct_complete ?? 0) < 100)
-    .sort((a, b) => {
-      const aDate = a.earliest_start || a.start_date;
-      const bDate = b.earliest_start || b.start_date;
-      if (!aDate && !bDate) return 0;
-      if (!aDate) return 1;
-      if (!bDate) return -1;
-      return aDate.localeCompare(bDate);
-    })
-    .slice(0, 4);
-  const scheduleHrefForItem = (item: DevPhase) => {
-    const track = item.track ?? "development";
-    const focusId = item.parent_phase_id || item.id;
-    const hasMiniSchedule = devPhases.some((phase) => phase.parent_phase_id === focusId);
-    if (item.parent_phase_id || hasMiniSchedule) {
-      return `/deals/${params.id}/schedule/focus/${focusId}`;
-    }
-    if (track === "acquisition") return `/deals/${params.id}/schedule/acquisition`;
-    if (track === "construction") return `/deals/${params.id}/construction/schedule`;
-    return `/deals/${params.id}/project`;
-  };
   const openDecisions = decisions
     .filter((decision) => !["resolved", "closed"].includes(decision.status))
     .sort((a, b) => {
@@ -410,115 +372,9 @@ export default function DealOverviewPage({
       if (bDue) return 1;
       return new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime();
     });
-  const overdueDecisions = openDecisions.filter((decision) => isPastDate(decision.due_date));
-  const pendingChecklistItems = checklist
-    .filter((item) => item.status === "pending")
-    .slice(0, 4);
-  const issueChecklistItems = checklist
-    .filter((item) => item.status === "issue")
-    .slice(0, 4);
-  const openQuestions = questions
-    .filter((question) => question.status === "open" || question.status === "asked")
-    .sort((a, b) => {
-      const statusA = a.status === "asked" ? 0 : 1;
-      const statusB = b.status === "asked" ? 0 : 1;
-      if (statusA !== statusB) return statusA - statusB;
-      return new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime();
-    })
-    .slice(0, 4);
-  const nextFocusItems: CommandCenterItem[] = [
-    ...upcomingScheduleItems.slice(0, 3).map((item) => ({
-      title: item.label,
-      meta: `${titleCase(item.track || "development")} schedule${item.earliest_start || item.start_date ? ` - ${formatShortDate(item.earliest_start || item.start_date)}` : " - unscheduled"}`,
-      href: scheduleHrefForItem(item),
-      tone: item.is_critical ? "danger" as const : "default" as const,
-    })),
-    ...openDecisions.slice(0, 3).map((decision) => ({
-      title: decision.title,
-      meta: `${decision.category ? `${titleCase(decision.category)} - ` : ""}${decision.due_date ? `Due ${formatShortDate(decision.due_date)}` : "Decision / RFI open"}`,
-      href: `/deals/${params.id}/decisions`,
-      tone: isPastDate(decision.due_date) ? "warning" as const : "default" as const,
-    })),
-    ...openQuestions.map((question) => ({
-      title: question.question,
-      meta: `${question.status === "asked" ? "Awaiting answer from" : "Open question for"} ${STAKEHOLDER_LABELS[question.target_role] || titleCase(question.target_role)}`,
-      href: `/deals/${params.id}/communication`,
-      tone: question.status === "asked" ? "warning" as const : "default" as const,
-    })),
-    ...pendingChecklistItems.map((item) => ({
-      title: item.item,
-      meta: `${titleCase(item.category)} diligence`,
-      href: `/deals/${params.id}/checklist`,
-      tone: "default" as const,
-    })),
-  ].slice(0, 5);
-  const watchoutItems: CommandCenterItem[] = [
-    ...overdueDecisions.slice(0, 2).map((decision) => ({
-      title: decision.title,
-      meta: `Decision/RFI overdue${decision.due_date ? ` since ${formatShortDate(decision.due_date)}` : ""}`,
-      href: `/deals/${params.id}/decisions`,
-      tone: "danger" as const,
-    })),
-    ...issueChecklistItems.map((item) => ({
-      title: item.item,
-      meta: `${titleCase(item.category)} flagged`,
-      href: `/deals/${params.id}/checklist`,
-      tone: "danger" as const,
-    })),
-    ...(!businessPlan
-      ? [{
-          title: "No business plan linked",
-          meta: "Tie the deal back to the investment thesis",
-          href: `/deals/${params.id}`,
-          tone: "warning" as const,
-        }]
-      : []),
-    ...(!highlights
-      ? [{
-          title: "Underwriting snapshot missing",
-          meta: "Add or refresh the model before IC work",
-          href: `/deals/${params.id}/underwriting`,
-          tone: "warning" as const,
-        }]
-      : []),
-    ...(documents.length === 0
-      ? [{
-          title: "No source documents uploaded",
-          meta: "Upload OM, rent roll, survey, plans, or reports",
-          href: `/deals/${params.id}/documents`,
-          tone: "warning" as const,
-        }]
-      : []),
-    ...(devPhases.length === 0
-      ? [{
-          title: "Schedule has not been seeded",
-          meta: "Create the deal timeline before handoffs start",
-          href: `/deals/${params.id}/schedule`,
-          tone: "warning" as const,
-        }]
-      : []),
-  ].slice(0, 4);
-  const recommendedAction =
-    watchoutItems[0] ||
-    nextFocusItems[0] ||
-    ({
-      title: "Ask the deal what needs attention",
-      meta: "Use the assistant to turn the current context into a next step",
-      href: `/deals/${params.id}/chat`,
-      tone: "success" as const,
-    });
   const playbookQuestion = buildDealPlaybookQuestion(deal, businessPlan);
-  const decisionNotes = notes
-    .filter((note) => {
-      const text = note.text.toLowerCase();
-      return note.category === "review" || /\b(decision|decide|approved|approval|selected|confirmed|open item|follow[- ]?up)\b/.test(text);
-    })
-    .slice(0, 4);
   const documentReviewNotes = notes
     .filter((note) => note.source === "document_review")
-    .slice(0, 4);
-  const openOwnerTasks = devPhases
-    .filter((phase) => phase.status !== "complete" && (phase.task_owner || phase.notes))
     .slice(0, 4);
   const addressString = [deal.address, deal.city, deal.state, deal.zip].filter(Boolean).join(", ");
   const hasAddress = !!(deal.address || deal.city);
@@ -627,12 +483,6 @@ export default function DealOverviewPage({
           )}
         </DialogContent>
       </Dialog>
-
-      {/* ═══ DEAL BRIEF — the daily canvas for this deal ═══
-          Read-only summary of thesis, headline metrics, open decisions,
-          pinned people, and risks. Everything below this is the legacy
-          deal home which will be progressively migrated in. */}
-      {deal && <DealBrief deal={deal} />}
 
       {/* ═══ HERO: Photo + Deal Info + Pipeline ═══ */}
       <div className="relative rounded-2xl overflow-hidden border border-border/60 shadow-card z-0">
@@ -1113,8 +963,7 @@ export default function DealOverviewPage({
               right column so the metrics below always read against it. */}
           <div className="border border-border/60 rounded-xl bg-card shadow-card overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
-              <h3 className="font-display text-sm">Business Plan</h3>
-              <Link href="/business-plans"><Button variant="ghost" size="sm" className="text-2xs gap-1 h-6">Manage <ArrowRight className="h-3 w-3" /></Button></Link>
+              <h3 className="font-display text-sm">Strategy / Thesis</h3>
             </div>
             <div className="p-4">
               <select value={selectedPlanId} onChange={(e) => {
@@ -1123,11 +972,11 @@ export default function DealOverviewPage({
                 setBusinessPlan(planId ? allPlans.find((p) => p.id === planId) || null : null);
                 setChangingPlan(true);
                 fetch(`/api/deals/${params.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ business_plan_id: planId }) })
-                  .then(r => r.json()).then(json => { if (json.data) { setDeal(json.data as Deal); toast.success(planId ? "Business plan linked" : "Business plan removed"); } else { setSelectedPlanId(deal.business_plan_id || ""); toast.error("Failed to update"); } })
+                  .then(r => r.json()).then(json => { if (json.data) { setDeal(json.data as Deal); toast.success(planId ? "Strategy linked" : "Strategy removed"); } else { setSelectedPlanId(deal.business_plan_id || ""); toast.error("Failed to update"); } })
                   .catch(() => { setSelectedPlanId(deal.business_plan_id || ""); toast.error("Failed to update"); })
                   .finally(() => setChangingPlan(false));
               }} disabled={changingPlan} className="w-full text-xs border border-border rounded-lg px-2.5 py-1.5 bg-background outline-none focus:ring-1 focus:ring-ring mb-2">
-                <option value="">No business plan</option>
+                <option value="">No strategy linked</option>
                 {allPlans.map((p) => <option key={p.id} value={p.id}>{p.name}{p.is_default ? " (Default)" : ""}</option>)}
               </select>
               {businessPlan && (
