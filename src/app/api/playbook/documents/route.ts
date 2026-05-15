@@ -34,12 +34,13 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null;
     const title = String(formData.get("title") || "").trim();
     const category = String(formData.get("category") || "handbook").trim() || "handbook";
+    const pastedContent = String(formData.get("content_text") || "").trim();
 
-    if (!file) {
-      return NextResponse.json({ error: "file is required" }, { status: 400 });
+    if (!file && !pastedContent) {
+      return NextResponse.json({ error: "file or pasted content is required" }, { status: 400 });
     }
 
-    if (file.size > MAX_PLAYBOOK_UPLOAD_BYTES) {
+    if (file && file.size > MAX_PLAYBOOK_UPLOAD_BYTES) {
       return NextResponse.json(
         {
           error: `"${file.name}" is ${formatMB(file.size)}. Playbook uploads are capped at ${formatMB(MAX_PLAYBOOK_UPLOAD_BYTES)}.`,
@@ -48,12 +49,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const contentText = await extractPlaybookText(
-      buffer,
-      file.type || "application/octet-stream",
-      file.name
-    );
+    const contentText = file
+      ? await extractPlaybookText(
+          Buffer.from(await file.arrayBuffer()),
+          file.type || "application/octet-stream",
+          file.name
+        )
+      : pastedContent;
     const chunks = buildPlaybookChunks(contentText);
 
     if (chunks.length === 0) {
@@ -67,11 +69,11 @@ export async function POST(req: NextRequest) {
     const document = await playbookQueries.createDocumentWithChunks(
       {
         id: documentId,
-        title: title || file.name.replace(/\.[^.]+$/, ""),
+        title: title || file?.name.replace(/\.[^.]+$/, "") || "Untitled playbook",
         category,
-        original_name: file.name,
-        mime_type: file.type || "application/octet-stream",
-        file_size: file.size,
+        original_name: file?.name || `${title || "pasted-playbook"}.md`,
+        mime_type: file?.type || "text/markdown",
+        file_size: file?.size || Buffer.byteLength(contentText, "utf8"),
         content_text: contentText,
         uploaded_by: userId,
       },

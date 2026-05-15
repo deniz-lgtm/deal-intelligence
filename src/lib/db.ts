@@ -4543,6 +4543,21 @@ export const playbookQueries = {
     return res.rows;
   },
 
+  getDocumentById: async (id: string): Promise<PlaybookDocumentRow | null> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT
+        d.*,
+        COUNT(c.id)::int AS chunk_count
+       FROM playbook_documents d
+       LEFT JOIN playbook_chunks c ON c.document_id = d.id
+       WHERE d.id = $1
+       GROUP BY d.id`,
+      [id]
+    );
+    return res.rows[0] ?? null;
+  },
+
   deleteDocument: async (id: string): Promise<boolean> => {
     const pool = getPool();
     const res = await pool.query("DELETE FROM playbook_documents WHERE id = $1", [id]);

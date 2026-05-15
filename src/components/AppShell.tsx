@@ -6,14 +6,16 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   BookOpen,
+  Calculator,
+  Compass,
   Home,
   Inbox,
   Kanban,
-  LayoutDashboard,
+  FileSearch,
   PanelLeftClose,
   PanelLeftOpen,
   Shield,
-  Users,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
@@ -32,24 +34,26 @@ interface NavItem {
 
 const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
-    label: "Command",
+    label: "Deal desk",
     items: [
-      { href: "/", label: "Deal Pipeline", icon: Home },
       { href: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" },
+      { href: "/", label: "Deals", icon: Home },
+      { href: "/review-doc", label: "Review Doc", icon: FileSearch },
     ],
   },
   {
-    label: "Knowledge + Design",
+    label: "Underwrite",
+    items: [
+      { href: "/deals/new", label: "New BOE", icon: Calculator, permission: "deals.create" },
+      { href: "/comps-library", label: "Comps", icon: BarChart3 },
+      { href: "/assumptions", label: "Assumptions", icon: SlidersHorizontal },
+    ],
+  },
+  {
+    label: "Reference",
     items: [
       { href: "/playbook", label: "Playbook", icon: BookOpen },
-      { href: "/floor-plans", label: "Floor Plans", icon: LayoutDashboard },
-      { href: "/comps-library", label: "Comps Library", icon: BarChart3 },
-    ],
-  },
-  {
-    label: "Network",
-    items: [
-      { href: "/contacts", label: "Contacts", icon: Users, permission: "contacts.access" },
+      { href: "/floor-plans", label: "Design Scratchpad", icon: Compass },
       { href: "/business-plans", label: "Business Plans", icon: BookOpen },
     ],
   },
@@ -166,7 +170,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="flex h-14 items-center justify-between border-b border-border/30 px-3">
           {!collapsed && (
-            <Link href="/" className="flex min-w-0 items-center gap-2">
+            <Link href="/inbox" className="flex min-w-0 items-center gap-2">
               <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md gradient-gold">
                 <Kanban className="h-3.5 w-3.5 text-primary-foreground" />
               </span>
