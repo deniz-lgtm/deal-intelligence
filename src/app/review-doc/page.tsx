@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  Copy,
   FileSearch,
   FileText,
   FolderOpen,
@@ -41,7 +42,31 @@ type ReviewedDoc = {
   review: ReviewResult | null;
   loading: boolean;
   error?: string | null;
+  saved_note_id?: string | null;
 };
+
+const REVIEW_PRESETS = [
+  {
+    label: "Prelim site plan",
+    prompt:
+      "Review this preliminary site plan for deal feasibility. Focus on unit count and mix, parking, access/circulation, fire access, trash/loading, open space, setbacks/easements, grading/utilities, missing dimensions, zoning assumptions, constructability, and questions for architect/civil.",
+  },
+  {
+    label: "Consultant proposal",
+    prompt:
+      "Review this proposal before I respond. Focus on scope gaps, exclusions, fee clarity, schedule, deliverables, reimbursables, assumptions, and questions to ask before signing.",
+  },
+  {
+    label: "OM / front-end deal",
+    prompt:
+      "Review this front-end deal material. Focus on underwriting assumptions to verify, seller/broker claims, missing diligence, value-creation thesis, and quick BOE questions.",
+  },
+  {
+    label: "Email response",
+    prompt:
+      "Review this as something I may need to respond to. Pull out the decision, risks, missing information, and draft a short practical reply.",
+  },
+];
 
 export default function ReviewDocPage() {
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -165,10 +190,17 @@ export default function ReviewDocPage() {
           });
           const reviewJson = await reviewRes.json().catch(() => ({}));
           if (!reviewRes.ok) throw new Error(reviewJson.error || "Review failed");
+          const responseData = reviewJson.data || {};
+          const review = (responseData.review || responseData) as ReviewResult;
           setReviewedDocs((prev) =>
             prev.map((row) =>
               row.doc.id === doc.id
-                ? { ...row, review: reviewJson.data as ReviewResult, loading: false }
+                ? {
+                    ...row,
+                    review,
+                    loading: false,
+                    saved_note_id: responseData.saved_note_id || null,
+                  }
                 : row
             )
           );
@@ -362,6 +394,18 @@ export default function ReviewDocPage() {
                   rows={3}
                   className="mt-2 w-full rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-sm leading-6 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
                 />
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {REVIEW_PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => setFocus(preset.prompt)}
+                      className="rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-muted-foreground">
                     {selectedDeal ? `Filing into ${selectedDeal.name}` : "Pick a deal folder first"}
@@ -430,6 +474,11 @@ function ReviewCard({
             {review?.document_type && (
               <Badge variant="outline" className="text-[10px]">
                 {review.document_type}
+              </Badge>
+            )}
+            {row.saved_note_id && (
+              <Badge variant="success" className="text-[10px]">
+                Saved to deal
               </Badge>
             )}
           </div>
@@ -508,9 +557,24 @@ function ReviewCard({
 
           {review.suggested_email && (
             <div className="rounded-lg border border-border/50 bg-background/40 p-3">
-              <div className="flex items-center gap-2">
-                <Mail className="h-4 w-4 text-primary" />
-                <p className="text-sm font-medium">Suggested email</p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-primary" />
+                  <p className="text-sm font-medium">Suggested email</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 text-2xs"
+                  onClick={() => {
+                    navigator.clipboard.writeText(review.suggested_email);
+                    toast.success("Email copied");
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy
+                </Button>
               </div>
               <pre className="mt-3 whitespace-pre-wrap rounded-md bg-black/20 p-3 text-xs leading-5 text-muted-foreground">
                 {review.suggested_email}

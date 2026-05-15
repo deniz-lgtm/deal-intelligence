@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
-import { documentQueries } from "@/lib/db";
+import { v4 as uuidv4 } from "uuid";
+import { dealNoteQueries, documentQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
 import { getActiveModel } from "@/lib/claude";
 import { DOCUMENT_CATEGORIES, type DocumentCategory } from "@/lib/types";
@@ -19,6 +20,11 @@ type ReviewPayload = {
     category: string;
     deal_relevance: string;
   };
+};
+
+type ReviewResponse = {
+  review: ReviewPayload;
+  saved_note_id: string | null;
 };
 
 function getClient() {
@@ -74,6 +80,44 @@ function normalizeReview(input: unknown): ReviewPayload {
   };
 }
 
+function formatList(items: string[]) {
+  return items.length > 0 ? items.map((item) => `- ${item}`).join("\n") : "- Nothing material flagged.";
+}
+
+function formatReviewNote({
+  documentName,
+  focus,
+  review,
+}: {
+  documentName: string;
+  focus: string;
+  review: ReviewPayload;
+}) {
+  return [
+    `Document review: ${documentName}`,
+    `Type: ${review.document_type}`,
+    `Focus: ${focus}`,
+    "",
+    `Bottom line: ${review.executive_take}`,
+    "",
+    "Key points:",
+    formatList(review.key_points),
+    "",
+    "Red flags:",
+    formatList(review.red_flags),
+    "",
+    "Missing items:",
+    formatList(review.missing_items),
+    "",
+    "Questions to ask:",
+    formatList(review.questions_to_ask),
+    "",
+    review.suggested_email ? `Suggested email:\n${review.suggested_email}` : "",
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -115,9 +159,11 @@ export async function POST(
 
 Review documents before the user sends emails, files the doc, or moves a front-end deal forward. Focus on practical issues: scope gaps, economics, exclusions, dates, deliverables, risk, missing backup, and the exact questions to ask.
 
+If the document is a preliminary site plan, focus specifically on: unit count and unit mix, parking count/ratio, access and circulation, fire access, trash/loading, open space and amenities, setbacks/easements, grading/utilities, zoning or entitlement assumptions, dimensions that are missing, constructability concerns, and the questions to ask the architect/civil engineer before relying on the plan.
+
 Return ONLY valid JSON:
 {
-  "document_type": "consultant proposal | OM | report | email | plan | other",
+  "document_type": "consultant proposal | OM | report | email | preliminary site plan | plan | other",
   "executive_take": "2-3 sentence bottom line",
   "key_points": ["important point"],
   "red_flags": ["issue to watch"],
@@ -151,7 +197,22 @@ ${content}`,
       .map((block) => block.text)
       .join("\n");
 
-    return NextResponse.json({ data: normalizeReview(text) });
+    const review = normalizeReview(text);
+    const noteId = uuidv4();
+    await dealNoteQueries.create({
+      id: noteId,
+      deal_id: dealId,
+      text: formatReviewNote({
+        documentName: String(doc.original_name || doc.name || "Untitled document"),
+        focus,
+        review,
+      }),
+      category: "review",
+      source: "document_review",
+    });
+
+    const data: ReviewResponse = { review, saved_note_id: noteId };
+    return NextResponse.json({ data });
   } catch (error) {
     console.error("POST /api/documents/[id]/review error:", error);
     const detail = error instanceof Error ? error.message : String(error);

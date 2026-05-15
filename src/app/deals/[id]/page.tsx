@@ -10,7 +10,9 @@ import Link from "next/link";
 const CoverMap = dynamic(() => import("@/components/deals/CoverMap"), { ssr: false });
 import {
   Building2,
+  FileSearch,
   FileText,
+  FolderOpen,
   MessageSquare,
   MapPin,
   Star,
@@ -518,6 +520,9 @@ export default function DealOverviewPage({
       return note.category === "review" || /\b(decision|decide|approved|approval|selected|confirmed|open item|follow[- ]?up)\b/.test(text);
     })
     .slice(0, 4);
+  const documentReviewNotes = notes
+    .filter((note) => note.source === "document_review")
+    .slice(0, 4);
   const openOwnerTasks = devPhases
     .filter((phase) => phase.status !== "complete" && (phase.task_owner || phase.notes))
     .slice(0, 4);
@@ -875,6 +880,12 @@ export default function DealOverviewPage({
       />
 
       <ScheduleContinuityPanel dealId={params.id} phases={devPhases} />
+
+      <DocumentReviewsPanel
+        dealId={params.id}
+        reviews={documentReviewNotes}
+        documents={documents}
+      />
 
       <OpenTasksPreview dealId={params.id} />
 
@@ -1533,6 +1544,126 @@ function ScheduleContinuityPanel({
 // Open Items panel now that decisions live as tasks on /tasks?kind=decision.
 // Fetches the unified tasks feed directly so the home page doesn't have
 // to thread a fresh prop down from the parent.
+function parseDocumentReviewNote(note: DealNote) {
+  const lines = note.text.split("\n").map((line) => line.trim()).filter(Boolean);
+  const titleLine = lines.find((line) => line.toLowerCase().startsWith("document review:")) || "Document review";
+  const title = titleLine.replace(/^Document review:\s*/i, "").trim() || "Document review";
+  const bottomLine = lines.find((line) => line.toLowerCase().startsWith("bottom line:"));
+  const bottom = bottomLine
+    ? bottomLine.replace(/^Bottom line:\s*/i, "").trim()
+    : lines.slice(1, 4).join(" ");
+  const questionIndex = lines.findIndex((line) => line.toLowerCase() === "questions to ask:");
+  const questions = questionIndex >= 0
+    ? lines
+        .slice(questionIndex + 1)
+        .filter((line) => line.startsWith("- "))
+        .map((line) => line.replace(/^-\s*/, ""))
+        .slice(0, 2)
+    : [];
+
+  return { title, bottom, questions };
+}
+
+function DocumentReviewsPanel({
+  dealId,
+  reviews,
+  documents,
+}: {
+  dealId: string;
+  reviews: DealNote[];
+  documents: Document[];
+}) {
+  const latestDocument = [...documents].sort((a, b) => {
+    const aTime = new Date(a.uploaded_at || 0).getTime();
+    const bTime = new Date(b.uploaded_at || 0).getTime();
+    return bTime - aTime;
+  })[0];
+
+  return (
+    <section className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-border/40 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <FileSearch className="h-4 w-4 text-primary" />
+            <h2 className="font-display text-sm">Document Reviews</h2>
+          </div>
+          <p className="mt-1 text-2xs text-muted-foreground">
+            Latest saved readouts, questions, and red flags from Review Doc.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/review-doc">
+            <Button size="sm" className="h-7 gap-1.5 text-2xs">
+              Review prelim site plan
+              <ArrowRight className="h-3 w-3" />
+            </Button>
+          </Link>
+          <Link href={`/deals/${dealId}/documents`}>
+            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-2xs">
+              <FolderOpen className="h-3 w-3" />
+              Documents
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+      {reviews.length === 0 ? (
+        <div className="grid gap-px bg-border/60 md:grid-cols-[1.2fr_1fr]">
+          <div className="bg-card p-4">
+            <p className="text-sm font-medium">No saved reviews yet.</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Upload the site plan in Review Doc, choose the Prelim site plan focus, and the review will save back here automatically.
+            </p>
+          </div>
+          <div className="bg-card p-4">
+            <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Latest document</p>
+            <p className="mt-2 line-clamp-2 text-sm font-medium">
+              {latestDocument?.original_name || latestDocument?.name || "No documents uploaded yet"}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-px bg-border/60 lg:grid-cols-2">
+          {reviews.map((note) => {
+            const parsed = parseDocumentReviewNote(note);
+            return (
+              <Link
+                key={note.id}
+                href={`/notes?deal=${dealId}`}
+                className="bg-card p-4 transition-colors hover:bg-muted/25"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="line-clamp-1 text-sm font-semibold">{parsed.title}</p>
+                    <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted-foreground">
+                      {parsed.bottom || "Review saved to this deal."}
+                    </p>
+                    {parsed.questions.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 p-2">
+                        <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-amber-200">
+                          Questions to ask
+                        </p>
+                        <ul className="mt-1 space-y-1">
+                          {parsed.questions.map((question, index) => (
+                            <li key={index} className="line-clamp-2 text-2xs leading-4 text-amber-100/90">
+                              {question}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-2xs text-muted-foreground">{relativeTime(note.created_at)}</span>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function OpenTasksPreview({ dealId }: { dealId: string }) {
   const [tasks, setTasks] = useState<DevPhase[]>([]);
   const [loading, setLoading] = useState(true);
