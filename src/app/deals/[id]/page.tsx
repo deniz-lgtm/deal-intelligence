@@ -56,7 +56,6 @@ import {
 import { QuantScoreCard } from "@/components/QuantScoreCard";
 import DealNotes from "@/components/DealNotes";
 import { PhasePinControl } from "@/components/deals/PhasePinControl";
-import { PhaseProgressStrip } from "@/components/deals/PhaseProgressStrip";
 import { DealBrief } from "@/components/deals/brief/DealBrief";
 import { classifyDealPhase } from "@/lib/phase-classification";
 import { formatCurrency, formatNumber, titleCase, cn } from "@/lib/utils";
@@ -165,7 +164,6 @@ export default function DealOverviewPage({
   // separately so the overview can render ACQ progress immediately
   // without waiting on the schedule query.
   const [devPhases, setDevPhases] = useState<DevPhase[]>([]);
-  const [devPhasesLoading, setDevPhasesLoading] = useState(true);
 
   useEffect(() => {
     const stored = localStorage.getItem(`dealCoverMode:${params.id}`);
@@ -174,7 +172,6 @@ export default function DealOverviewPage({
 
   useEffect(() => {
     let cancelled = false;
-    setDevPhasesLoading(true);
     fetch(`/api/deals/${params.id}/dev-schedule`)
       .then((r) => r.json())
       .then((j) => {
@@ -184,9 +181,6 @@ export default function DealOverviewPage({
       .catch(() => {
         if (!cancelled) setDevPhases([]);
       })
-      .finally(() => {
-        if (!cancelled) setDevPhasesLoading(false);
-      });
     return () => {
       cancelled = true;
     };
@@ -824,12 +818,6 @@ export default function DealOverviewPage({
             pipeline status); DEV and CON are read-only and derive position
             from the deal's dev_schedule. Next-stage / Reactivate actions
             live below the strip so they're consistent across phases. */}
-        <PhaseProgressStrip
-          deal={deal}
-          devPhases={devPhases}
-          devPhasesLoading={devPhasesLoading}
-          onAdvanceStatus={(s) => changeStatus(s)}
-        />
         {(nextStatus || isOffPipeline) && (
           <div className="flex items-center px-5 py-2 bg-card border-t border-border/40 gap-2">
             {nextStatus && (
@@ -864,22 +852,16 @@ export default function DealOverviewPage({
         </div>
       </div>
 
-      <DealCommandCenter
+      <DealPersonalWorkspace
         dealId={params.id}
-        recommendedAction={recommendedAction}
+        documents={documents}
+        documentReviews={documentReviewNotes}
+        underwriting={underwriting}
+        scheduleItems={devPhases}
+        openTaskCount={openDecisions.length}
+        checklistIssues={checklistIssues}
         playbookQuestion={playbookQuestion}
-        nextItems={nextFocusItems}
-        watchouts={watchoutItems}
-        recentActivity={recentActivity}
-        stats={{
-          scheduleOpen: devPhases.filter((p) => p.status !== "complete").length,
-          openDecisions: openDecisions.length,
-          documents: documents.length,
-          checklistIssues,
-        }}
       />
-
-      <ScheduleContinuityPanel dealId={params.id} phases={devPhases} />
 
       <DocumentReviewsPanel
         dealId={params.id}
@@ -902,10 +884,10 @@ export default function DealOverviewPage({
               ) : (
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
               )}
-              <h2 className="font-display text-sm">Deal Details & References</h2>
+              <h2 className="font-display text-sm">Advanced Deal Tools</h2>
             </div>
             <p className="mt-1 text-2xs text-muted-foreground">
-              Score, underwriting highlights, property details, notes, business plan, and phase cards.
+              Deeper underwriting, property details, notes, business plan, schedule, and legacy coordination tools.
             </p>
           </div>
           <span className="shrink-0 rounded-full border border-border/50 px-2 py-1 text-2xs text-muted-foreground">
@@ -1311,6 +1293,177 @@ export default function DealOverviewPage({
       </section>
 
     </div>
+  );
+}
+
+function DealPersonalWorkspace({
+  dealId,
+  documents,
+  documentReviews,
+  underwriting,
+  scheduleItems,
+  openTaskCount,
+  checklistIssues,
+  playbookQuestion,
+}: {
+  dealId: string;
+  documents: Document[];
+  documentReviews: DealNote[];
+  underwriting: UnderwritingData | null;
+  scheduleItems: DevPhase[];
+  openTaskCount: number;
+  checklistIssues: number;
+  playbookQuestion: string;
+}) {
+  const openScheduleItems = scheduleItems.filter((item) => item.status !== "complete").length;
+  const hasUnderwriting = Boolean(underwriting);
+  const latestReview = documentReviews[0] ? parseDocumentReviewNote(documentReviews[0]) : null;
+  const nextPrompt = encodeURIComponent(
+    "Look at this deal like my personal development associate. What should I do next before I email anyone or move the deal forward? Be concise and turn only the highest-priority items into suggested tasks."
+  );
+  const emailPrompt = encodeURIComponent(
+    "Draft a concise email response based on the latest deal context and document reviews. If key facts are missing, ask me only the questions needed before drafting."
+  );
+
+  const steps = [
+    {
+      label: "1",
+      title: "Intake",
+      body: documents.length > 0 ? `${documents.length} document${documents.length === 1 ? "" : "s"} in the deal folder.` : "Add the OM, site plan, proposal, or email thread first.",
+      href: "/review-doc",
+      action: documents.length > 0 ? "Review another doc" : "Review a doc",
+      complete: documents.length > 0,
+      icon: FileSearch,
+    },
+    {
+      label: "2",
+      title: "BOE",
+      body: hasUnderwriting ? "Underwriting exists. Use it as the working BOE and sanity-check assumptions." : "Run or fill the quick underwriting before spending time on heavier diligence.",
+      href: `/deals/${dealId}/underwriting`,
+      action: hasUnderwriting ? "Open BOE" : "Start BOE",
+      complete: hasUnderwriting,
+      icon: Calculator,
+    },
+    {
+      label: "3",
+      title: "Site / document review",
+      body: latestReview ? latestReview.bottom || "Latest document review is saved to this deal." : "Use a saved review framework for site plans, proposals, and DD docs.",
+      href: "/review-doc",
+      action: latestReview ? "Review next doc" : "Run review",
+      complete: documentReviews.length > 0,
+      icon: Compass,
+    },
+    {
+      label: "4",
+      title: "Memo / decision",
+      body: "Accrete the narrative, open questions, and recommendation before this becomes a team project.",
+      href: `/deals/${dealId}/investment-package`,
+      action: "Build memo",
+      complete: false,
+      icon: Presentation,
+    },
+  ];
+
+  return (
+    <section className="rounded-xl border border-border/60 bg-card shadow-card overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-border/40 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <h2 className="font-display text-sm">Deal Workspace</h2>
+          </div>
+          <p className="mt-1 text-2xs text-muted-foreground">
+            Personal front-end workflow: review the materials, run a BOE, pressure-test the site, then draft the memo or email.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/deals/${dealId}/chat?prompt=${nextPrompt}`}>
+            <Button size="sm" className="h-7 gap-1.5 text-2xs">
+              <MessageSquare className="h-3 w-3" />
+              Ask next step
+            </Button>
+          </Link>
+          <Link href={`/deals/${dealId}/chat?prompt=${emailPrompt}`}>
+            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-2xs">
+              Draft email
+              <ArrowRight className="h-3 w-3" />
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+      <div className="grid gap-px bg-border/60 md:grid-cols-2 xl:grid-cols-4">
+        {steps.map((step) => {
+          const Icon = step.icon;
+          return (
+            <Link key={step.title} href={step.href} className="bg-card p-4 transition-colors hover:bg-muted/25">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className={cn(
+                    "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
+                    step.complete
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      : "border-border/60 bg-background/60 text-muted-foreground"
+                  )}>
+                    {step.complete ? <CheckCircle2 className="h-3.5 w-3.5" /> : step.label}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Icon className="h-3.5 w-3.5 text-primary" />
+                      <p className="text-sm font-semibold">{step.title}</p>
+                    </div>
+                    <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted-foreground">{step.body}</p>
+                    <p className="mt-3 inline-flex items-center gap-1 text-2xs font-medium text-primary">
+                      {step.action}
+                      <ArrowRight className="h-3 w-3" />
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+
+      <div className="grid gap-px bg-border/60 md:grid-cols-4">
+        {[
+          { label: "Documents", value: documents.length, href: `/deals/${dealId}/documents` },
+          { label: "Review notes", value: documentReviews.length, href: `/notes?deal=${dealId}` },
+          { label: "Open tasks", value: openTaskCount, href: `/deals/${dealId}/tasks` },
+          { label: "Schedule items", value: openScheduleItems, href: `/deals/${dealId}/schedule` },
+        ].map((item) => (
+          <Link key={item.label} href={item.href} className="bg-background/35 px-4 py-3 transition-colors hover:bg-muted/25">
+            <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{item.label}</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums">{item.value}</p>
+          </Link>
+        ))}
+      </div>
+
+      {(checklistIssues > 0 || openTaskCount > 0 || documentReviews.length === 0) && (
+        <div className="border-t border-border/40 bg-background/30 px-4 py-3">
+          <div className="flex flex-wrap gap-2">
+            {documentReviews.length === 0 && (
+              <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-2xs text-amber-200">
+                No document review saved yet
+              </span>
+            )}
+            {openTaskCount > 0 && (
+              <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-2xs text-primary">
+                {openTaskCount} open task{openTaskCount === 1 ? "" : "s"}
+              </span>
+            )}
+            {checklistIssues > 0 && (
+              <span className="rounded-full border border-rose-500/25 bg-rose-500/10 px-2.5 py-1 text-2xs text-rose-200">
+                {checklistIssues} diligence issue{checklistIssues === 1 ? "" : "s"}
+              </span>
+            )}
+            <Link href={`/deals/${dealId}/chat?prompt=${encodeURIComponent(playbookQuestion)}`} className="rounded-full border border-border/50 px-2.5 py-1 text-2xs text-muted-foreground transition-colors hover:text-foreground">
+              Ask playbook
+            </Link>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
