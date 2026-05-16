@@ -11,7 +11,6 @@ import {
   Home,
   Inbox,
   Kanban,
-  FileSearch,
   PanelLeftClose,
   PanelLeftOpen,
   Shield,
@@ -38,7 +37,6 @@ const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     items: [
       { href: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" },
       { href: "/", label: "Deal Desk", icon: Home },
-      { href: "/review-doc", label: "Doc Review", icon: FileSearch },
     ],
   },
   {

@@ -128,6 +128,9 @@ export default function DealOverviewPage({
   const router = useRouter();
   const { can } = usePermissions();
   const [deal, setDeal] = useState<Deal | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [questions, setQuestions] = useState<DealQuestion[]>([]);
@@ -244,6 +247,54 @@ export default function DealOverviewPage({
       body: JSON.stringify({ starred: newStarred }),
     });
     toast.success(newStarred ? "Deal starred" : "Star removed");
+  };
+
+  const startRename = () => {
+    if (!deal) return;
+    setNameDraft(deal.name);
+    setEditingName(true);
+  };
+
+  const cancelRename = () => {
+    setNameDraft("");
+    setEditingName(false);
+  };
+
+  const saveDealName = async () => {
+    if (!deal) return;
+    const trimmed = nameDraft.trim().replace(/\s+/g, " ");
+    if (!trimmed) {
+      toast.error("Deal name cannot be blank");
+      return;
+    }
+    if (trimmed === deal.name) {
+      cancelRename();
+      return;
+    }
+
+    const previous = deal.name;
+    setSavingName(true);
+    setDeal({ ...deal, name: trimmed });
+    try {
+      const res = await fetch(`/api/deals/${params.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.data) throw new Error(json.error || "Could not rename deal");
+      setDeal(json.data as Deal);
+      window.dispatchEvent(new CustomEvent("deal:renamed", {
+        detail: { id: params.id, name: (json.data as Deal).name || trimmed },
+      }));
+      toast.success("Deal renamed");
+      cancelRename();
+    } catch (error) {
+      setDeal((current) => (current ? { ...current, name: previous } : current));
+      toast.error(error instanceof Error ? error.message : "Could not rename deal");
+    } finally {
+      setSavingName(false);
+    }
   };
 
   const deleteDeal = async () => {
@@ -640,7 +691,50 @@ export default function DealOverviewPage({
                   }
                 />
               </div>
-              <h1 className="font-nameplate text-3xl leading-none tracking-tight">{deal.name}</h1>
+              {editingName ? (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={nameDraft}
+                    onChange={(event) => setNameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        saveDealName();
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    disabled={savingName}
+                    className="min-w-0 rounded-lg border border-border/60 bg-background/80 px-3 py-2 font-nameplate text-2xl leading-none tracking-tight text-foreground outline-none transition-colors focus:border-primary/60 sm:min-w-[320px]"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <Button size="sm" className="h-7 text-2xs" onClick={saveDealName} disabled={savingName}>
+                      {savingName ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 text-2xs" onClick={cancelRename} disabled={savingName}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="font-nameplate text-3xl leading-none tracking-tight">{deal.name}</h1>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={startRename}
+                    className="h-7 gap-1 px-2 text-2xs text-muted-foreground hover:text-foreground"
+                  >
+                    <Edit2 className="h-3 w-3" />
+                    Rename
+                  </Button>
+                </div>
+              )}
               {hasAddress && <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-0.5"><MapPin className="h-3.5 w-3.5 text-muted-foreground/40" />{addressString}</p>}
             </div>
             <div className="flex items-center gap-1">
@@ -711,12 +805,6 @@ export default function DealOverviewPage({
         openTaskCount={openDecisions.length}
         checklistIssues={checklistIssues}
         playbookQuestion={playbookQuestion}
-      />
-
-      <DocumentReviewsPanel
-        dealId={params.id}
-        reviews={documentReviewNotes}
-        documents={documents}
       />
 
       <OpenTasksPreview dealId={params.id} />
@@ -1179,8 +1267,8 @@ function DealPersonalWorkspace({
       label: "1",
       title: "Intake",
       body: documents.length > 0 ? `${documents.length} document${documents.length === 1 ? "" : "s"} in the deal folder.` : "Add the OM, site plan, proposal, or email thread first.",
-      href: "/review-doc",
-      action: documents.length > 0 ? "Review another doc" : "Review a doc",
+      href: `/deals/${dealId}/documents`,
+      action: documents.length > 0 ? "Open documents" : "Add document",
       complete: documents.length > 0,
       icon: FileSearch,
     },
@@ -1197,7 +1285,7 @@ function DealPersonalWorkspace({
       label: "3",
       title: "Site / document review",
       body: latestReview ? latestReview.bottom || "Latest document review is saved to this deal." : "Use a saved review framework for site plans, proposals, and DD docs.",
-      href: "/review-doc",
+      href: `/deals/${dealId}/documents`,
       action: latestReview ? "Review next doc" : "Run review",
       complete: documentReviews.length > 0,
       icon: Compass,

@@ -407,6 +407,16 @@ export default function DealLayout({
       .catch(console.error);
   }, [params.id]);
 
+  useEffect(() => {
+    const onRenamed = (event: Event) => {
+      const detail = (event as CustomEvent<{ id: string; name: string }>).detail;
+      if (!detail || detail.id !== params.id) return;
+      setDeal((current) => (current ? { ...current, name: detail.name } : current));
+    };
+    window.addEventListener("deal:renamed", onRenamed);
+    return () => window.removeEventListener("deal:renamed", onRenamed);
+  }, [params.id]);
+
   // Live count of open task-shaped rows on this deal — surfaced as a
   // badge on the Tasks sidebar item. Refreshes whenever the user
   // navigates within the deal so creates/completes elsewhere reflect.

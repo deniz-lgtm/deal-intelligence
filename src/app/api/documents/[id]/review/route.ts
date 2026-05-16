@@ -3,10 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { dealNoteQueries, documentQueries, playbookQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
-import { getActiveModel } from "@/lib/claude";
+import { getActiveModel, imageContentBlocks, pdfToImages } from "@/lib/claude";
+import { readFile } from "@/lib/blob-storage";
 import { DOCUMENT_CATEGORIES, type DocumentCategory } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+const MAX_REVIEW_IMAGE_PAGES = 6;
 
 type ReviewPayload = {
   document_type: string;
@@ -118,6 +120,36 @@ function formatReviewNote({
     .join("\n");
 }
 
+async function buildVisualContext(doc: Record<string, unknown>) {
+  const mimeType = String(doc.mime_type || "");
+  if (!mimeType.startsWith("image/") && mimeType !== "application/pdf") {
+    return [];
+  }
+
+  const filePath = typeof doc.file_path === "string" ? doc.file_path : "";
+  if (!filePath) return [];
+
+  const buffer = await readFile(filePath);
+  if (!buffer) return [];
+
+  if (mimeType === "application/pdf") {
+    const images = await pdfToImages(buffer, MAX_REVIEW_IMAGE_PAGES, 220);
+    return imageContentBlocks(images);
+  }
+
+  const mediaType = mimeType === "image/png" || mimeType === "image/webp" || mimeType === "image/gif"
+    ? mimeType
+    : "image/jpeg";
+  return [{
+    type: "image" as const,
+    source: {
+      type: "base64" as const,
+      media_type: mediaType as "image/png" | "image/jpeg" | "image/webp" | "image/gif",
+      data: buffer.toString("base64"),
+    },
+  }];
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -157,6 +189,10 @@ export async function POST(
       ? doc.content_text.slice(0, 18000)
       : "No extractable document text was stored. Use filename, category, and existing summary only.";
     const summary = typeof doc.ai_summary === "string" ? doc.ai_summary : "";
+    const visualBlocks = await buildVisualContext(doc).catch((error) => {
+      console.warn("Document review visual context failed:", error);
+      return [];
+    });
 
     const response = await getClient().messages.create({
       model: await getActiveModel(),
@@ -187,11 +223,18 @@ Keep lists short. If you do not know, say so plainly. Do not invent facts.`,
       messages: [
         {
           role: "user",
-          content: `Focus: ${focus}
+          content: [
+            ...visualBlocks,
+            {
+              type: "text" as const,
+              text: `Focus: ${focus}
 
 Document name: ${doc.original_name || doc.name || "Untitled"}
 Current category: ${DOCUMENT_CATEGORIES[category]?.label || category}
 Existing summary: ${summary || "None"}
+${visualBlocks.length > 0 ? `
+Visual context: ${visualBlocks.length} rendered page/image snapshot${visualBlocks.length === 1 ? "" : "s"} included. Read dimensions, labels, counts, tables, and drawing notes from the image where possible before declaring information missing.
+` : ""}
 ${reviewPlaybookText ? `
 Selected review framework: ${reviewPlaybook?.title || "Review framework"}
 Use this framework as the primary review lens. Do not mention every item; surface only what matters for this document and phase.
@@ -201,6 +244,8 @@ ${reviewPlaybookText}
 
 Document text:
 ${content}`,
+            },
+          ],
         },
       ],
     });

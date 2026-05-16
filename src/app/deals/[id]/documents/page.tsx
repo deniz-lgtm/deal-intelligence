@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   FileText,
   File,
   Folder,
@@ -74,6 +75,27 @@ type DocumentActionApplyResult = {
   checklist: number;
 };
 
+type ReviewResult = {
+  document_type: string;
+  executive_take: string;
+  key_points: string[];
+  red_flags: string[];
+  missing_items: string[];
+  questions_to_ask: string[];
+  suggested_email: string;
+  filing_suggestion: {
+    category: string;
+    deal_relevance: string;
+  };
+};
+
+type PlaybookDocument = {
+  id: string;
+  title: string;
+  category: string;
+  chunk_count: number;
+};
+
 /** Parse an AI summary string into bullet points (split on ". " or newlines) */
 function parseSummaryBullets(summary: string): string[] {
   // Split on newlines first, then periods
@@ -129,10 +151,42 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
   } | null>(null);
   const [applyingActions, setApplyingActions] = useState(false);
   const [actionCreated, setActionCreated] = useState<DocumentActionApplyResult | null>(null);
+  const [reviewFrameworks, setReviewFrameworks] = useState<PlaybookDocument[]>([]);
+  const [selectedReviewFrameworkId, setSelectedReviewFrameworkId] = useState("");
+  const [reviewFocus, setReviewFocus] = useState(
+    "Review this document as my personal real estate development associate. Be concise, flag what matters, and say plainly when the file does not answer something."
+  );
+  const [reviewingDocId, setReviewingDocId] = useState<string | null>(null);
+  const [docReviewResult, setDocReviewResult] = useState<{
+    doc: Document;
+    review: ReviewResult;
+    savedNoteId?: string | null;
+  } | null>(null);
 
   useEffect(() => {
     loadDocuments();
   }, [params.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFrameworks() {
+      try {
+        const res = await fetch("/api/playbook/documents");
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || cancelled) return;
+        const rows = ((json.data || []) as PlaybookDocument[]).filter((doc) =>
+          ["review_framework", "design_standard", "handbook"].includes(doc.category)
+        );
+        setReviewFrameworks(rows);
+      } catch {
+        // Frameworks are optional.
+      }
+    }
+    loadFrameworks();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadDocuments = async () => {
     try {
@@ -344,6 +398,36 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
     }
   }, [actionReview]);
 
+  const reviewDocument = useCallback(
+    async (doc: Document) => {
+      setReviewingDocId(doc.id);
+      try {
+        const res = await fetch(`/api/documents/${doc.id}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            focus: reviewFocus,
+            review_playbook_id: selectedReviewFrameworkId || undefined,
+          }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          toast.error(json.error || "Could not review this document");
+          return;
+        }
+        const data = json.data || {};
+        const review = (data.review || data) as ReviewResult;
+        setDocReviewResult({ doc, review, savedNoteId: data.saved_note_id || null });
+        toast.success("Review saved to this deal");
+      } catch {
+        toast.error("Could not review this document");
+      } finally {
+        setReviewingDocId(null);
+      }
+    },
+    [reviewFocus, selectedReviewFrameworkId]
+  );
+
   const handleUploadComplete = () => {
     setShowUpload(false);
     loadDocuments();
@@ -448,6 +532,14 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         />
       )}
 
+      {docReviewResult && (
+        <DocumentReviewModal
+          result={docReviewResult}
+          dealId={params.id}
+          onClose={() => setDocReviewResult(null)}
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -540,7 +632,12 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
       <DocumentsWorkflowHub
         dealId={params.id}
         documents={documents}
+        frameworks={reviewFrameworks}
+        selectedFrameworkId={selectedReviewFrameworkId}
+        reviewFocus={reviewFocus}
         draftingAction={draftingAction}
+        onSelectFramework={setSelectedReviewFrameworkId}
+        onReviewFocusChange={setReviewFocus}
         onDraftBatchAction={draftBatchDocumentActions}
       />
 
@@ -577,6 +674,8 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           reExtracting={reExtracting}
           draftingAction={draftingAction}
           onDraftAction={draftDocumentActions}
+          reviewingDocId={reviewingDocId}
+          onReviewDocument={reviewDocument}
         />
       ) : (
         <GridView
@@ -591,6 +690,8 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
           deleting={deleting}
           draftingAction={draftingAction}
           onDraftAction={draftDocumentActions}
+          reviewingDocId={reviewingDocId}
+          onReviewDocument={reviewDocument}
         />
       )}
 
@@ -609,12 +710,22 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
 function DocumentsWorkflowHub({
   dealId,
   documents,
+  frameworks,
+  selectedFrameworkId,
+  reviewFocus,
   draftingAction,
+  onSelectFramework,
+  onReviewFocusChange,
   onDraftBatchAction,
 }: {
   dealId: string;
   documents: Document[];
+  frameworks: PlaybookDocument[];
+  selectedFrameworkId: string;
+  reviewFocus: string;
   draftingAction: string | null;
+  onSelectFramework: (id: string) => void;
+  onReviewFocusChange: (value: string) => void;
   onDraftBatchAction: () => void;
 }) {
   const countByCategory = (category: DocumentCategory) =>
@@ -802,6 +913,37 @@ function DocumentsWorkflowHub({
               );
             })}
           </div>
+          <div className="grid gap-3 border-t border-border/50 bg-card p-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                <FileSearch className="h-3.5 w-3.5" />
+                Review lens
+              </div>
+              <textarea
+                value={reviewFocus}
+                onChange={(event) => onReviewFocusChange(event.target.value)}
+                rows={2}
+                className="mt-2 w-full rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-xs leading-5 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                Saved framework
+              </label>
+              <select
+                value={selectedFrameworkId}
+                onChange={(event) => onSelectFramework(event.target.value)}
+                className="mt-2 w-full rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-xs outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+              >
+                <option value="">No framework</option>
+                {frameworks.map((framework) => (
+                  <option key={framework.id} value={framework.id}>
+                    {framework.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div className="grid grid-cols-1 gap-px bg-border/50 md:grid-cols-2 xl:grid-cols-4">
             {workActions.map((action) => {
               const Icon = action.icon;
@@ -899,6 +1041,8 @@ function FolderView({
   reExtracting,
   draftingAction,
   onDraftAction,
+  reviewingDocId,
+  onReviewDocument,
 }: {
   dealId: string;
   byCategory: Record<string, Document[]>;
@@ -915,6 +1059,8 @@ function FolderView({
   reExtracting?: string | null;
   draftingAction?: string | null;
   onDraftAction: (doc: Document, intent: DraftableDocumentActionIntent) => void;
+  reviewingDocId?: string | null;
+  onReviewDocument: (doc: Document) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(filledCategories));
 
@@ -975,6 +1121,8 @@ function FolderView({
                     reExtracting={reExtracting}
                     draftingAction={draftingAction}
                     onDraftAction={onDraftAction}
+                    reviewingDocId={reviewingDocId}
+                    onReviewDocument={onReviewDocument}
                   />
                 ))}
               </div>
@@ -998,6 +1146,8 @@ function GridView({
   deleting,
   draftingAction,
   onDraftAction,
+  reviewingDocId,
+  onReviewDocument,
 }: {
   dealId: string;
   documents: Document[];
@@ -1010,6 +1160,8 @@ function GridView({
   deleting: string | null;
   draftingAction?: string | null;
   onDraftAction: (doc: Document, intent: DraftableDocumentActionIntent) => void;
+  reviewingDocId?: string | null;
+  onReviewDocument: (doc: Document) => void;
 }) {
   return (
     <div>
@@ -1039,6 +1191,8 @@ function GridView({
             deleting={deleting}
             draftingAction={draftingAction}
             onDraftAction={onDraftAction}
+            reviewingDocId={reviewingDocId}
+            onReviewDocument={onReviewDocument}
           />
         ))}
       </div>
@@ -1060,6 +1214,8 @@ function DocRow({
   reExtracting,
   draftingAction,
   onDraftAction,
+  reviewingDocId,
+  onReviewDocument,
 }: {
   dealId: string;
   doc: Document & { is_key?: boolean };
@@ -1074,6 +1230,8 @@ function DocRow({
   reExtracting?: string | null;
   draftingAction?: string | null;
   onDraftAction: (doc: Document, intent: DraftableDocumentActionIntent) => void;
+  reviewingDocId?: string | null;
+  onReviewDocument: (doc: Document) => void;
 }) {
   const [showCatMenu, setShowCatMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1194,6 +1352,12 @@ function DocRow({
           </ul>
         )}
         <div className="mt-2 flex flex-wrap gap-1.5">
+          <DocActionButton
+            icon={<FileSearch className="h-3 w-3" />}
+            label="Review"
+            loading={reviewingDocId === doc.id}
+            onClick={() => onReviewDocument(doc)}
+          />
           <DocActionLink href={documentActionHref(dealId, doc, "ask")} icon={<MessageSquare className="h-3 w-3" />} label="Ask" />
           <DocActionButton
             icon={<CalendarPlus className="h-3 w-3" />}
@@ -1304,6 +1468,8 @@ function GridDocCard({
   deleting,
   draftingAction,
   onDraftAction,
+  reviewingDocId,
+  onReviewDocument,
 }: {
   dealId: string;
   doc: Document;
@@ -1314,6 +1480,8 @@ function GridDocCard({
   deleting: string | null;
   draftingAction?: string | null;
   onDraftAction: (doc: Document, intent: DraftableDocumentActionIntent) => void;
+  reviewingDocId?: string | null;
+  onReviewDocument: (doc: Document) => void;
 }) {
   const [showCatMenu, setShowCatMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1363,6 +1531,12 @@ function GridDocCard({
           </ul>
         )}
         <div className="mt-3 flex flex-wrap gap-1.5">
+          <DocActionButton
+            icon={<FileSearch className="h-3 w-3" />}
+            label="Review"
+            loading={reviewingDocId === doc.id}
+            onClick={() => onReviewDocument(doc)}
+          />
           <DocActionLink href={documentActionHref(dealId, doc, "ask")} icon={<MessageSquare className="h-3 w-3" />} label="Ask" />
           <DocActionButton
             icon={<CalendarPlus className="h-3 w-3" />}
@@ -1480,6 +1654,107 @@ function DocActionButton({
       {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : icon}
       {label}
     </button>
+  );
+}
+
+function DocumentReviewModal({
+  result,
+  dealId,
+  onClose,
+}: {
+  result: { doc: Document; review: ReviewResult; savedNoteId?: string | null };
+  dealId: string;
+  onClose: () => void;
+}) {
+  const { doc, review } = result;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 p-4">
+      <div className="mx-auto flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border bg-card shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+              <FileSearch className="h-3.5 w-3.5 text-primary" />
+              Document review
+            </div>
+            <h3 className="mt-1 truncate text-lg font-semibold">{doc.original_name}</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {review.document_type} - saved to this deal
+            </p>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <div className="rounded-lg border border-primary/20 bg-primary/10 p-4">
+            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-primary">Bottom line</p>
+            <p className="mt-2 text-sm leading-6">{review.executive_take}</p>
+          </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <ReviewList title="Key points" items={review.key_points} icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />} />
+            <ReviewList title="Red flags" items={review.red_flags} icon={<AlertTriangle className="h-4 w-4 text-amber-400" />} />
+            <ReviewList title="Missing items" items={review.missing_items} icon={<FileText className="h-4 w-4 text-blue-400" />} />
+            <ReviewList title="Questions to ask" items={review.questions_to_ask} icon={<MessageSquare className="h-4 w-4 text-primary" />} />
+          </div>
+          {review.suggested_email && (
+            <div className="mt-4 rounded-lg border border-border/60 bg-background/50 p-4">
+              <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Suggested response</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{review.suggested_email}</p>
+            </div>
+          )}
+          <div className="mt-4 rounded-lg border border-border/60 bg-background/50 p-4">
+            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Filing suggestion</p>
+            <p className="mt-2 text-sm leading-6">
+              {DOCUMENT_CATEGORIES[review.filing_suggestion.category as DocumentCategory]?.label || review.filing_suggestion.category}
+              {review.filing_suggestion.deal_relevance ? ` - ${review.filing_suggestion.deal_relevance}` : ""}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t px-5 py-3">
+          <p className="text-xs text-muted-foreground">
+            Review note saved. Use questions as follow-ups if they are worth tracking.
+          </p>
+          <div className="flex gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/notes?deal=${dealId}`}>Open notes</Link>
+            </Button>
+            <Button asChild size="sm">
+              <Link href={`/deals/${dealId}/tasks`}>Open follow-ups</Link>
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewList({
+  title,
+  items,
+  icon,
+}: {
+  title: string;
+  items: string[];
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/50 p-4">
+      <div className="flex items-center gap-2">
+        {icon}
+        <p className="text-sm font-medium">{title}</p>
+      </div>
+      {items.length === 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground">Nothing material flagged.</p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {items.map((item, index) => (
+            <li key={index} className="text-sm leading-6 text-muted-foreground">
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
