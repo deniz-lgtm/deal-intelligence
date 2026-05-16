@@ -1261,6 +1261,25 @@ function DealPersonalWorkspace({
   const emailPrompt = encodeURIComponent(
     "Draft a concise email response based on the latest deal context and document reviews. If key facts are missing, ask me only the questions needed before drafting."
   );
+  const [pushingToNotion, setPushingToNotion] = useState(false);
+  const [notionUrl, setNotionUrl] = useState<string | null>(null);
+
+  const pushToNotion = async () => {
+    setPushingToNotion(true);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/notion`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.data?.notion_url) {
+        throw new Error(json.error || "Could not push this deal to Notion");
+      }
+      setNotionUrl(json.data.notion_url);
+      toast.success("Deal package pushed to Notion");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not push this deal to Notion");
+    } finally {
+      setPushingToNotion(false);
+    }
+  };
 
   const steps = [
     {
@@ -1310,10 +1329,29 @@ function DealPersonalWorkspace({
             <h2 className="font-display text-sm">Deal Workspace</h2>
           </div>
           <p className="mt-1 text-2xs text-muted-foreground">
-            Personal front-end workflow: review the materials, run a BOE, pressure-test the site, then draft the memo or email.
+            Personal front-end workflow: review the materials, run a BOE, pressure-test the site, then push the package to Notion for deal management.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {notionUrl ? (
+            <a href={notionUrl} target="_blank" rel="noreferrer">
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-2xs">
+                <Share2 className="h-3 w-3" />
+                Open Notion
+              </Button>
+            </a>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-2xs"
+              onClick={pushToNotion}
+              disabled={pushingToNotion}
+            >
+              {pushingToNotion ? <Loader2 className="h-3 w-3 animate-spin" /> : <Share2 className="h-3 w-3" />}
+              Push to Notion
+            </Button>
+          )}
           <Link href={`/deals/${dealId}/chat?prompt=${nextPrompt}`}>
             <Button size="sm" className="h-7 gap-1.5 text-2xs">
               <MessageSquare className="h-3 w-3" />
