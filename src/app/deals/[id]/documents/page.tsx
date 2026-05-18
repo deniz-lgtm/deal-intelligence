@@ -1267,12 +1267,12 @@ function DocRow({
       </button>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => onView(doc)}
+          <Link
+            href={`/deals/${dealId}/documents/${doc.id}`}
             className="text-sm font-medium truncate text-left hover:text-primary transition-colors"
           >
             {doc.original_name}
-          </button>
+          </Link>
           {doc.version > 1 && (
             <button
               onClick={() => onShowVersions(doc)}
@@ -1358,6 +1358,7 @@ function DocRow({
             loading={reviewingDocId === doc.id}
             onClick={() => onReviewDocument(doc)}
           />
+          <DocActionLink href={`/deals/${dealId}/documents/${doc.id}`} icon={<FileText className="h-3 w-3" />} label="Details" />
           <DocActionLink href={documentActionHref(dealId, doc, "ask")} icon={<MessageSquare className="h-3 w-3" />} label="Ask" />
           <DocActionButton
             icon={<CalendarPlus className="h-3 w-3" />}
@@ -1507,12 +1508,12 @@ function GridDocCard({
         <DocFileIcon mimeType={doc.mime_type} />
       </button>
       <div className="flex-1 min-w-0">
-        <button
-          onClick={() => onView(doc)}
+        <Link
+          href={`/deals/${dealId}/documents/${doc.id}`}
           className="font-medium text-sm truncate text-left hover:text-primary transition-colors block w-full"
         >
           {doc.original_name}
-        </button>
+        </Link>
         <div className="flex items-center gap-2 mt-1">
           <Badge variant="secondary" className="text-xs">
             {DOCUMENT_CATEGORIES[doc.category as DocumentCategory]?.icon}{" "}
@@ -1537,6 +1538,7 @@ function GridDocCard({
             loading={reviewingDocId === doc.id}
             onClick={() => onReviewDocument(doc)}
           />
+          <DocActionLink href={`/deals/${dealId}/documents/${doc.id}`} icon={<FileText className="h-3 w-3" />} label="Details" />
           <DocActionLink href={documentActionHref(dealId, doc, "ask")} icon={<MessageSquare className="h-3 w-3" />} label="Ask" />
           <DocActionButton
             icon={<CalendarPlus className="h-3 w-3" />}
