@@ -41,6 +41,8 @@ import {
   CheckCircle2,
   Compass,
   HardHat,
+  ExternalLink,
+  Link2,
 } from "lucide-react";
 import { DocCoverageChip } from "@/components/ai";
 import { Button } from "@/components/ui/button";
@@ -1262,22 +1264,85 @@ function DealPersonalWorkspace({
     "Draft a concise email response based on the latest deal context and document reviews. If key facts are missing, ask me only the questions needed before drafting."
   );
   const [pushingToNotion, setPushingToNotion] = useState(false);
+  const [linkingNotion, setLinkingNotion] = useState(false);
+  const [checkingNotion, setCheckingNotion] = useState(true);
   const [notionUrl, setNotionUrl] = useState<string | null>(null);
+  const [notionProjectId, setNotionProjectId] = useState<string | null>(null);
+  const [existingNotionProject, setExistingNotionProject] = useState("");
+  const [showExistingInput, setShowExistingInput] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCheckingNotion(true);
+    fetch(`/api/notion/projects?deal_id=${dealId}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return;
+        setNotionUrl(json.data?.notion_url || null);
+        setNotionProjectId(json.data?.notion_project_id || null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNotionUrl(null);
+          setNotionProjectId(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingNotion(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dealId]);
 
   const pushToNotion = async () => {
     setPushingToNotion(true);
     try {
-      const res = await fetch(`/api/deals/${dealId}/notion`, { method: "POST" });
+      const res = await fetch(`/api/notion/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_id: dealId }),
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.data?.notion_url) {
-        throw new Error(json.error || "Could not push this deal to Notion");
+        throw new Error(json.error || "Could not create the Notion project");
       }
       setNotionUrl(json.data.notion_url);
-      toast.success("Deal package pushed to Notion");
+      setNotionProjectId(json.data.notion_project_id || null);
+      toast.success(json.data.created ? "Notion project created" : "Notion project linked");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not push this deal to Notion");
+      toast.error(error instanceof Error ? error.message : "Could not create the Notion project");
     } finally {
       setPushingToNotion(false);
+    }
+  };
+
+  const linkExistingProject = async () => {
+    const value = existingNotionProject.trim();
+    if (!value) {
+      toast.error("Paste a Notion Pipeline project URL or page ID");
+      return;
+    }
+    setLinkingNotion(true);
+    try {
+      const res = await fetch(`/api/notion/projects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_id: dealId, notion_project_url: value }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.data?.notion_project_id) {
+        throw new Error(json.error || "Could not link the Notion project");
+      }
+      setNotionUrl(json.data.notion_url || value);
+      setNotionProjectId(json.data.notion_project_id);
+      setExistingNotionProject("");
+      setShowExistingInput(false);
+      toast.success("Notion project linked");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not link the Notion project");
+    } finally {
+      setLinkingNotion(false);
     }
   };
 
@@ -1333,25 +1398,6 @@ function DealPersonalWorkspace({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {notionUrl ? (
-            <a href={notionUrl} target="_blank" rel="noreferrer">
-              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-2xs">
-                <Share2 className="h-3 w-3" />
-                Open Notion
-              </Button>
-            </a>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1.5 text-2xs"
-              onClick={pushToNotion}
-              disabled={pushingToNotion}
-            >
-              {pushingToNotion ? <Loader2 className="h-3 w-3 animate-spin" /> : <Share2 className="h-3 w-3" />}
-              Push to Notion
-            </Button>
-          )}
           <Link href={`/deals/${dealId}/chat?prompt=${nextPrompt}`}>
             <Button size="sm" className="h-7 gap-1.5 text-2xs">
               <MessageSquare className="h-3 w-3" />
@@ -1365,6 +1411,80 @@ function DealPersonalWorkspace({
             </Button>
           </Link>
         </div>
+      </div>
+
+      <div className="border-b border-border/40 bg-background/30 px-4 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-3">
+            <span className={cn(
+              "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border",
+              notionUrl
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                : "border-amber-500/25 bg-amber-500/10 text-amber-200"
+            )}>
+              {checkingNotion ? <Loader2 className="h-4 w-4 animate-spin" /> : notionUrl ? <CheckCircle2 className="h-4 w-4" /> : <Share2 className="h-4 w-4" />}
+            </span>
+            <div>
+              <p className="text-sm font-semibold">
+                {notionUrl ? "Linked to Notion Pipeline" : "Notion Project"}
+              </p>
+              <p className="mt-0.5 max-w-2xl text-xs leading-5 text-muted-foreground">
+                {notionUrl
+                  ? "Tasks, RFIs, risks, schedule items, notes, and key documents pushed from this deal will carry this Pipeline relation."
+                  : "Create or link the Pipeline project before pushing review tasks, RFIs, risks, schedule items, notes, or key documents."}
+              </p>
+              {notionProjectId && (
+                <p className="mt-1 font-mono text-[10px] text-muted-foreground/70">{notionProjectId}</p>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {notionUrl ? (
+              <a href={notionUrl} target="_blank" rel="noreferrer">
+                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-2xs">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Open Notion
+                </Button>
+              </a>
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  className="h-8 gap-1.5 text-2xs"
+                  onClick={pushToNotion}
+                  disabled={pushingToNotion || checkingNotion}
+                >
+                  {pushingToNotion ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
+                  Create project
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 text-2xs"
+                  onClick={() => setShowExistingInput((value) => !value)}
+                  disabled={linkingNotion || checkingNotion}
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  Link existing
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+        {showExistingInput && !notionUrl && (
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <input
+              value={existingNotionProject}
+              onChange={(event) => setExistingNotionProject(event.target.value)}
+              placeholder="Paste Notion Pipeline project URL or page ID"
+              className="min-w-0 flex-1 rounded-md border border-border/60 bg-background px-3 py-2 text-xs outline-none transition-colors focus:border-primary"
+            />
+            <Button size="sm" className="h-9 gap-1.5 text-xs" onClick={linkExistingProject} disabled={linkingNotion}>
+              {linkingNotion ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+              Link project
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="grid gap-px bg-border/60 md:grid-cols-2 xl:grid-cols-4">

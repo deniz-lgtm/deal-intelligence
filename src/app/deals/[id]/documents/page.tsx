@@ -1667,6 +1667,130 @@ function DocumentReviewModal({
   onClose: () => void;
 }) {
   const { doc, review } = result;
+  const [selectedPushItems, setSelectedPushItems] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = { note: true, document: true };
+    review.questions_to_ask?.slice(0, 8).forEach((_, index) => {
+      initial[`rfi:${index}`] = true;
+    });
+    review.red_flags?.slice(0, 8).forEach((_, index) => {
+      initial[`risk:${index}`] = true;
+    });
+    review.missing_items?.slice(0, 8).forEach((_, index) => {
+      initial[`task:${index}`] = true;
+    });
+    return initial;
+  });
+  const [pushingToNotion, setPushingToNotion] = useState(false);
+  const [notionError, setNotionError] = useState<string | null>(null);
+
+  const togglePushItem = (id: string) => {
+    setSelectedPushItems((current) => ({ ...current, [id]: !current[id] }));
+  };
+
+  const ensureNotionProject = async () => {
+    const res = await fetch("/api/notion/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deal_id: dealId }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || "Could not create Notion project");
+    return json.data;
+  };
+
+  const pushReviewToNotion = async () => {
+    setPushingToNotion(true);
+    setNotionError(null);
+    try {
+      const approvedItems = {
+        rfis: (review.questions_to_ask || [])
+          .slice(0, 8)
+          .filter((_, index) => selectedPushItems[`rfi:${index}`])
+          .map((question) => ({
+            question,
+            priority: "P2 - Medium",
+            phase: "Due Diligence",
+          })),
+        risks: (review.red_flags || [])
+          .slice(0, 8)
+          .filter((_, index) => selectedPushItems[`risk:${index}`])
+          .map((flag) => ({
+            title: flag,
+            severity: "Medium",
+            phase: "Due Diligence",
+            mitigation: "Review with the deal team and assign owner in Notion.",
+          })),
+        tasks: (review.missing_items || [])
+          .slice(0, 8)
+          .filter((_, index) => selectedPushItems[`task:${index}`])
+          .map((item) => ({
+            title: item,
+            priority: "P2 - Medium",
+            phase: "Due Diligence",
+            category: "Document Review",
+            notes: `Follow-up from review of ${doc.original_name}.`,
+          })),
+        documents: selectedPushItems.document
+          ? [
+              {
+                title: doc.original_name,
+                type: notionDocumentType(doc.category),
+                status: "In Review",
+                link: typeof window !== "undefined" ? `${window.location.origin}/api/documents/${doc.id}/view` : undefined,
+                phase: "Due Diligence",
+                notes: review.executive_take,
+              },
+            ]
+          : [],
+        notes: selectedPushItems.note
+          ? [
+              {
+                title: `Review: ${doc.original_name}`,
+                type: "Other",
+                summary: [
+                  review.executive_take,
+                  ...(review.key_points || []).map((point) => `Key point: ${point}`),
+                ].join("\n"),
+              },
+            ]
+          : [],
+      };
+
+      let res = await fetch(`/api/review-packets/${result.savedNoteId || doc.id}/push-to-notion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_id: dealId, approved_items: approvedItems }),
+      });
+      let json = await res.json().catch(() => ({}));
+
+      if (res.status === 409 && json.code === "NOTION_PROJECT_REQUIRED") {
+        await ensureNotionProject();
+        res = await fetch(`/api/review-packets/${result.savedNoteId || doc.id}/push-to-notion`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deal_id: dealId, approved_items: approvedItems }),
+        });
+        json = await res.json().catch(() => ({}));
+      }
+
+      if (!res.ok) {
+        throw new Error(json.error || "Could not push review to Notion");
+      }
+      const created = (json.data?.created || {}) as Record<string, unknown>;
+      const totalCreated = Object.values(created).reduce<number>(
+        (sum, value) => sum + (Array.isArray(value) ? value.length : 0),
+        0
+      );
+      toast.success(`Pushed ${totalCreated} item${totalCreated === 1 ? "" : "s"} to Notion`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not push review to Notion";
+      setNotionError(message);
+      toast.error(message);
+    } finally {
+      setPushingToNotion(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-black/70 p-4">
       <div className="mx-auto flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border bg-card shadow-2xl">
@@ -1705,9 +1829,72 @@ function DocumentReviewModal({
           <div className="mt-4 rounded-lg border border-border/60 bg-background/50 p-4">
             <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Filing suggestion</p>
             <p className="mt-2 text-sm leading-6">
-              {DOCUMENT_CATEGORIES[review.filing_suggestion.category as DocumentCategory]?.label || review.filing_suggestion.category}
-              {review.filing_suggestion.deal_relevance ? ` - ${review.filing_suggestion.deal_relevance}` : ""}
+              {DOCUMENT_CATEGORIES[review.filing_suggestion?.category as DocumentCategory]?.label || review.filing_suggestion?.category || "Project document"}
+              {review.filing_suggestion?.deal_relevance ? ` - ${review.filing_suggestion.deal_relevance}` : ""}
             </p>
+          </div>
+          <div className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-amber-300">Push selected items to Notion</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  These records will attach to this deal&apos;s Notion Pipeline project. If no project exists yet, Deal Intelligence will create one first.
+                </p>
+              </div>
+              <Button size="sm" className="gap-1.5" onClick={pushReviewToNotion} disabled={pushingToNotion}>
+                {pushingToNotion ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
+                Push to Notion
+              </Button>
+            </div>
+            {notionError && (
+              <p className="mt-2 text-xs text-rose-300">{notionError}</p>
+            )}
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <NotionPushToggle
+                id="document"
+                checked={!!selectedPushItems.document}
+                label="Key document record"
+                detail={doc.original_name}
+                onToggle={togglePushItem}
+              />
+              <NotionPushToggle
+                id="note"
+                checked={!!selectedPushItems.note}
+                label="Review note"
+                detail={review.executive_take}
+                onToggle={togglePushItem}
+              />
+              {(review.questions_to_ask || []).slice(0, 8).map((question, index) => (
+                <NotionPushToggle
+                  key={`rfi:${index}`}
+                  id={`rfi:${index}`}
+                  checked={!!selectedPushItems[`rfi:${index}`]}
+                  label="RFI / question"
+                  detail={question}
+                  onToggle={togglePushItem}
+                />
+              ))}
+              {(review.red_flags || []).slice(0, 8).map((flag, index) => (
+                <NotionPushToggle
+                  key={`risk:${index}`}
+                  id={`risk:${index}`}
+                  checked={!!selectedPushItems[`risk:${index}`]}
+                  label="Issue / risk"
+                  detail={flag}
+                  onToggle={togglePushItem}
+                />
+              ))}
+              {(review.missing_items || []).slice(0, 8).map((item, index) => (
+                <NotionPushToggle
+                  key={`task:${index}`}
+                  id={`task:${index}`}
+                  checked={!!selectedPushItems[`task:${index}`]}
+                  label="Task"
+                  detail={item}
+                  onToggle={togglePushItem}
+                />
+              ))}
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t px-5 py-3">
@@ -1726,6 +1913,58 @@ function DocumentReviewModal({
       </div>
     </div>
   );
+}
+
+function NotionPushToggle({
+  id,
+  checked,
+  label,
+  detail,
+  onToggle,
+}: {
+  id: string;
+  checked: boolean;
+  label: string;
+  detail: string;
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(id)}
+      className={`rounded-lg border p-3 text-left transition-colors ${
+        checked
+          ? "border-amber-500/35 bg-amber-500/10"
+          : "border-border/60 bg-background/40 hover:bg-muted/30"
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+          checked ? "border-amber-400 bg-amber-400 text-black" : "border-border"
+        }`}>
+          {checked && <CheckCircle2 className="h-3 w-3" />}
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</span>
+          <span className="mt-1 line-clamp-2 block text-xs leading-5 text-foreground">{detail}</span>
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function notionDocumentType(category: string) {
+  const value = category.toLowerCase();
+  if (value.includes("om")) return "OM / Marketing";
+  if (value.includes("title")) return "Title Commitment";
+  if (value.includes("survey")) return "Survey";
+  if (value.includes("environment") || value.includes("phase")) return "Phase I/II";
+  if (value.includes("zoning")) return "Zoning Letter";
+  if (value.includes("plan") || value.includes("drawing") || value.includes("site")) return "Plans / Drawings";
+  if (value.includes("permit")) return "Permit";
+  if (value.includes("loi")) return "LOI";
+  if (value.includes("psa")) return "PSA / PA";
+  return "Other";
 }
 
 function ReviewList({
