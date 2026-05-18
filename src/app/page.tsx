@@ -48,8 +48,10 @@ export default function HomePage() {
   const [lastNotionImport, setLastNotionImport] = useState<{
     scanned: number;
     created: number;
+    linked: number;
     updated: number;
     skipped: number;
+    needs_review?: number;
   } | null>(null);
   const [search, setSearch] = useState("");
 
@@ -91,7 +93,7 @@ export default function HomePage() {
       if (!res.ok) throw new Error(json.error || "Could not import Notion Pipeline");
       setLastNotionImport(json.data);
       toast.success(
-        `Notion sync: ${json.data.created} created, ${json.data.updated} updated, ${json.data.skipped} unchanged`
+        `Notion sync: ${json.data.created} created, ${json.data.linked} linked, ${json.data.needs_review || 0} need review`
       );
       await loadDealDesk();
     } catch (error) {
@@ -344,8 +346,8 @@ export default function HomePage() {
                         <div className="mt-3 grid grid-cols-4 gap-1 text-center text-[11px]">
                           <SyncStat label="Scan" value={lastNotionImport.scanned} />
                           <SyncStat label="New" value={lastNotionImport.created} />
-                          <SyncStat label="Fill" value={lastNotionImport.updated} />
-                          <SyncStat label="Same" value={lastNotionImport.skipped} />
+                          <SyncStat label="Link" value={lastNotionImport.linked || 0} />
+                          <SyncStat label="Review" value={lastNotionImport.needs_review || 0} />
                         </div>
                       )}
                       <Button size="sm" className="mt-3 h-8 w-full gap-1.5 text-xs" onClick={importFromNotion} disabled={syncingNotion}>

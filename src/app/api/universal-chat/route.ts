@@ -17,6 +17,7 @@ import {
 import { chatUniversal } from "@/lib/claude";
 import type { UniversalChatContext } from "@/lib/claude";
 import { formatPlaybookContext } from "@/lib/playbook";
+import { getLinkedNotionProject, getProjectContext } from "@/lib/notion";
 import { recomputeSchedule } from "@/lib/schedule-recompute";
 import {
   requireAuth,
@@ -109,11 +110,16 @@ export async function POST(req: NextRequest) {
         console.warn("universal-chat deal facts failed:", error);
         return null;
       });
+      const notionContext = await buildNotionContext(dealId).catch((error) => {
+        console.warn("universal-chat notion context failed:", error);
+        return null;
+      });
       deal = {
         id: d.id,
         name: d.name,
         context_notes: memoryText || d.context_notes || null,
         deal_facts: dealFacts,
+        notion_context: notionContext,
         property_type: d.property_type ?? null,
         status: d.status ?? null,
         city: d.city ?? null,
@@ -431,6 +437,45 @@ export async function POST(req: NextRequest) {
     console.error("POST /api/universal-chat error:", error);
     return NextResponse.json({ error: "Chat failed" }, { status: 500 });
   }
+}
+
+async function buildNotionContext(dealId: string): Promise<string | null> {
+  const link = await getLinkedNotionProject(dealId);
+  if (!link?.notion_page_id) return null;
+  const ctx = await getProjectContext(link.notion_page_id, { mode: "active" });
+  const lines: string[] = [];
+  lines.push(`Pipeline project: ${link.notion_url || link.notion_page_id}`);
+  if (ctx.tasks.length > 0) {
+    lines.push("Active tasks:");
+    ctx.tasks.slice(0, 8).forEach((task) => {
+      const flags = [task.priority, task.due_date ? `due ${task.due_date}` : null, task.blocker ? "blocker" : null, task.critical_path ? "critical path" : null]
+        .filter(Boolean)
+        .join(", ");
+      lines.push(`- ${task.title}${flags ? ` (${flags})` : ""}`);
+    });
+  }
+  if (ctx.rfis.length > 0) {
+    lines.push("Open RFIs/questions:");
+    ctx.rfis.slice(0, 6).forEach((rfi) => {
+      lines.push(`- ${rfi.question}${rfi.due_date ? ` (due ${rfi.due_date})` : ""}`);
+    });
+  }
+  if (ctx.risks.length > 0) {
+    lines.push("Open risks/issues:");
+    ctx.risks.slice(0, 6).forEach((risk) => {
+      lines.push(`- ${risk.title}${risk.severity ? ` (${risk.severity})` : ""}`);
+    });
+  }
+  if (ctx.schedule.length > 0) {
+    lines.push("Active schedule:");
+    ctx.schedule.slice(0, 6).forEach((item) => {
+      lines.push(`- ${item.title}${item.forecast_date ? ` (${item.forecast_date})` : ""}${item.critical_path ? " [critical]" : ""}`);
+    });
+  }
+  if (lines.length === 1) {
+    lines.push("No active Notion tasks, RFIs, risks, or schedule items returned.");
+  }
+  return lines.join("\n");
 }
 
 export async function GET(req: NextRequest) {

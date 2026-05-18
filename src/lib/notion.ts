@@ -456,6 +456,54 @@ function mergeOnlyEmptyFields(
   return updates;
 }
 
+function normalizeMatchText(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b(llc|lp|inc|the|project|deal)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function likelyDealMatch(
+  localDeal: Record<string, unknown>,
+  importedDeal: Record<string, unknown>
+): { confidence: "high" | "medium"; reason: string } | null {
+  const localAddress = normalizeMatchText(localDeal.address);
+  const importedAddress = normalizeMatchText(importedDeal.address);
+  const localName = normalizeMatchText(localDeal.name);
+  const importedName = normalizeMatchText(importedDeal.name);
+  const localCity = normalizeMatchText(localDeal.city);
+  const importedCity = normalizeMatchText(importedDeal.city);
+  const localState = normalizeMatchText(localDeal.state);
+  const importedState = normalizeMatchText(importedDeal.state);
+
+  if (localAddress && importedAddress) {
+    if (localAddress === importedAddress) {
+      return { confidence: "high", reason: "exact address" };
+    }
+    if (
+      localAddress.length > 8 &&
+      importedAddress.length > 8 &&
+      (localAddress.includes(importedAddress) || importedAddress.includes(localAddress))
+    ) {
+      return { confidence: "high", reason: "matching address" };
+    }
+  }
+
+  if (localName && importedName && localName === importedName) {
+    if (!importedCity || !localCity || importedCity === localCity) {
+      if (!importedState || !localState || importedState === localState) {
+        return { confidence: "high", reason: "matching name and market" };
+      }
+    }
+    return { confidence: "medium", reason: "matching name" };
+  }
+
+  return null;
+}
+
 function extractPipelineProject(page: Record<string, unknown>) {
   const title = getTitle(page, "Project Name");
   const assetClass = getMultiSelect(page, "Asset Class")[0] ?? "";
@@ -498,19 +546,24 @@ export async function importPipelineProjectsFromNotion(opts: {
     page_size: Math.max(1, Math.min(100, opts.pageSize ?? 50)),
   } as never);
 
+  const localDeals = (await dealQueries.getAll(opts.userId)) as Array<Record<string, unknown>>;
+  const linkedLocalDealIds = new Set<string>();
+
   const summary = {
     scanned: 0,
     created: 0,
     linked: 0,
     updated: 0,
     skipped: 0,
+    needs_review: 0,
     records: [] as Array<{
       notion_page_id: string;
       notion_url: string;
       deal_id: string | null;
-      action: "created" | "linked" | "updated" | "skipped";
+      action: "created" | "linked" | "updated" | "skipped" | "needs_review";
       name: string;
       updated_fields?: string[];
+      match_reason?: string;
     }>,
   };
 
@@ -521,6 +574,7 @@ export async function importPipelineProjectsFromNotion(opts: {
     const existingLink = await notionSyncQueries.getByNotionPage(pageId, "pipeline_project");
 
     if (existingLink?.local_id) {
+      linkedLocalDealIds.add(existingLink.local_id);
       const existingDeal = await dealQueries.getById(existingLink.local_id);
       if (!existingDeal) {
         await notionSyncQueries.upsert({
@@ -568,6 +622,59 @@ export async function importPipelineProjectsFromNotion(opts: {
       continue;
     }
 
+    const matched = localDeals
+      .filter((deal) => !linkedLocalDealIds.has(String(deal.id ?? "")))
+      .map((deal) => ({ deal, match: likelyDealMatch(deal, imported.deal) }))
+      .filter((entry): entry is { deal: Record<string, unknown>; match: { confidence: "high" | "medium"; reason: string } } => Boolean(entry.match))
+      .sort((a, b) => (a.match.confidence === b.match.confidence ? 0 : a.match.confidence === "high" ? -1 : 1))[0];
+
+    if (matched?.match.confidence === "high" && matched.deal.id) {
+      const matchedDealId = String(matched.deal.id);
+      const updates = mergeOnlyEmptyFields(matched.deal, imported.deal);
+      if (Object.keys(updates).length > 0) {
+        await dealQueries.update(matchedDealId, updates);
+      }
+      await notionSyncQueries.upsert({
+        local_type: "deal",
+        local_id: matchedDealId,
+        notion_role: "pipeline_project",
+        notion_data_source: "pipeline",
+        notion_page_id: pageId,
+        notion_url: imported.notion_url,
+        metadata: {
+          linked_from_notion_import_at: new Date().toISOString(),
+          import_policy: "auto-link-high-confidence-only",
+          match_reason: matched.match.reason,
+          updated_fields: Object.keys(updates),
+        },
+      });
+      linkedLocalDealIds.add(matchedDealId);
+      summary.linked += 1;
+      summary.records.push({
+        notion_page_id: pageId,
+        notion_url: imported.notion_url,
+        deal_id: matchedDealId,
+        action: "linked",
+        name: String(matched.deal.name ?? imported.deal.name),
+        updated_fields: Object.keys(updates),
+        match_reason: matched.match.reason,
+      });
+      continue;
+    }
+
+    if (matched?.match.confidence === "medium") {
+      summary.needs_review += 1;
+      summary.records.push({
+        notion_page_id: pageId,
+        notion_url: imported.notion_url,
+        deal_id: String(matched.deal.id ?? "") || null,
+        action: "needs_review",
+        name: imported.deal.name,
+        match_reason: matched.match.reason,
+      });
+      continue;
+    }
+
     const dealId = randomUUID();
     await dealQueries.create({
       id: dealId,
@@ -593,6 +700,8 @@ export async function importPipelineProjectsFromNotion(opts: {
       action: "created",
       name: imported.deal.name,
     });
+    localDeals.push({ id: dealId, ...imported.deal });
+    linkedLocalDealIds.add(dealId);
   }
 
   return summary;

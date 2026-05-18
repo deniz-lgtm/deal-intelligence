@@ -1219,6 +1219,7 @@ export interface UniversalChatContext {
     status?: string | null;
     city?: string | null;
     state?: string | null;
+    notion_context?: string | null;
   } | null;
   // Free-text snapshot of what's on screen. Pages call useSetPageContext
   // to publish this. Examples:
@@ -1270,7 +1271,10 @@ ${ctx.deal.city || ctx.deal.state ? `Location: ${[ctx.deal.city, ctx.deal.state]
 ${ctx.deal.deal_facts?.trim() || "No structured deal facts loaded."}
 
 ## Deal Memory
-${ctx.deal.context_notes?.trim() || "No context saved yet."}`
+${ctx.deal.context_notes?.trim() || "No context saved yet."}
+
+## Active Notion Context
+${ctx.deal.notion_context?.trim() || "No linked/active Notion context loaded. Treat Deal Intelligence as the analysis workbench, not the task manager."}`
     : `## Active Deal
 None — the user is on a workspace-level page. save_context, update_deal_fields, and update_underwriting tools are NOT available. Answer questions, help navigate, and give general underwriting guidance.`;
 
