@@ -94,6 +94,21 @@ export async function ensureColumns(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_shares_deal_id ON deal_shares(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_deal_shares_user_id ON deal_shares(user_id)`,
+    `CREATE TABLE IF NOT EXISTS notion_sync_links (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      local_type TEXT NOT NULL,
+      local_id TEXT NOT NULL,
+      notion_role TEXT NOT NULL DEFAULT 'primary',
+      notion_data_source TEXT NOT NULL,
+      notion_page_id TEXT NOT NULL,
+      notion_url TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(local_type, local_id, notion_role)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_notion_sync_links_local ON notion_sync_links(local_type, local_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_notion_sync_links_page ON notion_sync_links(notion_page_id)`,
     // deals table
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS business_plan_id TEXT",
     "ALTER TABLE deals ADD COLUMN IF NOT EXISTS context_notes TEXT",
@@ -1757,6 +1772,23 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_shares_deal_id ON deal_shares(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_deal_shares_user_id ON deal_shares(user_id)`,
+    // Notion-primary integration: maps local deals/reviews/outputs to Notion
+    // Pipeline projects and records created by approved review packets.
+    `CREATE TABLE IF NOT EXISTS notion_sync_links (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      local_type TEXT NOT NULL,
+      local_id TEXT NOT NULL,
+      notion_role TEXT NOT NULL DEFAULT 'primary',
+      notion_data_source TEXT NOT NULL,
+      notion_page_id TEXT NOT NULL,
+      notion_url TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(local_type, local_id, notion_role)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_notion_sync_links_local ON notion_sync_links(local_type, local_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_notion_sync_links_page ON notion_sync_links(notion_page_id)`,
     // Branding columns on business_plans
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_company_name TEXT NOT NULL DEFAULT ''`,
     `ALTER TABLE business_plans ADD COLUMN IF NOT EXISTS branding_tagline TEXT NOT NULL DEFAULT ''`,
@@ -2421,6 +2453,89 @@ export const dealQueries = {
 };
 
 // ─── Deal Notes queries ──────────────────────────────────────────────────────
+
+// Notion sync links map local workbench records to Notion Pipeline projects
+// and the records created from approved review packets.
+export type NotionSyncLink = {
+  id: string;
+  local_type: string;
+  local_id: string;
+  notion_role: string;
+  notion_data_source: string;
+  notion_page_id: string;
+  notion_url: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export const notionSyncQueries = {
+  getByLocal: async (
+    localType: string,
+    localId: string,
+    role = "primary"
+  ): Promise<NotionSyncLink | null> => {
+    await ensureColumns();
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT *
+         FROM notion_sync_links
+        WHERE local_type = $1 AND local_id = $2 AND notion_role = $3
+        LIMIT 1`,
+      [localType, localId, role]
+    );
+    return (res.rows[0] as NotionSyncLink | undefined) ?? null;
+  },
+
+  getDealProjectLink: async (dealId: string): Promise<NotionSyncLink | null> => {
+    return notionSyncQueries.getByLocal("deal", dealId, "pipeline_project");
+  },
+
+  upsert: async (link: {
+    local_type: string;
+    local_id: string;
+    notion_role?: string;
+    notion_data_source: string;
+    notion_page_id: string;
+    notion_url?: string | null;
+    metadata?: Record<string, unknown>;
+  }): Promise<NotionSyncLink> => {
+    await ensureColumns();
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO notion_sync_links (
+         local_type,
+         local_id,
+         notion_role,
+         notion_data_source,
+         notion_page_id,
+         notion_url,
+         metadata,
+         created_at,
+         updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW(), NOW())
+       ON CONFLICT (local_type, local_id, notion_role)
+       DO UPDATE SET
+         notion_data_source = EXCLUDED.notion_data_source,
+         notion_page_id = EXCLUDED.notion_page_id,
+         notion_url = EXCLUDED.notion_url,
+         metadata = EXCLUDED.metadata,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        link.local_type,
+        link.local_id,
+        link.notion_role ?? "primary",
+        link.notion_data_source,
+        link.notion_page_id,
+        link.notion_url ?? null,
+        JSON.stringify(link.metadata ?? {}),
+      ]
+    );
+    return res.rows[0] as NotionSyncLink;
+  },
+};
 
 // Categories where notes are included in AI memory
 const MEMORY_CATEGORIES = ["context", "thesis", "risk", "site_walk"];

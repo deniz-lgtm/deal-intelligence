@@ -25,11 +25,11 @@ export async function POST(
     const { errorResponse: accessError } = await requireDealEditAccess(params.id, userId);
     if (accessError) return accessError;
 
-    if (!process.env.NOTION_API_KEY || !process.env.NOTION_DEALS_DATABASE_ID) {
+    if (!process.env.NOTION_API_KEY) {
       return NextResponse.json(
         {
           error:
-            "Notion integration is not configured. Add NOTION_API_KEY and NOTION_DEALS_DATABASE_ID to environment variables.",
+            "Notion integration is not configured. Add NOTION_API_KEY to environment variables.",
         },
         { status: 501 }
       );
@@ -57,7 +57,7 @@ export async function POST(
       data: {
         notion_page_id: result.pageId,
         notion_url: result.url,
-        message: "Deal package pushed to Notion.",
+        message: "Deal linked to Notion Pipeline project and approved handoff records were pushed.",
       },
     });
   } catch (error) {
