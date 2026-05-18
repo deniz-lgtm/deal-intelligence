@@ -107,18 +107,6 @@ const ANALYSIS_NAV_GROUP: NavGroup = {
   ],
 };
 
-const SCHEDULE_BASE_ITEMS: NavItem[] = [
-  { href: "/schedule", label: "Master Schedule", icon: Flag },
-];
-
-// Development Schedule sub-tabs (Design / Entitlements / CEQA / Procurement)
-// move inside the Development Schedule page itself rather than living on
-// the sidebar. Keeps the sidebar quiet for analysts who don't context-switch
-// between those four sub-views every click.
-const DEVELOPMENT_SCHEDULE_ITEMS: NavItem[] = [
-  { href: "/project", label: "Development Schedule", icon: GanttChart },
-];
-
 // Docs collapses the prior six-item Docs & Outputs group into three:
 // Documents (raw files), Outputs (a hub for OM / Diligence Summary / IC /
 // Output Library / Share Room), and Photos (kept top-level because it's
@@ -132,9 +120,8 @@ const DOCS_NAV_GROUP: NavGroup = {
 };
 
 const ADVANCED_NAV_GROUP: NavGroup = {
-  label: "Advanced",
+  label: "People",
   items: [
-    { href: "/schedule", label: "Schedule", icon: Flag },
     { href: "/contacts", label: "Contacts", icon: Users },
   ],
 };
@@ -160,7 +147,7 @@ const NAV_GROUP_ORDER = new Map<string, number>([
   ["Deal", 1],
   ["Analyze", 2],
   ["Materials", 3],
-  ["Advanced", 4],
+  ["People", 4],
   ["Execution", 5],
 ]);
 
@@ -188,7 +175,6 @@ const ALWAYS_VISIBLE_HREFS = new Set([
   "/chat",
   "/underwriting",
   "/site",
-  "/schedule",
   "/documents",
   "/outputs",
 ]);
@@ -217,7 +203,6 @@ function getNavGroups(
   dealScope: DealScope | null,
   showInDevelopment: boolean,
   showInConstruction: boolean,
-  forceDevelopmentSchedule = false,
   forceExecutionGroup = false
 ): NavGroup[] {
   // Construction now contains both pre-con prep and operational items.
@@ -233,15 +218,6 @@ function getNavGroups(
     showInDevelopment ||
     dealScope !== "acquisition" ||
     forceExecutionGroup;
-  const showDevelopmentSchedule =
-    dealScope !== "acquisition" || showInDevelopment || forceDevelopmentSchedule;
-  const scheduleGroup: NavGroup = {
-    label: "Schedule",
-    items: [
-      ...SCHEDULE_BASE_ITEMS,
-      ...(showDevelopmentSchedule ? DEVELOPMENT_SCHEDULE_ITEMS : []),
-    ],
-  };
   const base: NavGroup[] = [
     OVERVIEW_NAV_GROUP,
     ANALYSIS_NAV_GROUP,
@@ -471,7 +447,6 @@ export default function DealLayout({
       }))
       .filter((group) => group.items.length > 0);
   };
-  const forceDevelopmentSchedule = pathname.startsWith(`${basePath}/project`);
   const forceExecutionGroup =
     pathname.startsWith(`${basePath}/construction`) ||
     pathname.startsWith(`${basePath}/pre-construction`);
@@ -613,7 +588,6 @@ export default function DealLayout({
                 deal?.deal_scope ?? null,
                 deal?.show_in_development ?? false,
                 deal?.show_in_construction ?? false,
-                forceDevelopmentSchedule,
                 forceExecutionGroup,
               )
             ).map((group, gi) => {

@@ -7,7 +7,6 @@ import {
   Clock3,
   Database,
   ExternalLink,
-  FileSearch,
   FolderOpen,
   Inbox,
   Link2,
@@ -188,18 +187,18 @@ export default function HomePage() {
       icon: Inbox,
     },
     {
-      href: "/review-doc",
-      label: "Review a document",
-      value: "Drop",
-      body: "File a proposal, OM, report, plan, or email attachment into a deal folder.",
-      icon: FileSearch,
-    },
-    {
       href: "/deals/new",
       label: "Start BOE",
       value: "New",
       body: "Create a quick deal folder and start the high-level underwriting pass.",
       icon: Plus,
+    },
+    {
+      href: "/comps-library",
+      label: "Find comps",
+      value: "Repo",
+      body: "Open the comps and market reference library before you underwrite too deeply.",
+      icon: FolderOpen,
     },
   ];
 
@@ -222,12 +221,6 @@ export default function HomePage() {
               <Button variant="outline" size="sm" className="gap-1.5" onClick={importFromNotion} disabled={syncingNotion}>
                 {syncingNotion ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
                 Sync Notion
-              </Button>
-              <Button asChild variant="outline" size="sm" className="gap-1.5">
-                <Link href="/review-doc">
-                  <FileSearch className="h-3.5 w-3.5" />
-                  Review Doc
-                </Link>
               </Button>
               {can("deals.create") && (
                 <Button asChild size="sm" className="gap-1.5">
@@ -461,12 +454,12 @@ export default function HomePage() {
                   <Panel
                     title="Assistant"
                     icon={<MessageSquare className="h-4 w-4 text-blue-400" />}
-                    href="/review-doc"
-                    hrefLabel="Review doc"
+                    href="/inbox"
+                    hrefLabel="Open inbox"
                   >
                     <div className="rounded-lg border border-border/50 bg-background/50 p-3">
                       <p className="text-xs leading-5 text-muted-foreground">
-                        For now, use Review Doc for proposals and loose files. The next pass should fold this directly into the Inbox so every messy input starts in one place.
+                        Drop messy inputs into Inbox or a deal&apos;s Documents tab. Reviews, questions, and red flags can then be pushed to Notion with the Pipeline relation attached.
                       </p>
                     </div>
                   </Panel>

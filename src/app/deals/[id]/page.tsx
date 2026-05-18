@@ -803,7 +803,6 @@ export default function DealOverviewPage({
         documents={documents}
         documentReviews={documentReviewNotes}
         underwriting={underwriting}
-        scheduleItems={devPhases}
         openTaskCount={openDecisions.length}
         checklistIssues={checklistIssues}
         playbookQuestion={playbookQuestion}
@@ -827,7 +826,7 @@ export default function DealOverviewPage({
               <h2 className="font-display text-sm">Advanced Deal Tools</h2>
             </div>
             <p className="mt-1 text-2xs text-muted-foreground">
-              Deeper underwriting, property details, notes, business plan, schedule, and legacy coordination tools.
+              Deeper underwriting, property details, notes, business plan, and supporting analysis tools.
             </p>
           </div>
           <span className="shrink-0 rounded-full border border-border/50 px-2 py-1 text-2xs text-muted-foreground">
@@ -1240,7 +1239,6 @@ function DealPersonalWorkspace({
   documents,
   documentReviews,
   underwriting,
-  scheduleItems,
   openTaskCount,
   checklistIssues,
   playbookQuestion,
@@ -1249,12 +1247,10 @@ function DealPersonalWorkspace({
   documents: Document[];
   documentReviews: DealNote[];
   underwriting: UnderwritingData | null;
-  scheduleItems: DevPhase[];
   openTaskCount: number;
   checklistIssues: number;
   playbookQuestion: string;
 }) {
-  const openScheduleItems = scheduleItems.filter((item) => item.status !== "complete").length;
   const hasUnderwriting = Boolean(underwriting);
   const latestReview = documentReviews[0] ? parseDocumentReviewNote(documentReviews[0]) : null;
   const nextPrompt = encodeURIComponent(
@@ -1524,8 +1520,8 @@ function DealPersonalWorkspace({
         {[
           { label: "Documents", value: documents.length, href: `/deals/${dealId}/documents` },
           { label: "Review notes", value: documentReviews.length, href: `/notes?deal=${dealId}` },
-          { label: "Open tasks", value: openTaskCount, href: `/deals/${dealId}/tasks` },
-          { label: "Schedule items", value: openScheduleItems, href: `/deals/${dealId}/schedule` },
+          { label: "Follow-ups", value: openTaskCount, href: `/deals/${dealId}/tasks` },
+          { label: "BOE", value: hasUnderwriting ? "Ready" : "Start", href: `/deals/${dealId}/underwriting` },
         ].map((item) => (
           <Link key={item.label} href={item.href} className="bg-background/35 px-4 py-3 transition-colors hover:bg-muted/25">
             <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{item.label}</p>
