@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
   Clock3,
+  Database,
   FileSearch,
   FolderOpen,
   Inbox,
@@ -20,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { DEAL_STAGE_LABELS, type Deal } from "@/lib/types";
 import { formatCurrency, titleCase } from "@/lib/utils";
 import { usePermissions } from "@/lib/usePermissions";
+import { toast } from "sonner";
 
 interface DealWithStats extends Deal {
   document_count?: number;
@@ -37,51 +39,67 @@ interface InboxItem {
   analysis_status?: string | null;
 }
 
-interface DueTask {
-  id: string;
-  deal_id: string;
-  deal_name: string;
-  title: string;
-  due_date: string | null;
-  kind: string;
-  priority: string | null;
-}
-
 export default function HomePage() {
   const { can } = usePermissions();
   const [deals, setDeals] = useState<DealWithStats[]>([]);
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
-  const [tasksDue, setTasksDue] = useState<DueTask[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncingNotion, setSyncingNotion] = useState(false);
+  const [lastNotionImport, setLastNotionImport] = useState<{
+    scanned: number;
+    created: number;
+    updated: number;
+    skipped: number;
+  } | null>(null);
   const [search, setSearch] = useState("");
+
+  const loadDealDesk = useCallback(async (cancelled?: () => boolean) => {
+    try {
+      const [dealsRes, inboxRes] = await Promise.all([
+        fetch("/api/deals"),
+        fetch("/api/inbox/items").catch(() => null),
+      ]);
+      const dealsJson = await dealsRes.json().catch(() => ({ data: [] }));
+      const inboxJson = inboxRes ? await inboxRes.json().catch(() => ({ data: [] })) : { data: [] };
+      if (cancelled?.()) return;
+      setDeals(Array.isArray(dealsJson.data) ? dealsJson.data : []);
+      setInboxItems(Array.isArray(inboxJson.data) ? inboxJson.data : []);
+    } catch (error) {
+      console.error("Failed to load deal desk:", error);
+    } finally {
+      if (!cancelled?.()) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      try {
-        const [dealsRes, inboxRes, tasksRes] = await Promise.all([
-          fetch("/api/deals"),
-          fetch("/api/inbox/items").catch(() => null),
-          fetch("/api/home/tasks-due").catch(() => null),
-        ]);
-        const dealsJson = await dealsRes.json().catch(() => ({ data: [] }));
-        const inboxJson = inboxRes ? await inboxRes.json().catch(() => ({ data: [] })) : { data: [] };
-        const tasksJson = tasksRes ? await tasksRes.json().catch(() => ({ data: [] })) : { data: [] };
-        if (cancelled) return;
-        setDeals(Array.isArray(dealsJson.data) ? dealsJson.data : []);
-        setInboxItems(Array.isArray(inboxJson.data) ? inboxJson.data : []);
-        setTasksDue(Array.isArray(tasksJson.data) ? tasksJson.data : []);
-      } catch (error) {
-        console.error("Failed to load deal desk:", error);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    load();
+    loadDealDesk(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadDealDesk]);
+
+  const importFromNotion = async () => {
+    setSyncingNotion(true);
+    try {
+      const res = await fetch("/api/notion/projects/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ page_size: 75 }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Could not import Notion Pipeline");
+      setLastNotionImport(json.data);
+      toast.success(
+        `Notion sync: ${json.data.created} created, ${json.data.updated} updated, ${json.data.skipped} unchanged`
+      );
+      await loadDealDesk();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not import Notion Pipeline");
+    } finally {
+      setSyncingNotion(false);
+    }
+  };
 
   const activeDeals = useMemo(
     () => deals.filter((deal) => deal.status !== "dead" && deal.status !== "archived"),
@@ -144,7 +162,11 @@ export default function HomePage() {
                 A quieter front door for screening deals, reviewing documents, and jumping back into active BOEs.
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={importFromNotion} disabled={syncingNotion}>
+                {syncingNotion ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
+                Sync Notion
+              </Button>
               <Button asChild variant="outline" size="sm" className="gap-1.5">
                 <Link href="/review-doc">
                   <FileSearch className="h-3.5 w-3.5" />
@@ -305,29 +327,32 @@ export default function HomePage() {
                   </Panel>
 
                   <Panel
-                    title="Due soon"
-                    icon={<Clock3 className="h-4 w-4 text-amber-400" />}
-                    href="/inbox"
-                    hrefLabel="Review"
+                    title="Notion source of truth"
+                    icon={<Database className="h-4 w-4 text-emerald-400" />}
+                    href="/"
+                    hrefLabel="Sync"
+                    onAction={importFromNotion}
                   >
-                    {tasksDue.length === 0 ? (
-                      <EmptyLine text="No due tasks across active deals." />
-                    ) : (
-                      <div className="space-y-2">
-                        {tasksDue.slice(0, 5).map((task) => (
-                          <Link
-                            key={task.id}
-                            href={`/deals/${task.deal_id}`}
-                            className="block rounded-lg border border-border/50 bg-background/50 p-3 transition-colors hover:bg-muted/30"
-                          >
-                            <p className="line-clamp-2 text-xs font-medium">{task.title}</p>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              {task.deal_name} {task.due_date ? `- due ${formatShortDate(task.due_date)}` : "- no date"}
-                            </p>
-                          </Link>
-                        ))}
+                    <div className="rounded-lg border border-border/50 bg-background/50 p-3">
+                      <div className="flex items-start gap-2">
+                        <Clock3 className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          Notion owns team tasks, RFIs, risks, schedules, and meetings. Sync imports missing Pipeline projects as DI deal shells and only fills blank local fields.
+                        </p>
                       </div>
-                    )}
+                      {lastNotionImport && (
+                        <div className="mt-3 grid grid-cols-4 gap-1 text-center text-[11px]">
+                          <SyncStat label="Scan" value={lastNotionImport.scanned} />
+                          <SyncStat label="New" value={lastNotionImport.created} />
+                          <SyncStat label="Fill" value={lastNotionImport.updated} />
+                          <SyncStat label="Same" value={lastNotionImport.skipped} />
+                        </div>
+                      )}
+                      <Button size="sm" className="mt-3 h-8 w-full gap-1.5 text-xs" onClick={importFromNotion} disabled={syncingNotion}>
+                        {syncingNotion ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
+                        Sync Pipeline deals
+                      </Button>
+                    </div>
                   </Panel>
 
                   <Panel
@@ -357,12 +382,14 @@ function Panel({
   icon,
   href,
   hrefLabel,
+  onAction,
   children,
 }: {
   title: string;
   icon: React.ReactNode;
   href: string;
   hrefLabel: string;
+  onAction?: () => void;
   children: React.ReactNode;
 }) {
   return (
@@ -372,13 +399,33 @@ function Panel({
           {icon}
           <h2 className="text-sm font-semibold">{title}</h2>
         </div>
-        <Link href={href} className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-          {hrefLabel}
-          <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
+        {onAction ? (
+          <button
+            type="button"
+            onClick={onAction}
+            className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            {hrefLabel}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <Link href={href} className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+            {hrefLabel}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        )}
       </div>
       {children}
     </section>
+  );
+}
+
+function SyncStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-border/50 bg-card/60 px-2 py-1">
+      <p className="font-semibold tabular-nums text-foreground">{value}</p>
+      <p className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+    </div>
   );
 }
 

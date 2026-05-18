@@ -7,6 +7,8 @@
  */
 
 import { Client } from "@notionhq/client";
+import { randomUUID } from "crypto";
+import type { DealStatus, PropertyType } from "./types";
 import type { OmAnalysisRow } from "./db";
 import { dealQueries, notionSyncQueries } from "./db";
 
@@ -293,6 +295,36 @@ function getTitle(page: Record<string, unknown>, prop: string): string {
   return properties?.[prop]?.title?.map((part) => part.plain_text ?? "").join("") ?? "Untitled";
 }
 
+function getPlainText(page: Record<string, unknown>, prop: string): string {
+  const properties = page.properties as Record<
+    string,
+    {
+      rich_text?: Array<{ plain_text?: string }>;
+      select?: { name?: string };
+      place?: { address?: string; name?: string };
+    }
+  > | undefined;
+  const property = properties?.[prop];
+  return (
+    property?.rich_text?.map((part) => part.plain_text ?? "").join("") ||
+    property?.select?.name ||
+    property?.place?.address ||
+    property?.place?.name ||
+    ""
+  );
+}
+
+function getNumber(page: Record<string, unknown>, prop: string): number | null {
+  const properties = page.properties as Record<string, { number?: number | null }> | undefined;
+  const value = properties?.[prop]?.number;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getMultiSelect(page: Record<string, unknown>, prop: string): string[] {
+  const properties = page.properties as Record<string, { multi_select?: Array<{ name?: string }> }> | undefined;
+  return properties?.[prop]?.multi_select?.map((item) => item.name ?? "").filter(Boolean) ?? [];
+}
+
 function activeTask(page: Record<string, unknown>) {
   const status = getSelectName(page, "Status");
   if (["Done", "Cancelled", "Deferred"].includes(status)) return false;
@@ -380,6 +412,190 @@ export async function getProjectContext(
       url: page.url,
     })),
   };
+}
+
+function notionStageToDealStatus(stage: string): DealStatus {
+  const value = stage.toLowerCase();
+  if (value.includes("loi")) return "loi";
+  if (value.includes("control") || value.includes("psa") || value.includes("contract")) return "under_contract";
+  if (value.includes("diligence")) return "diligence";
+  if (value.includes("closing")) return "closing";
+  if (value.includes("closed")) return "closed";
+  if (value.includes("dead") || value.includes("passed")) return "dead";
+  if (value.includes("underwriting")) return "screening";
+  return "sourcing";
+}
+
+function notionAssetToPropertyType(assetClass: string): PropertyType {
+  const value = assetClass.toLowerCase();
+  if (value.includes("industrial")) return "industrial";
+  if (value.includes("multi") || value.includes("apartment")) return "multifamily";
+  if (value.includes("office")) return "office";
+  if (value.includes("retail")) return "retail";
+  if (value.includes("student")) return "student_housing";
+  if (value.includes("mixed")) return "mixed_use";
+  if (value.includes("land")) return "land";
+  if (value.includes("hotel") || value.includes("hospitality")) return "hospitality";
+  return "other";
+}
+
+function mergeOnlyEmptyFields(
+  deal: Record<string, unknown>,
+  imported: Record<string, unknown>
+): Record<string, unknown> {
+  const updates: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(imported)) {
+    if (value == null || value === "") continue;
+    const existing = deal[key];
+    const empty =
+      existing == null ||
+      existing === "" ||
+      (typeof existing === "number" && Number.isNaN(existing));
+    if (empty) updates[key] = value;
+  }
+  return updates;
+}
+
+function extractPipelineProject(page: Record<string, unknown>) {
+  const title = getTitle(page, "Project Name");
+  const assetClass = getMultiSelect(page, "Asset Class")[0] ?? "";
+  const stage = getSelectName(page, "Stage");
+  const address = getPlainText(page, "Address");
+  return {
+    notion_page_id: String(page.id),
+    notion_url: String(page.url ?? `https://notion.so/${String(page.id).replace(/-/g, "")}`),
+    deal: {
+      name: title || "Untitled Notion deal",
+      address,
+      city: getSelectName(page, "City") || "",
+      state: getSelectName(page, "State") || "",
+      zip: "",
+      property_type: notionAssetToPropertyType(assetClass),
+      status: notionStageToDealStatus(stage),
+      starred: false,
+      asking_price: getNumber(page, "Purchase Price"),
+      square_footage: getNumber(page, "Building SF"),
+      units: getNumber(page, "Units"),
+      bedrooms: null,
+      year_built: null,
+      notes: getPlainText(page, "Notes") || null,
+      land_acres: getNumber(page, "Site Acres"),
+      investment_strategy: null,
+      deal_scope: null,
+      loi_executed: false,
+      psa_executed: false,
+    },
+  };
+}
+
+export async function importPipelineProjectsFromNotion(opts: {
+  userId: string;
+  pageSize?: number;
+}) {
+  const notion = getClient();
+  const response = await notion.dataSources.query({
+    data_source_id: getNotionDataSourceId("pipeline"),
+    page_size: Math.max(1, Math.min(100, opts.pageSize ?? 50)),
+  } as never);
+
+  const summary = {
+    scanned: 0,
+    created: 0,
+    linked: 0,
+    updated: 0,
+    skipped: 0,
+    records: [] as Array<{
+      notion_page_id: string;
+      notion_url: string;
+      deal_id: string | null;
+      action: "created" | "linked" | "updated" | "skipped";
+      name: string;
+      updated_fields?: string[];
+    }>,
+  };
+
+  for (const page of response.results as Array<Record<string, unknown>>) {
+    summary.scanned += 1;
+    const imported = extractPipelineProject(page);
+    const pageId = normalizeNotionId(imported.notion_page_id);
+    const existingLink = await notionSyncQueries.getByNotionPage(pageId, "pipeline_project");
+
+    if (existingLink?.local_id) {
+      const existingDeal = await dealQueries.getById(existingLink.local_id);
+      if (!existingDeal) {
+        await notionSyncQueries.upsert({
+          local_type: "deal",
+          local_id: existingLink.local_id,
+          notion_role: "pipeline_project",
+          notion_data_source: "pipeline",
+          notion_page_id: pageId,
+          notion_url: imported.notion_url,
+          metadata: { last_imported_at: new Date().toISOString(), import_policy: "link-only" },
+        });
+        summary.linked += 1;
+        summary.records.push({
+          notion_page_id: pageId,
+          notion_url: imported.notion_url,
+          deal_id: existingLink.local_id,
+          action: "linked",
+          name: imported.deal.name,
+        });
+        continue;
+      }
+
+      const updates = mergeOnlyEmptyFields(existingDeal, imported.deal);
+      if (Object.keys(updates).length > 0) {
+        await dealQueries.update(existingLink.local_id, updates);
+        summary.updated += 1;
+        summary.records.push({
+          notion_page_id: pageId,
+          notion_url: imported.notion_url,
+          deal_id: existingLink.local_id,
+          action: "updated",
+          name: String(existingDeal.name ?? imported.deal.name),
+          updated_fields: Object.keys(updates),
+        });
+      } else {
+        summary.skipped += 1;
+        summary.records.push({
+          notion_page_id: pageId,
+          notion_url: imported.notion_url,
+          deal_id: existingLink.local_id,
+          action: "skipped",
+          name: String(existingDeal.name ?? imported.deal.name),
+        });
+      }
+      continue;
+    }
+
+    const dealId = randomUUID();
+    await dealQueries.create({
+      id: dealId,
+      ...imported.deal,
+      owner_id: opts.userId,
+      auto_ingested: false,
+      inbox_reviewed_at: new Date().toISOString(),
+    });
+    await notionSyncQueries.upsert({
+      local_type: "deal",
+      local_id: dealId,
+      notion_role: "pipeline_project",
+      notion_data_source: "pipeline",
+      notion_page_id: pageId,
+      notion_url: imported.notion_url,
+      metadata: { created_from_notion_at: new Date().toISOString(), import_policy: "create-shell-only" },
+    });
+    summary.created += 1;
+    summary.records.push({
+      notion_page_id: pageId,
+      notion_url: imported.notion_url,
+      deal_id: dealId,
+      action: "created",
+      name: imported.deal.name,
+    });
+  }
+
+  return summary;
 }
 
 export type ReviewPacketItems = {

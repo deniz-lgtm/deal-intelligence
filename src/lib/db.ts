@@ -2491,6 +2491,22 @@ export const notionSyncQueries = {
     return notionSyncQueries.getByLocal("deal", dealId, "pipeline_project");
   },
 
+  getByNotionPage: async (
+    notionPageId: string,
+    role = "pipeline_project"
+  ): Promise<NotionSyncLink | null> => {
+    await ensureColumns();
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT *
+         FROM notion_sync_links
+        WHERE notion_page_id = $1 AND notion_role = $2
+        LIMIT 1`,
+      [notionPageId, role]
+    );
+    return (res.rows[0] as NotionSyncLink | undefined) ?? null;
+  },
+
   upsert: async (link: {
     local_type: string;
     local_id: string;
