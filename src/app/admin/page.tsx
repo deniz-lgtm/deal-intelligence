@@ -12,6 +12,7 @@ import ChecklistTemplatePanel from "./ChecklistTemplatePanel";
 import ContactsPanel from "./ContactsPanel";
 import AuditLogPanel from "./AuditLogPanel";
 import StoragePanel from "./StoragePanel";
+import NotionConfigPanel from "./NotionConfigPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,7 @@ export default async function AdminPage() {
           <SignupAllowlistPanel />
           <StoragePanel />
           <ContactsPanel />
+          <NotionConfigPanel />
           <AiConfigPanel />
           <PipelinePanel />
           <ChecklistTemplatePanel />

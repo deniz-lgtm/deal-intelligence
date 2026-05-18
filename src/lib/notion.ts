@@ -87,6 +87,68 @@ const DATA_SOURCES: Record<
   },
 };
 
+export async function getNotionRegistryStatus() {
+  const apiKeyConfigured = Boolean(process.env.NOTION_API_KEY);
+  const entries = Object.entries(DATA_SOURCES) as Array<
+    [NotionDataSourceKey, { env: string; fallback: string; label: string }]
+  >;
+
+  if (!apiKeyConfigured) {
+    return {
+      api_key_configured: false,
+      sources: entries.map(([key, source]) => ({
+        key,
+        label: source.label,
+        env: source.env,
+        id: getNotionDataSourceId(key),
+        configured_from_env: Boolean(process.env[source.env]),
+        status: "not_checked" as const,
+        notion_name: null,
+        error: "NOTION_API_KEY is not configured",
+      })),
+    };
+  }
+
+  const notion = getClient();
+  const sources = await Promise.all(
+    entries.map(async ([key, source]) => {
+      const id = getNotionDataSourceId(key);
+      try {
+        // The Notion SDK's data source shape has changed across versions;
+        // keep this registry status read-only and tolerant.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const response = await (notion.dataSources as any).retrieve({ data_source_id: id });
+        return {
+          key,
+          label: source.label,
+          env: source.env,
+          id,
+          configured_from_env: Boolean(process.env[source.env]),
+          status: "ok" as const,
+          notion_name: String(response?.title?.[0]?.plain_text ?? response?.name ?? source.label),
+          error: null,
+        };
+      } catch (error) {
+        return {
+          key,
+          label: source.label,
+          env: source.env,
+          id,
+          configured_from_env: Boolean(process.env[source.env]),
+          status: "error" as const,
+          notion_name: null,
+          error: error instanceof Error ? error.message : "Could not read Notion data source",
+        };
+      }
+    })
+  );
+
+  return {
+    api_key_configured: true,
+    sources,
+  };
+}
+
 export function getNotionDataSourceId(key: NotionDataSourceKey): string {
   const configured = process.env[DATA_SOURCES[key].env];
   return normalizeNotionId(configured || DATA_SOURCES[key].fallback);
