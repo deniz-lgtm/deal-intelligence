@@ -6,9 +6,11 @@ import {
   ArrowRight,
   Clock3,
   Database,
+  ExternalLink,
   FileSearch,
   FolderOpen,
   Inbox,
+  Link2,
   Loader2,
   MessageSquare,
   Plus,
@@ -39,12 +41,23 @@ interface InboxItem {
   analysis_status?: string | null;
 }
 
+interface NotionImportRecord {
+  notion_page_id: string;
+  notion_url: string;
+  deal_id: string | null;
+  action: "created" | "linked" | "updated" | "skipped" | "needs_review";
+  name: string;
+  updated_fields?: string[];
+  match_reason?: string;
+}
+
 export default function HomePage() {
   const { can } = usePermissions();
   const [deals, setDeals] = useState<DealWithStats[]>([]);
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncingNotion, setSyncingNotion] = useState(false);
+  const [linkingNotionMatch, setLinkingNotionMatch] = useState<string | null>(null);
   const [lastNotionImport, setLastNotionImport] = useState<{
     scanned: number;
     created: number;
@@ -52,6 +65,7 @@ export default function HomePage() {
     updated: number;
     skipped: number;
     needs_review?: number;
+    records?: NotionImportRecord[];
   } | null>(null);
   const [search, setSearch] = useState("");
 
@@ -100,6 +114,46 @@ export default function HomePage() {
       toast.error(error instanceof Error ? error.message : "Could not import Notion Pipeline");
     } finally {
       setSyncingNotion(false);
+    }
+  };
+
+  const linkReviewMatch = async (record: NotionImportRecord) => {
+    if (!record.deal_id) {
+      toast.error("Open the deal and link this Notion project manually.");
+      return;
+    }
+    setLinkingNotionMatch(record.notion_page_id);
+    try {
+      const res = await fetch("/api/notion/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deal_id: record.deal_id,
+          notion_project_id: record.notion_page_id,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Could not link Notion project");
+      setLastNotionImport((prev) =>
+        prev
+          ? {
+              ...prev,
+              linked: prev.linked + 1,
+              needs_review: Math.max(0, (prev.needs_review || 0) - 1),
+              records: prev.records?.map((item) =>
+                item.notion_page_id === record.notion_page_id
+                  ? { ...item, action: "linked" as const }
+                  : item
+              ),
+            }
+          : prev
+      );
+      await loadDealDesk();
+      toast.success("Linked Notion project to existing deal");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not link Notion project");
+    } finally {
+      setLinkingNotionMatch(null);
     }
   };
 
@@ -343,12 +397,59 @@ export default function HomePage() {
                         </p>
                       </div>
                       {lastNotionImport && (
-                        <div className="mt-3 grid grid-cols-4 gap-1 text-center text-[11px]">
-                          <SyncStat label="Scan" value={lastNotionImport.scanned} />
-                          <SyncStat label="New" value={lastNotionImport.created} />
-                          <SyncStat label="Link" value={lastNotionImport.linked || 0} />
-                          <SyncStat label="Review" value={lastNotionImport.needs_review || 0} />
-                        </div>
+                        <>
+                          <div className="mt-3 grid grid-cols-4 gap-1 text-center text-[11px]">
+                            <SyncStat label="Scan" value={lastNotionImport.scanned} />
+                            <SyncStat label="New" value={lastNotionImport.created} />
+                            <SyncStat label="Link" value={lastNotionImport.linked || 0} />
+                            <SyncStat label="Review" value={lastNotionImport.needs_review || 0} />
+                          </div>
+                          {(lastNotionImport.records || []).some((record) => record.action === "needs_review") && (
+                            <div className="mt-3 space-y-2">
+                              <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                                Review likely matches
+                              </p>
+                              {(lastNotionImport.records || [])
+                                .filter((record) => record.action === "needs_review")
+                                .slice(0, 3)
+                                .map((record) => (
+                                  <div key={record.notion_page_id} className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-2">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <p className="truncate text-xs font-medium text-amber-100">{record.name}</p>
+                                        <p className="mt-0.5 text-[11px] text-amber-100/70">
+                                          {record.match_reason || "possible duplicate"}
+                                        </p>
+                                      </div>
+                                      <a
+                                        href={record.notion_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="mt-0.5 text-amber-100/70 hover:text-amber-100"
+                                        aria-label="Open Notion project"
+                                      >
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                      </a>
+                                    </div>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="mt-2 h-7 w-full gap-1.5 border-amber-500/30 bg-transparent text-[11px] text-amber-100 hover:bg-amber-500/15"
+                                      onClick={() => linkReviewMatch(record)}
+                                      disabled={!record.deal_id || linkingNotionMatch === record.notion_page_id}
+                                    >
+                                      {linkingNotionMatch === record.notion_page_id ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <Link2 className="h-3.5 w-3.5" />
+                                      )}
+                                      Link to existing deal
+                                    </Button>
+                                  </div>
+                                ))}
+                            </div>
+                          )}
+                        </>
                       )}
                       <Button size="sm" className="mt-3 h-8 w-full gap-1.5 text-xs" onClick={importFromNotion} disabled={syncingNotion}>
                         {syncingNotion ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
