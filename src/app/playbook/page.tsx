@@ -35,6 +35,7 @@ const CATEGORIES = [
   { value: "underwriting", label: "Underwriting" },
   { value: "construction", label: "Construction" },
   { value: "entitlement", label: "Entitlement" },
+  { value: "skill", label: "Skill" },
   { value: "review_framework", label: "Review framework" },
   { value: "template", label: "Template" },
   { value: "other", label: "Other" },
@@ -194,7 +195,7 @@ export default function PlaybookPage() {
                 <div>
                   <h2 className="text-base font-semibold">Add source material</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Upload a file or paste a repeatable review framework. Review frameworks can be selected in Review Doc.
+                    Upload a file or paste a repeatable skill/review framework. Document pages can select these before running a review.
                   </p>
                 </div>
 

@@ -161,6 +161,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
     doc: Document;
     review: ReviewResult;
     savedNoteId?: string | null;
+    packetId?: string | null;
   } | null>(null);
 
   useEffect(() => {
@@ -175,7 +176,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         const json = await res.json().catch(() => ({}));
         if (!res.ok || cancelled) return;
         const rows = ((json.data || []) as PlaybookDocument[]).filter((doc) =>
-          ["review_framework", "design_standard", "handbook"].includes(doc.category)
+          ["skill", "review_framework", "design_standard", "handbook"].includes(doc.category)
         );
         setReviewFrameworks(rows);
       } catch {
@@ -417,7 +418,7 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
         }
         const data = json.data || {};
         const review = (data.review || data) as ReviewResult;
-        setDocReviewResult({ doc, review, savedNoteId: data.saved_note_id || null });
+        setDocReviewResult({ doc, review, savedNoteId: data.saved_note_id || null, packetId: data.packet_id || null });
         toast.success("Review saved to this deal");
       } catch {
         toast.error("Could not review this document");
@@ -543,9 +544,9 @@ export default function DocumentsPage({ params }: { params: { id: string } }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold">Documents & Intelligence</h2>
+          <h2 className="text-xl font-bold">Deal file room</h2>
           <p className="text-sm text-muted-foreground">
-            {documents.length} document{documents.length !== 1 ? "s" : ""} - upload, review, act, and share
+            {documents.length} document{documents.length !== 1 ? "s" : ""} - open any file for preview, review packets, and Notion push
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1664,7 +1665,7 @@ function DocumentReviewModal({
   dealId,
   onClose,
 }: {
-  result: { doc: Document; review: ReviewResult; savedNoteId?: string | null };
+  result: { doc: Document; review: ReviewResult; savedNoteId?: string | null; packetId?: string | null };
   dealId: string;
   onClose: () => void;
 }) {
@@ -1758,7 +1759,10 @@ function DocumentReviewModal({
           : [],
       };
 
-      let res = await fetch(`/api/review-packets/${result.savedNoteId || doc.id}/push-to-notion`, {
+      const pushEndpoint = result.packetId
+        ? `/api/document-review-packets/${result.packetId}/push-to-notion`
+        : `/api/review-packets/${result.savedNoteId || doc.id}/push-to-notion`;
+      let res = await fetch(pushEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deal_id: dealId, approved_items: approvedItems }),
@@ -1767,7 +1771,7 @@ function DocumentReviewModal({
 
       if (res.status === 409 && json.code === "NOTION_PROJECT_REQUIRED") {
         await ensureNotionProject();
-        res = await fetch(`/api/review-packets/${result.savedNoteId || doc.id}/push-to-notion`, {
+        res = await fetch(pushEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ deal_id: dealId, approved_items: approvedItems }),

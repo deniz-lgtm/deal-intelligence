@@ -53,6 +53,31 @@ type VersionRow = {
   parent_document_id: string | null;
 };
 
+type ReviewVisualStatus = {
+  attempted?: boolean;
+  included_pages?: number;
+  source?: string;
+  warning?: string | null;
+};
+
+type DocumentReviewPacket = {
+  id: string;
+  review_playbook_id: string | null;
+  focus: string | null;
+  review_json: ReviewResult;
+  visual_status: ReviewVisualStatus;
+  saved_note_id: string | null;
+  pushed_to_notion_at: string | null;
+  created_at: string;
+};
+
+type PlaybookDocument = {
+  id: string;
+  title: string;
+  category: string;
+  chunk_count: number;
+};
+
 function parseSummaryBullets(summary?: string | null): string[] {
   if (!summary?.trim()) return [];
   return summary
@@ -126,22 +151,30 @@ export default function DocumentDetailPage({
   const [doc, setDoc] = useState<Document | null>(null);
   const [notes, setNotes] = useState<DealNote[]>([]);
   const [versions, setVersions] = useState<VersionRow[]>([]);
+  const [packets, setPackets] = useState<DocumentReviewPacket[]>([]);
+  const [frameworks, setFrameworks] = useState<PlaybookDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [reviewing, setReviewing] = useState(false);
   const [pushing, setPushing] = useState(false);
+  const [pushSelection, setPushSelection] = useState<Record<string, boolean>>({});
+  const [selectedFrameworkId, setSelectedFrameworkId] = useState("");
   const [reviewFocus, setReviewFocus] = useState(
     "Review this document as my personal real estate development associate. Be concise, flag what matters, and say plainly when the file does not answer something."
   );
   const [liveReview, setLiveReview] = useState<ReviewResult | null>(null);
   const [liveReviewNoteId, setLiveReviewNoteId] = useState<string | null>(null);
+  const [livePacketId, setLivePacketId] = useState<string | null>(null);
+  const [liveVisualStatus, setLiveVisualStatus] = useState<ReviewVisualStatus | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [docRes, notesRes, versionsRes] = await Promise.all([
+      const [docRes, notesRes, versionsRes, packetsRes, frameworksRes] = await Promise.all([
         fetch(`/api/documents/${params.docId}`),
         fetch(`/api/deals/${params.id}/notes`).catch(() => null),
         fetch(`/api/deals/${params.id}/documents/${params.docId}/versions`).catch(() => null),
+        fetch(`/api/documents/${params.docId}/review-packets`).catch(() => null),
+        fetch(`/api/playbook/documents`).catch(() => null),
       ]);
       const docJson = await docRes.json().catch(() => ({}));
       if (!docRes.ok) throw new Error(docJson.error || "Document not found");
@@ -150,6 +183,15 @@ export default function DocumentDetailPage({
       setNotes(Array.isArray(notesJson.data) ? notesJson.data : []);
       const versionsJson = versionsRes ? await versionsRes.json().catch(() => ({})) : {};
       setVersions(Array.isArray(versionsJson.data) ? versionsJson.data : []);
+      const packetsJson = packetsRes ? await packetsRes.json().catch(() => ({})) : {};
+      setPackets(Array.isArray(packetsJson.data) ? packetsJson.data : []);
+      const frameworksJson = frameworksRes ? await frameworksRes.json().catch(() => ({})) : {};
+      const reviewFrameworks = Array.isArray(frameworksJson.data)
+        ? frameworksJson.data.filter((item: PlaybookDocument) =>
+            ["skill", "review_framework", "design_standard", "handbook"].includes(item.category)
+          )
+        : [];
+      setFrameworks(reviewFrameworks);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load document");
     } finally {
@@ -170,8 +212,13 @@ export default function DocumentDetailPage({
       .sort((a, b) => new Date(b.note.created_at).getTime() - new Date(a.note.created_at).getTime());
   }, [doc, notes]);
 
-  const activeReview = liveReview || savedReviews[0]?.review || null;
-  const activeReviewId = liveReviewNoteId || savedReviews[0]?.note.id || params.docId;
+  const activePacket = useMemo(() => {
+    if (livePacketId) return packets.find((packet) => packet.id === livePacketId) || null;
+    return packets[0] || null;
+  }, [livePacketId, packets]);
+  const activeReview = liveReview || activePacket?.review_json || savedReviews[0]?.review || null;
+  const activeReviewId = livePacketId || activePacket?.id || liveReviewNoteId || savedReviews[0]?.note.id || params.docId;
+  const activeVisualStatus = liveVisualStatus || activePacket?.visual_status || null;
   const summaryBullets = parseSummaryBullets(doc?.ai_summary);
   const tags = useMemo(() => {
     if (!doc?.ai_tags) return [];
@@ -183,6 +230,11 @@ export default function DocumentDetailPage({
     }
   }, [doc?.ai_tags]);
 
+  const isPushItemSelected = (key: string) => pushSelection[key] ?? true;
+  const togglePushItem = (key: string, checked: boolean) => {
+    setPushSelection((prev) => ({ ...prev, [key]: checked }));
+  };
+
   const runReview = async () => {
     if (!doc) return;
     setReviewing(true);
@@ -190,13 +242,19 @@ export default function DocumentDetailPage({
       const res = await fetch(`/api/documents/${doc.id}/review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ focus: reviewFocus }),
+        body: JSON.stringify({
+          focus: reviewFocus,
+          review_playbook_id: selectedFrameworkId || undefined,
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Could not review this document");
       const data = json.data || {};
       setLiveReview((data.review || data) as ReviewResult);
       setLiveReviewNoteId(data.saved_note_id || null);
+      setLivePacketId(data.packet_id || null);
+      setLiveVisualStatus(data.visual_status || null);
+      setPushSelection({});
       await load();
       toast.success("Review saved to this deal");
     } catch (error) {
@@ -211,50 +269,64 @@ export default function DocumentDetailPage({
     setPushing(true);
     try {
       const approved_items = {
-        rfis: activeReview.questions_to_ask.map((question) => ({
-          question,
-          status: "Open",
-          priority: "P2 - Medium",
-          phase: "Diligence",
-        })),
-        risks: activeReview.red_flags.map((title) => ({
-          title,
-          severity: "Medium",
-          status: "Open",
-          phase: "Diligence",
-          mitigation: "Review with the deal team and assign owner in Notion.",
-        })),
-        tasks: activeReview.missing_items.map((title) => ({
-          title,
-          status: "Not Started",
-          priority: "P2 - Medium",
-          phase: "Diligence",
-          category: "Document Review",
-        })),
-        documents: [
-          {
-            title: doc.original_name,
-            type: DOCUMENT_CATEGORIES[doc.category as DocumentCategory]?.label || doc.category,
-            status: "In Review",
-            link: typeof window !== "undefined" ? window.location.href : undefined,
-            notes: activeReview.executive_take,
-          },
-        ],
-        notes: [
-          {
-            title: `Review: ${doc.original_name}`,
-            type: "Document Review",
-            summary: activeReview.executive_take,
-          },
-        ],
+        rfis: activeReview.questions_to_ask
+          .filter((_, index) => isPushItemSelected(`rfi-${index}`))
+          .map((question) => ({
+            question,
+            status: "Open",
+            priority: "P2 - Medium",
+            phase: "Diligence",
+          })),
+        risks: activeReview.red_flags
+          .filter((_, index) => isPushItemSelected(`risk-${index}`))
+          .map((title) => ({
+            title,
+            severity: "Medium",
+            status: "Open",
+            phase: "Diligence",
+            mitigation: "Review with the deal team and assign owner in Notion.",
+          })),
+        tasks: activeReview.missing_items
+          .filter((_, index) => isPushItemSelected(`task-${index}`))
+          .map((title) => ({
+            title,
+            status: "Not Started",
+            priority: "P2 - Medium",
+            phase: "Diligence",
+            category: "Document Review",
+          })),
+        documents: isPushItemSelected("document")
+          ? [
+              {
+                title: doc.original_name,
+                type: DOCUMENT_CATEGORIES[doc.category as DocumentCategory]?.label || doc.category,
+                status: "In Review",
+                link: typeof window !== "undefined" ? window.location.href : undefined,
+                notes: activeReview.executive_take,
+              },
+            ]
+          : [],
+        notes: isPushItemSelected("note")
+          ? [
+              {
+                title: `Review: ${doc.original_name}`,
+                type: "Document Review",
+                summary: activeReview.executive_take,
+              },
+            ]
+          : [],
       };
-      const res = await fetch(`/api/review-packets/${activeReviewId}/push-to-notion`, {
+      const endpoint = activePacket?.id || livePacketId
+        ? `/api/document-review-packets/${activeReviewId}/push-to-notion`
+        : `/api/review-packets/${activeReviewId}/push-to-notion`;
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deal_id: params.id, approved_items }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Could not push to Notion");
+      await load();
       toast.success("Review pushed to Notion");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not push to Notion");
@@ -375,6 +447,21 @@ export default function DocumentDetailPage({
 
         <aside className="space-y-5">
           <DetailCard title="Review" icon={<Sparkles className="h-4 w-4 text-primary" />}>
+            <label className="mb-2 block text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              Review skill / playbook
+            </label>
+            <select
+              value={selectedFrameworkId}
+              onChange={(event) => setSelectedFrameworkId(event.target.value)}
+              className="mb-3 w-full rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-xs outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+            >
+              <option value="">General document review</option>
+              {frameworks.map((framework) => (
+                <option key={framework.id} value={framework.id}>
+                  {framework.title} ({framework.category.replace(/_/g, " ")})
+                </option>
+              ))}
+            </select>
             <textarea
               value={reviewFocus}
               onChange={(event) => setReviewFocus(event.target.value)}
@@ -382,7 +469,10 @@ export default function DocumentDetailPage({
               className="mb-3 w-full rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-xs leading-5 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
             />
             {activeReview ? (
-              <ReviewPanel review={activeReview} />
+              <>
+                <ReviewPanel review={activeReview} />
+                <VisualStatus status={activeVisualStatus} />
+              </>
             ) : (
               <EmptyState text="No saved review yet. Run a review to organize the findings, questions, missing items, and red flags." />
             )}
@@ -397,6 +487,20 @@ export default function DocumentDetailPage({
               </Button>
             </div>
           </DetailCard>
+
+          {activeReview && (
+            <DetailCard title="Notion push center" icon={<Send className="h-4 w-4 text-primary" />}>
+              <NotionPushCenter
+                review={activeReview}
+                documentName={doc.original_name}
+                pushedAt={activePacket?.pushed_to_notion_at || null}
+                pushing={pushing}
+                selection={pushSelection}
+                onToggle={togglePushItem}
+                onPush={pushReviewToNotion}
+              />
+            </DetailCard>
+          )}
 
           <DetailCard title="AI summary" icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />}>
             {summaryBullets.length > 0 ? (
@@ -432,7 +536,38 @@ export default function DocumentDetailPage({
           </DetailCard>
 
           <DetailCard title="Review history" icon={<History className="h-4 w-4 text-purple-400" />}>
-            {savedReviews.length > 0 ? (
+            {packets.length > 0 ? (
+              <div className="space-y-2">
+                {packets.map((packet) => (
+                  <button
+                    key={packet.id}
+                    type="button"
+                    onClick={() => {
+                      setLivePacketId(packet.id);
+                      setLiveReview(packet.review_json);
+                      setLiveVisualStatus(packet.visual_status);
+                      setLiveReviewNoteId(packet.saved_note_id);
+                      setPushSelection({});
+                    }}
+                    className={`w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/30 ${
+                      activeReviewId === packet.id ? "border-primary/30 bg-primary/5" : "border-border/50 bg-background/50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-medium">{formatDate(packet.created_at)}</p>
+                      {packet.pushed_to_notion_at && (
+                        <Badge variant="outline" className="border-emerald-500/30 text-[10px] text-emerald-300">
+                          Pushed
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                      {packet.review_json?.executive_take || packet.focus || "Saved packet"}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            ) : savedReviews.length > 0 ? (
               <div className="space-y-2">
                 {savedReviews.map(({ note }) => (
                   <div key={note.id} className="rounded-lg border border-border/50 bg-background/50 p-3">
@@ -520,6 +655,178 @@ function ReviewPanel({ review }: { review: ReviewResult }) {
         </div>
       )}
     </div>
+  );
+}
+
+function VisualStatus({ status }: { status: ReviewVisualStatus | null }) {
+  if (!status) return null;
+  const includedPages = Number(status.included_pages || 0);
+  return (
+    <div className={`mt-3 rounded-lg border p-3 text-xs leading-5 ${
+      status.warning ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-emerald-500/20 bg-emerald-500/10 text-emerald-100"
+    }`}>
+      <div className="flex items-start gap-2">
+        {status.warning ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+        <div>
+          <p className="font-medium">
+            {includedPages > 0 ? `Visual context included (${includedPages} page${includedPages === 1 ? "" : "s"})` : "Text/metadata review only"}
+          </p>
+          {status.warning && <p className="mt-1 text-amber-100/80">{status.warning}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NotionPushCenter({
+  review,
+  documentName,
+  pushedAt,
+  pushing,
+  selection,
+  onToggle,
+  onPush,
+}: {
+  review: ReviewResult;
+  documentName: string;
+  pushedAt: string | null;
+  pushing: boolean;
+  selection: Record<string, boolean>;
+  onToggle: (key: string, checked: boolean) => void;
+  onPush: () => void;
+}) {
+  const selected = (key: string) => selection[key] ?? true;
+  const selectedCount =
+    review.questions_to_ask.filter((_, index) => selected(`rfi-${index}`)).length +
+    review.red_flags.filter((_, index) => selected(`risk-${index}`)).length +
+    review.missing_items.filter((_, index) => selected(`task-${index}`)).length +
+    (selected("document") ? 1 : 0) +
+    (selected("note") ? 1 : 0);
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-border/50 bg-background/50 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium">Choose what becomes team-facing work</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Selected items push to Notion with the required Pipeline relation. Leave rough items unchecked.
+            </p>
+          </div>
+          {pushedAt && (
+            <Badge variant="outline" className="shrink-0 border-emerald-500/30 text-[10px] text-emerald-300">
+              Pushed {formatDate(pushedAt)}
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      <PushOption
+        id="document"
+        checked={selected("document")}
+        title={`Key document: ${documentName}`}
+        subtitle="Create or update a Notion project document record."
+        onToggle={onToggle}
+      />
+      <PushOption
+        id="note"
+        checked={selected("note")}
+        title="Review note"
+        subtitle="Save the executive take into Meetings & Notes / review notes."
+        onToggle={onToggle}
+      />
+
+      <PushGroup
+        title="Questions / RFIs"
+        items={review.questions_to_ask}
+        prefix="rfi"
+        selection={selection}
+        onToggle={onToggle}
+      />
+      <PushGroup
+        title="Risks"
+        items={review.red_flags}
+        prefix="risk"
+        selection={selection}
+        onToggle={onToggle}
+      />
+      <PushGroup
+        title="Tasks"
+        items={review.missing_items}
+        prefix="task"
+        selection={selection}
+        onToggle={onToggle}
+      />
+
+      <Button size="sm" className="w-full gap-1.5" onClick={onPush} disabled={pushing || selectedCount === 0}>
+        {pushing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+        Push {selectedCount} selected to Notion
+      </Button>
+    </div>
+  );
+}
+
+function PushGroup({
+  title,
+  items,
+  prefix,
+  selection,
+  onToggle,
+}: {
+  title: string;
+  items: string[];
+  prefix: string;
+  selection: Record<string, boolean>;
+  onToggle: (key: string, checked: boolean) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{title}</p>
+      <div className="space-y-1.5">
+        {items.map((item, index) => {
+          const id = `${prefix}-${index}`;
+          return (
+            <PushOption
+              key={id}
+              id={id}
+              checked={selection[id] ?? true}
+              title={item}
+              onToggle={onToggle}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PushOption({
+  id,
+  checked,
+  title,
+  subtitle,
+  onToggle,
+}: {
+  id: string;
+  checked: boolean;
+  title: string;
+  subtitle?: string;
+  onToggle: (key: string, checked: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border/50 bg-background/50 p-2 text-xs leading-5 transition-colors hover:bg-muted/30">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onToggle(id, event.target.checked)}
+        className="mt-1 h-3.5 w-3.5 rounded border-border bg-background accent-primary"
+      />
+      <span className="min-w-0">
+        <span className="block text-foreground">{title}</span>
+        {subtitle && <span className="mt-0.5 block text-muted-foreground">{subtitle}</span>}
+      </span>
+    </label>
   );
 }
 

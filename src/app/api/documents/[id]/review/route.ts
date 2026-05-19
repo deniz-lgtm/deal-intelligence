@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { dealNoteQueries, documentQueries, playbookQueries } from "@/lib/db";
+import { dealNoteQueries, documentQueries, documentReviewPacketQueries, playbookQueries } from "@/lib/db";
 import { requireAuth, requireDealAccess, syncCurrentUser } from "@/lib/auth";
 import { getActiveModel, imageContentBlocks, pdfToImages } from "@/lib/claude";
 import { readFile } from "@/lib/blob-storage";
@@ -26,7 +26,9 @@ type ReviewPayload = {
 
 type ReviewResponse = {
   review: ReviewPayload;
+  packet_id: string | null;
   saved_note_id: string | null;
+  visual_status: Record<string, unknown>;
 };
 
 function getClient() {
@@ -185,6 +187,7 @@ export async function POST(
       ? reviewPlaybook.content_text.slice(0, 16000)
       : "";
     const category = String(doc.category || "other") as DocumentCategory;
+    const mimeType = String(doc.mime_type || "");
     const content = typeof doc.content_text === "string" && doc.content_text.trim()
       ? doc.content_text.slice(0, 18000)
       : "No extractable document text was stored. Use filename, category, and existing summary only.";
@@ -193,6 +196,15 @@ export async function POST(
       console.warn("Document review visual context failed:", error);
       return [];
     });
+    const visualStatus = {
+      attempted: mimeType.startsWith("image/") || mimeType === "application/pdf",
+      included_pages: visualBlocks.length,
+      source: visualBlocks.length > 0 ? "rendered_visual_context" : "text_or_metadata_only",
+      warning:
+        (mimeType.startsWith("image/") || mimeType === "application/pdf") && visualBlocks.length === 0
+          ? "No visual pages could be attached. Review may rely on extracted text, filename, category, and summary only."
+          : null,
+    };
 
     const response = await getClient().messages.create({
       model: await getActiveModel(),
@@ -268,8 +280,20 @@ ${content}`,
       category: "review",
       source: "document_review",
     });
+    const packetId = uuidv4();
+    await documentReviewPacketQueries.create({
+      id: packetId,
+      deal_id: dealId,
+      document_id: String(doc.id),
+      review_playbook_id: reviewPlaybookId || null,
+      focus,
+      review_json: review as unknown as Record<string, unknown>,
+      visual_status: visualStatus,
+      saved_note_id: noteId,
+      created_by: userId,
+    });
 
-    const data: ReviewResponse = { review, saved_note_id: noteId };
+    const data: ReviewResponse = { review, packet_id: packetId, saved_note_id: noteId, visual_status: visualStatus };
     return NextResponse.json({ data });
   } catch (error) {
     console.error("POST /api/documents/[id]/review error:", error);

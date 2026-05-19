@@ -180,6 +180,22 @@ export async function ensureColumns(): Promise<void> {
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'current'",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_artifact_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_documents_generated ON documents(deal_id, is_generated, kind) WHERE is_generated = true",
+    `CREATE TABLE IF NOT EXISTS document_review_packets (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      review_playbook_id TEXT,
+      focus TEXT,
+      review_json JSONB NOT NULL,
+      visual_status JSONB NOT NULL DEFAULT '{}'::jsonb,
+      saved_note_id TEXT,
+      pushed_to_notion_at TIMESTAMPTZ,
+      notion_push_summary JSONB,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_document_review_packets_doc ON document_review_packets(document_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_document_review_packets_deal ON document_review_packets(deal_id, created_at DESC)",
     // Backfill: existing exports saved via documentQueries.create already
     // sit in documents with `category` values like 'investment_package',
     // 'dd_abstract', 'proforma', 'zoning_report', 'ic_package'. Flip them
@@ -1595,6 +1611,22 @@ export async function initSchema(): Promise<void> {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_documents_deal_id ON documents(deal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category)`,
+    `CREATE TABLE IF NOT EXISTS document_review_packets (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      review_playbook_id TEXT,
+      focus TEXT,
+      review_json JSONB NOT NULL,
+      visual_status JSONB NOT NULL DEFAULT '{}'::jsonb,
+      saved_note_id TEXT,
+      pushed_to_notion_at TIMESTAMPTZ,
+      notion_push_summary JSONB,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_document_review_packets_doc ON document_review_packets(document_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_document_review_packets_deal ON document_review_packets(deal_id, created_at DESC)`,
     `CREATE TABLE IF NOT EXISTS photos (
       id TEXT PRIMARY KEY,
       deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
@@ -2661,6 +2693,87 @@ export const dealNoteQueries = {
 };
 
 // ─── Site Walk queries ───────────────────────────────────────────────────────
+
+export type DocumentReviewPacketRow = {
+  id: string;
+  deal_id: string;
+  document_id: string;
+  review_playbook_id: string | null;
+  focus: string | null;
+  review_json: Record<string, unknown>;
+  visual_status: Record<string, unknown>;
+  saved_note_id: string | null;
+  pushed_to_notion_at: string | null;
+  notion_push_summary: Record<string, unknown> | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+export const documentReviewPacketQueries = {
+  listByDocumentId: async (documentId: string): Promise<DocumentReviewPacketRow[]> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `SELECT * FROM document_review_packets
+       WHERE document_id = $1
+       ORDER BY created_at DESC`,
+      [documentId]
+    );
+    return res.rows;
+  },
+
+  getById: async (id: string): Promise<DocumentReviewPacketRow | null> => {
+    const pool = getPool();
+    const res = await pool.query("SELECT * FROM document_review_packets WHERE id = $1", [id]);
+    return res.rows[0] ?? null;
+  },
+
+  create: async (packet: {
+    id: string;
+    deal_id: string;
+    document_id: string;
+    review_playbook_id?: string | null;
+    focus?: string | null;
+    review_json: Record<string, unknown>;
+    visual_status?: Record<string, unknown>;
+    saved_note_id?: string | null;
+    created_by?: string | null;
+  }): Promise<DocumentReviewPacketRow> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `INSERT INTO document_review_packets
+        (id, deal_id, document_id, review_playbook_id, focus, review_json, visual_status, saved_note_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING *`,
+      [
+        packet.id,
+        packet.deal_id,
+        packet.document_id,
+        packet.review_playbook_id ?? null,
+        packet.focus ?? null,
+        JSON.stringify(packet.review_json),
+        JSON.stringify(packet.visual_status ?? {}),
+        packet.saved_note_id ?? null,
+        packet.created_by ?? null,
+      ]
+    );
+    return res.rows[0];
+  },
+
+  markPushedToNotion: async (
+    id: string,
+    summary: Record<string, unknown>
+  ): Promise<DocumentReviewPacketRow | null> => {
+    const pool = getPool();
+    const res = await pool.query(
+      `UPDATE document_review_packets
+       SET pushed_to_notion_at = NOW(), notion_push_summary = $2
+       WHERE id = $1
+       RETURNING *`,
+      [id, JSON.stringify(summary)]
+    );
+    return res.rows[0] ?? null;
+  },
+};
 
 function parseSiteWalkRow(row: Record<string, unknown> | undefined | null): Record<string, unknown> | null {
   if (!row) return null;
